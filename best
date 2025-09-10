@@ -1,10 +1,65 @@
--- Config + main script
-_G.Config = {
-    UserID = "3087df52-2f5c-4e6f-a407-10fa72d16932",
-    discord_id = "1135837863603351573",
-    Note = "Pc",
-}
+local HttpService = game:GetService("HttpService")
 
--- Load external script
-loadstring(game:HttpGet("https://raw.githubusercontent.com/skadidau/unfazedfree/refs/heads/main/bgsi"))()
-loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/refs/heads/main/adm"))()
+local PlaceId = 85896571713843
+local Webhook = "https://discord.com/api/webhooks/1411629941178765365/k0Tw3CWiuZ935oPnQ4GnofN3xcWAc7q3KWg41_SwqtkOlyNotA5nNXzPjf1XVg1zcu4h"
+
+-- 🔎 Collect all servers
+local function getAllServers()
+    local servers = {}
+    local cursor = ""
+    repeat
+        local url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100%s"):format(
+            PlaceId,
+            cursor ~= "" and "&cursor=" .. cursor or ""
+        )
+        local success, response = pcall(function()
+            return HttpService:GetAsync(url)
+        end)
+        if success then
+            local data = HttpService:JSONDecode(response)
+            for _, server in ipairs(data.data) do
+                table.insert(servers, server)
+            end
+            cursor = data.nextPageCursor or ""
+        else
+            warn("Failed to fetch servers:", response)
+            break
+        end
+    until cursor == "" or not cursor
+    return servers
+end
+
+-- 📤 Send message to Discord
+local function sendToWebhook(message)
+    local data = HttpService:JSONEncode({
+        content = message
+    })
+    pcall(function()
+        HttpService:PostAsync(Webhook, data, Enum.HttpContentType.ApplicationJson)
+    end)
+end
+
+-- 📝 Build message of all servers
+local servers = getAllServers()
+if #servers > 0 then
+    local msg = {}
+    for i, s in ipairs(servers) do
+        table.insert(msg, string.format("`%d.` ID: %s | %d/%d players", i, s.id, s.playing, s.maxPlayers))
+    end
+
+    -- ⚠️ Discord has a 2000 character limit per message
+    local chunk = ""
+    for _, line in ipairs(msg) do
+        if #chunk + #line + 1 > 1900 then
+            sendToWebhook(chunk)
+            chunk = line
+        else
+            chunk = chunk .. "\n" .. line
+        end
+    end
+    if chunk ~= "" then
+        sendToWebhook(chunk)
+    end
+else
+    sendToWebhook("❌ No servers found.")
+end
