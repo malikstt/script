@@ -1,0 +1,231 @@
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+
+local alreadyFound = {}
+local isHopping = false
+local lastCheck = tick()
+local player = Players.LocalPlayer
+
+local function formatEggName(name)
+    name = name:gsub("-", " ")
+    return name:gsub("(%a)([%w]*)", function(first, rest) 
+        return first:upper() .. rest:lower() 
+    end)
+end
+
+local function normalize(name)
+    return (name or ""):lower():gsub("%W", "")
+end
+
+local function sendWebhook(url, message)
+    local jsonData = HttpService:JSONEncode(message)
+    
+    local success, result = pcall(function()
+        local response
+        if syn and syn.request then
+            response = syn.request({
+                Url = url,
+                Method = "POST",
+                Headers = {
+                    ["Content-Type"] = "application/json"
+                },
+                Body = jsonData
+            })
+        else
+            response = request({
+                Url = url,
+                Method = "POST",
+                Headers = {
+                    ["Content-Type"] = "application/json"
+                },
+                Body = jsonData
+            })
+        end
+        return response
+    end)
+    
+    if success then
+        print("Webhook sent successfully")
+    else
+        print("Error sending webhook:", result)
+    end
+end
+
+local function shouldHopServer()
+    if not Config.ServerHop.Enabled then
+        return false
+    end
+    
+    if Config.ServerHop.PlayerCountFilter.Enabled then
+        local playerCount = #Players:GetPlayers()
+        if playerCount < Config.ServerHop.PlayerCountFilter.MinPlayers or 
+           playerCount > Config.ServerHop.PlayerCountFilter.MaxPlayers then
+            return true
+        end
+    end
+    
+    if (tick() - lastCheck) >= Config.ServerHop.IdleTime then
+        return true
+    end
+    
+    return false
+end
+
+local function hopServers()
+    if isHopping then return end
+    
+    local servers = Config.ServerList
+    if not servers or #servers == 0 then
+        warn("No servers available for hopping")
+        return
+    end
+
+    local currentJob = tostring(game.JobId or "")
+    local chosenJob = nil
+
+    for _ = 1, #servers do
+        local candidate = tostring(servers[math.random(1, #servers)] or "")
+        if candidate ~= "" and candidate ~= currentJob then
+            chosenJob = candidate
+            break
+        end
+    end
+
+    if not chosenJob then
+        warn("No new server found (only current one).")
+        return
+    end
+
+    isHopping = true
+    warn("Teleporting to server:", chosenJob)
+    
+    pcall(function()
+        TeleportService:TeleportToPlaceInstance(game.PlaceId, chosenJob, player)
+    end)
+    
+    task.wait(Config.ServerHop.Cooldown)
+    isHopping = false
+end
+
+while true do
+    local foundRift = false
+    local rendered = Workspace:FindFirstChild("Rendered")
+    
+    if rendered then
+        local riftsFolder = rendered:FindFirstChild("Rifts")
+        if riftsFolder then
+            for _, rift in ipairs(riftsFolder:GetChildren()) do
+                if rift.Name:lower():find("egg") and not alreadyFound[rift] then
+                    for _, filter in ipairs(Config.EggFilters) do
+                        if normalize(rift.Name):find(normalize(filter.Name)) then
+                            foundRift = true
+                            
+                            local luckText, timerText, heightText = "N/A", "N/A", "N/A"
+                            local minutes, seconds = 0, 0
+
+                            pcall(function()
+                                if rift:FindFirstChild("Display") and rift.Display:FindFirstChild("SurfaceGui") then
+                                    if rift.Display.SurfaceGui:FindFirstChild("Icon") and rift.Display.SurfaceGui.Icon:FindFirstChild("Luck") then
+                                        luckText = rift.Display.SurfaceGui.Icon.Luck.Text or "N/A"
+                                    end
+                                    if rift.Display.SurfaceGui:FindFirstChild("Timer") then
+                                        timerText = rift.Display.SurfaceGui.Timer.Text or ""
+                                    end
+                                end
+                            end)
+
+                            pcall(function()
+                                minutes = tonumber(timerText:match("(%d+) ?m")) or 0
+                                seconds = tonumber(timerText:match("(%d+) ?s")) or 0
+                                if minutes == 0 and seconds == 0 then
+                                    local mm, ss = timerText:match("(%d+):(%d+)")
+                                    if mm and ss then
+                                        minutes = tonumber(mm) or 0
+                                        seconds = tonumber(ss) or 0
+                                    end
+                                end
+                            end)
+
+                            pcall(function()
+                                if rift.GetPivot then
+                                    heightText = tostring(math.floor(rift:GetPivot().Position.Y)) .. " studs"
+                                elseif rift:FindFirstChild("Display") and rift.Display:IsA("BasePart") then
+                                    heightText = tostring(math.floor(rift.Display.Position.Y)) .. " studs"
+                                end
+                            end)
+
+                            local formattedEggName = formatEggName(rift.Name)
+                            local expireTimestamp = os.time() + (minutes * 60 + seconds)
+                            local jobId = tostring(game.JobId or "")
+                            local playerCount = #Players:GetPlayers()
+                            local maxPlayers = Players.MaxPlayers or 0
+                            
+                            local luckValue = tonumber(luckText:match("%d+")) or 0
+                            
+                            if luckValue >= filter.MinLuck then
+                                local webhookUrl = Config.Webhooks[filter.Name] or Config.Webhooks["Brainrot Egg"]
+                                
+                                if webhookUrl and webhookUrl ~= "" then
+                                    local message = {
+                                        ["embeds"] = {{
+                                            ["title"] = formattedEggName .. " Has Been Found 🥚",
+                                            ["color"] = 0x00FF00,
+                                            ["fields"] = {
+                                                {
+                                                    ["name"] = "🌍 Server Info",
+                                                    ["value"] = "Players Online: " .. playerCount .. "/" .. maxPlayers,
+                                                    ["inline"] = true
+                                                },
+                                                {
+                                                    ["name"] = "🎲 Rift Info",
+                                                    ["value"] = "Luck Multiplier: " .. luckText .. 
+                                                               "\nExpires: <t:" .. expireTimestamp .. ":R>" ..
+                                                               "\nHeight: " .. heightText,
+                                                    ["inline"] = true
+                                                },
+                                                {
+                                                    ["name"] = "🔗 Quick Join",
+                                                    ["value"] = "[Click to Join Server](https://www.roblox.com/games/start?placeId=" .. game.PlaceId .. "&jobId=" .. jobId .. ")",
+                                                    ["inline"] = false
+                                                }
+                                            },
+                                            ["timestamp"] = DateTime.now():ToIsoDate()
+                                        }}
+                                    }
+                                    
+                                    sendWebhook(webhookUrl, message)
+                                    print("Webhook sent for:", formattedEggName)
+                                end
+                                
+                                if Config.ServerHop.Enabled then
+                                    hopServers()
+                                end
+                            end
+                            
+                            alreadyFound[rift] = true
+                            task.delay(300, function()
+                                alreadyFound[rift] = nil
+                            end)
+                            
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    if not foundRift and shouldHopServer() then
+        hopServers()
+        lastCheck = tick()
+    end
+    
+    task.wait(10)
+end
+
+TeleportService.TeleportInitFailed:Connect(function(player, result, errMsg)
+    warn("Teleport failed:", result, errMsg)
+    isHopping = false
+end)
