@@ -2,19 +2,20 @@ if REMOVE_EGG_ANIMATION then
     require(game:GetService("ReplicatedStorage").Client.Effects.HatchEgg).Play = function() return end
 end
 
-local function convertToSummonName(riftName)
-    return riftName:gsub("-", " "):gsub("(%a)([%w']*)", function(first, rest)
-        return first:upper() .. rest:lower()
-    end)
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Network = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Framework"):WaitForChild("Network"):WaitForChild("Remote"):WaitForChild("RemoteEvent")
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+local PetsModule = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Data"):WaitForChild("Pets"))
+
+local function convertToRiftName(displayName)
+    return displayName:gsub(" ", "-"):lower()
 end
 
 local function findRiftByName()
-    if not workspace:FindFirstChild("Rendered") then return end
-    if not workspace.Rendered:FindFirstChild("Rifts") then return end
-    
-    for _, rift in pairs(workspace.Rendered.Rifts:GetChildren()) do
-        if rift.Name == RIFT_EGG then
-            return rift
+    local riftNameToFind = convertToRiftName(RIFT_EGG)
+    if workspace:FindFirstChild("Rendered") and workspace.Rendered:FindFirstChild("Rifts") then
+        for _, rift in pairs(workspace.Rendered.Rifts:GetChildren()) do
+            if rift.Name == riftNameToFind then return rift end
         end
     end
 end
@@ -24,57 +25,32 @@ local function teleportToRift()
     if rift then
         local character = game.Players.LocalPlayer.Character
         if character and character.PrimaryPart then
-            local riftPosition = rift:GetPivot().Position
-            local offset = Vector3.new(0, 5, 0)
-            local targetCFrame = CFrame.new(riftPosition + offset)
-            character:SetPrimaryPartCFrame(targetCFrame)
+            character:SetPrimaryPartCFrame(CFrame.new(rift:GetPivot().Position + Vector3.new(0, 5, 0)))
             return true
         end
     end
     return false
 end
 
-local function hatchEggs()
-    local VirtualInputManager = game:GetService("VirtualInputManager")
-    while true do
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-        task.wait(0.1)
-        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-        task.wait(0.1)
-    end
-end
-
 local function shouldKeepPet(rarity)
-    for _, keepRarity in ipairs(RARITIES_TO_KEEP) do
-        if rarity == keepRarity then
-            return true
-        end
+    for _, keepRarity in ipairs(KEEP_RARITIES) do
+        if rarity == keepRarity then return true end
     end
     return false
 end
 
 local function deleteUnwantedPets()
-    local ReplicatedStorage = game:GetService("ReplicatedStorage")
-    local Network = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Framework"):WaitForChild("Network"):WaitForChild("Remote"):WaitForChild("RemoteEvent")
-    local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
-    local PetsModule = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Data"):WaitForChild("Pets"))
-    
     local data = LocalData:Get()
     if data and data.Pets then
         for _, pet in pairs(data.Pets) do
             local petInfo = PetsModule[pet.Name]
             if petInfo and not shouldKeepPet(petInfo.Rarity) then
-                -- Delete with 1000, 100, and 10 coins
-                local args1 = {"DeletePet", pet.Id, 1000, false}
-                local args2 = {"DeletePet", pet.Id, 100, false}
-                local args3 = {"DeletePet", pet.Id, 10, false}
-                
-                Network:FireServer(unpack(args1))
-                task.wait(0.05)
-                Network:FireServer(unpack(args2))
-                task.wait(0.05)
-                Network:FireServer(unpack(args3))
-                task.wait(0.05)
+                Network:FireServer("DeletePet", pet.Id, 1000, false)
+                task.wait(0.5)
+                Network:FireServer("DeletePet", pet.Id, 100, false)
+                task.wait(0.5)
+                Network:FireServer("DeletePet", pet.Id, 10, false)
+                task.wait(0.5)
             end
         end
     end
@@ -82,15 +58,23 @@ end
 
 local function executeSummon()
     if not findRiftByName() then
-        local summonName = convertToSummonName(RIFT_EGG)
-        local args = { "SummonRift", { Type = "Egg", Time = 5, Name = summonName, Luck = 5, World = "The Overworld" } }
+        local args = {"SummonRift", {Type = "Egg", Time = 5, Name = RIFT_EGG, Luck = 5, World = "The Overworld"}}
         pcall(function()
-            game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Framework"):WaitForChild("Network"):WaitForChild("Remote"):WaitForChild("RemoteFunction"):InvokeServer(unpack(args))
+            ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Framework"):WaitForChild("Network"):WaitForChild("Remote"):WaitForChild("RemoteFunction"):InvokeServer(unpack(args))
         end)
     end
 end
 
-if SUMMON_RIFT then
+local isDeleting = false
+
+task.spawn(function()
+    while true do
+        teleportToRift()
+        task.wait(30)
+    end
+end)
+
+if AUTO_SUMMON then
     task.spawn(function()
         while true do
             if not findRiftByName() then
@@ -103,22 +87,29 @@ if SUMMON_RIFT then
     end)
 end
 
-task.spawn(function()
-    while true do
-        teleportToRift()
-        task.wait(1)
-    end
-end)
-
-if SPAM_E_KEY then
-    task.spawn(hatchEggs)
+if AUTO_HATCH then
+    task.spawn(function()
+        local VirtualInputManager = game:GetService("VirtualInputManager")
+        while true do
+            if not isDeleting then
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+                task.wait(0.1)
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+                task.wait(0.1)
+            else
+                task.wait(1)
+            end
+        end
+    end)
 end
 
 if AUTO_DELETE then
     task.spawn(function()
         while true do
+            task.wait(DELETE_EVERY)
+            isDeleting = true
             deleteUnwantedPets()
-            task.wait(DELETE_INTERVAL)
+            isDeleting = false
         end
     end)
 end
