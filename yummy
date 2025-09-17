@@ -17,7 +17,7 @@ getgenv().bgsInfConfig = {
     SHOW_MULTIPLIER = false,
     
     FOCUS_DICE = true,
-    USE_DICE_KEY = true,
+    USE_DICE_KEY = false,
     IGNORE_MINIGAME = true,
     SUPER_TICKET_MINIGAME = "Robot Claw",
     STOP_MINIGAME_INFINITY_ELIXIR = 9999,
@@ -28,16 +28,6 @@ getgenv().bgsInfConfig = {
     DELETE_LEGENDARY_MYTHIC = true,
     MAX_LEGENDARY_TIER_TO_DELETE = 1,
     
-    USE_GEMS_ENCHANT = false,
-    ENCHANT_TEAMUP = false,
-    ENCHANT_TEAMUP_TIER = 3,
-    ENCHANT_HIGH_ROLLER = true,
-    ENCHANT_SECRET_HUNTER = false,
-    
-    MASTERY_PETS_LEVEL = 15,
-    MASTERY_BUFFS_LEVEL = 20,
-    MASTERY_SHOPS_LEVEL = 11,
-    MASTERY_MINIGAMES_LEVEL = 8,
     IGNORE_STARTER_HATCH = false,
     PURCHASE_BLACKMARKET = true,
     PURCHASE_ALIENSHOP = true,
@@ -64,3 +54,138 @@ getgenv().bgsInfConfig = {
 }
 
 loadstring(game:HttpGet("https://api.luarmor.net/files/v3/loaders/e1f274825da00b92599872de596f1fc0.lua"))()
+
+-- Potion webhook and auto-use system
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local url = "https://discord.com/api/webhooks/1362479671387619499/YXQdRgCPSjHR0IrMUbb0UeULweAosEQaWGLtxMp80hexjlPtk0jD0q5mNwkdudOZpb7C"
+
+local function sendWebhook(data)
+    local success, response = pcall(function()
+        http_request({
+            Url = url,
+            Method = "POST",
+            Headers = {
+                ["Content-Type"] = "application/json"
+            },
+            Body = HttpService:JSONEncode(data)
+        })
+    end)
+end
+
+local function GetPotionTime(potionName)
+    local player = Players.LocalPlayer
+    if not player then return "N/A" end
+    
+    local playerGui = player:FindFirstChild("PlayerGui")
+    if not playerGui then return "N/A" end
+    
+    local screenGui = playerGui:FindFirstChild("ScreenGui")
+    if not screenGui then return "N/A" end
+    
+    local buffs = screenGui:FindFirstChild("Buffs")
+    if not buffs then return "N/A" end
+    
+    local potion = buffs:FindFirstChild(potionName)
+    if not potion then return "N/A" end
+    
+    local button = potion:FindFirstChild("Button")
+    if not button then return "N/A" end
+    
+    local label = button:FindFirstChild("Label")
+    if not label then return "N/A" end
+    
+    return label.Text
+end
+
+local function GetPlayTime()
+    local player = Players.LocalPlayer
+    if not player then return "N/A" end
+    
+    local playerGui = player:FindFirstChild("PlayerGui")
+    if not playerGui then return "N/A" end
+    
+    local screenGui = playerGui:FindFirstChild("ScreenGui")
+    if not screenGui then return "N/A" end
+    
+    local debugTags = screenGui:FindFirstChild("_debug")
+    if debugTags then
+        local tags = debugTags:FindFirstChild("Tags")
+        if tags then
+            local template = tags:FindFirstChild("Template")
+            if template then
+                local label = template:FindFirstChild("Label")
+                if label and label:IsA("TextLabel") then
+                    return label.Text:gsub("<[^>]+>", "")
+                end
+            end
+        end
+    end
+    
+    return "N/A"
+end
+
+-- Function to send potion status webhook
+local function sendPotionWebhook()
+    local player = Players.LocalPlayer
+    local username = player and player.Name or "N/A"
+    local playtime = GetPlayTime()
+
+    local potions = {
+        "Lucky",
+        "Speed", 
+        "Infinity Elixir",
+        "Mythic",
+        "Tickets",
+        "Coins",
+        "Secret Elixir",
+        "Egg Elixir"
+    }
+
+    local message = "```\n"
+    message = message .. "Player: " .. username .. "\n"
+    message = message .. "Playtime: " .. playtime .. "\n\n"
+    message = message .. "POTIONS:\n"
+
+    for _, potionName in ipairs(potions) do
+        local time = GetPotionTime(potionName)
+        message = message .. potionName .. ": " .. time .. "\n"
+    end
+
+    message = message .. "```"
+
+    sendWebhook({content = message})
+end
+
+-- Auto potion use function
+local function autoUsePotions()
+    getgenv().running = true
+    
+    local potions = {
+        {"Coins", 6}, {"Coins", 5},
+        {"Speed", 6},
+        {"Lucky", 6},
+        {"Mythic", 6},
+        {"Tickets", 6}, {"Tickets", 5},
+        {"Infinity Elixir", 1}
+    }
+
+    while getgenv().running do
+        for _, potion in ipairs(potions) do
+            local args = {"UsePotion", potion[1], potion[2]}
+            game:GetService("ReplicatedStorage").Shared.Framework.Network.Remote.RemoteEvent:FireServer(unpack(args))
+            task.wait(0.5)
+        end
+        task.wait(300) -- Wait 5 minutes before next cycle
+    end
+end
+
+-- Start the systems
+spawn(autoUsePotions)
+
+-- Send initial webhook and set up 5-minute intervals
+sendPotionWebhook()
+while true do
+    task.wait(300) -- 5 minutes
+    sendPotionWebhook()
+end
