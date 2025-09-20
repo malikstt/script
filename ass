@@ -1,113 +1,116 @@
-local function parsePearlValue(input)
-    input = tostring(input):lower():gsub(" ", "")
-    if input:find("b") then return tonumber(input:gsub("b", "")) * 1000000000
-    elseif input:find("m") then return tonumber(input:gsub("m", "")) * 1000000
-    elseif input:find("k") then return tonumber(input:gsub("k", "")) * 1000
-    else return tonumber(input) or 1000000000 end
-end
-
-local TARGET = parsePearlValue(MIN_PEARLS)
-local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
-local RemoteEvent = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Framework"):WaitForChild("Network"):WaitForChild("Remote"):WaitForChild("RemoteEvent")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
-local function getPearlBalance()
-    local success, result = pcall(function()
-        return Players.LocalPlayer.PlayerGui.ScreenGui.HUD.Left.Currency.Pearls.Frame.Label.Text
-    end)
-    return success and tonumber(result:gsub(",", "")) or 0
-end
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = " dice debugerI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = PlayerGui
 
-local function teleportToMysteryBox()
-    RemoteEvent:FireServer("Teleport", "Workspace.Worlds.Seven Seas.Areas.Fisher's Island.IslandTeleport.Spawn")
-    task.wait(2)
-end
+local DebugLabel = Instance.new("TextLabel")
+DebugLabel.Size = UDim2.new(0, 500, 0, 300)
+DebugLabel.Position = UDim2.new(0, 20, 0, 200)
+DebugLabel.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+DebugLabel.BorderSizePixel = 2
+DebugLabel.BorderColor3 = Color3.fromRGB(0, 255, 0)
+DebugLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+DebugLabel.TextScaled = true
+DebugLabel.Font = Enum.Font.SourceSansBold
+DebugLabel.TextXAlignment = Enum.TextXAlignment.Left
+DebugLabel.TextYAlignment = Enum.TextYAlignment.Top
+DebugLabel.TextWrapped = true
+DebugLabel.Text = "Loading..."
+DebugLabel.Parent = ScreenGui
 
-local function teleportToHatching()
-    local character = Players.LocalPlayer.Character
-    if character and character:FindFirstChild("HumanoidRootPart") then
-        character.HumanoidRootPart.CFrame = CFrame.new(-41518.53, 12.06, -20415.61)
-    end
-    task.wait(2)
-end
+local TARGET_TILE_TYPES = { "infinity", "infinity_elixir" }
+local startTime = tick()
+local elixirCount = 0
 
-local function useMysteryBox()
-    RemoteEvent:FireServer("UseGift", "Mystery Box", 25)
-end
+local BoardModulePath = ReplicatedStorage.Client.Gui.Frames.Board
+local BoardUtil = require(ReplicatedStorage.Shared.Utils.BoardUtil)
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+local ItemUtil = require(ReplicatedStorage.Shared.Utils.Stats.ItemUtil)
+local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
+local Board = require(BoardModulePath)
 
-local function findCurrentGiftIDs()
-    local rendered = Workspace:FindFirstChild("Rendered")
-    if not rendered then return {} end
-    local giftsFolder = rendered:FindFirstChild("Gifts")
-    if not giftsFolder then return {} end
-    local ids = {}
-    for _, gift in ipairs(giftsFolder:GetChildren()) do
-        table.insert(ids, gift.Name)
-    end
-    return ids
-end
+if not Board or not Board.Pieces then return end
 
-local function claimGift(giftID)
-    RemoteEvent:FireServer("ClaimGift", giftID)
-end
+local function updateUI(lastDice, stepsNeeded, foundInf)
+    local elapsed = math.floor(tick() - startTime)
+    local mins = math.floor(elapsed / 60)
+    local secs = elapsed % 60
+    local timeStr = string.format("%02d:%02d", mins, secs)
 
-local function farmPearlsUntilTarget()
-    while getPearlBalance() < TARGET do
-        useMysteryBox()
-        task.wait(0.1)
-        local gifts = findCurrentGiftIDs()
-        for _, id in ipairs(gifts) do
-            claimGift(id)
-            task.wait(0.05)
-        end
-        task.wait(0.1)
-    end
-end
-
-local function autoDeletePets()
-    local Network = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Framework"):WaitForChild("Network"):WaitForChild("Remote"):WaitForChild("RemoteEvent")
-    local PetsModule = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Data"):WaitForChild("Pets"))
-    local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
-    local data = LocalData:Get()
-    if data and data.Pets then
-        for _, pet in pairs(data.Pets) do
-            local petInfo = PetsModule[pet.Name]
-            if petInfo and petInfo.Rarity ~= "Secret" and petInfo.Rarity ~= "Infinity" then
-                local args = {"DeletePet", pet.Id, 100, false}
-                Network:FireServer(unpack(args))
-                task.wait(0.01)
-            end
-        end
-    end
-end
-
-local function equipBestPets()
-    local equipArgs = {"EquipBestPets"}
-    pcall(function()
-        RemoteEvent:FireServer(unpack(equipArgs))
-    end)
+    local text = "🎲 DICE DEBUG PANEL\n"
+    text = text .. "⏱ Time Running: " .. timeStr .. "\n\n"
+    text = text .. "🎲 Last Dice Used: " .. (lastDice or "None") .. "\n"
+    text = text .. "📏 Steps to Next Infinity: " .. (stepsNeeded or "??") .. "\n"
+    text = text .. "✨ Infinity Elixirs Collected: " .. tostring(elixirCount) .. "\n"
+    if foundInf then text = text .. "\n⚡ Infinity Tile DETECTED!" end
+    DebugLabel.Text = text
 end
 
 task.spawn(function()
-    while task.wait(10) do
-        equipBestPets()
+    while true do
+        task.wait(1)
+
+        local playerPiece = Board.Pieces[LocalPlayer.Name]
+        local currentData = LocalData:Get()
+        if not playerPiece or not currentData then continue end
+
+        local startIndex = playerPiece.Index
+        local totalNodes = #BoardUtil.Nodes
+        local stepsNeeded, foundInf = nil, false
+
+        for i = 1, totalNodes do
+            local currentIndex = startIndex + i
+            if currentIndex > totalNodes then currentIndex = currentIndex - totalNodes end
+
+            local nodeData = BoardUtil.Nodes[currentIndex]
+            if table.find(TARGET_TILE_TYPES, nodeData.Type) then
+                stepsNeeded = i
+                foundInf = true
+                break
+            end
+        end
+
+        if stepsNeeded == 1 then elixirCount += 1 end
+        if not stepsNeeded then task.wait(10) continue end
+
+        local bestDice = nil
+        local function check(diceName)
+            return ItemUtil:GetOwnedAmount(currentData, {Type = "Powerup", Name = diceName}) > 0
+        end
+
+        if stepsNeeded <= 4 then
+            if check("Golden Dice") then bestDice = "Golden Dice"
+            elseif check("Dice") then bestDice = "Dice"
+            elseif check("Giant Dice") then bestDice = "Giant Dice" end
+        elseif stepsNeeded <= 9 then
+            if check("Dice") then bestDice = "Dice"
+            elseif check("Giant Dice") then bestDice = "Giant Dice" end
+        elseif stepsNeeded <= 50 then
+            if check("Giant Dice") then bestDice = "Giant Dice" end
+        end
+
+        if not bestDice then task.wait(5) continue end
+
+        local result
+        local ok = pcall(function() result = Remote:InvokeServer("RollDice", bestDice) end)
+
+        if ok and result and result.Roll and result.Tile and result.Tile.Index then
+            playerPiece.Index = result.Tile.Index
+            Remote:FireServer("ClaimTile")
+            if table.find(TARGET_TILE_TYPES, result.Tile.Type) then elixirCount += 1 end
+        else
+            Remote:FireServer("ClaimTile")
+        end
+
+        updateUI(bestDice, stepsNeeded, foundInf)
+        task.wait(1.5)
     end
-end)
-
-local currentBalance = getPearlBalance()
-if currentBalance < TARGET then
-    RemoteEvent:FireServer("UnlockWorld", "Seven Seas")
-    task.wait(1)
-    teleportToMysteryBox()
-    farmPearlsUntilTarget()
-end
-
-teleportToHatching()
-
-while task.wait(1) do
-    if getPearlBalance() < TARGET then
-        teleportToMysteryBox()
+end)        teleportToMysteryBox()
         farmPearlsUntilTarget()
         teleportToHatching()
     end
