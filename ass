@@ -1,0 +1,125 @@
+local function parsePearlValue(input)
+    input = tostring(input):lower():gsub(" ", "")
+    if input:find("b") then return tonumber(input:gsub("b", "")) * 1000000000
+    elseif input:find("m") then return tonumber(input:gsub("m", "")) * 1000000
+    elseif input:find("k") then return tonumber(input:gsub("k", "")) * 1000
+    else return tonumber(input) or 1000000000 end
+end
+
+local TARGET = parsePearlValue(MIN_PEARLS)
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local RemoteEvent = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Framework"):WaitForChild("Network"):WaitForChild("Remote"):WaitForChild("RemoteEvent")
+
+local function getPearlBalance()
+    local success, result = pcall(function()
+        return Players.LocalPlayer.PlayerGui.ScreenGui.HUD.Left.Currency.Pearls.Frame.Label.Text
+    end)
+    return success and tonumber(result:gsub(",", "")) or 0
+end
+
+local function teleportToMysteryBox()
+    RemoteEvent:FireServer("Teleport", "Workspace.Worlds.Seven Seas.Areas.Fisher's Island.IslandTeleport.Spawn")
+    task.wait(2)
+end
+
+local function teleportToHatching()
+    local character = Players.LocalPlayer.Character
+    if character and character:FindFirstChild("HumanoidRootPart") then
+        character.HumanoidRootPart.CFrame = CFrame.new(-41518.53, 12.06, -20415.61)
+    end
+    task.wait(2)
+end
+
+local function useMysteryBox()
+    RemoteEvent:FireServer("UseGift", "Mystery Box", 25)
+end
+
+local function findCurrentGiftIDs()
+    local rendered = Workspace:FindFirstChild("Rendered")
+    if not rendered then return {} end
+    local giftsFolder = rendered:FindFirstChild("Gifts")
+    if not giftsFolder then return {} end
+    local ids = {}
+    for _, gift in ipairs(giftsFolder:GetChildren()) do
+        table.insert(ids, gift.Name)
+    end
+    return ids
+end
+
+local function claimGift(giftID)
+    RemoteEvent:FireServer("ClaimGift", giftID)
+end
+
+local function farmPearlsUntilTarget()
+    while getPearlBalance() < TARGET do
+        useMysteryBox()
+        task.wait(0.1)
+        local gifts = findCurrentGiftIDs()
+        for _, id in ipairs(gifts) do
+            claimGift(id)
+            task.wait(0.05)
+        end
+        task.wait(0.1)
+    end
+end
+
+local function autoDeletePets()
+    local Network = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Framework"):WaitForChild("Network"):WaitForChild("Remote"):WaitForChild("RemoteEvent")
+    local PetsModule = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Data"):WaitForChild("Pets"))
+    local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+    local data = LocalData:Get()
+    if data and data.Pets then
+        for _, pet in pairs(data.Pets) do
+            local petInfo = PetsModule[pet.Name]
+            if petInfo and petInfo.Rarity ~= "Secret" and petInfo.Rarity ~= "Infinity" then
+                local args = {"DeletePet", pet.Id, 100, false}
+                Network:FireServer(unpack(args))
+                task.wait(0.01)
+            end
+        end
+    end
+end
+
+local function equipBestPets()
+    local equipArgs = {"EquipBestPets"}
+    pcall(function()
+        RemoteEvent:FireServer(unpack(equipArgs))
+    end)
+end
+
+task.spawn(function()
+    while task.wait(10) do
+        equipBestPets()
+    end
+end)
+
+local currentBalance = getPearlBalance()
+if currentBalance < TARGET then
+    RemoteEvent:FireServer("UnlockWorld", "Seven Seas")
+    task.wait(1)
+    teleportToMysteryBox()
+    farmPearlsUntilTarget()
+end
+
+teleportToHatching()
+
+while task.wait(1) do
+    if getPearlBalance() < TARGET then
+        teleportToMysteryBox()
+        farmPearlsUntilTarget()
+        teleportToHatching()
+    end
+    
+    local hatchEndTime = os.time() + 55
+    while os.time() < hatchEndTime do
+        if getPearlBalance() < TARGET then break end
+        task.wait(1)
+    end
+    
+    if getPearlBalance() >= TARGET then
+        autoDeletePets()
+        task.wait(5)
+    end
+end
