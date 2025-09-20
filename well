@@ -1,77 +1,113 @@
-setfpscap(5)
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
-spawn(function()
-    local potions = {
-        {"Coins", 7}, {"Coins", 6},
-        {"Speed", 7}, {"Speed", 6},
-        {"Lucky", 7}, {"Lucky", 6},
-        {"Mythic", 7}, {"Mythic", 6},
-        {"Tickets", 7}, {"Tickets", 6},
-        {"Infinity Elixir", 1},
-        {"Egg Elixir", 1}
-    }
-    
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "DiceDebugUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = PlayerGui
+
+local DebugLabel = Instance.new("TextLabel")
+DebugLabel.Size = UDim2.new(0, 500, 0, 300)
+DebugLabel.Position = UDim2.new(0, 20, 0, 200)
+DebugLabel.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+DebugLabel.BorderSizePixel = 2
+DebugLabel.BorderColor3 = Color3.fromRGB(0, 255, 0)
+DebugLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+DebugLabel.TextScaled = true
+DebugLabel.Font = Enum.Font.SourceSansBold
+DebugLabel.TextXAlignment = Enum.TextXAlignment.Left
+DebugLabel.TextYAlignment = Enum.TextYAlignment.Top
+DebugLabel.TextWrapped = true
+DebugLabel.Text = "Loading..."
+DebugLabel.Parent = ScreenGui
+
+local TARGET_TILE_TYPES = { "infinity", "infinity_elixir" }
+local startTime = tick()
+local elixirCount = 0
+
+local BoardModulePath = ReplicatedStorage.Client.Gui.Frames.Board
+local BoardUtil = require(ReplicatedStorage.Shared.Utils.BoardUtil)
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+local ItemUtil = require(ReplicatedStorage.Shared.Utils.Stats.ItemUtil)
+local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
+local Board = require(BoardModulePath)
+
+if not Board or not Board.Pieces then return end
+
+local function updateUI(lastDice, stepsNeeded, foundInf)
+    local elapsed = math.floor(tick() - startTime)
+    local mins = math.floor(elapsed / 60)
+    local secs = elapsed % 60
+    local timeStr = string.format("%02d:%02d", mins, secs)
+
+    local text = "🎲 DICE DEBUG PANEL\n"
+    text = text .. "⏱ Time Running: " .. timeStr .. "\n\n"
+    text = text .. "🎲 Last Dice Used: " .. (lastDice or "None") .. "\n"
+    text = text .. "📏 Steps to Next Infinity: " .. (stepsNeeded or "??") .. "\n"
+    text = text .. "✨ Infinity Elixirs Collected: " .. tostring(elixirCount) .. "\n"
+    if foundInf then text = text .. "\n⚡ Infinity Tile DETECTED!" end
+    DebugLabel.Text = text
+end
+
+task.spawn(function()
     while true do
-        for _, potion in ipairs(potions) do
-            local args = {"UsePotion", potion[1], potion[2]}
-            game:GetService("ReplicatedStorage").Shared.Framework.Network.Remote.RemoteEvent:FireServer(unpack(args))
-            task.wait(0.5)
-        end
         task.wait(1)
+
+        local playerPiece = Board.Pieces[LocalPlayer.Name]
+        local currentData = LocalData:Get()
+        if not playerPiece or not currentData then continue end
+
+        local startIndex = playerPiece.Index
+        local totalNodes = #BoardUtil.Nodes
+        local stepsNeeded, foundInf = nil, false
+
+        for i = 1, totalNodes do
+            local currentIndex = startIndex + i
+            if currentIndex > totalNodes then currentIndex = currentIndex - totalNodes end
+
+            local nodeData = BoardUtil.Nodes[currentIndex]
+            if table.find(TARGET_TILE_TYPES, nodeData.Type) then
+                stepsNeeded = i
+                foundInf = true
+                break
+            end
+        end
+
+        if stepsNeeded == 1 then elixirCount += 1 end
+        if not stepsNeeded then task.wait(10) continue end
+
+        local bestDice = nil
+        local function check(diceName)
+            return ItemUtil:GetOwnedAmount(currentData, {Type = "Powerup", Name = diceName}) > 0
+        end
+
+        if stepsNeeded <= 4 then
+            if check("Golden Dice") then bestDice = "Golden Dice"
+            elseif check("Dice") then bestDice = "Dice"
+            elseif check("Giant Dice") then bestDice = "Giant Dice" end
+        elseif stepsNeeded <= 9 then
+            if check("Dice") then bestDice = "Dice"
+            elseif check("Giant Dice") then bestDice = "Giant Dice" end
+        elseif stepsNeeded <= 50 then
+            if check("Giant Dice") then bestDice = "Giant Dice" end
+        end
+
+        if not bestDice then task.wait(5) continue end
+
+        local result
+        local ok = pcall(function() result = Remote:InvokeServer("RollDice", bestDice) end)
+
+        if ok and result and result.Roll and result.Tile and result.Tile.Index then
+            playerPiece.Index = result.Tile.Index
+            Remote:FireServer("ClaimTile")
+            if table.find(TARGET_TILE_TYPES, result.Tile.Type) then elixirCount += 1 end
+        else
+            Remote:FireServer("ClaimTile")
+        end
+
+        updateUI(bestDice, stepsNeeded, foundInf)
+        task.wait(1.5)
     end
 end)
-
-_G.Config = {
-    UserID = "3087df52-2f5c-4e6f-a407-10fa72d16932",
-    discord_id = "1135837863603351573",
-    Note = "Pc"
-}
-
-loadstring(game:HttpGet("https://raw.githubusercontent.com/skadidau/unfazedfree/refs/heads/main/bgsi"))()
-
-getgenv().bgsInfConfig = {
-    WEBHOOK_URL = "https://discord.com/api/webhooks/1400484661620244562/Ia4mIjrkTZz4qkWtnzXw_RVpL1NqJxQ702GTd7kWg3yjCcx15QRv7OEg9ZWUohq-4BVD",
-    DISCORD_ID = "1135837863603351573",
-    WEBHOOK_ODDS = "1m",
-    SHOW_PET_WEBHOOK_USERNAME = true,
-    SHOW_MULTIPLIER = false,
-    FOCUS_DICE = true,
-    USE_DICE_KEY = false,
-    IGNORE_MINIGAME = true,
-    RARITY_TO_SHINY = {"Common", "Unique", "Rare", "Epic", "Legendary"},
-    RARITY_TO_DELETE = {"Common", "Unique", "Rare", "Epic", "Legendary"},
-    DELETE_LEGENDARY_SHINY = true,
-    DELETE_LEGENDARY_MYTHIC = true,
-    MAX_LEGENDARY_TIER_TO_DELETE = 2,
-    PURCHASE_BLACKMARKET = true,
-    PURCHASE_ALIENSHOP = true,
-    PURCHASE_DICE_MERCHANT = true,
-    MIN_RIFT_MULTIPLIER = 5,
-    AUTO_BOUNTY_RIFT = true,
-    AUTO_BOUNTY_1X = true,
-    HATCH_1X_EGG = {"Brainrot Egg "},
-    RIFT_EGGS = {"Secret Egg"},
-    AUTO_UPDATE_RESTART = true,
-    ADD_FRIEND = true,
-    DO_BUBBLE_GUM = false,
-    USE_ROYAL_KEY = true,
-    USE_GOLDEN_KEY = false,
-    USE_MYSTERY_BOX = true,
-    PURCHASE_STARSHOP_SLOT = 14,
-    ALWAYS_INFINITY_ELIXIR = true,
-    ALWAYS_EGG_ELIXIR = true,
-    IGNORE_SEASON_CHALLENGES = true,
-    GIVE_BUBBLE_SHRINE = {"Tickets"},
-    MIN_GIVE_BUBBLE_SHRINE = 100,
-    PURCHASE_SHADOW_SHOP = true,
-    PURCHASE_TRAVELING_MERCHANT = true,
-    PURCHASE_FESTIVAL_SHOP = true,
-    RESTOCK_SHOP = "Shadow Shop",
-    USE_SUPER_KEY = true,
-    PETS_TO_DELETE = {"Split", "Dragon Split", "Celestial Split", "Demonarium", "Contrast", "Robo Kitty", "Martian Kitty", "Cyber Wolf", "Cyber Phoenix", "Space Invader", "Bionic Shard", "Hell Piggy", "Hell Dragon", "Hell Crawler", "Inferno Dragon", "Inferno Cube", "Virus", "Space Mouse", "Space Bull", "Lunar Fox", "Lunarcorn", "Lunar Serpent", "Electra", "Cave Bat", "Dark Bat", "Angel", "Emerald Bat", "Unicorn", "Flying Pig", "Round Spitty", "Neon Doggy", "Hologram Dragon", "Disco Ball", "Neon Wyvern", "Neon Wire Eye", "Equalizer", "Mining Doggy", "Mining Bat", "Cave Mole", "Ore Golem", "Crystal Unicorn", "Stone Golem"},
-    ENCHANT_TEAMUP = true,
-    ENCHANT_TEAMUP_TIER = 3,
-    USE_GEMS_ENCHANT = true
-}
-
-loadstring(game:HttpGet("https://api.luarmor.net/files/v3/loaders/e1f274825da00b92599872de596f1fc0.lua"))()
