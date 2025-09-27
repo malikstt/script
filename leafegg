@@ -1,12 +1,24 @@
-if REMOVE_EGG_ANIMATION then
-    require(game:GetService("ReplicatedStorage").Client.Effects.HatchEgg).Play = function() end
-end
-
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualInputManager = game:GetService("VirtualInputManager")
-local player = Players.LocalPlayer
+local RunService = game:GetService("RunService")
 
-player.Character:PivotTo(CFrame.new(109.81, 9.49, 226.86))
+local player = Players.LocalPlayer
+local LocalData = require(ReplicatedStorage.Shared.Framework.Classes.LocalData)
+local PetsModule = require(ReplicatedStorage.Shared.Game.Pets)
+local RemoteEvent = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
+
+local RARITY_TO_KEEP = {"Secret", "Infinity"}
+
+local function getTeamPetIds()
+    local playerData = LocalData:Get()
+    if not playerData then return {} end
+    local equippedTeamIndex = playerData.TeamEquipped
+    if not equippedTeamIndex then return {} end
+    local equippedTeam = playerData.Teams and playerData.Teams[equippedTeamIndex]
+    if not equippedTeam or not equippedTeam.Pets then return {} end
+    return equippedTeam.Pets
+end
 
 local function autoDeletePets()
     local teamPetIds = getTeamPetIds()
@@ -22,7 +34,7 @@ local function autoDeletePets()
             end
             if not isTeamPet then
                 local petInfo = PetsModule[pet.Name]
-                if petInfo and petInfo.Rarity ~= "Secret" and petInfo.Rarity ~= "Infinity" then
+                if petInfo and not table.find(RARITY_TO_KEEP, petInfo.Rarity) then
                     local amounts = {100000, 10000, 1000, 100, 10, 1}
                     for _, amount in ipairs(amounts) do
                         RemoteEvent:FireServer("DeletePet", pet.Id, amount, false)
@@ -34,6 +46,47 @@ local function autoDeletePets()
     end
 end
 
+local itemsFolder = player:WaitForChild("PlayerGui")
+    :WaitForChild("ScreenGui")
+    :WaitForChild("HUD")
+    :WaitForChild("LootPoolViewer")
+    :WaitForChild("Content")
+    :WaitForChild("Items")
+
+local function ensureAutoDelete(petFrame)
+    local petName = petFrame.Name
+    local button = petFrame:FindFirstChild("Button")
+    if not button then return end
+
+    local label = button:FindFirstChild("Label")
+    if not label then return end
+
+    local textObj = label:FindFirstChild("Text")
+    if not textObj then
+        local args = {"ToggleAutoDelete", petName}
+        RemoteEvent:FireServer(unpack(args))
+        task.wait(0.5)
+    end
+end
+
+for _, petFrame in ipairs(itemsFolder:GetChildren()) do
+    if petFrame:IsA("Frame") then
+        ensureAutoDelete(petFrame)
+    end
+end
+
+itemsFolder.ChildAdded:Connect(function(petFrame)
+    if petFrame:IsA("Frame") then
+        task.wait(0.2)
+        ensureAutoDelete(petFrame)
+    end
+end)
+
+local remotes = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Pickups"):WaitForChild("CollectPickup")
+local claimed = {}
+
+player.Character:PivotTo(CFrame.new(109.81, 9.49, 226.86))
+
 task.spawn(function()
     loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/refs/heads/main/optimization"))()
 end)
@@ -41,19 +94,33 @@ end)
 while true do
     local start = tick()
     local lastClick = tick()
+    
     while tick() - start < 100 do
         if tick() - start < 90 then
-            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+            local children = workspace.Rendered:GetChildren()
+            local target = children[14]
+            if target then
+                for _, obj in ipairs(target:GetChildren()) do
+                    local id = obj.Name
+                    if not claimed[id] then
+                        claimed[id] = true
+                        pcall(function()
+                            remotes:FireServer(id)
+                            obj:Destroy()
+                        end)
+                    end
+                end
+            end
         else
             autoDeletePets()
         end
+        
         if tick() - lastClick >= 60 then
             local viewportSize = workspace.CurrentCamera.ViewportSize
             VirtualInputManager:SendMouseButtonEvent(viewportSize.X/2, viewportSize.Y/2, 0, true, game, 0)
             VirtualInputManager:SendMouseButtonEvent(viewportSize.X/2, viewportSize.Y/2, 0, false, game, 0)
             lastClick = tick()
         end
-        task.wait(0.15)
+        task.wait(0.1)
     end
 end
