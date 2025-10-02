@@ -1,0 +1,73 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local BoardModulePath = ReplicatedStorage.Client.Gui.Frames.Board
+local BoardUtil = require(ReplicatedStorage.Shared.Utils.BoardUtil)
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+local ItemUtil = require(ReplicatedStorage.Shared.Utils.Stats.ItemUtil)
+local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
+local Board = require(BoardModulePath)
+
+if not Board or not Board.Pieces then return end
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+
+        local playerPiece = Board.Pieces[LocalPlayer.Name]
+        local currentData = LocalData:Get()
+        if not playerPiece or not currentData then continue end
+
+        local startIndex, totalNodes = playerPiece.Index, #BoardUtil.Nodes
+        local stepsNeeded = nil
+
+        for i = 1, totalNodes do
+            local currentIndex = ((startIndex + i - 1) % totalNodes) + 1
+            local nodeData = BoardUtil.Nodes[currentIndex]
+
+            if nodeData.Type == "infinity" or nodeData.Type == "infinity_elixir" then
+                stepsNeeded = i
+                break
+            end
+        end
+
+        if not stepsNeeded then
+            task.wait(10)
+            continue
+        end
+
+        local function hasDice(diceName)
+            return ItemUtil:GetOwnedAmount(currentData, {Type = "Powerup", Name = diceName}) > 0
+        end
+
+        local bestDice = nil
+
+        if getgenv().boardSettings.UseGoldenDice 
+           and stepsNeeded <= getgenv().boardSettings.GoldenDiceDistance 
+           and hasDice("Golden Dice") then
+            bestDice = "Golden Dice"
+        elseif stepsNeeded <= getgenv().boardSettings.DiceDistance 
+           and hasDice("Dice") then
+            bestDice = "Dice"
+        elseif stepsNeeded <= getgenv().boardSettings.GiantDiceDistance 
+           and hasDice("Giant Dice") then
+            bestDice = "Giant Dice"
+        end
+
+        if not bestDice then
+            task.wait(5)
+            continue
+        end
+
+        local result = Remote:InvokeServer("RollDice", bestDice)
+        if result and result.Roll and result.Tile and result.Tile.Index then
+            playerPiece.Index = result.Tile.Index
+            Remote:FireServer("ClaimTile")
+        else
+            Remote:FireServer("ClaimTile")
+        end
+
+        task.wait(1.5)
+    end
+end)
