@@ -1,56 +1,67 @@
+-- Services
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local VirtualInputManager = game:GetService("VirtualInputManager")
-
 local LocalPlayer = Players.LocalPlayer
+
+-- Remotes and modules
 local NetworkEvent = ReplicatedStorage:FindFirstChild("NetworkEvent")
 local NetworkFunction = ReplicatedStorage:FindFirstChild("NetworkFunction")
+local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+local ItemUtil = require(ReplicatedStorage.Shared.Utils.Stats.ItemUtil)
+local BoardUtil = require(ReplicatedStorage.Shared.Utils.BoardUtil)
+local Board = require(ReplicatedStorage.Client.Gui.Frames.Board)
 
-local function teleportToEggByName(name)
-    local egg = Workspace:FindFirstChild("Rendered") and Workspace.Rendered:FindFirstChild("Eggs") and Workspace.Rendered.Eggs:FindFirstChild(name)
-    if egg then
-        local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-        if hrp then
-            hrp.CFrame = egg.CFrame * CFrame.new(0,0,5)
-        end
-    end
-end
-
-local function teleportToRiftByName(name)
-    local rift = Workspace:FindFirstChild("Rendered") and Workspace.Rendered:FindFirstChild("Rifts") and Workspace.Rendered.Rifts:FindFirstChild(name)
-    if rift and rift:FindFirstChild("Egg") then
-        local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-        if hrp then
-            hrp.CFrame = rift.Egg.CFrame * CFrame.new(0,0,5)
-        end
-    end
-end
-
+-- Utility functions
 local function pressKey(key)
     VirtualInputManager:SendKeyEvent(true, key, false, game)
     task.wait(0.06)
     VirtualInputManager:SendKeyEvent(false, key, false, game)
 end
 
-local function usePotions()
-    while ALWAYS_RUN do
-        for _, potion in ipairs(POTION_NAMES) do
-            pcall(function()
-                if NetworkEvent then
-                    NetworkEvent:FireServer("UsePotion", potion)
-                elseif NetworkFunction then
-                    NetworkFunction:InvokeServer("UsePotion", potion)
-                end
-            end)
-            task.wait(POTION_GAP)
-        end
-        task.wait(POTION_DELAY)
+local function teleportTo(obj, offset)
+    offset = offset or Vector3.new(0,0,5)
+    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if hrp and obj then
+        hrp.CFrame = obj.CFrame * CFrame.new(offset)
     end
 end
 
+local function getEggByName(name)
+    return Workspace:FindFirstChild("Rendered")
+        and Workspace.Rendered:FindFirstChild("Eggs")
+        and Workspace.Rendered.Eggs:FindFirstChild(name)
+end
+
+local function getRiftByName(name)
+    local rift = Workspace:FindFirstChild("Rendered")
+        and Workspace.Rendered:FindFirstChild("Rifts")
+        and Workspace.Rendered.Rifts:FindFirstChild(name)
+    if rift then return rift:FindFirstChild("Egg") end
+end
+
+local function usePotions()
+    task.spawn(function()
+        while ALWAYS_RUN do
+            for _, potion in ipairs(POTION_NAMES) do
+                pcall(function()
+                    if NetworkEvent then
+                        NetworkEvent:FireServer("UsePotion", potion)
+                    elseif NetworkFunction then
+                        NetworkFunction:InvokeServer("UsePotion", potion)
+                    end
+                end)
+                task.wait(POTION_GAP)
+            end
+            task.wait(POTION_DELAY)
+        end
+    end)
+end
+
 local function deletePets()
-    local ok, data = pcall(function() return LocalData and LocalData:Get() end)
+    local ok, data = pcall(function() return LocalData:Get() end)
     if ok and data and data.Pets then
         for _, pet in pairs(data.Pets) do
             if pet.Id then
@@ -67,8 +78,7 @@ local function deletePets()
     end
 end
 
-task.spawn(usePotions)
-
+-- Auto Hatch/Delete logic
 task.spawn(function()
     local isHatching = true
     local switchTime = os.time()
@@ -84,11 +94,9 @@ task.spawn(function()
 
         if isHatching and AUTO_HATCH then
             if RIFT_EGG then
-                teleportToRiftByName(RIFT_EGG)
-                task.wait(0.2)
+                teleportTo(getRiftByName(RIFT_EGG))
             else
-                teleportToEggByName(HATCH_1X_EGG)
-                task.wait(0.2)
+                teleportTo(getEggByName(HATCH_1X_EGG))
             end
             pressKey(HATCH_KEY)
         elseif not isHatching and AUTO_DELETE then
@@ -97,237 +105,110 @@ task.spawn(function()
         task.wait(0.1)
     end
 end)
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
-local VirtualInputManager = game:GetService("VirtualInputManager")
 
-local BoardModulePath = ReplicatedStorage.Client.Gui.Frames.Board
-local BoardUtil = require(ReplicatedStorage.Shared.Utils.BoardUtil)
-local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
-local ItemUtil = require(ReplicatedStorage.Shared.Utils.Stats.ItemUtil)
-local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
-local Board = require(BoardModulePath)
-
-local teleportArgs = {"WorldTeleport","Minigame Paradise"}
-local summonArgs = {"SummonRift",{Name="dice-rift",Type="Chest",Time=5,World="Minigame Paradise"}}
-local lastSummonTime = 0
-local COOLDOWN_DURATION = 30*60
-local lastTeleportTime = 0
-local TELEPORT_INTERVAL = 20
-
-local function teleportToWorld()
-    ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent:FireServer(unpack(teleportArgs))
+-- Chest functions
+local function getChest(name)
+    local rifts = Workspace:FindFirstChild("Rendered") and Workspace.Rendered:FindFirstChild("Rifts")
+    if rifts and rifts:FindFirstChild(name) then
+        local chest = rifts[name]:FindFirstChild("Chest")
+        if chest then return chest:FindFirstChild(name) or chest end
+    end
 end
 
-local function executeSummon()
-    if os.time()-lastSummonTime<COOLDOWN_DURATION then return false end
-    local success = pcall(function()
-        ReplicatedStorage.Shared.Framework.Network.Remote.RemoteFunction:InvokeServer(unpack(summonArgs))
-    end)
-    if success then lastSummonTime=os.time() return true end
-    return false
-end
-
-local function getChest()
-    return workspace:FindFirstChild("Rendered")
-    and workspace.Rendered:FindFirstChild("Rifts")
-    and workspace.Rendered.Rifts:FindFirstChild("dice-rift")
-    and workspace.Rendered.Rifts["dice-rift"]:FindFirstChild("Chest")
-    and workspace.Rendered.Rifts["dice-rift"].Chest:FindFirstChild("dice-rift")
-end
-
-local function teleportToChest()
-    local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    local hrp = character:WaitForChild("HumanoidRootPart")
-    local chest = getChest()
-    if chest then
+local function teleportToChest(chest)
+    if chest and LocalPlayer.Character then
+        local hrp = LocalPlayer.Character:WaitForChild("HumanoidRootPart")
         hrp.CFrame = chest.CFrame * CFrame.new(0,5,0)
-        return true
     end
-    return false
 end
 
-local function spamRE()
-    while true do
-        if getChest() then
-            VirtualInputManager:SendKeyEvent(true,Enum.KeyCode.R,false,game)
-            VirtualInputManager:SendKeyEvent(false,Enum.KeyCode.R,false,game)
-            VirtualInputManager:SendKeyEvent(true,Enum.KeyCode.E,false,game)
-            VirtualInputManager:SendKeyEvent(false,Enum.KeyCode.E,false,game)
-        else
-            break
+local function spamChestRE(chestName)
+    task.spawn(function()
+        while true do
+            local chest = getChest(chestName)
+            if chest then
+                teleportToChest(chest)
+                pressKey(Enum.KeyCode.R)
+                pressKey(Enum.KeyCode.E)
+            else
+                break
+            end
+            task.wait(0.1)
         end
-        wait(0.1)
-    end
+    end)
 end
 
-local function enableLogic()
-    if FOCUS_DICE and Board and Board.Pieces then
-        task.spawn(function()
-            while true do
-                task.wait(1)
-                local playerPiece=Board.Pieces[LocalPlayer.Name]
-                local currentData=LocalData:Get()
-                if not playerPiece or not currentData then continue end
-                local startIndex,totalNodes=playerPiece.Index,#BoardUtil.Nodes
-                local stepsNeeded=nil
+-- Dice board logic
+task.spawn(function()
+    while true do
+        if FOCUS_DICE and Board and Board.Pieces then
+            local piece = Board.Pieces[LocalPlayer.Name]
+            local data = LocalData:Get()
+            if piece and data then
+                local startIndex,totalNodes = piece.Index,#BoardUtil.Nodes
+                local stepsNeeded
                 for i=1,totalNodes do
-                    local currentIndex=((startIndex+i-1)%totalNodes)+1
-                    local nodeData=BoardUtil.Nodes[currentIndex]
+                    local nodeIndex = ((startIndex+i-1)%totalNodes)+1
+                    local nodeData = BoardUtil.Nodes[nodeIndex]
                     if nodeData.Type=="infinity" or nodeData.Type=="infinity_elixir" then
                         stepsNeeded=i break
                     end
                 end
-                if not stepsNeeded then task.wait(10) continue end
-                local function hasDice(diceName)
-                    return ItemUtil:GetOwnedAmount(currentData,{Type="Powerup",Name=diceName})>0
+                if stepsNeeded then
+                    local function hasDice(name)
+                        return ItemUtil:GetOwnedAmount(data,{Type="Powerup",Name=name})>0
+                    end
+                    local bestDice
+                    if USE_GOLDEN_DICE and stepsNeeded<=GOLDEN_DICE_DISTANCE and hasDice("Golden Dice") then
+                        bestDice="Golden Dice"
+                    elseif stepsNeeded<=DICE_DISTANCE and hasDice("Dice") then
+                        bestDice="Dice"
+                    elseif stepsNeeded<=GIANT_DICE_DISTANCE and hasDice("Giant Dice") then
+                        bestDice="Giant Dice"
+                    end
+                    if bestDice then
+                        local result = Remote:InvokeServer("RollDice",bestDice)
+                        if result and result.Tile then
+                            piece.Index=result.Tile.Index
+                        end
+                        Remote:FireServer("ClaimTile")
+                    end
                 end
-                local bestDice=nil
-                if USE_GOLDEN_DICE and stepsNeeded<=GOLDEN_DICE_DISTANCE and hasDice("Golden Dice") then
-                    bestDice="Golden Dice"
-                elseif stepsNeeded<=DICE_DISTANCE and hasDice("Dice") then
-                    bestDice="Dice"
-                elseif stepsNeeded<=GIANT_DICE_DISTANCE and hasDice("Giant Dice") then
-                    bestDice="Giant Dice"
-                end
-                if not bestDice then task.wait(5) continue end
-                local result=Remote:InvokeServer("RollDice",bestDice)
-                if result and result.Roll and result.Tile and result.Tile.Index then
-                    playerPiece.Index=result.Tile.Index
-                    Remote:FireServer("ClaimTile")
-                else
-                    Remote:FireServer("ClaimTile")
-                end
-                task.wait(1.5)
             end
-        end)
-    end
-
-    teleportToWorld()
-    wait(3)
-    task.spawn(function()
-        while true do
-            if not getChest() then
-                local summoned=executeSummon()
-                if summoned then wait(3) end
-            end
-            if getChest() then
-                if os.time()-lastTeleportTime>=TELEPORT_INTERVAL then
-                    teleportToChest()
-                    lastTeleportTime=os.time()
-                end
-                spamRE()
-            end
-            wait(5)
         end
-    end)
-
-    task.spawn(function()
-        while true do
-            task.wait(20)
-            local chest=getChest()
-            if chest then teleportToChest() end
-        end
-    end)
-end
-
-task.spawn(function()
-    while true do
-        local cycleStart=os.time()
-        while os.time()-cycleStart<60*60 do
-            local enableStart=os.time()
-            while os.time()-enableStart<60 do
-                enableLogic()
-                task.wait(1)
-            end
-            task.wait(6*60)
-        end
+        task.wait(1.5)
     end
 end)
+
+-- Shrine donation
 if ALWAYS_BUBBLE_SHRINE then
-    local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local RemoteFunction = ReplicatedStorage:WaitForChild("Shared")
         :WaitForChild("Framework")
         :WaitForChild("Network")
         :WaitForChild("Remote")
         :WaitForChild("RemoteFunction")
-
-    local function donate()
-        local args = { 
-            "DonateToShrine",
-            {
-                Type = BUBBLE_SHRINE_TYPE,
-                Level = BUBBLE_SHRINE_LEVEL,
-                Name = BUBBLE_SHRINE_NAME,
-                Amount = BUBBLE_SHRINE_AMOUNT
-            }
-        }
-        RemoteFunction:InvokeServer(unpack(args))
-    end
-
     task.spawn(function()
         while true do
-            donate()
+            RemoteFunction:InvokeServer("DonateToShrine",{
+                Type=BUBBLE_SHRINE_TYPE,
+                Level=BUBBLE_SHRINE_LEVEL,
+                Name=BUBBLE_SHRINE_NAME,
+                Amount=BUBBLE_SHRINE_AMOUNT
+            })
             task.wait(BUBBLE_SHRINE_INTERVAL)
         end
     end)
 end
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local LocalPlayer = Players.LocalPlayer
-local VirtualInputManager = game:GetService("VirtualInputManager")
 
-local function getChest(chestName)
-    return workspace:FindFirstChild("Rendered")
-    and workspace.Rendered:FindFirstChild("Rifts")
-    and workspace.Rendered.Rifts:FindFirstChild(chestName)
-    and workspace.Rendered.Rifts[chestName]:FindFirstChild("Chest")
-    and workspace.Rendered.Rifts[chestName].Chest:FindFirstChild(chestName)
-end
-
-local function teleportToChest(chest)
-    local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    local hrp = character:WaitForChild("HumanoidRootPart")
-    hrp.CFrame = chest.CFrame * CFrame.new(0, 0, 5)
-end
-
-local function spamRE(chestName)
-    while true do
-        local chest = getChest(chestName)
-        if chest then
-            teleportToChest(chest)
-            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
-            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
-            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-        else
-            break
-        end
-        task.wait(0.1)
-    end
-end
-
+-- Auto chest spam
 task.spawn(function()
     while true do
-        if AUTO_SPAM_SUPER_CHEST then
-            local chest = getChest("super-chest")
-            if chest then
-                spamRE("super-chest")
-            end
-        end
-        if AUTO_SPAM_DICE_CHEST then
-            local chest = getChest("dice-rift")
-            if chest then
-                spamRE("dice-rift")
-            end
-        end
-        if AUTO_SPAM_ROYAL_CHEST then
-            local chest = getChest("royal-chest")
-            if chest then
-                spamRE("royal-chest")
-            end
-        end
+        if AUTO_SPAM_SUPER_CHEST then spamChestRE("super-chest") end
+        if AUTO_SPAM_DICE_CHEST then spamChestRE("dice-rift") end
+        if AUTO_SPAM_ROYAL_CHEST then spamChestRE("royal-chest") end
         task.wait(5)
     end
 end)
+
+-- Start potions
+usePotions()
