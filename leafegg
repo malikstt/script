@@ -1,131 +1,95 @@
-Players = game:GetService("Players")
-ReplicatedStorage = game:GetService("ReplicatedStorage")
-VirtualInputManager = game:GetService("VirtualInputManager")
-player = Players.LocalPlayer
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local player = Players.LocalPlayer
 
-Network = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
-LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
-PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
+local Network = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
 
-EGG_LOCATIONS = {
-    Vector3.new(108.22, 9.49, 226.44),
-    Vector3.new(107.99, 9.49, 238.93),
-}
+require(ReplicatedStorage.Client.Effects.HatchEgg).Play = function() return end
 
-if REMOVE_EGG_ANIMATION then
-    require(ReplicatedStorage.Client.Effects.HatchEgg).Play = function() return end
-end
-
-function getTeamPetIds()
-    ids = {}
-    data = LocalData:Get()
-    if not data then return ids end
-    equippedTeamIndex = data.TeamEquipped
-    team = data.Teams and data.Teams[equippedTeamIndex]
-    if team and team.Pets then
-        for _, id in ipairs(team.Pets) do
-            ids[id] = true
-        end
+local function getTeamPetIds()
+    local ids = {}
+    local ok, data = pcall(function() return LocalData:Get() end)
+    if not ok or not data then return ids end
+    local equippedTeamIndex = data.TeamEquipped
+    if not equippedTeamIndex then return ids end
+    local team = data.Teams and data.Teams[equippedTeamIndex]
+    if not team or not team.Pets then return ids end
+    for _, id in ipairs(team.Pets) do
+        ids[id] = true
     end
     return ids
 end
 
-function shouldKeep(pet, teamSet)
-    if KEEP_PETS then
+local function shouldKeep(pet, teamSet)
+    if KEEP_PETS and #KEEP_PETS > 0 then
         for _, name in ipairs(KEEP_PETS) do
             if pet.Name == name then return true end
         end
     end
-    if PetsModule and KEEP_RARITIES then
-        info = PetsModule[pet.Name]
+    if PetsModule and KEEP_RARITIES and #KEEP_RARITIES > 0 then
+        local info = PetsModule[pet.Name]
         if info then
             for _, rarity in ipairs(KEEP_RARITIES) do
                 if info.Rarity == rarity then return true end
             end
         end
     end
-    if KEEP_TEAM and teamSet[pet.Id] then return true end
+    if KEEP_TEAM and teamSet[pet.Id] then
+        return true
+    end
     return false
 end
 
-function deletePetsLoop()
-    while AUTO_DELETE do
-        data = LocalData:Get()
-        if data and data.Pets then
-            teamSet = getTeamPetIds()
+task.spawn(function()
+    if not AUTO_DELETE then return end
+    while true do
+        local ok, data = pcall(function() return LocalData:Get() end)
+        if ok and data and data.Pets then
+            local teamSet = getTeamPetIds()
             for _, pet in pairs(data.Pets) do
                 if pet.Id and not shouldKeep(pet, teamSet) then
-                    for _, amount in ipairs({100, 10, 1}) do
-                        Network:FireServer("DeletePet", pet.Id, amount, false)
-                        task.wait(0.05)
+                    for _, amount in ipairs(DELETE_AMOUNTS or {}) do
+                        pcall(function()
+                            Network:FireServer("DeletePet", pet.Id, amount, false)
+                        end)
                     end
+                    task.wait(0.1)
                 end
             end
         end
         task.wait(5)
     end
-end
+end)
 
-task.spawn(deletePetsLoop)
-
-function teleportTo(pos)
+local function teleportTo(pos)
     if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
         player.Character.HumanoidRootPart.CFrame = CFrame.new(pos)
     end
 end
 
-function spamHatch(duration)
-    start = tick()
-    while tick() - start < duration do
+task.spawn(function()
+    while true do
+        teleportTo(TELEPORT_POS)
         VirtualInputManager:SendKeyEvent(true, "E", false, game)
         VirtualInputManager:SendKeyEvent(false, "E", false, game)
         task.wait(0.1)
     end
-end
+end)
 
-function autoSpinWheel()
-    while AUTO_SPIN_WHEEL do
-        ReplicatedStorage.Shared.Framework.Network.Remote.RemoteFunction:InvokeServer("AutumnWheelSpin")
-        task.wait(1)
-        ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent:FireServer("ClaimAutumnWheelSpinQueue")
-        task.wait(5)
-    end
-end
-
-task.spawn(autoSpinWheel)
-
-function autoBuyMerchant()
-    items = {1,2,3}
-    while AUTO_BUY_AUTUMN_MERCHANT do
-        for _, itemId in ipairs(items) do
-            ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent:FireServer("BuyShopItem","autumnnorm-shop",itemId,false)
-            task.wait(0.2)
-        end
-        task.wait(10)
-    end
-end
-
-task.spawn(autoBuyMerchant)
-
-while true do
-    if HATCH_1ST_AUTUMN then
-        teleportTo(EGG_LOCATIONS[1])
-        spamHatch(HATCH_INTERVAL)
-    end
-    if HATCH_2ND_AUTUMN then
-        teleportTo(EGG_LOCATIONS[2])
-        spamHatch(HATCH_INTERVAL)
-    end
-    task.wait(DELETE_INTERVAL)
-end
 task.spawn(function()
-    local remotes = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("Pickups"):WaitForChild("CollectPickup")
+    local remotes = ReplicatedStorage
+        :WaitForChild("Remotes")
+        :WaitForChild("Pickups")
+        :WaitForChild("CollectPickup")
+
     local claimed = {}
+
     while true do
-        local children = workspace.Rendered:GetChildren()
-        local target = children[14]
-        if target then
-            for _, obj in ipairs(target:GetChildren()) do
+        for _, child in ipairs(workspace.Rendered:GetChildren()) do
+            for _, obj in ipairs(child:GetChildren()) do
                 local id = obj.Name
                 if not claimed[id] then
                     claimed[id] = true
@@ -136,14 +100,6 @@ task.spawn(function()
                 end
             end
         end
-        task.wait(0.1)
-    end
-end)
-
-task.spawn(function()
-    while true do
-        local args = {"EquipBestPets"}
-        game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Framework"):WaitForChild("Network"):WaitForChild("Remote"):WaitForChild("RemoteEvent"):FireServer(unpack(args))
-        task.wait(1)
+        task.wait(COIN_CLAIM_DELAY)
     end
 end)
