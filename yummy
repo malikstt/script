@@ -1,1 +1,95 @@
+ALWAYS_CANDYCORN_TEAM = true
 
+task.spawn(function()
+    if ALWAYS_CANDYCORN_TEAM then
+        local Players = game:GetService("Players")
+        local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+        local player = Players.LocalPlayer
+        local remote = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
+        local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+        local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
+        local HttpService = game:GetService("HttpService")
+
+        local MAX_TEAM_SIZE = 8
+
+        local function getPetInfo(pet)
+            local info = PetsModule[pet.Name]
+            if not info or not info.Stats then return nil end
+            return info
+        end
+
+        local function getSortedPets()
+            local data = LocalData:Get()
+            if not data or not data.Pets then return {} end
+            local pets = {}
+            for _, pet in pairs(data.Pets) do
+                local info = getPetInfo(pet)
+                if info and info.Stats and info.Stats.Candycorn then
+                    table.insert(pets, {
+                        Id = pet.Id,
+                        Name = pet.Name,
+                        Candycorn = info.Stats.Candycorn,
+                        Stats = info.Stats
+                    })
+                end
+            end
+            table.sort(pets, function(a, b)
+                return a.Candycorn > b.Candycorn
+            end)
+            return pets
+        end
+
+        local function getEquippedTeam()
+            local data = LocalData:Get()
+            if not data then return {} end
+            local equipped = {}
+            if data.Teams and data.TeamEquipped then
+                local team = data.Teams[data.TeamEquipped]
+                if team and team.Pets then
+                    for _, id in ipairs(team.Pets) do
+                        equipped[id] = true
+                    end
+                end
+            end
+            return equipped
+        end
+
+        task.spawn(function()
+            while task.wait(5) do
+                local data = LocalData:Get()
+                if not data or not data.Pets then continue end
+
+                local sorted = getSortedPets()
+                if #sorted == 0 then continue end
+
+                local equipped = getEquippedTeam()
+
+                local desired = {}
+                for i = 1, math.min(MAX_TEAM_SIZE, #sorted) do
+                    desired[sorted[i].Id] = sorted[i]
+                end
+
+                for id in pairs(equipped) do
+                    if not desired[id] then
+                        remote:FireServer("UnequipPet", id)
+                        task.wait(0.15)
+                    end
+                end
+
+                local currentlyEquipped = 0
+                for id in pairs(equipped) do
+                    currentlyEquipped += 1
+                end
+
+                for id, pet in pairs(desired) do
+                    if not equipped[id] and currentlyEquipped < MAX_TEAM_SIZE then
+                        remote:FireServer("EquipPet", id)
+                        task.wait(0.15)
+                        currentlyEquipped += 1
+                    end
+                end
+            end
+        end)
+    end
+end)
