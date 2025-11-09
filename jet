@@ -1,130 +1,74 @@
-if getgenv().RunningFlyScript then
-    getgenv().RunningFlyScript:Disconnect()
-    getgenv().RunningFlyScript = nil
-end
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+local Window = Rayfield:CreateWindow({Name = "Pro Spammer"})
 
-local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
-local player = Players.LocalPlayer
-local char = player.Character or player.CharacterAdded:Wait()
-local humanoid = char:WaitForChild("Humanoid")
-local root = char:WaitForChild("HumanoidRootPart")
+local Remote = game:GetService("ReplicatedStorage").Shared.Framework.Network.Remote.RemoteEvent
 
-humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
-humanoid.AutoRotate = false
-for _, part in ipairs(char:GetDescendants()) do
-    if part:IsA("BasePart") then
-        part.CanCollide = false
-        part.Massless = true
+local trading = false
+local delayTime = 0.4
+local selectedNames = {}
+
+local function GetSortedPlayers()
+    local list = {}
+    for _, v in pairs(Players:GetPlayers()) do
+        if v ~= Players.LocalPlayer then
+            table.insert(list, v.Name)
+        end
     end
+    table.sort(list, function(a, b)
+        local aNum = a:match("^[0-9]")
+        local bNum = b:match("^[0-9]")
+        if aNum and not bNum then return true end
+        if bNum and not aNum then return false end
+        return a:lower() < b:lower()
+    end)
+    return list
 end
 
-workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
-player.CameraMode = Enum.CameraMode.Classic
+local MainTab = Window:CreateTab("Main")
 
-local function getClosestCoin()
-    local closest, shortest = nil, math.huge
-    for _, area in ipairs(workspace:GetChildren()) do
-        local coinContainer = area:FindFirstChild("CoinContainer")
-        local coinFolder = coinContainer and coinContainer:FindFirstChild("Coin_Server")
-        if coinFolder then
-            for _, coin in ipairs(coinFolder:GetChildren()) do
-                if coin:IsA("BasePart") and coin.Parent then
-                    local dist = (root.Position - coin.Position).Magnitude
-                    if dist < shortest then
-                        shortest = dist
-                        closest = coin
+local Dropdown = MainTab:CreateDropdown({
+    Name = "Select Target(s)",
+    Options = GetSortedPlayers(),
+    MultipleOptions = true,
+    Callback = function(options)
+        selectedNames = options or {}
+    end
+})
+
+MainTab:CreateInput({
+    Name = "Delay (sec)",
+    PlaceholderText = tostring(delayTime),
+    Callback = function(text)
+        delayTime = tonumber(text) or 0.4
+    end
+})
+
+MainTab:CreateToggle({
+    Name = "Start Trading",
+    Callback = function(value)
+        trading = value
+        if trading then
+            task.spawn(function()
+                while trading do
+                    for _, name in ipairs(selectedNames) do
+                        if not trading then break end
+                        local plr = Players:FindFirstChild(name)
+                        if plr then
+                            Remote:FireServer("TradeRequest", plr)
+                            task.wait(delayTime)
+                        end
                     end
+                    task.wait(delayTime)
                 end
-            end
+            end)
         end
     end
-    return closest
+})
+
+local function RefreshDropdown()
+    Dropdown:Refresh(GetSortedPlayers())
 end
 
-local function tweenCharacterTo(targetPos)
-    local flyPos = targetPos + Vector3.new(0, FLY_HEIGHT, 0)
-    local distance = (root.Position - flyPos).Magnitude
-    local duration = math.max(0.05, distance / 100 * TWEEN_TIME)
-    local tween = TweenService:Create(
-        root,
-        TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut),
-        {CFrame = CFrame.new(flyPos)}
-    )
-    tween:Play()
-    tween.Completed:Wait()
-end
-
-getgenv().RunningFlyScript = game:GetService("RunService").Heartbeat:Connect(function()
-    local start = tick()
-    task.spawn(function()
-        while tick() - start < RESTART_TIME do
-            local closest = getClosestCoin()
-            if closest and closest.Parent then
-                tweenCharacterTo(closest.Position)
-                task.wait(WAIT_BETWEEN_COINS)
-            else
-                task.wait(0.2)
-            end
-        end
-        loadstring(game:HttpGet(game:HttpGet("https://raw.githubusercontent.com/whatever/fly.lua")))()
-    end)
-end)pcall(function()
-    GadgetsTab:CreateSection("Controls")
-    GadgetsTab:CreateToggle({
-        Name = "Auto Delete",
-        CurrentValue = false,
-        Callback = function(Value)
-            autoDelete = Value
-        end
-    })
-end)
-
-local function deleteGadget(gadget)
-    local gadgetName = gadget:GetAttribute("GadgetName")
-    local gadgetID = gadget.Name
-    if table.find(keepList, gadgetName) then return end
-    local rarity = (GadgetsTable[gadgetName] and GadgetsTable[gadgetName].Rarity) or "Unknown"
-    if table.find(deleteNames, gadgetName) or table.find(deleteRarities, rarity) then
-        pcall(function()
-            Remote:InvokeServer("Delete Gadgets", {gadgetID})
-        end)
-    end
-end
-
-spawn(function()
-    while true do
-        if autoDelete then
-            for _, gadget in pairs(GadgetsFolder:GetChildren()) do
-                deleteGadget(gadget)
-            end
-        end
-        task.wait(1)
-    end
-end)
-
-RunService.Heartbeat:Connect(function()
-    if opRace then
-        pcall(function()
-            Remote:InvokeServer("Start Track")
-            Remote:InvokeServer("Collect Wins")
-            local target = Workspace.Worlds.Space:WaitForChild("FinishProximity")
-            if target and target:IsA("BasePart") then
-                Root.CFrame = target.CFrame + Vector3.new(0, 3, 0)
-            end
-        end)
-    end
-end)
-
-for i = 1, 8 do
-    pcall(function()
-        WorldTab:CreateButton({
-            Name = "Teleport to World "..i,
-            Callback = function()
-                pcall(function()
-                    Remote:InvokeServer("Set Current World", i)
-                end)
-            end
-        })
-    end)
-end
+Players.PlayerAdded:Connect(RefreshDropdown)
+Players.PlayerRemoved:Connect(RefreshDropdown)
