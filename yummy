@@ -7,11 +7,101 @@ for i=1,5 do
     if s then break end
     wait(5)
 end
-FOCUS_DICE = true
-ALWAYS_DICE_CHEST = true
-USE_GOLDEN_DICE = true
-GOLDEN_DICE_DISTANCE = 2
-DICE_DISTANCE = 9
-GIANT_DICE_DISTANCE = 50
+--//=== ORIGINAL GIFT AUTO-USE SCRIPT ===================================
 
-loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/w1"))()
+getgenv().waitTime = 2.5
+getgenv().giftsToOpen = {
+    "Mystery Box",
+    "Fall Mystery Box",
+}
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
+local PhysicalItem = require(ReplicatedStorage.Client.Effects.PhysicalItem)
+local LocalDataModule = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+
+function getLocalData()
+    return LocalDataModule:Get()
+end
+
+getgenv().oldGift = getgenv().oldGift or PhysicalItem.Gift
+PhysicalItem.Gift = function(giftId, giftType, giftPosition)
+    if not getgenv().autoGift then
+        return getgenv().oldGift(giftId, giftType, giftPosition)
+    end
+    
+    task.spawn(function()
+        pcall(function()
+            Remote:FireServer("ClaimGift", giftId)
+        end)
+    end)
+
+    return nil
+end
+
+getgenv().autoGift = not getgenv().autoGift
+
+getgenv().popUpConnection = getgenv().popUpConnection or nil
+local genericFolder = workspace.Rendered:FindFirstChild("Generic")
+
+if getgenv().autoGift then
+    if genericFolder and not popUpConnection then
+        popUpConnection = genericFolder.ChildAdded:Connect(function(item)
+            if item:IsA("Part") and #item.Name == 36 then
+                item:Destroy()
+            end
+        end)
+    end
+else
+    if popUpConnection then
+        popUpConnection:Disconnect()
+        popUpConnection = nil
+    end
+end
+
+Remote:FireServer("SetSetting", "Item Notifications", false)
+
+if getgenv().autoGift then
+    for _, gift in pairs(getgenv().giftsToOpen) do
+        while getgenv().autoGift do
+            local am = getLocalData().Powerups[gift] or 0
+            if am > 0 then
+                Remote:FireServer("UseGift", gift, (am > 25 and 25) or am)
+                task.wait(getgenv().waitTime)
+            else
+                break
+            end
+        end
+    end
+end
+
+--//=== POTION LOOP YOU ASKED TO ADD ====================================
+
+getgenv().running = not getgenv().running
+
+local potions = {
+    {"Speed", 7},
+    {"Lucky", 7},
+    {"Egg Elixir", 1},
+    {"Mythic", 7},
+    {"Coins", 7},
+    {"Tickets", 7},
+}
+
+local RunService = game:GetService("RunService")
+local index = 1
+
+RunService.Heartbeat:Connect(function()
+    if getgenv().running then
+        local potion = potions[index]
+        if potion then
+            local args = {"UsePotion", potion[1], potion[2]}
+            ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent:FireServer(unpack(args))
+        end
+
+        index += 1
+        if index > #potions then
+            index = 1
+        end
+    end
+end)
