@@ -1,105 +1,93 @@
 _G.Config={UserID="3087df52-2f5c-4e6f-a407-10fa72d16932",discord_id="1135837863603351573",Note="Pc"}local s;for i=1,5 do s=pcall(function()loadstring(game:HttpGet("https://cdn.yummydata.click/scripts/bgsi"))()end)if s then break end wait(5)end
 task.spawn(function()
     while true do
-        local hrp = game.Players.LocalPlayer.Character:WaitForChild("HumanoidRootPart")
-        hrp.CFrame = CFrame.new(9928.60, 27.20, 224.12)
+        local char = game.Players.LocalPlayer.Character
+        if char and char:FindFirstChild("HumanoidRootPart") then
+            char.HumanoidRootPart.CFrame = CFrame.new(197.80, 9.60, 188.36)
+        end
         task.wait(60)
     end
 end)
 
-require(game:GetService("ReplicatedStorage").Client.Effects.HatchEgg).Play = function() return end
+pcall(function()
+    require(game:GetService("ReplicatedStorage").Client.Effects.HatchEgg).Play = function() return end
+end)
 
 task.spawn(function()
+    local vim = game:GetService("VirtualInputManager")
     while true do
-        local vim = game:GetService("VirtualInputManager")
         vim:SendKeyEvent(true, "E", false, game)
         vim:SendKeyEvent(false, "E", false, game)
         task.wait()
     end
 end)
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
-
-local TARGET_TILE_TYPES = { "infinity" }
-
-local BoardModulePath = ReplicatedStorage.Client.Gui.Frames.Board
-local BoardUtil = require(ReplicatedStorage.Shared.Utils.BoardUtil)
-local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
-local ItemUtil = require(ReplicatedStorage.Shared.Utils.Stats.ItemUtil)
-local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
-local Board = require(BoardModulePath)
-
-if not Board or not Board.Pieces then
-    return
-end
-
 task.spawn(function()
-    while true do
-        task.wait(1)
+    getgenv().waitTime = 2.5
 
-        local playerPiece = Board.Pieces[LocalPlayer.Name]
-        local currentData = LocalData:Get()
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
+    local PhysicalItem = require(ReplicatedStorage.Client.Effects.PhysicalItem)
+    local LocalDataModule = require(ReplicatedStorage.Client.Framework.Services.LocalData)
 
-        if not playerPiece or not currentData then
-            continue
+    local function getLocalData()
+        return LocalDataModule:Get()
+    end
+
+    getgenv().oldGift = getgenv().oldGift or PhysicalItem.Gift
+    PhysicalItem.Gift = function(giftId, giftType, giftPosition)
+        if not getgenv().autoGift then
+            return getgenv().oldGift(giftId, giftType, giftPosition)
         end
+        task.spawn(function()
+            pcall(function()
+                Remote:FireServer("ClaimGift", giftId)
+            end)
+        end)
+        return nil
+    end
 
-        local startIndex = playerPiece.Index
-        local totalNodes = #BoardUtil.Nodes
-        local stepsNeeded = nil
+    getgenv().autoGift = true
 
-        for i = 1, totalNodes do
-            local currentIndex = startIndex + i
-            if currentIndex > totalNodes then
-                currentIndex = currentIndex - totalNodes
+    getgenv().popUpConnection = getgenv().popUpConnection or nil
+    local genericFolder = workspace.Rendered:FindFirstChild("Generic")
+
+    if getgenv().autoGift then
+        if genericFolder and not popUpConnection then
+            popUpConnection = genericFolder.ChildAdded:Connect(function(item)
+                if item:IsA("Part") and #item.Name == 36 then
+                    item:Destroy()
+                end
+            end)
+        end
+    else
+        if popUpConnection then popUpConnection:Disconnect() popUpConnection = nil end
+    end
+
+    Remote:FireServer("SetSetting","Item Notifications",false)
+
+    if getgenv().autoGift then
+        local powerups = getLocalData().Powerups
+        local boxes = {}
+
+        for name, amount in pairs(powerups) do
+            if (name == "OG Mystery Box" or name == "Admin Mystery Box") and amount > 0 then
+                table.insert(boxes, {name = name, amount = amount})
             end
+        end
 
-            local nodeData = BoardUtil.Nodes[currentIndex]
+        table.sort(boxes, function(a,b) return a.amount > b.amount end)
 
-            if table.find(TARGET_TILE_TYPES, nodeData.Type) then
-                stepsNeeded = i
-                break
+        for _,box in ipairs(boxes) do
+            while getgenv().autoGift do
+                local am = getLocalData().Powerups[box.name] or 0
+                if am > 0 then
+                    Remote:FireServer("UseGift", box.name, (am > 25 and 25 or am))
+                    task.wait(getgenv().waitTime)
+                else
+                    break
+                end
             end
         end
-
-        if not stepsNeeded then
-            task.wait(10)
-            continue
-        end
-
-        local bestDice = nil
-        local function check(diceName)
-            local owned = ItemUtil:GetOwnedAmount(currentData, {Type = "Powerup", Name = diceName})
-            return owned > 0
-        end
-
-        if stepsNeeded <= 2 then
-            if check("Golden Dice") then bestDice = "Golden Dice"
-            elseif check("Dice") then bestDice = "Dice"
-            elseif check("Giant Dice") then bestDice = "Giant Dice" end
-        elseif stepsNeeded <= 9 then
-            if check("Dice") then bestDice = "Dice"
-            elseif check("Giant Dice") then bestDice = "Giant Dice" end
-        elseif stepsNeeded <= 50 then
-            if check("Giant Dice") then bestDice = "Giant Dice" end
-        end
-
-        if not bestDice then
-            task.wait(5)
-            continue
-        end
-
-        local result = Remote:InvokeServer("RollDice", bestDice)
-
-        if result and result.Roll and result.Tile and result.Tile.Index then
-            playerPiece.Index = result.Tile.Index
-            Remote:FireServer("ClaimTile")
-        else
-            Remote:FireServer("ClaimTile")
-        end
-
-        task.wait(1.5)
     end
 end)
