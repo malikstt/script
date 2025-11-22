@@ -1,89 +1,96 @@
-task.spawn(function()
-    while true do
-        local hrp = game.Players.LocalPlayer.Character:WaitForChild("HumanoidRootPart")
-        hrp.CFrame = CFrame.new(130.95, 10.16, 96.59)
-        task.wait(60)
-    end
-end)
-
-require(game:GetService("ReplicatedStorage").Client.Effects.HatchEgg).Play = function() return end
-
-task.spawn(function()
-    while true do
-        local vim = game:GetService("VirtualInputManager")
-        vim:SendKeyEvent(true,"E",false,game)
-        vim:SendKeyEvent(false,"E",false,game)
-        task.wait()
-    end
-end)
-
-local RS=game:GetService("ReplicatedStorage")
-local D=require(RS.Client.Framework.Services.LocalData)
-local R=RS.Shared.Framework.Network.Remote.RemoteEvent
-local M=require(RS.Shared.Data.Pets)
-
-task.spawn(function()
-while true do
-local a=D:Get()
-if a and a.Pets then
-local e={}
-local t=a.Teams and a.TeamEquipped and a.Teams[a.TeamEquipped]
-if t and t.Pets then for _,v in ipairs(t.Pets)do e[v]=true end end
-
-local s={}
-for _,p in pairs(a.Pets)do
-local i=M[p.Name]
-if i and i.Rarity=="Secret"then table.insert(s,p.Id)end
-end
-
-local c=0
-for _,id in ipairs(s)do
-if c>=14 then break end
-if not e[id]then R:FireServer("EquipPet",id)task.wait(.15)end
-c=c+1
-end
-
-for id in pairs(e)do
-local keep=false
-for i=1,math.min(14,#s)do if id==s[i]then keep=true end end
-if not keep then R:FireServer("UnequipPet",id)task.wait(.15)end
-end
-
-end
-task.wait(.3)
-end
-end)
+getgenv().waitTime = 2.5
+getgenv().running = not getgenv().running
+getgenv().autoGift = not getgenv().autoGift
 
 local RS = game:GetService("ReplicatedStorage")
+local RemoteEventRef = RS.Shared.Framework.Network.Remote.RemoteEvent
+local Remote = require(RS.Shared.Framework.Network.Remote)
+local PhysicalItem = require(RS.Client.Effects.PhysicalItem)
 local LocalData = require(RS.Client.Framework.Services.LocalData)
-local RemoteEvent = RS.Shared.Framework.Network.Remote.RemoteEvent
-local target = "secret-hunter"
-local done = {}
+local RunService = game:GetService("RunService")
+
+local function getData()
+    return LocalData:Get()
+end
+
+local potions = {
+    {"Speed", 7},
+    {"Lucky", 7},
+    {"Egg Elixir", 1},
+    {"Mythic", 7},
+    {"Coins", 7},
+    {"Tickets", 7},
+}
+
+local idx = 1
+task.spawn(function()
+    RunService.Heartbeat:Connect(function()
+        if getgenv().running then
+            local p = potions[idx]
+            if p then
+                RemoteEventRef:FireServer("UsePotion", p[1], p[2])
+            end
+            idx += 1
+            if idx > #potions then idx = 1 end
+        end
+    end)
+end)
+
+getgenv().oldGift = getgenv().oldGift or PhysicalItem.Gift
+PhysicalItem.Gift = function(gid, gtype, gpos)
+    if not getgenv().autoGift then
+        return getgenv().oldGift(gid, gtype, gpos)
+    end
+    task.spawn(function()
+        pcall(function()
+            Remote:FireServer("ClaimGift", gid)
+        end)
+    end)
+    return nil
+end
+
+getgenv().popUpConnection = getgenv().popUpConnection or nil
+local gen = workspace.Rendered:FindFirstChild("Generic")
+if getgenv().autoGift then
+    if gen and not getgenv().popUpConnection then
+        getgenv().popUpConnection = gen.ChildAdded:Connect(function(i)
+            if i:IsA("Part") and #i.Name == 36 then i:Destroy() end
+        end)
+    end
+else
+    if getgenv().popUpConnection then
+        getgenv().popUpConnection:Disconnect()
+        getgenv().popUpConnection = nil
+    end
+end
+
+RemoteEventRef:FireServer("SetSetting", "Ultra Low Detail Mode", true)
 
 task.spawn(function()
-while true do
-local data = LocalData:Get()
-if data and data.Teams and data.TeamEquipped then
-local team = data.Teams[data.TeamEquipped]
-if team and team.Pets then
-for _, petId in ipairs(team.Pets) do
-if not done[petId] then
-local pet
-for _, p in ipairs(data.Pets or {}) do if p.Id == petId then pet = p break end end
-if pet then
-local has=false
-for _,e in ipairs(pet.Enchants or {})do if e.Id==target then has=true break end end
-if has then
-done[petId]=true
-else
-RemoteEvent:FireServer("UseShadowCrystal",petId)
-end
-end
-end
-task.wait(.1)
-end
-end
-end
-task.wait(.1)
-end
+    if getgenv().autoGift then
+        local data = getData()
+        if not data or not data.Powerups then return end
+        local powerups = data.Powerups
+        local boxes = {}
+
+        for n,a in pairs(powerups) do
+            if not string.find(n,"Mystery Box") and a > 0 then
+                table.insert(boxes, {name=n, amount=a})
+            end
+        end
+
+        table.sort(boxes, function(a,b) return a.amount > b.amount end)
+
+        for _,box in ipairs(boxes) do
+            while getgenv().autoGift do
+                local am = getData().Powerups[box.name] or 0
+                if am > 0 then
+                    Remote:FireServer("UseGift", box.name, (am > 25 and 25 or am))
+                    task.wait(getgenv().waitTime)
+                else
+                    break
+                end
+            end
+        end
+    end
 end)
