@@ -7,6 +7,133 @@ local g = lp.PlayerGui:FindFirstChild("ScreenGui")
 if g and g:FindFirstChild("DailyRewards") then
     g.DailyRewards:Destroy()
 end
---Script loader for every supported game
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
+local RemoteFunction = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteFunction
 
-loadstring(game:HttpGet("https://raw.githubusercontent.com/IdiotHub/Scripts/main/Loader"))()
+local AUTO_REBIRTH_MACHINE = true
+local SECRETS_NAME = "Butter Dawg"
+local USE_RANDOM = false
+local USE_SM_ONLY = true
+local USE_MYTHIC_ONLY = true
+local USE_SHINY_ONLY = true
+local USE_NORMAL_ONLY = false
+
+local function getTeamPetIds()
+    local ids = {}
+    local data = LocalData:Get()
+    if not data then return ids end
+    local equippedTeamIndex = data.TeamEquipped
+    if not equippedTeamIndex then return ids end
+    local team = data.Teams and data.Teams[equippedTeamIndex]
+    if not team or not team.Pets then return ids end
+    for _, id in ipairs(team.Pets) do
+        ids[id] = true
+    end
+    return ids
+end
+
+local function petVariantKey(pet)
+    local isShiny = pet.Shiny == true
+    local isMythic = pet.Mythic == true
+    if isShiny and isMythic then
+        return "SM"
+    elseif isMythic then
+        return "M"
+    elseif isShiny then
+        return "S"
+    else
+        return "N"
+    end
+end
+
+local function variantAllowed(key)
+    if USE_SM_ONLY then
+        return key == "SM"
+    elseif USE_MYTHIC_ONLY then
+        return key == "M"
+    elseif USE_SHINY_ONLY then
+        return key == "S"
+    elseif USE_NORMAL_ONLY then
+        return key == "N"
+    else
+        return true
+    end
+end
+
+local function collectCandidates()
+    local data = LocalData:Get()
+    local idsInTeam = getTeamPetIds()
+    local candidates = {}
+    if not data or not data.Pets then return candidates end
+    for _, pet in pairs(data.Pets) do
+        if pet.Id and pet.Name then
+            if not idsInTeam[pet.Id] then
+                if USE_RANDOM or pet.Name == SECRETS_NAME then
+                    local key = petVariantKey(pet)
+                    if variantAllowed(key) then
+                        candidates[#candidates+1] = {id = pet.Id, key = key}
+                    end
+                end
+            end
+        end
+    end
+    return candidates
+end
+
+local function groupByVariant(list)
+    local groups = {SM = {}, M = {}, S = {}, N = {}}
+    for _, v in ipairs(list) do
+        groups[v.key][#groups[v.key] + 1] = v.id
+    end
+    return groups
+end
+
+local function attemptDonate(ids)
+    if #ids < 5 then return false end
+    local args = {
+        "UseRebirthMachine",
+        {ids[1], ids[2], ids[3], ids[4], ids[5]}
+    }
+    RemoteFunction:InvokeServer(unpack(args))
+    return true
+end
+
+task.spawn(function()
+    while AUTO_REBIRTH_MACHINE do
+        local candidates = collectCandidates()
+        local groups = groupByVariant(candidates)
+        local done = false
+        if USE_SM_ONLY then
+            done = attemptDonate(groups.SM)
+        elseif USE_MYTHIC_ONLY then
+            done = attemptDonate(groups.M)
+        elseif USE_SHINY_ONLY then
+            done = attemptDonate(groups.S)
+        elseif USE_NORMAL_ONLY then
+            done = attemptDonate(groups.N)
+        else
+            if USE_RANDOM then
+                for _, key in ipairs({"SM","M","S","N"}) do
+                    if attemptDonate(groups[key]) then
+                        done = true
+                        break
+                    end
+                end
+            else
+                for _, key in ipairs({"SM","M","S","N"}) do
+                    if attemptDonate(groups[key]) then
+                        done = true
+                        break
+                    end
+                end
+            end
+        end
+        if done then
+            task.wait(1)
+        else
+            task.wait(2)
+        end
+    end
+end)
