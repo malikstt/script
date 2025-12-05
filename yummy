@@ -1,95 +1,183 @@
-getgenv().Config = {
-    Dashboard = {
-        Enabled = true,
-        GroupName = "adoptme",
-    },
-    BabyFarm = false,
-    PetFarm = {
-        Enabled = false,
-        FarmEggs = false,
-        BuyEggs = false,
-        EggType = "any",
-        BuyEggType = "any",
-        MaxPets = 1,
-        FarmUntilFullGrown = false,
-        PrioritizeFriendship = false,
-        SelectiveFarm = false,
-        SelectedPetTypes = {},
-    },
-    AutoNeon = {
-        Enabled = false,
-        MakeMega = false,
-    },
-    Misc = {
-        AutoShowUI = false,
-    },
-    Performance = {
-        Disable3DRendering = false,
-        ReduceGraphics = false,
-    },
-    AutoPotion = {
-        Enabled = false,
-        SelectedPets = {},
-    },
-    AutoTrade = {
-        Enabled = false,
-        AutoAcceptTrades = false,
-        SendTradesTo = "",
-        TradeMode = "all",
-        Categories = {},
-        Items = {},
-        ItemCounts = {},
-        FilterByAge = false,
-        SelectedAges = {},
-        ExcludeNeons = false,
-        ExcludeFullGrown = false
-    },
-    AutoBuy = {
-        Enabled = false,
-        SelectedItems = {},
-    },
-    AutoPay = {
-        Enabled = false,
-        TargetPlayer = "",
-    },
-    AutoOpen = {
-        Enabled = false,
-        Items = {},
-    },
-    AutoRecycle = {
-        Enabled = false,
-        RarityFilter = {
-            common = false,
-            uncommon = false,
-            rare = false,
-            ultra_rare = false,
-            legendary = false
-        },
-        KeepNeons = false,
-        KeepFullGrown = false,
-        SelectiveMode = false,
-        SelectedPets = {}
-    },
-    IdleProgression = {
-        Enabled = false,
-        SelectedPets = {},
-        ExcludedPets = {},
-        AutoMiniggame = false
-    },
-    Webhook = {
-        Enabled = false,
-        URL = "https://discord.com/api/webhooks/",
-        PetUnlock = {
-            Enabled = false,
-            URL = "https://discord.com/api/webhooks/",
-            FilterRarities = {}
-        },
-    },
-    TaskExclusion = {
-        Enabled = false,
-        ExcludedTasks = {},
-    },
-};
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 
-script_key="tZJiEVAELOYJhmkkbNtnyDZxZXXNUoov"
-loadstring(game:HttpGet("https://zekehub.com/scripts/AdoptMe/MassFarm.lua"))()
+local TradeEvent = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+
+getgenv().Settings = {
+    Enabled = false,
+    SelectedPlayer = nil
+}
+
+getgenv().TargetPlayers = {}
+getgenv().AutoTrade = false
+
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+local Window = Rayfield:CreateWindow({
+    Name = "Trade Automation",
+    LoadingTitle = "Trade System",
+    LoadingSubtitle = "Professional Trading Suite",
+    ConfigurationSaving = {Enabled = true, FileName = "TradeAutoConfig"},
+    KeySystem = false
+})
+
+local MainTab = Window:CreateTab("Main", 4483362458)
+
+MainTab:CreateToggle({
+    Name = "Enable Auto-Trade",
+    CurrentValue = getgenv().Settings.Enabled,
+    Flag = "EnableToggle",
+    Callback = function(Value)
+        getgenv().Settings.Enabled = Value
+    end
+})
+
+local PlayerSection = MainTab:CreateSection("Player Selection")
+
+local PlayerDropdown = MainTab:CreateDropdown({
+    Name = "Select Player",
+    Options = {"None"},
+    CurrentOption = "None",
+    Flag = "PlayerSelect",
+    Callback = function(Option)
+        if Option ~= "None" then
+            getgenv().SelectedPlayer = Players:FindFirstChild(Option)
+        else
+            getgenv().SelectedPlayer = nil
+        end
+    end
+})
+
+local function updatePlayerList()
+    local playerNames = {"None"}
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= Players.LocalPlayer then
+            table.insert(playerNames, player.Name)
+        end
+    end
+    PlayerDropdown:Refresh(playerNames)
+end
+
+Players.PlayerAdded:Connect(updatePlayerList)
+Players.PlayerRemoving:Connect(updatePlayerList)
+updatePlayerList()
+
+local TradeActions = MainTab:CreateSection("Quick Trade Actions")
+
+local function addPetsByType(typeFilter)
+    local data = LocalData:Get()
+    if not data or not data.Pets then return end
+    
+    local petsToAdd = {}
+    
+    for _, pet in pairs(data.Pets) do
+        if typeFilter == "normal" and not pet.Shiny and not pet.Mythic then
+            table.insert(petsToAdd, pet)
+        elseif typeFilter == "mythic" and pet.Mythic and not pet.Shiny then
+            table.insert(petsToAdd, pet)
+        elseif typeFilter == "shiny" and pet.Shiny and not pet.Mythic then
+            table.insert(petsToAdd, pet)
+        elseif typeFilter == "shinymythic" and pet.Shiny and pet.Mythic then
+            table.insert(petsToAdd, pet)
+        end
+    end
+    
+    local count = 0
+    for i = 1, math.min(10, #petsToAdd) do
+        local pet = petsToAdd[i]
+        local idString = tostring(pet.Id)
+        if not idString:match(":") then
+            idString = idString .. ":0"
+        end
+        TradeEvent:FireServer("TradeAddPet", idString)
+        count += 1
+        task.wait(0.1)
+    end
+    
+    return count
+end
+
+MainTab:CreateButton({
+    Name = "Add 10 Random Normals",
+    Callback = function()
+        addPetsByType("normal")
+    end
+})
+
+MainTab:CreateButton({
+    Name = "Add 10 Random Mythics",
+    Callback = function()
+        addPetsByType("mythic")
+    end
+})
+
+MainTab:CreateButton({
+    Name = "Add 10 Random Shinies",
+    Callback = function()
+        addPetsByType("shiny")
+    end
+})
+
+MainTab:CreateButton({
+    Name = "Add 10 Random Shiny Mythics",
+    Callback = function()
+        addPetsByType("shinymythic")
+    end
+})
+
+MainTab:CreateButton({
+    Name = "Add 10 Random Any",
+    Callback = function()
+        local data = LocalData:Get()
+        if not data or not data.Pets then return end
+        
+        local allPets = {}
+        for _, pet in pairs(data.Pets) do
+            table.insert(allPets, pet)
+        end
+        
+        local count = 0
+        for i = 1, math.min(10, #allPets) do
+            local pet = allPets[i]
+            local idString = tostring(pet.Id)
+            if not idString:match(":") then
+                idString = idString .. ":0"
+            end
+            TradeEvent:FireServer("TradeAddPet", idString)
+            count += 1
+            task.wait(0.1)
+        end
+    end
+})
+
+local SettingsTab = Window:CreateTab("Settings", 9747378038)
+
+SettingsTab:CreateToggle({
+    Name = "Auto-Start on Launch",
+    CurrentValue = false,
+    Flag = "AutoStartToggle",
+    Callback = function(Value)
+        getgenv().AutoStart = Value
+    end
+})
+
+SettingsTab:CreateButton({
+    Name = "Save Settings",
+    Callback = function()
+        Rayfield:Notify({
+            Title = "Settings Saved",
+            Content = "Configuration has been saved",
+            Duration = 2,
+            Image = 4483362458
+        })
+    end
+})
+
+task.spawn(function()
+    while task.wait(1) do
+        if getgenv().Settings.Enabled and getgenv().SelectedPlayer then
+            TradeEvent:FireServer("TradeRequest", getgenv().SelectedPlayer)
+        end
+    end
+end)
