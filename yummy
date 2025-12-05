@@ -1,152 +1,225 @@
-local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
-
-local Window = Rayfield:CreateWindow({
-    Name = "Trade Tool",
-    ConfigurationSaving = {Enabled = false}
-})
-
-local Tab = Window:CreateTab("Main")
-
+--// Services & game stuff
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-
-local TradeEvent = ReplicatedStorage
+local Network = ReplicatedStorage
     :WaitForChild("Shared")
     :WaitForChild("Framework")
     :WaitForChild("Network")
     :WaitForChild("Remote")
     :WaitForChild("RemoteEvent")
 
-local autoTrade = false
-local autoTradeDelay = 1
-local autoConfirm = false
-local autoConfirmDelay = 1
-local targetName = nil
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
 
-local tradeLoopRunning = false
-local confirmLoopRunning = false
+--// Rayfield
+local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 
-local function StartTradeLoop()
-    if tradeLoopRunning then return end
-    tradeLoopRunning = true
-    task.spawn(function()
-        while tradeLoopRunning do
-            if autoTrade and targetName then
-                local target = Players:WaitForChild(targetName)
-                local args = {
-                    "TradeRequest",
-                    target
-                }
-                TradeEvent:FireServer(unpack(args))
-            end
-            task.wait(autoTradeDelay)
-        end
-    end)
+local Window = Rayfield:CreateWindow({
+    Name = "Trade Pet Spammer",
+    LoadingTitle = "Trade Tools",
+    LoadingSubtitle = "Rayfield UI",
+    ConfigurationSaving = {
+        Enabled = false,
+    }
+})
+
+local PetsTab = Window:CreateTab("Auto Pets")
+
+-- SETTINGS
+local AutoPetsEnabled = false
+local CurrentMode = "10 Shiny Mythics"
+local DelayPerPet = 0.2       -- delay between each TradeAddPet
+local DelayBetweenCycles = 1  -- delay between loops
+
+----------------------------------------------------------------------
+-- Helpers
+----------------------------------------------------------------------
+
+local function formatPetId(petId)
+    local idString = tostring(petId)
+    if not idString:match(":") then
+        return idString .. ":0"
+    end
+    return idString
 end
 
-local function StartConfirmLoop()
-    if confirmLoopRunning then return end
-    confirmLoopRunning = true
-    task.spawn(function()
-        while confirmLoopRunning do
-            if autoConfirm then
-                local args = {
-                    "TradeConfirm"
-                }
-                TradeEvent:FireServer(unpack(args))
-            end
-            task.wait(autoConfirmDelay)
-        end
-    end)
-end
+-- grabs ALL pets & categorizes
+local function getCategorizedPets()
+    local data = LocalData:Get()
+    if not data or not data.Pets then
+        return {
+            ShinyMythic = {},
+            Mythic = {},
+            Shiny = {},
+            Normal = {},
+            All = {},
+        }
+    end
 
-Tab:CreateToggle({
-    Name = "Auto Trade",
-    CurrentValue = false,
-    Callback = function(v)
-        autoTrade = v
-        if v then
-            StartTradeLoop()
+    local shinyMythics = {}
+    local mythics = {}
+    local shinies = {}
+    local normals = {}
+    local allPets = {}
+
+    for _, pet in pairs(data.Pets) do
+        table.insert(allPets, pet)
+
+        if pet.Shiny and pet.Mythic then
+            table.insert(shinyMythics, pet)
+        elseif pet.Mythic and not pet.Shiny then
+            table.insert(mythics, pet)
+        elseif pet.Shiny and not pet.Mythic then
+            table.insert(shinies, pet)
         else
-            tradeLoopRunning = false
+            table.insert(normals, pet)
         end
     end
-})
 
-Tab:CreateSlider({
-    Name = "Trade Delay",
-    Range = {0.1, 10},
-    Increment = 0.1,
-    CurrentValue = 1,
-    Callback = function(v)
-        autoTradeDelay = v
-    end
-})
-
-Tab:CreateToggle({
-    Name = "Auto Confirm",
-    CurrentValue = false,
-    Callback = function(v)
-        autoConfirm = v
-        if v then
-            StartConfirmLoop()
-        else
-            confirmLoopRunning = false
-        end
-    end
-})
-
-Tab:CreateSlider({
-    Name = "Confirm Delay",
-    Range = {0.1, 10},
-    Increment = 0.1,
-    CurrentValue = 1,
-    Callback = function(v)
-        autoConfirmDelay = v
-    end
-})
-
-local playerList = {"None"}
-for _, p in ipairs(Players:GetPlayers()) do
-    if p ~= Players.LocalPlayer then
-        table.insert(playerList, p.Name)
-    end
+    return {
+        ShinyMythic = shinyMythics,
+        Mythic = mythics,
+        Shiny = shinies,
+        Normal = normals,
+        All = allPets,
+    }
 end
 
-local Dropdown = Tab:CreateDropdown({
-    Name = "Select Player",
-    Options = playerList,
-    CurrentOption = "None",
+-- returns up to 10 pets of the chosen mode
+local function getPetsForMode(mode)
+    local cats = getCategorizedPets()
+    local source = {}
+
+    if mode == "10 Shiny Mythics" then
+        source = cats.ShinyMythic
+    elseif mode == "10 Mythics" then
+        source = cats.Mythic
+    elseif mode == "10 Shinies" then
+        source = cats.Shiny
+    elseif mode == "10 Normals" then
+        source = cats.Normal
+    elseif mode == "10 Random" then
+        -- any pets
+        source = cats.All
+    else
+        source = cats.All
+    end
+
+    -- If random mode, shuffle a copy of the source
+    if mode == "10 Random" then
+        local copy = {}
+        for i, v in ipairs(source) do
+            copy[i] = v
+        end
+        -- simple shuffle
+        for i = #copy, 2, -1 do
+            local j = math.random(1, i)
+            copy[i], copy[j] = copy[j], copy[i]
+        end
+        source = copy
+    end
+
+    local result = {}
+    local maxCount = math.min(10, #source)
+    for i = 1, maxCount do
+        result[i] = source[i]
+    end
+
+    return result
+end
+
+----------------------------------------------------------------------
+-- Rayfield UI Elements
+----------------------------------------------------------------------
+
+-- Mode dropdown
+PetsTab:CreateDropdown({
+    Name = "Mode",
+    Options = {
+        "10 Shiny Mythics",
+        "10 Mythics",
+        "10 Shinies",
+        "10 Normals",
+        "10 Random",
+    },
+    CurrentOption = "10 Shiny Mythics",
+    MultipleOptions = false,
+    Flag = "AutoPetsMode",
     Callback = function(option)
-        local name
-
-        if typeof(option) == "table" then
-            name = option[1]
-        else
-            name = option
-        end
-
-        if name == "None" then
-            targetName = nil
-        else
-            targetName = name
-        end
-    end
+        CurrentMode = option
+    end,
 })
 
-Players.PlayerAdded:Connect(function(p)
-    if p ~= Players.LocalPlayer then
-        table.insert(playerList, p.Name)
-        Dropdown:Refresh(playerList, true)
-    end
-end)
-
-Players.PlayerRemoving:Connect(function(p)
-    for i, v in ipairs(playerList) do
-        if v == p.Name then
-            table.remove(playerList, i)
-            break
+-- Optional: change delays if you want
+PetsTab:CreateInput({
+    Name = "Delay Between Pets (seconds)",
+    PlaceholderText = tostring(DelayPerPet),
+    RemoveTextAfterFocusLost = false,
+    Callback = function(text)
+        local num = tonumber(text)
+        if num and num > 0 then
+            DelayPerPet = num
         end
-    end
-    Dropdown:Refresh(playerList, true)
-end)
+    end,
+})
+
+PetsTab:CreateInput({
+    Name = "Delay Between Cycles (seconds)",
+    PlaceholderText = tostring(DelayBetweenCycles),
+    RemoveTextAfterFocusLost = false,
+    Callback = function(text)
+        local num = tonumber(text)
+        if num and num >= 0 then
+            DelayBetweenCycles = num
+        end
+    end,
+})
+
+-- Toggle: ON/OFF actually works and controls the loop
+PetsTab:CreateToggle({
+    Name = "Auto Add Pets (ON/OFF)",
+    CurrentValue = false,
+    Flag = "AutoPetsEnabled",
+    Callback = function(value)
+        AutoPetsEnabled = value
+
+        if value then
+            -- start loop
+            task.spawn(function()
+                while AutoPetsEnabled do
+                    local success, err = pcall(function()
+                        local pets = getPetsForMode(CurrentMode)
+
+                        for _, pet in ipairs(pets) do
+                            local formattedPetId = formatPetId(pet.Id)
+                            Network:FireServer("TradeAddPet", formattedPetId)
+                            task.wait(DelayPerPet)
+
+                            -- check if turned off mid-loop
+                            if not AutoPetsEnabled then
+                                break
+                            end
+                        end
+                    end)
+
+                    if not AutoPetsEnabled then
+                        break
+                    end
+
+                    task.wait(DelayBetweenCycles)
+                end
+            end)
+        end
+    end,
+})
+
+-- Optional one-time button (no auto loop, just once)
+PetsTab:CreateButton({
+    Name = "Add 10 Now (One Time)",
+    Callback = function()
+        local pets = getPetsForMode(CurrentMode)
+        for _, pet in ipairs(pets) do
+            local formattedPetId = formatPetId(pet.Id)
+            Network:FireServer("TradeAddPet", formattedPetId)
+            task.wait(DelayPerPet)
+        end
+    end,
+})
