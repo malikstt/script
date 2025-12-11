@@ -1,5 +1,6 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 local lp = game.Players.LocalPlayer
 local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
 local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
@@ -22,7 +23,7 @@ gui.DisplayOrder = 999999
 gui.ResetOnSpawn = false
 
 local card = Instance.new("Frame", gui)
-card.Size = UDim2.new(0,360,0,210)
+card.Size = UDim2.new(0,360,0,250)
 card.Position = UDim2.new(1,-380,0,24)
 card.BackgroundColor3 = Color3.fromRGB(20,22,30)
 card.BorderSizePixel = 0
@@ -40,15 +41,15 @@ local title = Instance.new("TextLabel", card)
 title.Size = UDim2.new(1,-20,0,28)
 title.Position = UDim2.new(0,10,0,8)
 title.BackgroundTransparency = 1
-title.Text = "❄️ SNOWFLAKES ❄️"
+title.Text = "SNOWFLAKES"
 title.TextColor3 = Color3.new(1,1,1)
 title.Font = Enum.Font.GothamBlack
-title.TextSize = 20
+title.TextSize = 18
 title.TextXAlignment = Enum.TextXAlignment.Left
 
 local big = Instance.new("TextLabel", card)
 big.Size = UDim2.new(1,-20,0,60)
-big.Position = UDim2.new(0,10,0,40)
+big.Position = UDim2.new(0,10,0,36)
 big.BackgroundTransparency = 1
 big.Font = Enum.Font.GothamBlack
 big.TextSize = 36
@@ -57,34 +58,56 @@ big.TextXAlignment = Enum.TextXAlignment.Left
 big.Text = "0"
 
 local rate = Instance.new("TextLabel", card)
-rate.Size = UDim2.new(1,-20,0,26)
+rate.Size = UDim2.new(1,-20,0,22)
 rate.Position = UDim2.new(0,10,0,100)
 rate.BackgroundTransparency = 1
 rate.Font = Enum.Font.GothamBold
-rate.TextSize = 16
+rate.TextSize = 14
 rate.TextColor3 = Color3.fromRGB(200,200,255)
 rate.TextXAlignment = Enum.TextXAlignment.Left
-rate.Text = "❄️/min: 0"
+rate.Text = "/min: 0"
 
 local cycle = Instance.new("TextLabel", card)
-cycle.Size = UDim2.new(1,-20,0,26)
-cycle.Position = UDim2.new(0,10,0,132)
+cycle.Size = UDim2.new(1,-20,0,22)
+cycle.Position = UDim2.new(0,10,0,124)
 cycle.BackgroundTransparency = 1
 cycle.Font = Enum.Font.GothamBold
-cycle.TextSize = 16
+cycle.TextSize = 14
 cycle.TextColor3 = Color3.fromRGB(255,255,255)
 cycle.TextXAlignment = Enum.TextXAlignment.Left
 cycle.Text = "Equipped: ..."
 
 local totalTeam = Instance.new("TextLabel", card)
-totalTeam.Size = UDim2.new(1,-20,0,26)
-totalTeam.Position = UDim2.new(0,10,0,160)
+totalTeam.Size = UDim2.new(1,-20,0,22)
+totalTeam.Position = UDim2.new(0,10,0,148)
 totalTeam.BackgroundTransparency = 1
 totalTeam.Font = Enum.Font.GothamBold
-totalTeam.TextSize = 16
+totalTeam.TextSize = 14
 totalTeam.TextColor3 = Color3.fromRGB(255,255,200)
 totalTeam.TextXAlignment = Enum.TextXAlignment.Left
 totalTeam.Text = "Team Total: 0"
+
+-- new: peppermint cooldown label
+local peppermintLabel = Instance.new("TextLabel", card)
+peppermintLabel.Size = UDim2.new(1,-20,0,20)
+peppermintLabel.Position = UDim2.new(0,10,0,178)
+peppermintLabel.BackgroundTransparency = 1
+peppermintLabel.Font = Enum.Font.GothamBold
+peppermintLabel.TextSize = 14
+peppermintLabel.TextColor3 = Color3.fromRGB(255,180,180)
+peppermintLabel.TextXAlignment = Enum.TextXAlignment.Left
+peppermintLabel.Text = "Peppermint Chest: Unknown"
+
+-- new: christmas mastery label
+local christmasLabel = Instance.new("TextLabel", card)
+christmasLabel.Size = UDim2.new(1,-20,0,22)
+christmasLabel.Position = UDim2.new(0,10,0,202)
+christmasLabel.BackgroundTransparency = 1
+christmasLabel.Font = Enum.Font.GothamBold
+christmasLabel.TextSize = 14
+christmasLabel.TextColor3 = Color3.fromRGB(180,255,220)
+christmasLabel.TextXAlignment = Enum.TextXAlignment.Left
+christmasLabel.Text = "Christmas Mastery: Unknown"
 
 local samples = {}
 local shown = 0
@@ -141,16 +164,50 @@ local function calcTeam()
     return arr,sum
 end
 
+local function formatTimeSeconds(sec)
+    if not sec or sec <= 0 then return "Ready" end
+    sec = math.floor(sec)
+    local m = math.floor(sec / 60)
+    local s = sec % 60
+    return string.format("%d:%02d", m, s)
+end
+
+local function getPeppermintCooldown()
+    local ok, d = pcall(function() return LocalData:Get() end)
+    if not ok or not d then return nil end
+    local cd = d.Cooldowns and (d.Cooldowns["Peppermint Chest"] or d.Cooldowns["PeppermintChest"] or d.Cooldowns["Peppermint"] )
+    return cd
+end
+
+local function getChristmasLevel()
+    local ok, d = pcall(function() return LocalData:Get() end)
+    if not ok or not d then return nil end
+    return d.MasteryLevels and d.MasteryLevels.Christmas
+end
+
 local lastTeamHash = ""
 local petsCycle = {}
 local idx = 1
+
+local lastPepper = getPeppermintCooldown()
+local lastChristmas = getChristmasLevel()
+if lastPepper ~= nil then peppermintLabel.Text = "Peppermint Chest: "..formatTimeSeconds(lastPepper) end
+if lastChristmas ~= nil then christmasLabel.Text = "Christmas Mastery: "..tostring(lastChristmas) end
+
+local function flashLabel(lbl)
+    local tween1 = TweenService:Create(lbl, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextSize = lbl.TextSize + 4})
+    local tween2 = TweenService:Create(lbl, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {TextSize = lbl.TextSize})
+    tween1:Play()
+    tween1.Completed:Wait()
+    tween2:Play()
+end
 
 task.spawn(function()
     while true do
         local s = getSnow()
         push(s)
         animateNumber(s)
-        rate.Text = "❄️/min: "..fmt(perMin())
+        rate.Text = "/min: "..fmt(perMin())
 
         local arr,sum = calcTeam()
         local h = ""
@@ -172,6 +229,29 @@ task.spawn(function()
             cycle.Text = "Equipped: None"
         end
 
-        task.wait(1.2)
+        -- peppermint cooldown update
+        local nowPep = getPeppermintCooldown()
+        if nowPep ~= lastPepper then
+            lastPepper = nowPep
+            peppermintLabel.Text = "Peppermint Chest: "..formatTimeSeconds(nowPep)
+            flashLabel(peppermintLabel)
+        else
+            -- update countdown display if numeric
+            if nowPep and type(nowPep) == "number" and nowPep > 0 then
+                peppermintLabel.Text = "Peppermint Chest: "..formatTimeSeconds(nowPep)
+            end
+        end
+
+        -- christmas mastery update
+        local nowXmas = getChristmasLevel()
+        if nowXmas ~= lastChristmas then
+            christmasLabel.Text = "Christmas Mastery: "..tostring(nowXmas or "nil")
+            if lastChristmas ~= nil and nowXmas and lastChristmas and nowXmas > lastChristmas then
+                flashLabel(christmasLabel)
+            end
+            lastChristmas = nowXmas
+        end
+
+        task.wait(1)
     end
 end)
