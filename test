@@ -6,29 +6,70 @@ local TweenService = game:GetService("TweenService")
 local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
 local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
 
-local function gd() local ok,d=pcall(function()return LocalData:Get()end) return ok and d or {} end
+local gui = Instance.new("ScreenGui", lp:WaitForChild("PlayerGui"))
+gui.IgnoreGuiInset = true
+gui.ResetOnSpawn = false
+gui.DisplayOrder = 999999999
+
+local bg = Instance.new("Frame", gui)
+bg.Size = UDim2.new(1,0,1,0)
+bg.BackgroundColor3 = Color3.fromRGB(0,0,0)
+bg.BorderSizePixel = 0
+
+local function T(size, pos)
+	local t = Instance.new("TextLabel", bg)
+	t.Size = UDim2.new(0.8,0,0, size)
+	t.Position = pos
+	t.AnchorPoint = Vector2.new(0.5,0.5)
+	t.BackgroundTransparency = 1
+	t.Font = Enum.Font.GothamBlack
+	t.TextScaled = true
+	t.TextColor3 = Color3.fromRGB(255,255,255)
+	t.TextWrapped = true
+	return t
+end
+
+local centerBig = T(120, UDim2.new(0.5,0,0.28,0))
+local centerRate = T(60, UDim2.new(0.5,0,0.38,0))
+local topLeft = T(55, UDim2.new(0.18,0,0.08,0))
+local topRight = T(55, UDim2.new(0.82,0,0.08,0))
+local midLeft = T(55, UDim2.new(0.18,0,0.50,0))
+local midRight = T(55, UDim2.new(0.82,0,0.50,0))
+local bottomCenter = T(70, UDim2.new(0.5,0,0.78,0))
+
+local function gd()
+	local ok,d = pcall(function() return LocalData:Get() end)
+	return ok and d or {}
+end
 
 local function fmt(n)
-	n=tonumber(n)or 0
-	if n>=1e12 then return string.format("%.2fT",n/1e12)
-	elseif n>=1e9 then return string.format("%.2fB",n/1e9)
-	elseif n>=1e6 then return string.format("%.2fM",n/1e6)
-	elseif n>=1e3 then return string.format("%.2fK",n/1e3)
+	n = tonumber(n) or 0
+	if n>=1e12 then return string.format("%.2fT", n/1e12)
+	elseif n>=1e9 then return string.format("%.2fB", n/1e9)
+	elseif n>=1e6 then return string.format("%.2fM", n/1e6)
+	elseif n>=1e3 then return string.format("%.2fK", n/1e3)
 	else return tostring(n) end
 end
 
 local function getSnow() return gd().Snowflakes or 0 end
-local function getPep() local d=gd().Cooldowns return d and d["Peppermint Chest"] end
-local function getXmas() return gd().MasteryLevels and gd().MasteryLevels.Christmas or 0 end
-local ITEMS={"Christmas Present","Christmas Key","Christmas Spin Ticket"}
+local function getPep()
+	local d = gd().Cooldowns
+	return d and (d["Peppermint Chest"] or d["PeppermintChest"] or d["Peppermint"])
+end
+local function getXmas()
+	local d = gd().MasteryLevels
+	return d and d.Christmas or 0
+end
+
+local ITEMS = {"Christmas Present","Christmas Key","Christmas Spin Ticket"}
 
 local function getItems()
-	local d=gd()
-	local r={}
+	local d = gd()
+	local r = {}
 	local function scan(t)
 		for k,v in pairs(t) do
 			if type(v)=="table" then scan(v)
-			else for _,nm in ipairs(ITEMS)do if k==nm then r[nm]=v end end end
+			else for _,nm in ipairs(ITEMS) do if k==nm then r[nm]=v end end end
 		end
 	end
 	scan(d)
@@ -36,117 +77,88 @@ local function getItems()
 end
 
 local function getTeam()
-	local d=gd()
-	local ids=(d.Teams and d.TeamEquipped and d.Teams[d.TeamEquipped] and d.Teams[d.TeamEquipped].Pets)or{}
-	local map={} if d.Pets then for _,p in pairs(d.Pets)do map[tostring(p.Id)]=p end end
-	local arr={} local sum=0
-	for _,id in ipairs(ids)do
-		local p=map[tostring(id)]
+	local d = gd()
+	local ids = (d.Teams and d.TeamEquipped and d.Teams[d.TeamEquipped] and d.Teams[d.TeamEquipped].Pets) or {}
+	local pets = {}
+	local map = {}
+	if d.Pets then for _,p in pairs(d.Pets)do map[tostring(p.Id)] = p end end
+	local sum = 0
+	for _,id in ipairs(ids) do
+		local p = map[tostring(id)]
 		if p and PetsModule[p.Name] and PetsModule[p.Name].Stats and PetsModule[p.Name].Stats.Snowflakes then
-			local sf=PetsModule[p.Name].Stats.Snowflakes or 0
-			sum+=sf
-			table.insert(arr,{Name=p.Name,Snow=sf})
+			local sf = PetsModule[p.Name].Stats.Snowflakes or 0
+			sum += sf
+			table.insert(pets, {Name=p.Name, Snow=sf})
 		end
 	end
-	return arr,sum
+	return pets, sum
 end
 
 local function fmtTime(sec)
 	if not sec or sec<=0 then return "Ready" end
-	sec=math.floor(sec/1000)
-	local m=math.floor(sec/60)
-	local s=sec%60
-	return string.format("%d:%02d",m,s)
+	sec = math.floor(sec/1000)
+	local m = math.floor(sec/60)
+	local s = sec % 60
+	return string.format("%d:%02d", m, s)
 end
 
-local gui=Instance.new("ScreenGui",lp:WaitForChild("PlayerGui"))
-gui.DisplayOrder=99999999
-gui.IgnoreGuiInset=true
-gui.ResetOnSpawn=false
+local samples = {}
+local shown = 0
+local idx = 1
+local petsCycle = {}
 
-local bg=Instance.new("Frame",gui)
-bg.Size=UDim2.new(1,0,1,0)
-bg.BackgroundColor3=Color3.fromRGB(0,0,0)
-bg.BorderSizePixel=0
-
-local function makeText(size,pos,str)
-	local t=Instance.new("TextLabel",bg)
-	t.Size=UDim2.new(1,-20,0,size)
-	t.Position=pos
-	t.BackgroundTransparency=1
-	t.TextScaled=false
-	t.Font=Enum.Font.GothamBold
-	t.TextSize=size
-	t.TextColor3=Color3.new(1,1,1)
-	t.Text=str
-	t.TextXAlignment=Enum.TextXAlignment.Center
-	t.TextYAlignment=Enum.TextYAlignment.Center
-	return t
+local function push(v)
+	table.insert(samples,{t=tick(),v=v})
+	while #samples>1 and tick()-samples[1].t>60 do
+		table.remove(samples,1)
+	end
 end
 
-local centerBig = makeText(40,UDim2.new(0,0,0.3,0),"❄️ 0")
-local centerRate = makeText(20,UDim2.new(0,0,0.38,0),"❄️/min: 0")
-local topLeft = makeText(18,UDim2.new(0,10,0,10),"Peppermint Chest: ...")
-topLeft.TextXAlignment=Enum.TextXAlignment.Left
-local topRight = makeText(18,UDim2.new(0,-10,0,10),"Xmas Mastery: ...")
-topRight.TextXAlignment=Enum.TextXAlignment.Right
-local bottomLeft = makeText(18,UDim2.new(0,10,1,-80),"Items: ...")
-bottomLeft.TextXAlignment=Enum.TextXAlignment.Left
-local bottomRight = makeText(18,UDim2.new(0,-10,1,-80),"Team: ...")
-bottomRight.TextXAlignment=Enum.TextXAlignment.Right
-local bottomCenter = makeText(24,UDim2.new(0,0,1,-40),"Pets: ...")
-
-local samples={} local shown=0
-local function push(v)table.insert(samples,{t=tick(),v=v})while #samples>1 and tick()-samples[1].t>60 do table.remove(samples,1)end end
-local function perMin()if #samples<2 then return 0 end local a=samples[1]local b=samples[#samples]if b.t-a.t<=0 or b.v-a.v<0 then return 0 end return ((b.v-a.v)/(b.t-a.t))*60 end
-local function animate(obj,txt)
-	obj.Text=txt
-	local t1=TweenService:Create(obj,TweenInfo.new(0.15),{TextSize=obj.TextSize+4})
-	local t2=TweenService:Create(obj,TweenInfo.new(0.15),{TextSize=obj.TextSize})
-	t1:Play()t1.Completed:Wait()t2:Play()
+local function perMin()
+	if #samples<2 then return 0 end
+	local a = samples[1]
+	local b = samples[#samples]
+	if b.t-a.t<=0 or b.v-a.v<0 then return 0 end
+	return ((b.v-a.v)/(b.t-a.t))*60
 end
-
-local idx=1 local cyclePets={}
 
 task.spawn(function()
 	while true do
-		local snow=getSnow()
+		local snow = getSnow()
 		push(snow)
 
-		local start=shown
-		local target=snow
-		local t0=tick()
+		local aStart = shown
+		local target = snow
+		local t0 = tick()
 		local c
-		c=RunService.Heartbeat:Connect(function()
-			local a=math.clamp((tick()-t0)/0.35,0,1)
-			shown=start+(target-start)*a
-			centerBig.Text="❄️ "..fmt(shown)
+		c = RunService.Heartbeat:Connect(function()
+			local a = math.clamp((tick()-t0)/0.4,0,1)
+			shown = aStart + (target - aStart)*a
+			centerBig.Text = "❄️ "..fmt(shown)
 			if a>=1 then c:Disconnect() end
 		end)
 
-		centerRate.Text="❄️/min: "..fmt(perMin())
+		centerRate.Text = "❄️/min: "..fmt(perMin())
 
-		local pep=getPep()
-		topLeft.Text="Peppermint Chest: "..fmtTime(pep)
+		local pep = getPep()
+		topLeft.Text = "Peppermint Chest: "..fmtTime(pep)
 
-		local xm=getXmas()
-		topRight.Text="Xmas Mastery: "..xm
+		local xm = getXmas()
+		topRight.Text = "Xmas Mastery: "..xm
 
-		local it=getItems()
-		local s=""
-		for _,nm in ipairs(ITEMS)do s=s..nm..": "..fmt(it[nm]or 0).."   " end
-		bottomLeft.Text="Items: "..s
+		local it = getItems()
+		midLeft.Text = ("Present: "..fmt(it["Christmas Present"] or 0))
 
-		local arr,sum=getTeam()
-		bottomRight.Text="Team: "..fmt(sum)
+		midRight.Text = ("Key: "..fmt(it["Christmas Key"] or 0).." | Spins: "..fmt(it["Christmas Spin Ticket"] or 0))
 
+		local arr,sum = getTeam()
 		if #arr>0 then
 			if idx>#arr then idx=1 end
-			local p=arr[idx]
-			bottomCenter.Text="Pets: "..p.Name.." x"..p.Snow
-			idx=idx+1
+			local p = arr[idx]
+			bottomCenter.Text = "Pet: "..p.Name.." x"..fmt(p.Snow).." | Team: "..fmt(sum)
+			idx = idx + 1
 		else
-			bottomCenter.Text="Pets: None"
+			bottomCenter.Text = "Team: 0"
 		end
 
 		task.wait(1)
