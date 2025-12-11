@@ -1,1 +1,177 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local lp = game.Players.LocalPlayer
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
 
+local function getSnow()
+    local ok,d = pcall(function() return LocalData:Get() end)
+    if ok and d and d.Snowflakes then return d.Snowflakes end
+    return 0
+end
+
+local function fmt(n)
+    n = math.floor(n or 0)
+    return tostring(n):reverse():gsub("(%d%d%d)","%1,"):reverse():gsub("^,","")
+end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "SnowflakesUI"
+gui.Parent = lp:WaitForChild("PlayerGui")
+gui.DisplayOrder = 999999
+gui.ResetOnSpawn = false
+
+local card = Instance.new("Frame", gui)
+card.Size = UDim2.new(0,360,0,210)
+card.Position = UDim2.new(1,-380,0,24)
+card.BackgroundColor3 = Color3.fromRGB(20,22,30)
+card.BorderSizePixel = 0
+Instance.new("UICorner", card).CornerRadius = UDim.new(0,14)
+
+local grad = Instance.new("UIGradient", card)
+grad.Color = ColorSequence.new{
+    ColorSequenceKeypoint.new(0,Color3.fromRGB(120,180,255)),
+    ColorSequenceKeypoint.new(1,Color3.fromRGB(200,140,255))
+}
+grad.Rotation = 45
+grad.Transparency = NumberSequence.new(0.88,0.9)
+
+local title = Instance.new("TextLabel", card)
+title.Size = UDim2.new(1,-20,0,28)
+title.Position = UDim2.new(0,10,0,8)
+title.BackgroundTransparency = 1
+title.Text = "❄️ SNOWFLAKES ❄️"
+title.TextColor3 = Color3.new(1,1,1)
+title.Font = Enum.Font.GothamBlack
+title.TextSize = 20
+title.TextXAlignment = Enum.TextXAlignment.Left
+
+local big = Instance.new("TextLabel", card)
+big.Size = UDim2.new(1,-20,0,60)
+big.Position = UDim2.new(0,10,0,40)
+big.BackgroundTransparency = 1
+big.Font = Enum.Font.GothamBlack
+big.TextSize = 36
+big.TextColor3 = Color3.new(1,1,1)
+big.TextXAlignment = Enum.TextXAlignment.Left
+big.Text = "0"
+
+local rate = Instance.new("TextLabel", card)
+rate.Size = UDim2.new(1,-20,0,26)
+rate.Position = UDim2.new(0,10,0,100)
+rate.BackgroundTransparency = 1
+rate.Font = Enum.Font.GothamBold
+rate.TextSize = 16
+rate.TextColor3 = Color3.fromRGB(200,200,255)
+rate.TextXAlignment = Enum.TextXAlignment.Left
+rate.Text = "❄️/min: 0"
+
+local cycle = Instance.new("TextLabel", card)
+cycle.Size = UDim2.new(1,-20,0,26)
+cycle.Position = UDim2.new(0,10,0,132)
+cycle.BackgroundTransparency = 1
+cycle.Font = Enum.Font.GothamBold
+cycle.TextSize = 16
+cycle.TextColor3 = Color3.fromRGB(255,255,255)
+cycle.TextXAlignment = Enum.TextXAlignment.Left
+cycle.Text = "Equipped: ..."
+
+local totalTeam = Instance.new("TextLabel", card)
+totalTeam.Size = UDim2.new(1,-20,0,26)
+totalTeam.Position = UDim2.new(0,10,0,160)
+totalTeam.BackgroundTransparency = 1
+totalTeam.Font = Enum.Font.GothamBold
+totalTeam.TextSize = 16
+totalTeam.TextColor3 = Color3.fromRGB(255,255,200)
+totalTeam.TextXAlignment = Enum.TextXAlignment.Left
+totalTeam.Text = "Team Total: 0"
+
+local samples = {}
+local shown = 0
+
+local function animateNumber(vTo)
+    local s = shown
+    local t0 = tick()
+    local conn
+    conn = RunService.Heartbeat:Connect(function()
+        local a = math.clamp((tick()-t0)/0.4,0,1)
+        shown = s + (vTo - s) * a
+        big.Text = fmt(shown)
+        if a >= 1 then conn:Disconnect() end
+    end)
+end
+
+local function push(v)
+    table.insert(samples,{t=tick(),v=v})
+    while #samples>1 and tick()-samples[1].t>60 do table.remove(samples,1) end
+end
+
+local function perMin()
+    if #samples<2 then return 0 end
+    local a=samples[1]
+    local b=samples[#samples]
+    if b.t-a.t<=0 or b.v-a.v<0 then return 0 end
+    return ((b.v-a.v)/(b.t-a.t))*60
+end
+
+local function getEquipped()
+    local d = LocalData:Get()
+    if not d or not d.Teams or not d.TeamEquipped then return {} end
+    local t = d.Teams[d.TeamEquipped]
+    return (t and t.Pets) or {}
+end
+
+local function calcTeam()
+    local ids = getEquipped()
+    local map = {}
+    local d = LocalData:Get()
+    if d and d.Pets then
+        for _,p in pairs(d.Pets) do map[tostring(p.Id)] = p end
+    end
+    local arr = {}
+    local sum = 0
+    for _,id in ipairs(ids) do
+        local p = map[tostring(id)]
+        if p and PetsModule[p.Name] and PetsModule[p.Name].Stats and PetsModule[p.Name].Stats.Snowflakes then
+            local sf = tonumber(PetsModule[p.Name].Stats.Snowflakes) or 0
+            sum += sf
+            table.insert(arr,{name=p.Name,sf=sf})
+        end
+    end
+    return arr,sum
+end
+
+local lastTeamHash = ""
+local petsCycle = {}
+local idx = 1
+
+task.spawn(function()
+    while true do
+        local s = getSnow()
+        push(s)
+        animateNumber(s)
+        rate.Text = "❄️/min: "..fmt(perMin())
+
+        local arr,sum = calcTeam()
+        local h = ""
+        for _,v in ipairs(arr) do h = h..v.name..v.sf end
+
+        if h ~= lastTeamHash then
+            lastTeamHash = h
+            petsCycle = arr
+            idx = 1
+            totalTeam.Text = "Team Total: "..fmt(sum)
+        end
+
+        if #petsCycle > 0 then
+            local p = petsCycle[idx]
+            cycle.Text = p.name.." : x"..p.sf
+            idx = idx + 1
+            if idx > #petsCycle then idx = 1 end
+        else
+            cycle.Text = "Equipped: None"
+        end
+
+        task.wait(1.2)
+    end
+end)
