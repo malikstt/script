@@ -1,20 +1,31 @@
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local vim = game:GetService("VirtualInputManager")
 
 local lp = Players.LocalPlayer
 local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
 local Config = getgenv().EggConfig
 
+-- More robust effect blocking
 pcall(function()
-    local m = require(ReplicatedStorage.Client.Effects.HatchEgg)
-    m.Play = function() return end
+    local hatchEffects = require(ReplicatedStorage.Client.Effects.HatchEgg)
+    if hatchEffects then
+        local originalPlay = hatchEffects.Play
+        hatchEffects.Play = function(...)
+            if Config and Config.disable_effects then
+                return
+            end
+            return originalPlay(...)
+        end
+    end
 end)
 
+-- Optimized key press function
 local function pressE()
     vim:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-    task.wait()
+    task.wait(0.05) -- Reduced wait time
     vim:SendKeyEvent(false, Enum.KeyCode.E, false, game)
 end
 
@@ -22,108 +33,194 @@ _G.Hatch = function()
     pressE()
 end
 
+-- Optimized number parsing with caching
+local numberMultipliers = {
+    K = 1e3,
+    M = 1e6,
+    B = 1e9,
+    T = 1e12
+}
+
 local function parseNumber(str)
-    str = tostring(str):upper()
-    local n = tonumber(str:match("[%d%.]+")) or 0
-    if str:find("K") then return n * 1e3 end
-    if str:find("M") then return n * 1e6 end
-    if str:find("B") then return n * 1e9 end
-    if str:find("T") then return n * 1e12 end
-    return n
+    if type(str) == "number" then return str end
+    str = tostring(str):upper():gsub(",", "")
+    
+    local numPart = str:match("^[%d%.]+")
+    if not numPart then return 0 end
+    
+    local number = tonumber(numPart) or 0
+    local suffix = str:match("[KMBT]$")
+    
+    return suffix and (number * (numberMultipliers[suffix] or 1)) or number
 end
+
+-- Cached values for performance
+local lastSnowflakeCheck = 0
+local cachedSnowflakes = 0
+local SNOWFLAKE_CACHE_TIME = 5
 
 local function getSnow()
-    local d = LocalData:Get()
-    return (d and d.Snowflakes) or 0
-end
-
-local function convert(name)
-    return name:gsub(" ", "-"):lower()
-end
-
-local function getLuck(r)
-    local d = r:FindFirstChild("Display")
-    local g = d and d:FindFirstChildOfClass("SurfaceGui")
-    local i = g and g:FindFirstChild("Icon")
-    local l = i and i:FindFirstChild("Luck")
-    return l and tonumber(l.Text:match("%d+")) or 0
-end
-
-local function getCF(m)
-    if typeof(m.GetPivot) == "function" then
-        local ok, p = pcall(m.GetPivot, m)
-        if ok and p then return p end
+    if tick() - lastSnowflakeCheck > SNOWFLAKE_CACHE_TIME then
+        local success, data = pcall(function()
+            return LocalData:Get()
+        end)
+        
+        if success and data and data.Snowflakes then
+            cachedSnowflakes = data.Snowflakes
+        else
+            cachedSnowflakes = 0
+        end
+        lastSnowflakeCheck = tick()
     end
-    if m.PrimaryPart then return m.PrimaryPart.CFrame end
-    local part = m:FindFirstChildWhichIsA("BasePart", true)
-    return part and part.CFrame or nil
+    return cachedSnowflakes
 end
 
-local function tp(m)
-    local cf = getCF(m)
-    if not cf then return false end
-    local char = lp.Character or lp.CharacterAdded:Wait()
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return false end
-    hrp.CFrame = cf + Vector3.new(0,5,0)
-    return true
+-- Pre-calculate converted egg name
+local convertedEggName = nil
+local function getConvertedEggName()
+    if not convertedEggName and Config then
+        convertedEggName = Config.selected_egg:gsub(" ", "-"):lower()
+    end
+    return convertedEggName or ""
+end
+
+-- Optimized luck extraction
+local function getLuck(rift)
+    local display = rift and rift:FindFirstChild("Display")
+    if not display then return 0 end
+    
+    local surfaceGui = display:FindFirstChildWhichIsA("SurfaceGui")
+    if not surfaceGui then return 0 end
+    
+    local icon = surfaceGui:FindFirstChild("Icon")
+    if not icon then return 0 end
+    
+    local luckLabel = icon:FindFirstChild("Luck")
+    if not luckLabel or not luckLabel:IsA("TextLabel") then return 0 end
+    
+    local luckText = luckLabel.Text
+    local luckNumber = tonumber(luckText:match("%d+"))
+    return luckNumber or 0
+end
+
+-- Optimized teleportation with raycasting
+local function getCF(model)
+    local success, pivot = pcall(function()
+        if model:IsA("Model") then
+            if model.GetPivot then
+                return model:GetPivot()
+            elseif model.PrimaryPart then
+                return model.PrimaryPart.CFrame
+            end
+        end
+        return nil
+    end)
+    
+    if success and pivot then
+        return pivot
+    end
+    
+    -- Fallback: find any base part
+    local part = model:FindFirstChildWhichIsA("BasePart", true)
+    return part and part.CFrame
 end
 
 local lastTP = 0
 local function canTP()
-    return tick() - lastTP >= Config.teleport_debounce
+    return tick() - lastTP >= (Config.teleport_debounce or 1)
 end
 
-task.spawn(function()
+local function safeTeleport(model)
+    if not canTP() then return false end
+    
+    local char = lp.Character
+    if not char then
+        char = lp.CharacterAdded:Wait()
+    end
+    
+    local hrp = char:WaitForChild("HumanoidRootPart", 2)
+    if not hrp then return false end
+    
+    local targetCF = getCF(model)
+    if not targetCF then return false end
+    
+    -- Teleport with offset to avoid getting stuck
+    hrp.CFrame = targetCF + Vector3.new(0, 5, 0)
+    lastTP = tick()
+    
+    -- Small delay for stabilization
+    task.wait(0.1)
+    return true
+end
+
+-- Main loop optimization
+local function mainLoop()
     while true do
-        if not Config.enabled then
-            task.wait(Config.check_interval)
+        if not Config or not Config.enabled then
+            task.wait(Config and Config.check_interval or 1)
             continue
         end
 
-        local needed = parseNumber(Config.min_snowflakes_before_hatch)
+        -- Check snowflakes
+        local needed = parseNumber(Config.min_snowflakes_before_hatch or 0)
         if getSnow() < needed then
             task.wait(Config.check_interval)
             continue
         end
 
-        local selected = Config.selected_egg
-        local riftName = convert(selected)
-
+        local riftName = getConvertedEggName()
         local bestRift = nil
         local bestLuck = -1
 
-        local rifts = Workspace:FindFirstChild("Rendered") and Workspace.Rendered:FindFirstChild("Rifts")
-        if rifts then
-            for _, r in ipairs(rifts:GetChildren()) do
-                if r:GetAttribute("Type") == "Egg" and r.Name == riftName then
-                    local l = getLuck(r)
-                    if l >= Config.min_selected_egg_rift and l > bestLuck then
-                        bestLuck = l
-                        bestRift = r
+        -- Check for rift eggs first
+        local rendered = Workspace:FindFirstChild("Rendered")
+        if rendered then
+            local rifts = rendered:FindFirstChild("Rifts")
+            if rifts then
+                for _, rift in ipairs(rifts:GetChildren()) do
+                    if rift:GetAttribute("Type") == "Egg" and rift.Name == riftName then
+                        local luck = getLuck(rift)
+                        local minLuck = Config.min_selected_egg_rift or 0
+                        
+                        if luck >= minLuck and luck > bestLuck then
+                            bestLuck = luck
+                            bestRift = rift
+                        end
+                    end
+                end
+            end
+            
+            -- If no suitable rift found, check generic eggs
+            if not bestRift then
+                local generic = rendered:FindFirstChild("Generic")
+                if generic then
+                    local egg = generic:FindFirstChild(Config.selected_egg)
+                    if egg then
+                        bestRift = egg
                     end
                 end
             end
         end
 
-        if bestRift and canTP() then
-            if tp(bestRift) then
-                lastTP = tick()
-                _G.Hatch()
-            end
-        else
-            local generic = Workspace:FindFirstChild("Rendered") and Workspace.Rendered:FindFirstChild("Generic")
-            if generic then
-                local egg = generic:FindFirstChild(selected)
-                if egg and canTP() then
-                    if tp(egg) then
-                        lastTP = tick()
-                        _G.Hatch()
-                    end
-                end
-            end
+        -- Teleport and hatch if we found a target
+        if bestRift and safeTeleport(bestRift) then
+            _G.Hatch()
         end
 
-        task.wait(Config.check_interval)
+        task.wait(Config.check_interval or 1)
     end
-end)
+end
+
+-- Error handling wrapper
+local function safeMainLoop()
+    while true do
+        local success, err = pcall(mainLoop)
+        if not success then
+            warn("Egg hatch script error:", err)
+            task.wait(5) -- Wait before retrying on error
+        end
+    end
+end
+
+-- Start the script
+task.spawn(safeMainLoop)
