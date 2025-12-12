@@ -1,7 +1,60 @@
+-- Scans all shops and buys ONLY the exact potions you specified:
+-- Speed (Level 7), Mythic (Level 7), Luck/Lucky (Level 7), Festive Elixir (Level 4), Festive Infinity Elixir (Level 1)
+-- Exact-name matching (case-sensitive). Will NOT match generic "Infinity".
+-- Prints shop name, quantity bought, item name and total cost.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local task = task
+
 local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
 local ShopsModule = require(ReplicatedStorage.Shared.Data.Shops)
+local RemoteEvent = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Framework"):WaitForChild("Network"):WaitForChild("Remote"):WaitForChild("RemoteEvent")
+
 if not LocalData:IsReady() then LocalData.DataReady:Wait() end
+
+local function tryGet(t, ...)
+    if type(t) ~= "table" then return nil end
+    for i = 1, select("#", ...) do
+        local k = select(i, ...)
+        if t[k] ~= nil then return t[k] end
+    end
+    return nil
+end
+
+local function extractCost(def)
+    if not def then return nil end
+    local cost = tryGet(def, "Cost", "Price", "CostInfo", "PriceInfo") or tryGet(def and def.Product, "Cost", "Price")
+    if type(cost) == "number" then
+        local cur = tryGet(def, "Currency", "CurrencyType") or "Currency"
+        return { Amount = cost, Currency = cur }
+    end
+    if type(cost) == "table" then
+        local amt = tryGet(cost, "Amount", "Value", "Price", "Cost")
+        local cur = tryGet(cost, "Currency", "CurrencyType", "Cur") or tryGet(def, "Currency", "CurrencyType") or "Currency"
+        if amt ~= nil then
+            return { Amount = (type(amt)=="number" and amt) or tonumber(amt) or 0, Currency = cur }
+        end
+    end
+    local amt2 = tryGet(def, "Amount", "Value", "Price", "Cost") or tryGet(def and def.Product, "Amount", "Value")
+    local cur2 = tryGet(def, "Currency", "CurrencyType") or tryGet(def and def.Product, "Currency", "CurrencyType")
+    if amt2 ~= nil then return { Amount = (type(amt2)=="number" and amt2) or tonumber(amt2) or 0, Currency = cur2 or "Currency" } end
+    return nil
+end
+
+local function extractProduct(def)
+    local p = tryGet(def, "Product", "Reward", "Item", "Result") or def
+    if type(p) == "table" then
+        return {
+            Name = tostring(tryGet(p, "Name", "Label", "Title", "DisplayName", "ItemName") or "(no Name)"),
+            Type = tostring(tryGet(p, "Type", "Category") or typeof(p)),
+            Level = tonumber(tryGet(p, "Level")) or nil,
+            Amount = tonumber(tryGet(p, "Amount", "Quantity", "Count")) or nil
+        }
+    end
+    if typeof(p) == "Instance" then
+        return { Name = tostring(p.Name), Type = "Instance", Level = nil, Amount = nil }
+    end
+    return { Name = tostring(p), Type = typeof(p), Level = nil, Amount = nil }
+end
 
 local function fmtNumber(n)
     if type(n) ~= "number" then return tostring(n) end
@@ -14,117 +67,132 @@ local function fmtNumber(n)
     return tostring(n)
 end
 
-local function nicePrice(costTbl)
-    if type(costTbl) ~= "table" then return tostring(costTbl) end
-    local cur = costTbl.Currency or costTbl.CurrencyType or "Currency"
-    local amt = costTbl.Amount or costTbl.Value or costTbl.Price or 0
-    return fmtNumber(amt) .. " " .. tostring(cur)
+local function findCurrencyAmount(playerData, currencyName)
+    if not playerData or type(playerData) ~= "table" or not currencyName then return 0 end
+    local lowerName = string.lower(tostring(currencyName))
+    local function checkTable(t)
+        if type(t) ~= "table" then return nil end
+        for k,v in pairs(t) do
+            if type(k) == "string" and string.lower(k) == lowerName and type(v) == "number" then
+                return v
+            end
+        end
+        return nil
+    end
+    local direct = checkTable(playerData)
+    if direct then return direct end
+    for _, key in ipairs({"Currencies","Currency","Wallet","Resources","Stats","Balances"}) do
+        local ctbl = playerData[key] or playerData[string.lower(key)]
+        local found = checkTable(ctbl)
+        if found then return found end
+    end
+    for _,v in pairs(playerData) do
+        if type(v) == "table" then
+            local found = checkTable(v)
+            if found then return found end
+        end
+    end
+    return 0
 end
 
-local function productNameFromDef(product)
-    if type(product) ~= "table" then return tostring(product) end
-    if product.Name and product.Name ~= "" then return tostring(product.Name) end
-    if product.Label and product.Label ~= "" then return tostring(product.Label) end
-    if product.Type then
-        local s = tostring(product.Type)
-        if product.Level then s = s .. " L" .. tostring(product.Level) end
-        return s
+local function safeFire(argsTable)
+    local ok, err = pcall(function() RemoteEvent:FireServer(unpack(argsTable)) end)
+    return ok, err
+end
+
+-- exact rules (case-sensitive): name -> required level
+local exactRules = {
+    ["Speed"] = 7,
+    ["Mythic"] = 7,
+    ["Lucky"] = 7,            -- match "Lucky" as shown in your dump
+    ["Luck"] = 7,             -- include "Luck" if it appears as exact
+    ["Festive Elixir"] = 4,
+    ["Festive Infinity Elixir"] = 1,
+}
+
+local function matchesExactRule(prod)
+    if not prod or type(prod) ~= "table" then return false end
+    local name = prod.Name or ""
+    local level = prod.Level
+    local req = exactRules[name]
+    if req ~= nil then
+        if type(req) == "number" then
+            return level ~= nil and level == req
+        end
+        return true
     end
-    return tostring(product)
+    return false
 end
 
 local function qtyFromValue(v)
-    if type(v) == "boolean" then
-        return (v and math.huge) or 0
-    elseif type(v) == "number" then
-        return v
-    elseif type(v) == "table" then
-        return tonumber(v.Amount or v.Count or v.Qty or v.Quantity) or 0
-    else
-        return 0
-    end
+    if type(v) == "boolean" then return v and math.huge or 0 end
+    if type(v) == "number" then return v end
+    if type(v) == "table" then return tonumber(tryGet(v, "Amount","Count","Qty","Quantity")) or 0 end
+    return 0
 end
 
-local function qtyTextFromDelta(delta, rawV)
-    if delta == math.huge then return "ALL" end
-    if rawV == true then return "ALL" end
-    if type(rawV) == "boolean" and rawV == true then return "ALL" end
-    if delta >= 1 then
-        if delta >= 10 then return tostring(delta) end
-        return tostring(delta)
-    end
-    return tostring(rawV)
-end
+local playerDataCache = LocalData:Get() or {}
 
-local function snapshotAllBought(sh)
-    local out = {}
-    for shopKey, shopVal in pairs(sh or {}) do
-        local bought = (shopVal and shopVal.Bought) or {}
-        local snap = {}
-        for k,v in pairs(bought) do snap[tostring(k)] = v end
-        out[tostring(shopKey)] = snap
-    end
-    return out
-end
+for shopKey, shopDef in pairs(ShopsModule) do
+    local permanent = shopDef.PermanentItems or {}
+    local randomItems = shopDef.RandomItems or {}
+    local combined = {}
+    for i,entry in pairs(permanent) do combined[i] = entry end
+    for i,entry in pairs(randomItems) do combined[i] = entry end
 
-local pd = LocalData:Get() or {}
-local prev = snapshotAllBought(pd.Shops or {})
+    for slotIndex, slotDef in pairs(combined) do
+        local prod = extractProduct(slotDef)
+        if matchesExactRule(prod) then
+            local costTbl = extractCost(slotDef) or extractCost(slotDef and slotDef.Product) or extractCost(shopDef)
+            local pricePer = (costTbl and tonumber(costTbl.Amount)) or nil
+            local currencyName = (costTbl and costTbl.Currency) or "(unknown)"
+            local stock = tonumber(tryGet(slotDef, "Stock", "MaxStock", "Amount")) or math.huge
 
-task.spawn(function()
-    while true do
-        pd = LocalData:Get() or {}
-        local shopsData = pd.Shops or {}
-        for shopKey, shopVal in pairs(shopsData) do
-            local currentBought = (shopVal and shopVal.Bought) or {}
-            local prevBought = prev[tostring(shopKey)] or {}
+            playerDataCache = LocalData:Get() or playerDataCache
+            local balance = findCurrencyAmount(playerDataCache, currencyName) or 0
 
-            for k, v in pairs(currentBought) do
-                local ks = tostring(k)
-                local prevV = prevBought[ks]
-
-                local curQty = qtyFromValue(v)
-                local prevQty = qtyFromValue(prevV)
-                local delta
-
-                if prevV == nil then
-                    delta = curQty
-                else
-                    if curQty == math.huge or prevQty == math.huge then
-                        if curQty == prevQty then delta = 0 else delta = math.huge end
-                    else
-                        delta = curQty - prevQty
-                    end
+            if not pricePer or pricePer <= 0 then
+                local args = { "BuyShopItem", tostring(shopKey), slotIndex, true }
+                local ok, err = safeFire(args)
+                if ok then
+                    print(("%s Bought ALL x %s Qty:%s Cost:free/unknown"):format(tostring(shopKey), tostring(prod.Name), tostring(stock)))
                 end
-
-                if delta ~= 0 and delta ~= nil and (delta > 0 or delta == math.huge) then
-                    local slotIndex = tonumber(ks) or ks
-                    local shopDef = ShopsModule[tostring(shopKey)] or {}
-                    local productDef = nil
-                    if shopDef.PermanentItems and shopDef.PermanentItems[slotIndex] then productDef = shopDef.PermanentItems[slotIndex]
-                    elseif shopDef.RandomItems and shopDef.RandomItems[slotIndex] then productDef = shopDef.RandomItems[slotIndex] end
-
-                    local pname = "UNKNOWN"
-                    local price = "UNKNOWN"
-                    if productDef then
-                        if productDef.Product then
-                            pname = productNameFromDef(productDef.Product)
-                        else
-                            pname = productNameFromDef(productDef)
+                task.wait(0.25)
+            else
+                local maxAffordable = math.floor(balance / pricePer)
+                local toBuy = math.min(stock, maxAffordable)
+                if toBuy <= 0 then
+                    -- cannot afford
+                else
+                    if toBuy >= stock then
+                        local args = { "BuyShopItem", tostring(shopKey), slotIndex, true }
+                        local ok, err = safeFire(args)
+                        if ok then
+                            local totalCost = pricePer * stock
+                            print(("%s Bought ALL (%d) x %s Cost: %s %s"):format(tostring(shopKey), tonumber(stock), tostring(prod.Name), fmtNumber(totalCost), tostring(currencyName)))
                         end
-                        price = nicePrice(productDef.Cost)
+                        task.wait(0.35)
+                    else
+                        local bought = 0
+                        local totalCost = 0
+                        for i = 1, toBuy do
+                            local args = { "BuyShopItem", tostring(shopKey), slotIndex, false }
+                            local ok, err = safeFire(args)
+                            if not ok then break end
+                            bought = bought + 1
+                            totalCost = totalCost + pricePer
+                            task.wait(0.22)
+                        end
+                        if bought > 0 then
+                            print(("%s Bought %d x %s Cost: %s %s"):format(tostring(shopKey), bought, tostring(prod.Name), fmtNumber(totalCost), tostring(currencyName)))
+                        end
                     end
-
-                    local qtyPretty = qtyTextFromDelta(delta, v)
-                    if delta == math.huge then qtyPretty = "ALL" end
-                    print(string.format("Slot: %s  Qty: %s  Name: %s  Price: %s", tostring(slotIndex), tostring(qtyPretty), tostring(pname), tostring(price)))
                 end
             end
-
-            local newSnap = {}
-            for kk,vv in pairs(currentBought) do newSnap[tostring(kk)] = vv end
-            prev[tostring(shopKey)] = newSnap
         end
-
-        task.wait(0.35)
+        task.wait(0.12)
     end
-end)
+    task.wait(0.25)
+end
+
+print("Done.")
