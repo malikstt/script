@@ -1,287 +1,87 @@
-local Players=game:GetService("Players")
-local lp=Players.LocalPlayer
-local ReplicatedStorage=game:GetService("ReplicatedStorage")
-local RunService=game:GetService("RunService")
-local TweenService=game:GetService("TweenService")
-local LocalData=require(ReplicatedStorage.Client.Framework.Services.LocalData)
-local PetsModule=require(ReplicatedStorage.Shared.Data.Pets)
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+local ShopsModule = require(ReplicatedStorage.Shared.Data.Shops)
+if not LocalData:IsReady() then LocalData.DataReady:Wait() end
 
-local function gd()local ok,d=pcall(function()return LocalData:Get()end)return ok and d or{}end
-
-local function fmt(n)
-    n=tonumber(n)or 0
-    if n>=1e12 then return string.format("%.2fT",n/1e12)
-    elseif n>=1e9 then return string.format("%.2fB",n/1e9)
-    elseif n>=1e6 then return string.format("%.2fM",n/1e6)
-    elseif n>=1e3 then return string.format("%.2fK",n/1e3)
-    else return tostring(n) end
+local function nicePrice(costTbl)
+    if type(costTbl) ~= "table" then return tostring(costTbl) end
+    local cur = costTbl.Currency or costTbl.CurrencyType or "Currency"
+    local amt = costTbl.Amount or costTbl.Value or costTbl.Price or "?"
+    return tostring(amt) .. " " .. tostring(cur)
 end
 
-local function getSnow()return gd().Snowflakes or 0 end
-local function getHatches()return gd().Stats and gd().Stats.Hatches or 0 end
-
-local function getPep()
-    local d=gd().Cooldowns
-    return d and(d["Peppermint Chest"]or d["PeppermintChest"]or d["Peppermint"])
-end
-
-local function fmtTime(sec)
-    if not sec or sec<=0 then return"Ready"end
-    sec=math.floor(sec/1000)
-    return string.format("%d:%02d",math.floor(sec/60),sec%60)
-end
-
-local function getXmas()
-    return gd().MasteryLevels and gd().MasteryLevels.Christmas or 0
-end
-
-local ITEMS={"Christmas Present","Christmas Key","Christmas Spin Ticket"}
-
-local function getItems()
-    local d=gd()local r={}
-    local function scan(t)
-        for k,v in pairs(t)do
-            if type(v)=="table"then scan(v)
-            else for _,nm in ipairs(ITEMS)do if k==nm then r[nm]=v end end
-            end
-        end
+local function productNameFromDef(product)
+    if type(product) ~= "table" then return tostring(product) end
+    if product.Name and product.Name ~= "" then return tostring(product.Name) end
+    if product.Label and product.Label ~= "" then return tostring(product.Label) end
+    if product.Type then
+        local s = tostring(product.Type)
+        if product.Name then s = s .. " " .. tostring(product.Name) end
+        if product.Level then s = s .. " L" .. tostring(product.Level) end
+        return s
     end
-    scan(d)return r
+    return tostring(product)
 end
 
-local function getTeam()
-    local d=gd()
-    local ids=(d.Teams and d.TeamEquipped and d.Teams[d.TeamEquipped]
-        and d.Teams[d.TeamEquipped].Pets)or{}
-    local map={}
-    if d.Pets then for _,p in pairs(d.Pets)do map[tostring(p.Id)]=p end end
-    local arr={}local sum=0
-    for _,id in ipairs(ids)do
-        local p=map[tostring(id)]
-        if p and PetsModule[p.Name]and PetsModule[p.Name].Stats then
-            local sf=PetsModule[p.Name].Stats.Snowflakes or 0
-            sum+=sf arr[#arr+1]={Name=p.Name,Snow=sf}
-        end
+local function snapshotAllBought(sh)
+    local out = {}
+    for shopKey, shopVal in pairs(sh or {}) do
+        local bought = (shopVal and shopVal.Bought) or {}
+        local snap = {}
+        for k,v in pairs(bought) do snap[tostring(k)] = v end
+        out[tostring(shopKey)] = snap
     end
-    return arr,sum
+    return out
 end
 
-local gui=Instance.new("ScreenGui",lp.PlayerGui)
-gui.IgnoreGuiInset=true gui.ResetOnSpawn=false gui.DisplayOrder=9999999
-
-local bg=Instance.new("Frame",gui)
-bg.Size=UDim2.new(1,0,1,0)
-bg.BackgroundColor3=Color3.fromRGB(0,0,0)
-
-local function Section(x,y,w,h)
-    local f=Instance.new("Frame",bg)
-    f.AnchorPoint=Vector2.new(0.5,0.5)
-    f.Position=UDim2.new(x,0,y,0)
-    f.Size=UDim2.new(w,0,h,0)
-    f.BackgroundTransparency=1
-    local ar=Instance.new("UIAspectRatioConstraint",f)
-    ar.AspectRatio=4 ar.DominantAxis=Enum.DominantAxis.Height
-    return f
+local function getShopDef(key)
+    return ShopsModule[key]
 end
 
-local function NewText(p)
-    local t=Instance.new("TextLabel",p)
-    t.Size=UDim2.new(1,0,1,0)t.BackgroundTransparency=1
-    t.Font=Enum.Font.GothamBlack t.TextScaled=true
-    t.TextColor3=Color3.fromRGB(255,255,255)
-    t.TextWrapped=true
-    return t
-end
-
-local user=Section(0.5,0.12,0.6,0.1)
-local USER=NewText(user)
-USER.Text="👤 "..lp.Name
-
-local snowBig=Section(0.5,0.22,0.7,0.18)
-local BIG=NewText(snowBig)
-
-local snowRate=Section(0.5,0.34,0.5,0.12)
-local RATE=NewText(snowRate)
-
-local topLeft=Section(0.22,0.08,0.4,0.08)
-local TL=NewText(topLeft)
-TL.TextXAlignment=Enum.TextXAlignment.Left
-
-local sessionTopRight=Section(0.78,0.08,0.36,0.08)
-local SESSION=NewText(sessionTopRight)
-SESSION.TextXAlignment=Enum.TextXAlignment.Right
-
-local midLeft=Section(0.22,0.50,0.42,0.09)
-local ML=NewText(midLeft)
-ML.TextXAlignment=Enum.TextXAlignment.Left
-
-local midRight=Section(0.88,0.30,0.42,0.09) -- SHIFTED UP 20% AND RIGHT 10%
-local MR=NewText(midRight)
-MR.TextXAlignment=Enum.TextXAlignment.Right
-
-local msgBar=Section(0.52,0.50,0.75,0.11)
-local MSG=NewText(msgBar)
-MSG.TextTransparency=1
-MSG.TextWrapped=true
-
-local petsFrame=Instance.new("Frame",bg)
-petsFrame.AnchorPoint=Vector2.new(0,1)
-petsFrame.Position=UDim2.new(0.02,0,0.86,0)
-petsFrame.Size=UDim2.new(0.38,0,0.22,0)
-petsFrame.BackgroundColor3=Color3.fromRGB(18,18,20)
-local petsCorner=Instance.new("UICorner",petsFrame)
-
-local petsTitle=Instance.new("TextLabel",petsFrame)
-petsTitle.Size=UDim2.new(1,-16,0,22)
-petsTitle.Position=UDim2.new(0,8,0,6)
-petsTitle.BackgroundTransparency=1
-petsTitle.Font=Enum.Font.GothamBold
-petsTitle.TextSize=16
-petsTitle.TextColor3=Color3.fromRGB(255,255,255)
-petsTitle.Text="🐾 Equipped Pets"
-petsTitle.TextXAlignment=Enum.TextXAlignment.Left
-
-local petsList=Instance.new("TextLabel",petsFrame)
-petsList.Size=UDim2.new(1,-16,1,-34)
-petsList.Position=UDim2.new(0,8,0,30)
-petsList.BackgroundTransparency=1
-petsList.Font=Enum.Font.Gotham
-petsList.TextSize=16
-petsList.TextColor3=Color3.fromRGB(220,220,220)
-petsList.TextWrapped=true
-petsList.TextXAlignment=Enum.TextXAlignment.Left
-
-local multiFrame=Instance.new("Frame",bg)
-multiFrame.AnchorPoint=Vector2.new(1,1)
-multiFrame.Position=UDim2.new(0.98,0,0.86,0)
-multiFrame.Size=UDim2.new(0.22,0,0.22,0)
-multiFrame.BackgroundColor3=Color3.fromRGB(18,18,20)
-local multiCorner=Instance.new("UICorner",multiFrame)
-
-local multiTitle=Instance.new("TextLabel",multiFrame)
-multiTitle.Size=UDim2.new(1,-16,0,24)
-multiTitle.Position=UDim2.new(0,8,0,6)
-multiTitle.BackgroundTransparency=1
-multiTitle.Font=Enum.Font.GothamBold
-multiTitle.TextSize=14
-multiTitle.TextColor3=Color3.fromRGB(255,255,255)
-multiTitle.Text="Total Snowflake Multi :"
-
-local multiValue=Instance.new("TextLabel",multiFrame)
-multiValue.Size=UDim2.new(1,-16,1,-36)
-multiValue.Position=UDim2.new(0,8,0,30)
-multiValue.BackgroundTransparency=1
-multiValue.Font=Enum.Font.GothamBlack
-multiValue.TextSize=28
-multiValue.TextColor3=Color3.fromRGB(220,220,220)
-multiValue.Text="❄️\n0"
-multiValue.TextXAlignment=Enum.TextXAlignment.Center
-multiValue.TextYAlignment=Enum.TextYAlignment.Center
-multiValue.TextWrapped=true
-
-local masterySection=Instance.new("Frame",bg)
-masterySection.Size=UDim2.new(0.36,0,0.08,0)
-masterySection.BackgroundTransparency=1
-masterySection.AnchorPoint=Vector2.new(0.5,0.5)
-
-local masteryLabel=Instance.new("TextLabel",masterySection)
-masteryLabel.Size=UDim2.new(1,0,1,0)
-masteryLabel.BackgroundTransparency=1
-masteryLabel.Font=Enum.Font.GothamBold
-masteryLabel.TextScaled=true
-masteryLabel.TextWrapped=true
-masteryLabel.TextColor3=Color3.fromRGB(255,255,255)
-masteryLabel.Text="🎄 Xmas Mastery: 0"
-
-local samples={}local shown=0
-local function push(v)samples[#samples+1]={t=tick(),v=v}while #samples>1 and tick()-samples[1].t>60 do table.remove(samples,1)end end
-local function perMin()if #samples<2 then return 0 end local a=samples[1]local b=samples[#samples]if b.t-a.t<=0 or b.v-a.v<0 then return 0 end return((b.v-a.v)/(b.t-a.t))*60 end
-
-local startTick=tick()
-local last={snow=getSnow(),presents=0,keys=0,spins=0,xmas=getXmas(),hatches=getHatches()}
-local function fadeMsg(t)MSG.Text=t MSG.Position=UDim2.new(0.52,0,0.50,18)MSG.TextTransparency=1 TweenService:Create(MSG,TweenInfo.new(0.5),{TextTransparency=0,Position=UDim2.new(0.52,0,0.50,0)}):Play()end
-local queue={}
-
-local function addMsg(m)if queue[#queue]~=m then queue[#queue+1]=m end end
+local pd = LocalData:Get() or {}
+local shopsData = pd.Shops or {}
+local prev = snapshotAllBought(shopsData)
 
 task.spawn(function()
     while true do
-        local snow=getSnow()
-        push(snow)
+        pd = LocalData:Get() or {}
+        shopsData = pd.Shops or {}
+        for shopKey, shopVal in pairs(shopsData) do
+            local currentBought = (shopVal and shopVal.Bought) or {}
+            local prevBought = prev[tostring(shopKey)] or {}
+            for k, v in pairs(currentBought) do
+                local ks = tostring(k)
+                if prevBought[ks] == nil or tostring(prevBought[ks]) ~= tostring(v) then
+                    local qtyText
+                    if type(v) == "boolean" then qtyText = v and "ALL" or tostring(v)
+                    elseif type(v) == "number" then qtyText = tostring(v)
+                    elseif type(v) == "table" then qtyText = tostring(v.Amount or v.Count or v.Qty or v.Quantity or "TABLE")
+                    else qtyText = tostring(v) end
 
-        local items=getItems()
-        local pres=items["Christmas Present"]or 0
-        local keys=items["Christmas Key"]or 0
-        local spins=items["Christmas Spin Ticket"]or 0
-        local xmas=getXmas()
-        local htc=getHatches()
+                    local slotIndex = tonumber(ks) or ks
+                    local shopDef = getShopDef(tostring(shopKey)) or {}
+                    local productDef = nil
+                    if shopDef.PermanentItems and shopDef.PermanentItems[slotIndex] then productDef = shopDef.PermanentItems[slotIndex]
+                    elseif shopDef.RandomItems and shopDef.RandomItems[slotIndex] then productDef = shopDef.RandomItems[slotIndex] end
 
-        if xmas>last.xmas then addMsg("🎄 Upgraded Xmas Mastery!") end
-        if keys<last.keys then addMsg("🗝️ Opening Christmas Chest…") end
-        if keys>last.keys then addMsg("🗝️ +"..fmt(keys-last.keys).." Christmas Keys!") end
-        if spins<last.spins then addMsg("🎡 Spinning Christmas Wheel…") end
-        if spins>last.spins then addMsg("🎡 +"..fmt(spins-last.spins).." Christmas Spins!") end
-        if pres>last.presents then addMsg("🎁 +"..fmt(pres-last.presents).." Christmas Presents!") end
-        if snow>last.snow then addMsg("❄️ Automatically Giving Gifts…") end
-        if snow<last.snow and htc>last.hatches then addMsg("🥚 Hatching Eggs: +"..fmt(htc-last.hatches)) end
+                    local pname = "UNKNOWN"
+                    local price = "UNKNOWN"
+                    if productDef then
+                        if productDef.Product then
+                            pname = productNameFromDef(productDef.Product)
+                        else
+                            pname = productNameFromDef(productDef)
+                        end
+                        price = nicePrice(productDef.Cost)
+                    end
 
-        last.snow=snow last.presents=pres last.keys=keys last.spins=spins last.xmas=xmas last.hatches=htc
-
-        local s0=shown local s1=snow local t0=tick()
-        local c;c=RunService.Heartbeat:Connect(function()
-            local a=math.clamp((tick()-t0)/0.3,0,1)
-            shown=s0+(s1-s0)*a
-            BIG.Text="❄️ "..fmt(shown)
-            if a>=1 then c:Disconnect()end
-        end)
-
-        RATE.Text="❄️/min: "..fmt(perMin())
-        TL.Text="🍬 Peppermint: "..fmtTime(getPep())
-
-        local elapsed=math.floor(tick()-startTick)
-        local h=math.floor(elapsed/3600)
-        local m=math.floor((elapsed%3600)/60)
-        local s=elapsed%60
-        SESSION.Text=string.format("Session: %02d:%02d:%02d",h,m,s)
-
-        ML.Text="🎁 Christmas Presents: "..fmt(pres)
-        MR.Text="🗝️ "..fmt(keys).."\n🎡 "..fmt(spins)
-
-        local arr,sum=getTeam()
-        if #arr>0 then
-            local lines={}
-            for i=1,#arr do
-                local e=arr[i].Name.." x"..fmt(arr[i].Snow).." ❄️"
-                local r=math.floor((i-1)/3)+1
-                lines[r]=lines[r]and(lines[r].."      "..e)or e
+                    print(string.format("Slot: %s  Qty: %s  Name: %s  Price: %s", tostring(slotIndex), tostring(qtyText), tostring(pname), tostring(price)))
+                end
             end
-            petsList.Text=table.concat(lines,"\n")
-            multiValue.Text="❄️\n"..fmt(sum)
-        else
-            petsList.Text="None"
-            multiValue.Text="❄️\n0"
+            local newSnap = {}
+            for kk,vv in pairs(currentBought) do newSnap[tostring(kk)] = vv end
+            prev[tostring(shopKey)] = newSnap
         end
-
-        local petPos=petsFrame.AbsolutePosition
-        local petSize=petsFrame.AbsoluteSize
-        local multiPos=multiFrame.AbsolutePosition
-        local multiSize=multiFrame.AbsoluteSize
-
-        local midX=(petPos.X+petSize.X/2 + multiPos.X+multiSize.X/2)/2
-        local midY=(petPos.Y+petSize.Y/2 + multiPos.Y+multiSize.Y/2)/2
-
-        masterySection.Position=UDim2.new(midX/bg.AbsoluteSize.X,0,midY/bg.AbsoluteSize.Y,0)
-        masteryLabel.Text="🎄 Xmas Mastery: "..xmas
-
-        if #queue>0 then
-            local m=table.remove(queue,1)
-            fadeMsg(m)
-            task.wait(math.random(3,10))
-            TweenService:Create(MSG,TweenInfo.new(0.35),{TextTransparency=1,Position=UDim2.new(0.52,0,0.50,18)}):Play()
-        else
-            MSG.Text=""
-        end
-
-        task.wait(1)
+        task.wait(0.5)
     end
 end)
