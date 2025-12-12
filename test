@@ -1,7 +1,8 @@
--- Scans all shops and buys ONLY the exact potions you specified:
--- Speed (Level 7), Mythic (Level 7), Luck/Lucky (Level 7), Festive Elixir (Level 4), Festive Infinity Elixir (Level 1)
--- Exact-name matching (case-sensitive). Will NOT match generic "Infinity".
--- Prints shop name, quantity bought, item name and total cost.
+-- Buys only the specified potions using the game's real shop data layout.
+-- Exact-name & level rules:
+--   Speed (Level 7), Mythic (Level 7), Lucky or Luck (Level 7),
+--   Festive Elixir (Level 4), Festive Infinity Elixir (Level 1)
+-- Uses player data currency fields like data.Snowflakes / data.Coins / data.Gems.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local task = task
 
@@ -22,17 +23,15 @@ end
 
 local function extractCost(def)
     if not def then return nil end
-    local cost = tryGet(def, "Cost", "Price", "CostInfo", "PriceInfo") or tryGet(def and def.Product, "Cost", "Price")
-    if type(cost) == "number" then
+    local c = tryGet(def, "Cost", "Price", "CostInfo", "PriceInfo") or tryGet(def and def.Product, "Cost", "Price")
+    if type(c) == "number" then
         local cur = tryGet(def, "Currency", "CurrencyType") or "Currency"
-        return { Amount = cost, Currency = cur }
+        return { Amount = c, Currency = cur }
     end
-    if type(cost) == "table" then
-        local amt = tryGet(cost, "Amount", "Value", "Price", "Cost")
-        local cur = tryGet(cost, "Currency", "CurrencyType", "Cur") or tryGet(def, "Currency", "CurrencyType") or "Currency"
-        if amt ~= nil then
-            return { Amount = (type(amt)=="number" and amt) or tonumber(amt) or 0, Currency = cur }
-        end
+    if type(c) == "table" then
+        local amt = tryGet(c, "Amount", "Value", "Price", "Cost")
+        local cur = tryGet(c, "Currency", "CurrencyType") or tryGet(def, "Currency", "CurrencyType") or "Currency"
+        if amt ~= nil then return { Amount = (type(amt)=="number" and amt) or tonumber(amt) or 0, Currency = cur } end
     end
     local amt2 = tryGet(def, "Amount", "Value", "Price", "Cost") or tryGet(def and def.Product, "Amount", "Value")
     local cur2 = tryGet(def, "Currency", "CurrencyType") or tryGet(def and def.Product, "Currency", "CurrencyType")
@@ -68,28 +67,16 @@ local function fmtNumber(n)
 end
 
 local function findCurrencyAmount(playerData, currencyName)
-    if not playerData or type(playerData) ~= "table" or not currencyName then return 0 end
-    local lowerName = string.lower(tostring(currencyName))
-    local function checkTable(t)
-        if type(t) ~= "table" then return nil end
-        for k,v in pairs(t) do
-            if type(k) == "string" and string.lower(k) == lowerName and type(v) == "number" then
-                return v
-            end
-        end
-        return nil
-    end
-    local direct = checkTable(playerData)
-    if direct then return direct end
-    for _, key in ipairs({"Currencies","Currency","Wallet","Resources","Stats","Balances"}) do
-        local ctbl = playerData[key] or playerData[string.lower(key)]
-        local found = checkTable(ctbl)
-        if found then return found end
-    end
-    for _,v in pairs(playerData) do
-        if type(v) == "table" then
-            local found = checkTable(v)
-            if found then return found end
+    if not playerData or not currencyName then return 0 end
+    -- direct: data.Snowflakes style
+    if type(playerData[currencyName]) == "number" then return playerData[currencyName] end
+    -- some games store under Data or data
+    local alt = playerData.Data or playerData.data
+    if type(alt) == "table" and type(alt[currencyName]) == "number" then return alt[currencyName] end
+    -- fallback scan
+    for k,v in pairs(playerData) do
+        if type(k) == "string" and string.lower(k) == string.lower(currencyName) and type(v) == "number" then
+            return v
         end
     end
     return 0
@@ -100,14 +87,101 @@ local function safeFire(argsTable)
     return ok, err
 end
 
--- exact rules (case-sensitive): name -> required level
-local exactRules = {
+local rules = {
     ["Speed"] = 7,
     ["Mythic"] = 7,
-    ["Lucky"] = 7,            -- match "Lucky" as shown in your dump
-    ["Luck"] = 7,             -- include "Luck" if it appears as exact
+    ["Lucky"] = 7,
+    ["Luck"] = 7,
     ["Festive Elixir"] = 4,
     ["Festive Infinity Elixir"] = 1,
+}
+
+local function matchesRuleExact(prod)
+    if not prod or type(prod) ~= "table" then return false end
+    local name = prod.Name or ""
+    local level = prod.Level
+    local req = rules[name]
+    if req ~= nil then
+        if type(req) == "number" then
+            return level ~= nil and level == req
+        end
+        return true
+    end
+    return false
+end
+
+local function qtyFromValue(v)
+    if type(v) == "boolean" then return v and math.huge or 0 end
+    if type(v) == "number" then return v end
+    if type(v) == "table" then return tonumber(tryGet(v, "Amount","Count","Qty","Quantity")) or 0 end
+    return 0
+end
+
+local playerDataCache = LocalData:Get() or {}
+
+for shopKey, shopDef in pairs(ShopsModule) do
+    local perm = shopDef.PermanentItems or {}
+    local rand = shopDef.RandomItems or {}
+    local combined = {}
+    for i,entry in pairs(perm) do combined[i] = entry end
+    for i,entry in pairs(rand) do combined[i] = entry end
+
+    for slotIndex, slotDef in pairs(combined) do
+        local prod = extractProduct(slotDef)
+        if matchesRuleExact(prod) then
+            local costTbl = extractCost(slotDef) or extractCost(slotDef and slotDef.Product) or extractCost(shopDef)
+            local pricePer = (costTbl and tonumber(costTbl.Amount)) or nil
+            local currencyName = (costTbl and costTbl.Currency) or "(unknown)"
+            local stock = tonumber(tryGet(slotDef, "Stock", "MaxStock", "Amount")) or math.huge
+
+            playerDataCache = LocalData:Get() or playerDataCache
+            local balance = findCurrencyAmount(playerDataCache, currencyName) or 0
+
+            if not pricePer or pricePer <= 0 then
+                local args = { "BuyShopItem", tostring(shopKey), slotIndex, true }
+                local ok,_ = safeFire(args)
+                if ok then
+                    print(("%s Bought ALL x %s Qty:%s Cost:free/unknown"):format(tostring(shopKey), tostring(prod.Name), tostring(stock)))
+                end
+                task.wait(0.25)
+            else
+                local maxAffordable = math.floor(balance / pricePer)
+                local toBuy = math.min(stock, maxAffordable)
+                if toBuy <= 0 then
+                    -- cannot afford
+                else
+                    if toBuy >= stock then
+                        local args = { "BuyShopItem", tostring(shopKey), slotIndex, true }
+                        local ok,_ = safeFire(args)
+                        if ok then
+                            local totalCost = pricePer * stock
+                            print(("%s Bought ALL (%d) x %s Cost: %s %s"):format(tostring(shopKey), tonumber(stock), tostring(prod.Name), fmtNumber(totalCost), tostring(currencyName)))
+                        end
+                        task.wait(0.35)
+                    else
+                        local bought = 0
+                        local totalCost = 0
+                        for i = 1, toBuy do
+                            local args = { "BuyShopItem", tostring(shopKey), slotIndex, false }
+                            local ok,_ = safeFire(args)
+                            if not ok then break end
+                            bought = bought + 1
+                            totalCost = totalCost + pricePer
+                            task.wait(0.22)
+                        end
+                        if bought > 0 then
+                            print(("%s Bought %d x %s Cost: %s %s"):format(tostring(shopKey), bought, tostring(prod.Name), fmtNumber(totalCost), tostring(currencyName)))
+                        end
+                    end
+                end
+            end
+        end
+        task.wait(0.12)
+    end
+    task.wait(0.25)
+end
+
+print("Done.")    ["Festive Infinity Elixir"] = 1,
 }
 
 local function matchesExactRule(prod)
