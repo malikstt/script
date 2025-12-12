@@ -1,36 +1,37 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local task = task
 
 local ok, LocalData = pcall(function() return require(ReplicatedStorage.Client.Framework.Services.LocalData) end)
-if not ok or type(LocalData) ~= "table" then
-    LocalData = nil
-end
-
+if not ok then LocalData = nil end
 local ok2, ShopsModule = pcall(function() return require(ReplicatedStorage.Shared.Data.Shops) end)
-if not ok2 or type(ShopsModule) ~= "table" then
-    ShopsModule = nil
+if not ok2 then ShopsModule = nil end
+
+local function safeWait(t)
+    if type(t) ~= "number" then t = 0.1 end
+    if task and type(task.wait) == "function" then task.wait(t) else wait(t) end
 end
 
-local function waitForRemote()
-    local ok3, shared = pcall(function() return ReplicatedStorage:WaitForChild("Shared", 5) end)
-    if not ok3 or not shared then return nil end
-    local framework = shared:FindFirstChild("Framework")
-    if not framework then return nil end
-    local network = framework:FindFirstChild("Network")
-    if not network then return nil end
-    local remote = network:FindFirstChild("Remote")
-    if not remote then return nil end
-    local evt = remote:FindFirstChild("RemoteEvent") or remote:FindFirstChildWhichIsA("RemoteEvent")
-    return evt
-end
-
-local RemoteEvent = waitForRemote()
-
-if LocalData and LocalData.IsReady and type(LocalData.IsReady) == "function" then
-    if not LocalData:IsReady() and LocalData.DataReady and LocalData.DataReady.Wait then
-        pcall(function() LocalData.DataReady:Wait() end)
+local function findRemoteEvent()
+    for i = 1, 20 do
+        local shared = ReplicatedStorage:FindFirstChild("Shared")
+        if shared then
+            local framework = shared:FindFirstChild("Framework")
+            if framework then
+                local network = framework:FindFirstChild("Network")
+                if network then
+                    local remote = network:FindFirstChild("Remote")
+                    if remote then
+                        local evt = remote:FindFirstChild("RemoteEvent") or remote:FindFirstChildWhichIsA("RemoteEvent")
+                        if evt then return evt end
+                    end
+                end
+            end
+        end
+        safeWait(0.1)
     end
+    return nil
 end
+
+local RemoteEvent = findRemoteEvent()
 
 local function tryGet(t, ...)
     if type(t) ~= "table" then return nil end
@@ -104,7 +105,7 @@ end
 
 local function safeFire(argsTable)
     if not RemoteEvent then return false, "no remote" end
-    local ok, err = pcall(function() RemoteEvent:FireServer(unpack(argsTable)) end)
+    local ok, err = pcall(function() RemoteEvent.FireServer(RemoteEvent, unpack(argsTable)) end)
     return ok, err
 end
 
@@ -138,34 +139,34 @@ local function qtyFromValue(v)
     return 0
 end
 
-if not ShopsModule then
-    print("No ShopsModule available")
-    return
+if not ShopsModule then return end
+
+local function getPlayerData()
+    if LocalData and type(LocalData.Get) == "function" then
+        local ok, data = pcall(function() return LocalData:Get() end)
+        if ok and type(data) == "table" then return data end
+    end
+    return {}
 end
 
-if not LocalData then
-    print("No LocalData module available; proceeding but player balances may be unknown")
-end
-
-local playerDataCache = (LocalData and LocalData.Get and LocalData:Get()) or {}
+local playerDataCache = getPlayerData()
 
 for shopKey, shopDef in pairs(ShopsModule) do
-    local perm = shopDef and shopDef.PermanentItems or {}
-    local rand = shopDef and shopDef.RandomItems or {}
+    local perm = (type(shopDef)=="table" and shopDef.PermanentItems) or {}
+    local rand = (type(shopDef)=="table" and shopDef.RandomItems) or {}
     local combined = {}
-    for i,entry in pairs(perm) do combined[i] = entry end
-    for i,entry in pairs(rand) do combined[i] = entry end
+    for i,entry in pairs(perm or {}) do combined[i] = entry end
+    for i,entry in pairs(rand or {}) do combined[i] = entry end
 
     for slotIndex, slotDef in pairs(combined) do
         local prod = extractProduct(slotDef)
-        local okMatch = matchesRuleExact(prod)
-        if okMatch then
+        if matchesRuleExact(prod) then
             local costTbl = extractCost(slotDef) or extractCost(slotDef and slotDef.Product) or extractCost(shopDef)
             local pricePer = (costTbl and tonumber(costTbl.Amount)) or nil
             local currencyName = (costTbl and costTbl.Currency) or "(unknown)"
             local stock = tonumber(tryGet(slotDef, "Stock", "MaxStock", "Amount")) or math.huge
 
-            playerDataCache = (LocalData and LocalData.Get and LocalData:Get()) or playerDataCache
+            playerDataCache = getPlayerData() or playerDataCache
             local balance = findCurrencyAmount(playerDataCache, currencyName) or 0
 
             if not pricePer or pricePer <= 0 then
@@ -174,13 +175,11 @@ for shopKey, shopDef in pairs(ShopsModule) do
                 if okfire then
                     print(("%s Bought ALL x %s Qty:%s Cost:free/unknown"):format(tostring(shopKey), tostring(prod.Name), tostring(stock)))
                 end
-                task.wait(0.25)
+                safeWait(0.25)
             else
                 local maxAffordable = math.floor(balance / pricePer)
                 local toBuy = math.min(stock, maxAffordable)
-                if toBuy <= 0 then
-                    -- cannot afford
-                else
+                if toBuy > 0 then
                     if toBuy >= stock then
                         local args = { "BuyShopItem", tostring(shopKey), slotIndex, true }
                         local okfire = safeFire(args)
@@ -188,7 +187,7 @@ for shopKey, shopDef in pairs(ShopsModule) do
                             local totalCost = pricePer * stock
                             print(("%s Bought ALL (%d) x %s Cost: %s %s"):format(tostring(shopKey), tonumber(stock), tostring(prod.Name), fmtNumber(totalCost), tostring(currencyName)))
                         end
-                        task.wait(0.35)
+                        safeWait(0.35)
                     else
                         local bought = 0
                         local totalCost = 0
@@ -198,7 +197,7 @@ for shopKey, shopDef in pairs(ShopsModule) do
                             if not okfire then break end
                             bought = bought + 1
                             totalCost = totalCost + pricePer
-                            task.wait(0.22)
+                            safeWait(0.22)
                         end
                         if bought > 0 then
                             print(("%s Bought %d x %s Cost: %s %s"):format(tostring(shopKey), bought, tostring(prod.Name), fmtNumber(totalCost), tostring(currencyName)))
@@ -207,9 +206,9 @@ for shopKey, shopDef in pairs(ShopsModule) do
                 end
             end
         end
-        task.wait(0.12)
+        safeWait(0.12)
     end
-    task.wait(0.25)
+    safeWait(0.25)
 end
 
 print("Done.")
