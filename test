@@ -1,5 +1,3 @@
--- Christmas snowflake tracker — revised per your corrections (pure Lua, no notes)
-
 local Players = game:GetService("Players")
 local lp = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -33,9 +31,12 @@ end
 
 local function getSnow() return gd().Snowflakes or 0 end
 local function getHatches() return gd().Stats and gd().Stats.Hatches or 0 end
+local function getHatchesRaw()
+    local d = gd()
+    return (d.Stats and d.Stats.Hatches) or 0
+end
 local function getXmas() return gd().MasteryLevels and gd().MasteryLevels.Christmas or 0 end
 
--- Peppermint chest reading (timestamps are unix time)
 local CHEST_NAME = "Peppermint Chest"
 local function getPepRemainingSeconds()
     local data = gd()
@@ -49,7 +50,7 @@ local function getPepRemainingSeconds()
     return nil
 end
 
-local function fmt_hms(sec) -- HH:MM:SS
+local function fmt_hms(sec)
     sec = math.max(0, math.floor(sec or 0))
     local h = math.floor(sec/3600)
     local m = math.floor((sec%3600)/60)
@@ -57,40 +58,36 @@ local function fmt_hms(sec) -- HH:MM:SS
     return string.format("%02d:%02d:%02d", h, m, s)
 end
 
-local function fmt_mmss_or_ready(sec) -- MM:SS or READY when zero
+local function fmt_mmss_or_ready(sec)
     if sec == nil then return "NOT FOUND" end
     sec = math.max(0, math.floor(sec))
-    if sec == 0 then return "READY" end
+    if sec == 0 then return "READY !" end
     local m = math.floor(sec/60)
     local s = sec % 60
     return string.format("%02d:%02d", m, s)
 end
 
--- POTIONS: map raw names from LocalData to display labels exactly as requested
-local POTION_MAP = {
-    ["Festive Infinity Elixir"] = "Festive Infinity Elixirs",
-    ["Festive Elixir 4"] = "Festive Elixir IV",
-    ["Festive Elixir 3"] = "Festive Elixir III",
-}
-
-local function getPotions()
-    local out = { ["Festive Infinity Elixirs"] = 0, ["Festive Elixir IV"] = 0, ["Festive Elixir III"] = 0 }
+local function getPotionsTwoLines()
     local data = gd()
-    local pots = data.Potions
-    if type(pots) ~= "table" then return out end
-    for _, pot in pairs(pots) do
-        if type(pot) == "table" and pot.Name then
-            for rawName, display in pairs(POTION_MAP) do
-                if pot.Name == rawName then
-                    out[display] = tonumber(pot.Amount) or 0
+    local festiveInfinity = 0
+    local festiveElixirs = 0
+
+    if data and data.Potions then
+        for _, pot in pairs(data.Potions) do
+            if type(pot) == "table" and pot.Name and pot.Amount then
+                local name = tostring(pot.Name)
+                if name:find("Festive Infinity Elixir", 1, true) then
+                    festiveInfinity = festiveInfinity + (tonumber(pot.Amount) or 0)
+                elseif name:find("Festive Elixir", 1, true) then
+                    festiveElixirs = festiveElixirs + (tonumber(pot.Amount) or 0)
                 end
             end
         end
     end
-    return out
+
+    return festiveInfinity, festiveElixirs
 end
 
--- ITEMS and getItems unchanged
 local ITEMS = {"Christmas Present","Christmas Key","Christmas Spin Ticket"}
 local function getItems()
     local d = gd()
@@ -110,7 +107,6 @@ local function getItems()
     return r
 end
 
--- Team & pets & multi (keep pets info)
 local function getTeam()
     local d = gd()
     local ids = (d.Teams and d.TeamEquipped and d.Teams[d.TeamEquipped]
@@ -129,7 +125,6 @@ local function getTeam()
     return arr, sum
 end
 
--- UI build (restore original sizing/scale behavior; keep two separate UIs: left = pets + total multi, right = enchants)
 local gui = Instance.new("ScreenGui", lp.PlayerGui)
 gui.IgnoreGuiInset = true
 gui.ResetOnSpawn = false
@@ -138,7 +133,7 @@ gui.DisplayOrder = 9999999
 local bg = Instance.new("Frame", gui)
 bg.Size = UDim2.new(1,0,1,0)
 bg.BackgroundColor3 = Color3.fromRGB(0,0,0)
-bg.BackgroundTransparency = 0 -- restore full dark background
+bg.BackgroundTransparency = 0
 
 local function Section(x,y,w,h)
     local f = Instance.new("Frame", bg)
@@ -166,7 +161,7 @@ end
 
 local user = Section(0.5,0.12,0.6,0.1)
 local USER = NewText(user)
-USER.Text = "👤 "..lp.Name
+USER.Text = "🥚  "..lp.Name
 
 local snowBig = Section(0.5,0.22,0.7,0.18)
 local BIG = NewText(snowBig)
@@ -174,19 +169,28 @@ local BIG = NewText(snowBig)
 local snowRate = Section(0.5,0.34,0.5,0.12)
 local RATE = NewText(snowRate)
 
--- TOP LEFT: Inventory potions (TextScaled true, big enough — do not reduce)
 local topLeft = Section(0.22,0.08,0.4,0.12)
 local TL = NewText(topLeft)
 TL.TextXAlignment = Enum.TextXAlignment.Left
 TL.TextScaled = true
 TL.Font = Enum.Font.GothamBlack
 
--- TOP RIGHT: Session + Peppermint chest (keep TextScaled true, clear and readable)
-local sessionTopRight = Section(0.78,0.08,0.36,0.12)
+local sessionTopRight = Section(0.78,0.08,0.36,0.08)
 local SESSION = NewText(sessionTopRight)
-SESSION.TextXAlignment = Enum.TextXAlignment.Right
+SESSION.TextXAlignment = Enum.TextXAlignment.Center
 SESSION.TextScaled = true
 SESSION.Font = Enum.Font.GothamBlack
+
+local pepSection = Section(0.78,0.14,0.20,0.05)
+local PEP = Instance.new("TextLabel", pepSection)
+PEP.Size = UDim2.new(1,0,1,0)
+PEP.BackgroundTransparency = 1
+PEP.Font = Enum.Font.GothamBlack
+PEP.TextScaled = true
+PEP.TextColor3 = Color3.fromRGB(255,255,255)
+PEP.TextWrapped = true
+PEP.TextXAlignment = Enum.TextXAlignment.Center
+PEP.TextYAlignment = Enum.TextYAlignment.Center
 
 local midLeft = Section(0.22,0.50,0.42,0.09)
 local ML = NewText(midLeft)
@@ -201,7 +205,6 @@ local MSG = NewText(msgBar)
 MSG.TextTransparency = 1
 MSG.TextWrapped = true
 
--- LEFT UI: petsFrame (Equipped Pets + Total Multi at top, keep original layout)
 local petsFrame = Instance.new("Frame", bg)
 petsFrame.AnchorPoint = Vector2.new(0,1)
 petsFrame.Position = UDim2.new(0.02,0,0.86,0)
@@ -230,7 +233,6 @@ petsList.TextWrapped = true
 petsList.TextXAlignment = Enum.TextXAlignment.Left
 petsList.TextYAlignment = Enum.TextYAlignment.Top
 
--- RIGHT UI: multiFrame becomes Enchants display (keep it visible)
 local multiFrame = Instance.new("Frame", bg)
 multiFrame.AnchorPoint = Vector2.new(1,1)
 multiFrame.Position = UDim2.new(0.98,0,0.86,0)
@@ -245,7 +247,7 @@ multiTitle.BackgroundTransparency = 1
 multiTitle.Font = Enum.Font.GothamBold
 multiTitle.TextSize = 14
 multiTitle.TextColor3 = Color3.fromRGB(255,255,255)
-multiTitle.Text = "Enchant Status"
+multiTitle.Text = "✨ Enchant Status"
 multiTitle.TextXAlignment = Enum.TextXAlignment.Left
 
 local enchantList = Instance.new("TextLabel", multiFrame)
@@ -259,8 +261,21 @@ enchantList.TextWrapped = true
 enchantList.TextXAlignment = Enum.TextXAlignment.Left
 enchantList.TextYAlignment = Enum.TextYAlignment.Top
 
--- Keep a separate small multiValue display in petsFrame top if needed (we'll place Total Multi as the first line inside petsList)
--- Enchant detection helpers (use provided logic)
+local hatchFrame = Instance.new("Frame", bg)
+hatchFrame.AnchorPoint = Vector2.new(0.5,1)
+hatchFrame.Size = UDim2.new(0.12,0,0.10,0)
+hatchFrame.BackgroundColor3 = Color3.fromRGB(24,24,26)
+local hatchCorner = Instance.new("UICorner", hatchFrame)
+local hatchLabel = Instance.new("TextLabel", hatchFrame)
+hatchLabel.Size = UDim2.new(1,0,1,0)
+hatchLabel.BackgroundTransparency = 1
+hatchLabel.Font = Enum.Font.GothamBlack
+hatchLabel.TextScaled = true
+hatchLabel.TextColor3 = Color3.fromRGB(255,255,255)
+hatchLabel.TextWrapped = true
+hatchLabel.TextXAlignment = Enum.TextXAlignment.Center
+hatchLabel.TextYAlignment = Enum.TextYAlignment.Center
+
 local function findPetById(petId)
     local playerData = gd()
     if not (playerData and playerData.Pets) then return nil end
@@ -285,51 +300,23 @@ local function firstEnchantId(pet)
     return pet.Enchants[1].Id or "None"
 end
 
--- track previous enchant signatures to detect changes
-local prev_enchant_sig = {}
-
--- Build enchant lines for right UI (up to 4, with ticks)
-local function buildEnchantLines()
+local function buildEnchantLinesAll()
     local teamArr, _ = getTeam()
     if #teamArr == 0 then return {} end
 
-    local toShow = {}
-    for i = 1, math.min(4, #teamArr) do table.insert(toShow, teamArr[i]) end
-
-    local allTeamUp = true
-    for _, p in ipairs(toShow) do
-        if not hasTeamUpEnchant(findPetById(p.Id)) then
-            allTeamUp = false
-            break
-        end
-    end
-
-    if allTeamUp and #teamArr > 4 then
-        -- random 4
-        local indices = {}
-        for i = 1, #teamArr do indices[i] = i end
-        for i = #indices, 2, -1 do
-            local j = math.random(1, i)
-            indices[i], indices[j] = indices[j], indices[i]
-        end
-        toShow = {}
-        for idx = 1, math.min(4, #indices) do table.insert(toShow, teamArr[indices[idx]]) end
-    end
-
     local lines = {}
-    for _, p in ipairs(toShow) do
+    for _, p in ipairs(teamArr) do
         local petData = findPetById(p.Id) or p
         local name = petData.Name or ("Pet "..tostring(p.Id))
         local enchId = firstEnchantId(petData)
         local tickMark = hasTeamUpEnchant(petData) and "✅" or "❌"
         local dispEnchant = tostring(enchId):gsub("_", " ")
-        lines[#lines+1] = string.format("%s > %s %s", name, dispEnchant, tickMark)
+        lines[#lines+1] = string.format("🐾 %s > %s %s", name, dispEnchant, tickMark)
     end
 
     return lines
 end
 
--- sampling for rate
 local samples = {}
 local shown = 0
 local function push(v)
@@ -355,7 +342,16 @@ end
 local queue = {}
 local function addMsg(m) if queue[#queue] ~= m then queue[#queue+1] = m end end
 
--- Main updater loop
+local function getPowerups()
+    return (gd().Powerups) or {}
+end
+
+local oldPowerups = {}
+do
+    local t = getPowerups()
+    for k,v in pairs(t) do oldPowerups[k] = v end
+end
+
 task.spawn(function()
     waitForDataReady()
 
@@ -379,9 +375,19 @@ task.spawn(function()
         if snow > last.snow then addMsg("❄️ Automatically Giving Gifts…") end
         if snow < last.snow and htc > last.hatches then addMsg("🥚 Hatching Eggs: +"..fmt_num(htc-last.hatches)) end
 
+        -- powerups change detection -> add message like "+50 NAME"
+        local newPowerups = getPowerups()
+        for name, amount in pairs(newPowerups) do
+            local oldAmount = oldPowerups[name] or 0
+            if tonumber(amount) and tonumber(amount) > (tonumber(oldAmount) or 0) then
+                addMsg("➕ "..tostring(tonumber(amount) - (tonumber(oldAmount) or 0)).." "..tostring(name))
+            end
+        end
+        oldPowerups = {}
+        for k,v in pairs(newPowerups) do oldPowerups[k] = v end
+
         last.snow = snow last.presents = pres last.keys = keys last.spins = spins last.xmas = xmas last.hatches = htc
 
-        -- animate BIG snow number
         local s0 = shown local s1 = snow local t0 = tick()
         local c; c = RunService.Heartbeat:Connect(function()
             local a = math.clamp((tick()-t0)/0.3,0,1)
@@ -392,35 +398,28 @@ task.spawn(function()
 
         RATE.Text = "❄️/min: "..fmt_num(perMin())
 
-        -- Session + Peppermint (Session on first line, Peppermint chest label + time on separate lines); TextScaled true (readable)
         local elapsed = math.floor(tick() - startTick)
         local hhmmss = fmt_hms(elapsed)
+        SESSION.Text = "⏱️ Session: "..hhmmss
+
         local pepSecs = getPepRemainingSeconds()
         local pepDisplay = fmt_mmss_or_ready(pepSecs)
-        SESSION.Text = string.format("Session: %s\nPeppermint Chest:\n%s", hhmmss, pepDisplay)
+        PEP.Text = "🍬 Peppermint Chest :\n   "..pepDisplay
 
-        -- POTIONS at topLeft (exact name mapping, TextScaled true)
-        local pots = getPotions()
-        local potLines = {}
-        potLines[#potLines+1] = "Inventory potions"
-        potLines[#potLines+1] = string.format("Festive Infinity Elixirs : %s", fmt_num(pots["Festive Infinity Elixirs"] or 0))
-        potLines[#potLines+1] = string.format("Festive Elixir IV : %s", fmt_num(pots["Festive Elixir IV"] or 0))
-        potLines[#potLines+1] = string.format("Festive Elixir III : %s", fmt_num(pots["Festive Elixir III"] or 0))
-        TL.Text = table.concat(potLines, "\n")
+        local inf, elix = getPotionsTwoLines()
+        TL.Text = string.format("🧪 Inventory potions\n✨ Festive Infinity Elixirs : %s\n🔮 Festive Elixirs : %s", fmt_num(inf), fmt_num(elix))
 
-        -- ML / MR small stats
         ML.Text = "🎁 Christmas Presents: "..fmt_num(pres)
         MR.Text = "🗝️ "..fmt_num(keys).."\n🎡 "..fmt_num(spins)
 
-        -- Team and multi: Total Multi should be first line in left pets UI, then the large gap, then equipped pets lines (unchanged)
         local arr, sum = getTeam()
         if #arr > 0 then
             local lines = {}
-            lines[#lines+1] = "Total Multi : ❄️ "..fmt_num(sum) -- first line
-            lines[#lines+1] = "" -- blank gap to preserve original spacing
+            lines[#lines+1] = "❄️ Total Multi : "..fmt_num(sum)
+            lines[#lines+1] = ""
             local petRows = {}
             for i = 1, #arr do
-                local e = arr[i].Name.." x"..fmt_num(arr[i].Snow).." ❄️"
+                local e = "🐾 "..arr[i].Name.." x"..fmt_num(arr[i].Snow).." ❄️"
                 local r = math.floor((i-1)/3)+1
                 petRows[r] = petRows[r] and (petRows[r].."      "..e) or e
             end
@@ -430,15 +429,22 @@ task.spawn(function()
             petsList.Text = "None"
         end
 
-        -- Right UI: build enchant lines and display there (keeps right UI intact)
-        local enchantLines = buildEnchantLines()
+        local enchantLines = buildEnchantLinesAll()
         if #enchantLines > 0 then
             enchantList.Text = table.concat(enchantLines, "\n")
         else
             enchantList.Text = "No Equipped Pets"
         end
 
-        -- messages queue handling
+        local petPos, petSize = petsFrame.AbsolutePosition, petsFrame.AbsoluteSize
+        local multiPos, multiSize = multiFrame.AbsolutePosition, multiFrame.AbsoluteSize
+        local midX = (petPos.X + petSize.X/2 + multiPos.X + multiSize.X/2) / 2
+        local midY = petPos.Y + petSize.Y
+        if bg.AbsoluteSize.X > 0 and bg.AbsoluteSize.Y > 0 then
+            hatchFrame.Position = UDim2.new(midX / bg.AbsoluteSize.X, 0, midY / bg.AbsoluteSize.Y, 0)
+        end
+        hatchLabel.Text = "🥚 "..tostring(getHatchesRaw())
+
         if #queue > 0 then
             local m = table.remove(queue,1)
             fadeMsg(m)
