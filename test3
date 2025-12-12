@@ -1,13 +1,50 @@
-local EGG_NAME = "Candycane Egg"
-local AUTO_TELEPORT_GENERIC = true
-local AUTO_TELEPORT_RIFTS = true
-local MIN_RIFT_LUCK = 0
-local CHECK_INTERVAL = 1
-local TELEPORT_DEBOUNCE = 2
-
+-- main.lua
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local vim = game:GetService("VirtualInputManager")
+
 local lp = Players.LocalPlayer
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+local Config = require(path.to.EggConfig)
+
+-- HATCHER
+pcall(function()
+	local ok, hatchModule = pcall(function()
+		return require(ReplicatedStorage.Client.Effects.HatchEgg)
+	end)
+	if ok and type(hatchModule) == "table" and hatchModule.Play then
+		hatchModule.Play = function() return end
+	end
+end)
+
+local function pressE()
+	vim:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+	task.wait()
+	vim:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+end
+
+local function hatchUntilDone()
+	while true do
+		local gui = Players.LocalPlayer.PlayerGui
+		if not gui or not gui:FindFirstChild("Hatch") then
+			break
+		end
+		pressE()
+		task.wait()
+	end
+end
+
+_G.Hatch = function()
+	pressE()
+	hatchUntilDone()
+end
+
+-- UTIL
+local function getSnow()
+	local d = LocalData:Get()
+	return (d and d.Snowflakes) or 0
+end
 
 local function convertToRiftName(name)
 	return name:gsub(" ", "-"):lower()
@@ -51,43 +88,71 @@ end
 
 local lastTeleport = 0
 local function canTeleport()
-	return (tick() - lastTeleport) >= TELEPORT_DEBOUNCE
+	return (tick() - lastTeleport) >= Config.runtime.teleport_debounce
 end
 
-task.spawn(function()
-	local targetRiftName = convertToRiftName(EGG_NAME)
-	while true do
-		if AUTO_TELEPORT_GENERIC and Workspace:FindFirstChild("Rendered") and Workspace.Rendered:FindFirstChild("Generic") then
-			local genericFolder = Workspace.Rendered.Generic
-			local eggModel = genericFolder:FindFirstChild(EGG_NAME)
-			if eggModel and canTeleport() then
-				if tpToModel(eggModel) then
-					lastTeleport = tick()
-				end
-			end
-		end
+getgenv().DELETE_RIFT_BELOW = Config.rift.destroy_rift_if_luck_below
 
-		if AUTO_TELEPORT_RIFTS and Workspace:FindFirstChild("Rendered") and Workspace.Rendered:FindFirstChild("Rifts") then
-			local riftsFolder = Workspace.Rendered.Rifts
-			local bestRift = nil
-			local bestLuck = MIN_RIFT_LUCK
-			for _, r in ipairs(riftsFolder:GetChildren()) do
-				local typ = r.GetAttribute and r:GetAttribute(r, "Type") or (r:GetAttribute and r:GetAttribute("Type"))
-				if typ == "Egg" and r.Name == targetRiftName then
-					local luck = getLuck(r) or 0
-					if luck > bestLuck then
-						bestLuck = luck
-						bestRift = r
+-- MAIN LOOP
+task.spawn(function()
+	while true do
+		local snow = getSnow()
+		if snow < Config.egg.min_snowflakes_before_hatch then
+			task.wait(Config.runtime.check_interval)
+		else
+			local foundRift = nil
+			local bestLuck = -1
+
+			local riftsFolder = Workspace:FindFirstChild("Rendered") and Workspace.Rendered:FindFirstChild("Rifts")
+			if riftsFolder then
+				for _, rift in ipairs(riftsFolder:GetChildren()) do
+					if rift:GetAttribute("Type") == "Egg" then
+						local luck = getLuck(rift)
+
+						if luck < Config.rift.destroy_rift_if_luck_below then
+							pcall(function() rift:Destroy() end)
+						end
+
+						local targetName = (Config.rift.rift_egg_name ~= "" and Config.rift.rift_egg_name) or convertToRiftName(Config.egg.selected)
+						if rift.Name == targetName and luck >= Config.rift.min_rift_luck_to_hatch_rift then
+							if luck > bestLuck then
+								bestLuck = luck
+								foundRift = rift
+							end
+						end
 					end
 				end
 			end
-			if bestRift and canTeleport() then
-				if tpToModel(bestRift) then
+
+			if foundRift and canTeleport() then
+				if tpToModel(foundRift) then
 					lastTeleport = tick()
+					for i = 1, Config.egg.amount do
+						if getSnow() < Config.egg.min_snowflakes_before_hatch then break end
+						_G.Hatch()
+						task.wait(0.3)
+					end
+				end
+			else
+				local genericFolder = Workspace:FindFirstChild("Rendered") and Workspace.Rendered:FindFirstChild("Generic")
+				if genericFolder then
+					local selected = genericFolder:FindFirstChild(Config.egg.selected)
+					if selected and canTeleport() then
+						if bestLuck < Config.egg.min_rift_luck_to_use_selected then
+							if tpToModel(selected) then
+								lastTeleport = tick()
+								for i = 1, Config.egg.amount do
+									if getSnow() < Config.egg.min_snowflakes_before_hatch then break end
+									_G.Hatch()
+									task.wait(0.3)
+								end
+							end
+						end
+					end
 				end
 			end
-		end
 
-		task.wait(CHECK_INTERVAL)
+			task.wait(Config.runtime.check_interval)
+		end
 	end
 end)
