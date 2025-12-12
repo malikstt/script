@@ -8,147 +8,122 @@ local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
 local Config = getgenv().EggConfig
 
 pcall(function()
-	local ok, hatchModule = pcall(function()
-		return require(ReplicatedStorage.Client.Effects.HatchEgg)
-	end)
-	if ok and type(hatchModule) == "table" and hatchModule.Play then
-		hatchModule.Play = function() return end
-	end
+    local m = require(ReplicatedStorage.Client.Effects.HatchEgg)
+    m.Play = function() return end
 end)
 
 local function pressE()
-	vim:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-	task.wait()
-	vim:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-end
-
-local function hatchUntilDone()
-	while true do
-		local gui = Players.LocalPlayer.PlayerGui
-		if not gui or not gui:FindFirstChild("Hatch") then
-			break
-		end
-		pressE()
-		task.wait()
-	end
+    vim:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+    task.wait()
+    vim:SendKeyEvent(false, Enum.KeyCode.E, false, game)
 end
 
 _G.Hatch = function()
-	pressE()
-	hatchUntilDone()
+    pressE()
+end
+
+local function parseNumber(str)
+    str = tostring(str):upper()
+    local n = tonumber(str:match("[%d%.]+")) or 0
+    if str:find("K") then return n * 1e3 end
+    if str:find("M") then return n * 1e6 end
+    if str:find("B") then return n * 1e9 end
+    if str:find("T") then return n * 1e12 end
+    return n
 end
 
 local function getSnow()
-	local d = LocalData:Get()
-	return (d and d.Snowflakes) or 0
+    local d = LocalData:Get()
+    return (d and d.Snowflakes) or 0
 end
 
-local function convertToRiftName(name)
-	return name:gsub(" ", "-"):lower()
+local function convert(name)
+    return name:gsub(" ", "-"):lower()
 end
 
-local function getLuck(rift)
-	local d = rift:FindFirstChild("Display")
-	local g = d and d:FindFirstChildOfClass("SurfaceGui")
-	local i = g and g:FindFirstChild("Icon")
-	local l = i and i:FindFirstChild("Luck")
-	return l and tonumber(l.Text:match("%d+")) or 0
+local function getLuck(r)
+    local d = r:FindFirstChild("Display")
+    local g = d and d:FindFirstChildOfClass("SurfaceGui")
+    local i = g and g:FindFirstChild("Icon")
+    local l = i and i:FindFirstChild("Luck")
+    return l and tonumber(l.Text:match("%d+")) or 0
 end
 
-local function getModelCFrame(model)
-	if not model then return nil end
-	if typeof(model.GetPivot) == "function" then
-		local ok, pivot = pcall(model.GetPivot, model)
-		if ok and pivot then return pivot end
-	end
-	if model.PrimaryPart then return model.PrimaryPart.CFrame end
-	local p = model:FindFirstChildWhichIsA("BasePart", true)
-	if p then return p.CFrame end
-	return nil
+local function getCF(m)
+    if typeof(m.GetPivot) == "function" then
+        local ok, p = pcall(m.GetPivot, m)
+        if ok and p then return p end
+    end
+    if m.PrimaryPart then return m.PrimaryPart.CFrame end
+    local part = m:FindFirstChildWhichIsA("BasePart", true)
+    return part and part.CFrame or nil
 end
 
-local function tpToCFrame(cf)
-	if not cf then return end
-	local char = lp.Character or lp.CharacterAdded:Wait()
-	local hrp = char:FindFirstChild("HumanoidRootPart")
-	if hrp then hrp.CFrame = cf + Vector3.new(0,5,0) end
+local function tp(m)
+    local cf = getCF(m)
+    if not cf then return false end
+    local char = lp.Character or lp.CharacterAdded:Wait()
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    hrp.CFrame = cf + Vector3.new(0,5,0)
+    return true
 end
 
-local function tpToModel(model)
-	local cf = getModelCFrame(model)
-	if cf then
-		tpToCFrame(cf)
-		return true
-	end
-	return false
+local lastTP = 0
+local function canTP()
+    return tick() - lastTP >= Config.teleport_debounce
 end
-
-local lastTeleport = 0
-local function canTeleport()
-	return (tick() - lastTeleport) >= Config.runtime.teleport_debounce
-end
-
-getgenv().DELETE_RIFT_BELOW = Config.rift.destroy_rift_if_luck_below
 
 task.spawn(function()
-	while true do
-		local snow = getSnow()
-		if snow < Config.egg.min_snowflakes_before_hatch then
-			task.wait(Config.runtime.check_interval)
-		else
-			local foundRift = nil
-			local bestLuck = -1
+    while true do
+        if not Config.enabled then
+            task.wait(Config.check_interval)
+            continue
+        end
 
-			local riftsFolder = Workspace:FindFirstChild("Rendered") and Workspace.Rendered:FindFirstChild("Rifts")
-			if riftsFolder then
-				for _, rift in ipairs(riftsFolder:GetChildren()) do
-					if rift:GetAttribute("Type") == "Egg" then
-						local luck = getLuck(rift)
+        local needed = parseNumber(Config.min_snowflakes_before_hatch)
+        if getSnow() < needed then
+            task.wait(Config.check_interval)
+            continue
+        end
 
-						if luck < Config.rift.destroy_rift_if_luck_below then
-							pcall(function() rift:Destroy() end)
-						end
+        local selected = Config.selected_egg
+        local riftName = convert(selected)
 
-						local targetName = (Config.rift.rift_egg_name ~= "" and Config.rift.rift_egg_name) or convertToRiftName(Config.egg.selected)
-						if rift.Name == targetName and luck >= Config.rift.min_rift_luck_to_hatch_rift then
-							if luck > bestLuck then
-								bestLuck = luck
-								foundRift = rift
-							end
-						end
-					end
-				end
-			end
+        local bestRift = nil
+        local bestLuck = -1
 
-			if foundRift and canTeleport() then
-				if tpToModel(foundRift) then
-					lastTeleport = tick()
-					for i = 1, Config.egg.amount do
-						if getSnow() < Config.egg.min_snowflakes_before_hatch then break end
-						_G.Hatch()
-						task.wait(0.3)
-					end
-				end
-			else
-				local genericFolder = Workspace:FindFirstChild("Rendered") and Workspace.Rendered:FindFirstChild("Generic")
-				if genericFolder then
-					local selected = genericFolder:FindFirstChild(Config.egg.selected)
-					if selected and canTeleport() then
-						if bestLuck < Config.egg.min_rift_luck_to_use_selected then
-							if tpToModel(selected) then
-								lastTeleport = tick()
-								for i = 1, Config.egg.amount do
-									if getSnow() < Config.egg.min_snowflakes_before_hatch then break end
-									_G.Hatch()
-									task.wait(0.3)
-								end
-							end
-						end
-					end
-				end
-			end
+        local rifts = Workspace:FindFirstChild("Rendered") and Workspace.Rendered:FindFirstChild("Rifts")
+        if rifts then
+            for _, r in ipairs(rifts:GetChildren()) do
+                if r:GetAttribute("Type") == "Egg" and r.Name == riftName then
+                    local l = getLuck(r)
+                    if l >= Config.min_selected_egg_rift and l > bestLuck then
+                        bestLuck = l
+                        bestRift = r
+                    end
+                end
+            end
+        end
 
-			task.wait(Config.runtime.check_interval)
-		end
-	end
+        if bestRift and canTP() then
+            if tp(bestRift) then
+                lastTP = tick()
+                _G.Hatch()
+            end
+        else
+            local generic = Workspace:FindFirstChild("Rendered") and Workspace.Rendered:FindFirstChild("Generic")
+            if generic then
+                local egg = generic:FindFirstChild(selected)
+                if egg and canTP() then
+                    if tp(egg) then
+                        lastTP = tick()
+                        _G.Hatch()
+                    end
+                end
+            end
+        end
+
+        task.wait(Config.check_interval)
+    end
 end)
