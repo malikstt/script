@@ -3,11 +3,22 @@ local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
 local ShopsModule = require(ReplicatedStorage.Shared.Data.Shops)
 if not LocalData:IsReady() then LocalData.DataReady:Wait() end
 
+local function fmtNumber(n)
+    if type(n) ~= "number" then return tostring(n) end
+    local absn = math.abs(n)
+    if absn >= 1e15 then return string.format("%.2fP", n/1e15) end
+    if absn >= 1e12 then return string.format("%.2fT", n/1e12) end
+    if absn >= 1e9  then return string.format("%.2fB", n/1e9) end
+    if absn >= 1e6  then return string.format("%.2fM", n/1e6) end
+    if absn >= 1e3  then return string.format("%.2fK", n/1e3) end
+    return tostring(n)
+end
+
 local function nicePrice(costTbl)
     if type(costTbl) ~= "table" then return tostring(costTbl) end
     local cur = costTbl.Currency or costTbl.CurrencyType or "Currency"
-    local amt = costTbl.Amount or costTbl.Value or costTbl.Price or "?"
-    return tostring(amt) .. " " .. tostring(cur)
+    local amt = costTbl.Amount or costTbl.Value or costTbl.Price or 0
+    return fmtNumber(amt) .. " " .. tostring(cur)
 end
 
 local function productNameFromDef(product)
@@ -16,11 +27,33 @@ local function productNameFromDef(product)
     if product.Label and product.Label ~= "" then return tostring(product.Label) end
     if product.Type then
         local s = tostring(product.Type)
-        if product.Name then s = s .. " " .. tostring(product.Name) end
         if product.Level then s = s .. " L" .. tostring(product.Level) end
         return s
     end
     return tostring(product)
+end
+
+local function qtyFromValue(v)
+    if type(v) == "boolean" then
+        return (v and math.huge) or 0
+    elseif type(v) == "number" then
+        return v
+    elseif type(v) == "table" then
+        return tonumber(v.Amount or v.Count or v.Qty or v.Quantity) or 0
+    else
+        return 0
+    end
+end
+
+local function qtyTextFromDelta(delta, rawV)
+    if delta == math.huge then return "ALL" end
+    if rawV == true then return "ALL" end
+    if type(rawV) == "boolean" and rawV == true then return "ALL" end
+    if delta >= 1 then
+        if delta >= 10 then return tostring(delta) end
+        return tostring(delta)
+    end
+    return tostring(rawV)
 end
 
 local function snapshotAllBought(sh)
@@ -34,32 +67,38 @@ local function snapshotAllBought(sh)
     return out
 end
 
-local function getShopDef(key)
-    return ShopsModule[key]
-end
-
 local pd = LocalData:Get() or {}
-local shopsData = pd.Shops or {}
-local prev = snapshotAllBought(shopsData)
+local prev = snapshotAllBought(pd.Shops or {})
 
 task.spawn(function()
     while true do
         pd = LocalData:Get() or {}
-        shopsData = pd.Shops or {}
+        local shopsData = pd.Shops or {}
         for shopKey, shopVal in pairs(shopsData) do
             local currentBought = (shopVal and shopVal.Bought) or {}
             local prevBought = prev[tostring(shopKey)] or {}
+
             for k, v in pairs(currentBought) do
                 local ks = tostring(k)
-                if prevBought[ks] == nil or tostring(prevBought[ks]) ~= tostring(v) then
-                    local qtyText
-                    if type(v) == "boolean" then qtyText = v and "ALL" or tostring(v)
-                    elseif type(v) == "number" then qtyText = tostring(v)
-                    elseif type(v) == "table" then qtyText = tostring(v.Amount or v.Count or v.Qty or v.Quantity or "TABLE")
-                    else qtyText = tostring(v) end
+                local prevV = prevBought[ks]
 
+                local curQty = qtyFromValue(v)
+                local prevQty = qtyFromValue(prevV)
+                local delta
+
+                if prevV == nil then
+                    delta = curQty
+                else
+                    if curQty == math.huge or prevQty == math.huge then
+                        if curQty == prevQty then delta = 0 else delta = math.huge end
+                    else
+                        delta = curQty - prevQty
+                    end
+                end
+
+                if delta ~= 0 and delta ~= nil and (delta > 0 or delta == math.huge) then
                     local slotIndex = tonumber(ks) or ks
-                    local shopDef = getShopDef(tostring(shopKey)) or {}
+                    local shopDef = ShopsModule[tostring(shopKey)] or {}
                     local productDef = nil
                     if shopDef.PermanentItems and shopDef.PermanentItems[slotIndex] then productDef = shopDef.PermanentItems[slotIndex]
                     elseif shopDef.RandomItems and shopDef.RandomItems[slotIndex] then productDef = shopDef.RandomItems[slotIndex] end
@@ -75,13 +114,17 @@ task.spawn(function()
                         price = nicePrice(productDef.Cost)
                     end
 
-                    print(string.format("Slot: %s  Qty: %s  Name: %s  Price: %s", tostring(slotIndex), tostring(qtyText), tostring(pname), tostring(price)))
+                    local qtyPretty = qtyTextFromDelta(delta, v)
+                    if delta == math.huge then qtyPretty = "ALL" end
+                    print(string.format("Slot: %s  Qty: %s  Name: %s  Price: %s", tostring(slotIndex), tostring(qtyPretty), tostring(pname), tostring(price)))
                 end
             end
+
             local newSnap = {}
             for kk,vv in pairs(currentBought) do newSnap[tostring(kk)] = vv end
             prev[tostring(shopKey)] = newSnap
         end
-        task.wait(0.5)
+
+        task.wait(0.35)
     end
 end)
