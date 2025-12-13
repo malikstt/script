@@ -1,226 +1,209 @@
 local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local vim = game:GetService("VirtualInputManager")
-
+local TweenService = game:GetService("TweenService")
+local Lighting = game:GetService("Lighting")
+local ws = workspace
 local lp = Players.LocalPlayer
-local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
-local Config = getgenv().EggConfig
+local char = lp.Character or lp.CharacterAdded:Wait()
 
--- More robust effect blocking
-pcall(function()
-    local hatchEffects = require(ReplicatedStorage.Client.Effects.HatchEgg)
-    if hatchEffects then
-        local originalPlay = hatchEffects.Play
-        hatchEffects.Play = function(...)
-            if Config and Config.disable_effects then
-                return
-            end
-            return originalPlay(...)
-        end
-    end
+-- ================= LOADER UI =================
+local gui = Instance.new("ScreenGui")
+gui.Name = "__LOADER__"
+gui.IgnoreGuiInset = true
+gui.ResetOnSpawn = false
+gui.DisplayOrder = 1e9
+gui.Parent = lp.PlayerGui
+
+local bg = Instance.new("Frame", gui)
+bg.Size = UDim2.new(1,0,1,0)
+bg.BackgroundColor3 = Color3.new(0,0,0)
+
+local container = Instance.new("Frame", bg)
+container.AnchorPoint = Vector2.new(0.5,0.5)
+container.Position = UDim2.new(0.5,0,0.5,0)
+container.Size = UDim2.new(0.42,0,0.18,0)
+container.BackgroundTransparency = 1
+
+local outline = Instance.new("Frame", container)
+outline.Size = UDim2.new(1,0,1,0)
+outline.BackgroundColor3 = Color3.fromRGB(255,255,255)
+Instance.new("UICorner", outline).CornerRadius = UDim.new(0,18)
+
+local fill = Instance.new("Frame", outline)
+fill.Position = UDim2.new(0.02,0,0.1,0)
+fill.Size = UDim2.new(0,0,0.8,0)
+fill.BackgroundColor3 = Color3.fromRGB(200,50,50)
+Instance.new("UICorner", fill).CornerRadius = UDim.new(0,14)
+
+local cap = Instance.new("Frame", container)
+cap.AnchorPoint = Vector2.new(0,0.5)
+cap.Position = UDim2.new(1,6,0.5,0)
+cap.Size = UDim2.new(0,18,0.35,0)
+cap.BackgroundColor3 = Color3.fromRGB(255,255,255)
+Instance.new("UICorner", cap).CornerRadius = UDim.new(0,6)
+
+local pct = Instance.new("TextLabel", container)
+pct.Size = UDim2.new(1,0,1,0)
+pct.BackgroundTransparency = 1
+pct.Font = Enum.Font.GothamBlack
+pct.TextScaled = true
+pct.TextColor3 = Color3.new(1,1,1)
+pct.Text = "0%"
+
+local status = Instance.new("TextLabel", bg)
+status.AnchorPoint = Vector2.new(0.5,0)
+status.Position = UDim2.new(0.5,0,0.62,0)
+status.Size = UDim2.new(0.9,0,0.06,0)
+status.BackgroundTransparency = 1
+status.Font = Enum.Font.GothamBold
+status.TextScaled = true
+status.TextColor3 = Color3.fromRGB(200,200,200)
+status.Text = "🔄 Loading…"
+
+local progress,target = 0,0
+RunService.RenderStepped:Connect(function()
+	progress += (target-progress)*0.1
+	progress = math.clamp(progress,0,100)
+	fill.Size = UDim2.new((progress/100)*0.96,0,0.8,0)
+	pct.Text = math.floor(progress).."%"
+	if progress < 30 then
+		fill.BackgroundColor3 = Color3.fromRGB(200,50,50)
+	elseif progress < 70 then
+		fill.BackgroundColor3 = Color3.fromRGB(220,180,40)
+	else
+		fill.BackgroundColor3 = Color3.fromRGB(80,220,120)
+	end
 end)
 
--- Optimized key press function
-local function pressE()
-    vim:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-    task.wait(0.05) -- Reduced wait time
-    vim:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+local function stage(p,t)
+	target = p
+	status.TextTransparency = 1
+	status.Text = t
+	TweenService:Create(status,TweenInfo.new(0.15),{TextTransparency=0}):Play()
+	task.wait(0.5)
 end
 
-_G.Hatch = function()
-    pressE()
+-- ================= KEEP SYSTEM =================
+local keep = {}
+local function k(x)
+	if x then keep[x]=true end
 end
 
--- Optimized number parsing with caching
-local numberMultipliers = {
-    K = 1e3,
-    M = 1e6,
-    B = 1e9,
-    T = 1e12
-}
+k(gui)
+for _,v in ipairs(gui:GetDescendants()) do k(v) end
 
-local function parseNumber(str)
-    if type(str) == "number" then return str end
-    str = tostring(str):upper():gsub(",", "")
-    
-    local numPart = str:match("^[%d%.]+")
-    if not numPart then return 0 end
-    
-    local number = tonumber(numPart) or 0
-    local suffix = str:match("[KMBT]$")
-    
-    return suffix and (number * (numberMultipliers[suffix] or 1)) or number
+local function protectCharacter(c)
+	k(c)
+	for _,v in ipairs(c:GetDescendants()) do k(v) end
 end
 
--- Cached values for performance
-local lastSnowflakeCheck = 0
-local cachedSnowflakes = 0
-local SNOWFLAKE_CACHE_TIME = 5
+protectCharacter(char)
+lp.CharacterAdded:Connect(function(c)
+	task.wait(0.4)
+	protectCharacter(c)
+	pcall(function() c:WaitForChild("HumanoidRootPart").CFrame = CFrame.new(0,10,0) end)
+end)
 
-local function getSnow()
-    if tick() - lastSnowflakeCheck > SNOWFLAKE_CACHE_TIME then
-        local success, data = pcall(function()
-            return LocalData:Get()
-        end)
-        
-        if success and data and data.Snowflakes then
-            cachedSnowflakes = data.Snowflakes
-        else
-            cachedSnowflakes = 0
-        end
-        lastSnowflakeCheck = tick()
-    end
-    return cachedSnowflakes
+-- protect snowflake / enchant UI by name
+for _,g in ipairs(lp.PlayerGui:GetChildren()) do
+	if g:IsA("ScreenGui") and g ~= gui then
+		local n = g.Name:lower()
+		if n:find("snow") or n:find("flake") or n:find("enchant") then
+			k(g)
+			for _,v in ipairs(g:GetDescendants()) do k(v) end
+		end
+	end
 end
 
--- Pre-calculate converted egg name
-local convertedEggName = nil
-local function getConvertedEggName()
-    if not convertedEggName and Config then
-        convertedEggName = Config.selected_egg:gsub(" ", "-"):lower()
-    end
-    return convertedEggName or ""
+-- ================= SAFE DESTROY HELPERS =================
+local function isChar(o)
+	return lp.Character and (o==lp.Character or o:IsDescendantOf(lp.Character))
 end
 
--- Optimized luck extraction
-local function getLuck(rift)
-    local display = rift and rift:FindFirstChild("Display")
-    if not display then return 0 end
-    
-    local surfaceGui = display:FindFirstChildWhichIsA("SurfaceGui")
-    if not surfaceGui then return 0 end
-    
-    local icon = surfaceGui:FindFirstChild("Icon")
-    if not icon then return 0 end
-    
-    local luckLabel = icon:FindFirstChild("Luck")
-    if not luckLabel or not luckLabel:IsA("TextLabel") then return 0 end
-    
-    local luckText = luckLabel.Text
-    local luckNumber = tonumber(luckText:match("%d+"))
-    return luckNumber or 0
+local function d(i)
+	if i and i.Parent and not keep[i] and not isChar(i) then
+		pcall(function() i:Destroy() end)
+	end
 end
 
--- Optimized teleportation with raycasting
-local function getCF(model)
-    local success, pivot = pcall(function()
-        if model:IsA("Model") then
-            if model.GetPivot then
-                return model:GetPivot()
-            elseif model.PrimaryPart then
-                return model.PrimaryPart.CFrame
-            end
-        end
-        return nil
-    end)
-    
-    if success and pivot then
-        return pivot
-    end
-    
-    -- Fallback: find any base part
-    local part = model:FindFirstChildWhichIsA("BasePart", true)
-    return part and part.CFrame
+local function batch(list,b,w)
+	local i=1
+	while i<=#list do
+		for j=i,math.min(i+b-1,#list) do d(list[j]) end
+		i+=b
+		task.wait(w)
+	end
 end
 
-local lastTP = 0
-local function canTP()
-    return tick() - lastTP >= (Config.teleport_debounce or 1)
+local function collectWorkspace(pred)
+	local t={}
+	for _,o in ipairs(ws:GetDescendants()) do
+		if pred(o) and not keep[o] then table.insert(t,o) end
+	end
+	return t
 end
 
-local function safeTeleport(model)
-    if not canTP() then return false end
-    
-    local char = lp.Character
-    if not char then
-        char = lp.CharacterAdded:Wait()
-    end
-    
-    local hrp = char:WaitForChild("HumanoidRootPart", 2)
-    if not hrp then return false end
-    
-    local targetCF = getCF(model)
-    if not targetCF then return false end
-    
-    -- Teleport with offset to avoid getting stuck
-    hrp.CFrame = targetCF + Vector3.new(0, 5, 0)
-    lastTP = tick()
-    
-    -- Small delay for stabilization
-    task.wait(0.1)
-    return true
+-- ================= OPTIMIZATION FLOW =================
+stage(5,"🧨 Destroying Worlds")
+stage(10,"💀 Killing Server Players")
+stage(15,"🧱 Deleting Baseplates")
+
+stage(20,"🖥️ Clearing Player UI")
+for _,g in ipairs(lp.PlayerGui:GetChildren()) do
+	if g:IsA("ScreenGui") and not keep[g] then
+		g:Destroy()
+	end
 end
 
--- Main loop optimization
-local function mainLoop()
-    while true do
-        if not Config or not Config.enabled then
-            task.wait(Config and Config.check_interval or 1)
-            continue
-        end
+stage(30,"🌍 Nuking World Interfaces")
+batch(collectWorkspace(function(o)
+	return o:IsA("SurfaceGui") or o:IsA("BillboardGui")
+end),10,0.3)
 
-        -- Check snowflakes
-        local needed = parseNumber(Config.min_snowflakes_before_hatch or 0)
-        if getSnow() < needed then
-            task.wait(Config.check_interval)
-            continue
-        end
+stage(45,"🎆 Removing Visuals")
+batch(collectWorkspace(function(o)
+	return o:IsA("MeshPart") or o:IsA("SpecialMesh") or o:IsA("UnionOperation")
+	or o:IsA("Texture") or o:IsA("Decal") or o:IsA("ParticleEmitter")
+	or o:IsA("Beam") or o:IsA("Trail") or o:IsA("Fire")
+	or o:IsA("Smoke") or o:IsA("Sparkles") or o:IsA("Highlight")
+	or o:IsA("SurfaceAppearance")
+end),40,0.35)
 
-        local riftName = getConvertedEggName()
-        local bestRift = nil
-        local bestLuck = -1
+stage(60,"🎯 Deleting Decorations")
+batch(collectWorkspace(function(o)
+	return o:IsA("Adornment") or o:IsA("SelectionBox")
+	or o:IsA("SelectionSphere") or o:IsA("ArcHandles")
+end),20,0.3)
 
-        -- Check for rift eggs first
-        local rendered = Workspace:FindFirstChild("Rendered")
-        if rendered then
-            local rifts = rendered:FindFirstChild("Rifts")
-            if rifts then
-                for _, rift in ipairs(rifts:GetChildren()) do
-                    if rift:GetAttribute("Type") == "Egg" and rift.Name == riftName then
-                        local luck = getLuck(rift)
-                        local minLuck = Config.min_selected_egg_rift or 0
-                        
-                        if luck >= minLuck and luck > bestLuck then
-                            bestLuck = luck
-                            bestRift = rift
-                        end
-                    end
-                end
-            end
-            
-            -- If no suitable rift found, check generic eggs
-            if not bestRift then
-                local generic = rendered:FindFirstChild("Generic")
-                if generic then
-                    local egg = generic:FindFirstChild(Config.selected_egg)
-                    if egg then
-                        bestRift = egg
-                    end
-                end
-            end
-        end
+stage(70,"🧠 Executing Script Termination")
+batch(collectWorkspace(function(o)
+	return (o:IsA("Script") or o:IsA("LocalScript") or o:IsA("ModuleScript"))
+	and not o:IsDescendantOf(lp.Character)
+end),20,0.6)
 
-        -- Teleport and hatch if we found a target
-        if bestRift and safeTeleport(bestRift) then
-            _G.Hatch()
-        end
+stage(80,"🧼 Purging Non-Physical Objects")
+batch(collectWorkspace(function(o)
+	return not o:IsA("BasePart")
+end),30,0.5)
 
-        task.wait(Config.check_interval or 1)
-    end
+stage(88,"🗑️ Clearing Workspace Core")
+local t2={}
+for _,c in ipairs(ws:GetChildren()) do
+	if not keep[c] then table.insert(t2,c) end
 end
+batch(t2,3,0.7)
 
--- Error handling wrapper
-local function safeMainLoop()
-    while true do
-        local success, err = pcall(mainLoop)
-        if not success then
-            warn("Egg hatch script error:", err)
-            task.wait(5) -- Wait before retrying on error
-        end
-    end
+stage(94,"💡 Shutting Down Lighting")
+local t3={}
+for _,v in ipairs(Lighting:GetChildren()) do
+	if not keep[v] then table.insert(t3,v) end
 end
+batch(t3,8,0.4)
 
--- Start the script
-task.spawn(safeMainLoop)
+stage(100,"🔄 Loading…")
+pcall(function() RunService:Set3dRenderingEnabled(false) end)
+
+task.wait(0.4)
+TweenService:Create(bg,TweenInfo.new(0.25),{BackgroundTransparency=1}):Play()
+task.wait(0.3)
+gui:Destroy()
