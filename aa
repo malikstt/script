@@ -100,26 +100,32 @@ local function getLuckTime()
     return luck and luck.Text or "x0", timer and timer.Text or "N/A"
 end
 
+-- TEAM IDS (EXACT FUNCTION)
+local function getTeamPetIds()
+    local ids = {}
+    local data = LocalData:Get()
+    if not data then return ids end
+    local equippedTeamIndex = data.TeamEquipped
+    if not equippedTeamIndex then return ids end
+    local team = data.Teams and data.Teams[equippedTeamIndex]
+    if not team or not team.Pets then return ids end
+    for _, id in ipairs(team.Pets) do
+        ids[id] = true
+    end
+    return ids
+end
+
+-- COUNT SECRETS
 local function countSecrets(data)
     local inv, team = 0, 0
     if data and data.Pets then
-        for _, pet in pairs(data.Pets) do
+        local teamIds = getTeamPetIds()
+        for id, pet in pairs(data.Pets) do
             local info = PetsModule[pet.Name]
             if info and info.Rarity == "Secret" then
                 inv += 1
-            end
-        end
-    end
-    if data and data.Teams and data.TeamEquipped then
-        local t = data.Teams[data.TeamEquipped]
-        if t and t.Pets then
-            for _, id in ipairs(t.Pets) do
-                local pet = data.Pets[id]
-                if pet then
-                    local info = PetsModule[pet.Name]
-                    if info and info.Rarity == "Secret" then
-                        team += 1
-                    end
+                if teamIds[id] then
+                    team += 1
                 end
             end
         end
@@ -134,12 +140,17 @@ local currentEgg = "—"
 local eggHistory = {}
 local eggsPerMin = 0
 
+local eggVisible = false
+local function eggExists()
+    return workspace:FindFirstChild("SummonedEgg") ~= nil
+end
+
+-- LOOP
 task.spawn(function()
     while true do
         local data = LocalData:Get()
         local now = tick()
 
-        -- current egg detection
         if data and data.EggsOpened then
             for egg, count in pairs(data.EggsOpened) do
                 local prev = lastEggs[egg]
@@ -150,30 +161,35 @@ task.spawn(function()
             end
         end
 
-        -- eggs/min from Stats.Hatches (rolling 60s window)
         local h = data and data.Stats and data.Stats.Hatches
         if h then
-            table.insert(eggHistory, {time = now, value = h})
-
-            while #eggHistory > 0 and now - eggHistory[1].time > 60 do
+            table.insert(eggHistory, {t = now, v = h})
+            while #eggHistory > 0 and now - eggHistory[1].t > 60 do
                 table.remove(eggHistory, 1)
             end
-
             if #eggHistory >= 2 then
-                eggsPerMin = eggHistory[#eggHistory].value - eggHistory[1].value
+                eggsPerMin = eggHistory[#eggHistory].v - eggHistory[1].v
             else
                 eggsPerMin = 0
             end
         end
 
+        local exists = eggExists()
+        if exists ~= eggVisible then
+            eggVisible = exists
+            hatchText.Visible = eggVisible
+        end
+
         local luck, timeLeft = getLuckTime()
         local invS, teamS = countSecrets(data)
 
-        hatchText.Text =
-            "┌─────────────────────────────┐\n"..
-            "│ 🥚 Hatching: "..currentEgg.."\n"..
-            "│ 🌟 Total Secrets: "..invS.."\n"..
-            "└─────────────────────────────┘"
+        if eggVisible then
+            hatchText.Text =
+                "┌─────────────────────────────┐\n"..
+                "│ 🥚 Hatching: "..currentEgg.."\n"..
+                "│ 🌟 Total Secrets: "..invS.."\n"..
+                "└─────────────────────────────┘"
+        end
 
         leftText.Text =
             "┌───────────────┐\n"..
@@ -193,7 +209,7 @@ task.spawn(function()
             "│ 🐾 Secrets: "..teamS.."\n"..
             "└───────────────┘"
 
-        task.wait(0.5)
+        task.wait(0.25)
     end
 end)
 task.spawn(function()
