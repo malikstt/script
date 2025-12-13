@@ -1,0 +1,200 @@
+-- SERVICES
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+-- PLAYER
+local player = Players.LocalPlayer
+
+-- MODULES
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
+
+-- =========================
+-- UI CREATION
+-- =========================
+local gui = Instance.new("ScreenGui")
+gui.Name = "StatsHUD"
+gui.ResetOnSpawn = false
+gui.Parent = player:WaitForChild("PlayerGui")
+
+local bg = Instance.new("Frame")
+bg.Size = UDim2.fromScale(1, 1)
+bg.BackgroundColor3 = Color3.new(0, 0, 0)
+bg.BorderSizePixel = 0
+bg.Parent = gui
+
+local font = Enum.Font.Code
+local textColor = Color3.fromRGB(230, 230, 230)
+
+local function makeLabel(text, size, pos, align)
+    local l = Instance.new("TextLabel")
+    l.BackgroundTransparency = 1
+    l.Size = size
+    l.Position = pos
+    l.Text = text
+    l.TextColor3 = textColor
+    l.Font = font
+    l.TextSize = 18
+    l.TextXAlignment = align or Enum.TextXAlignment.Left
+    l.TextYAlignment = Enum.TextYAlignment.Center
+    l.Parent = bg
+    return l
+end
+
+-- HEADER
+local header = makeLabel(
+    "-------------- "..player.Name.." --------------",
+    UDim2.fromScale(1, 0.06),
+    UDim2.fromScale(0, 0),
+    Enum.TextXAlignment.Center
+)
+
+-- HATCHING BOX
+local hatchTop = makeLabel(
+    "-----------------------------------------",
+    UDim2.fromScale(1, 0.04),
+    UDim2.fromScale(0, 0.08),
+    Enum.TextXAlignment.Center
+)
+
+local hatchMid = makeLabel(
+    "Hatching: —\nTotal Secrets: 0",
+    UDim2.fromScale(1, 0.07),
+    UDim2.fromScale(0, 0.12),
+    Enum.TextXAlignment.Center
+)
+
+local hatchBot = makeLabel(
+    "-----------------------------------------",
+    UDim2.fromScale(1, 0.04),
+    UDim2.fromScale(0, 0.20),
+    Enum.TextXAlignment.Center
+)
+
+-- LEFT / RIGHT TEXT
+local leftText = makeLabel(
+    "Luck: x0\nEggs/min: 0\nEggs: 0",
+    UDim2.fromScale(0.5, 0.2),
+    UDim2.fromScale(0.05, 0.28)
+)
+
+local rightText = makeLabel(
+    "Time: N/A\nGems: 0\nSecrets: 0",
+    UDim2.fromScale(0.5, 0.2),
+    UDim2.fromScale(0.55, 0.28)
+)
+
+-- =========================
+-- HELPERS
+-- =========================
+local function formatNum(n)
+    if not n then return "0" end
+    if n >= 1e12 then return string.format("%.2fT", n / 1e12)
+    elseif n >= 1e9 then return string.format("%.2fB", n / 1e9)
+    elseif n >= 1e6 then return string.format("%.2fM", n / 1e6)
+    elseif n >= 1e3 then return string.format("%.2fK", n / 1e3)
+    else return tostring(n) end
+end
+
+-- =========================
+-- DATA TRACKING
+-- =========================
+local lastEggs = {}
+local hatchEgg = "—"
+local eggsPerMinute = 0
+local eggsOpened = 0
+local lastSampleTime = tick()
+local lastSampleCount = 0
+
+-- LUCK + TIMER
+local function getLuckAndTime()
+    local ok, gui = pcall(function()
+        return workspace.SummonedEgg.Sign.Display.SurfaceGui.Icon
+    end)
+    if not ok or not gui then return "x0", "N/A" end
+
+    local luck = gui:FindFirstChild("Luck")
+    local timer = gui:FindFirstChild("Timer")
+
+    return luck and luck.Text or "x0",
+           timer and timer.Text or "N/A"
+end
+
+-- COUNT SECRETS
+local function countSecrets(data)
+    local inv = 0
+    local team = 0
+
+    if data and data.Pets then
+        for _, pet in pairs(data.Pets) do
+            local info = PetsModule[pet.Name]
+            if info and info.Rarity == "Secret" then
+                inv += 1
+            end
+        end
+    end
+
+    if data and data.Teams and data.TeamEquipped then
+        local teamData = data.Teams[data.TeamEquipped]
+        if teamData and teamData.Pets then
+            for _, id in ipairs(teamData.Pets) do
+                local pet = data.Pets[id]
+                if pet then
+                    local info = PetsModule[pet.Name]
+                    if info and info.Rarity == "Secret" then
+                        team += 1
+                    end
+                end
+            end
+        end
+    end
+
+    return inv, team
+end
+
+-- =========================
+-- UPDATE LOOP
+-- =========================
+task.spawn(function()
+    while true do
+        local data = LocalData:Get()
+        local eggs = data and data.EggsOpened
+
+        if eggs then
+            for egg, count in pairs(eggs) do
+                local prev = lastEggs[egg]
+                if prev and count > prev then
+                    hatchEgg = egg
+                    eggsOpened = count
+                end
+                lastEggs[egg] = count
+            end
+        end
+
+        if tick() - lastSampleTime >= 60 then
+            eggsPerMinute = eggsOpened - lastSampleCount
+            lastSampleCount = eggsOpened
+            lastSampleTime = tick()
+        end
+
+        local luck, timeLeft = getLuckAndTime()
+        local invSecrets, teamSecrets = countSecrets(data)
+
+        hatchMid.Text =
+            "Hatching: "..hatchEgg..
+            "\nTotal Secrets: "..invSecrets
+
+        leftText.Text =
+            "Luck: "..luck..
+            "\nEggs/min: "..formatNum(eggsPerMinute)..
+            "\nEggs: "..formatNum(eggsOpened)
+
+        rightText.Text =
+            "Time: "..timeLeft..
+            "\nGems: "..formatNum(data and data.Gems)..
+            "\nSecrets: "..teamSecrets
+
+        task.wait(0.5)
+    end
+end)
