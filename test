@@ -278,7 +278,7 @@ local function fmt_num(n)
 end
 
 local function getSnow() return gd().Snowflakes or 0 end
-local function getHatchesRaw() return (gd().Stats and gd().Stats.Hatches) or 0 end
+local function getHatches() return (gd().Stats and gd().Stats.Hatches) or 0 end
 local function getXmas() return (gd().MasteryLevels and gd().MasteryLevels.Christmas) or 0 end
 
 local CHEST_NAME="Peppermint Chest"
@@ -349,14 +349,27 @@ local function getTeam()
 		if p and PetsModule and PetsModule[p.Name] and PetsModule[p.Name].Stats then
 			local sf=PetsModule[p.Name].Stats.Snowflakes or 0
 			sum+=sf
-			arr[#arr+1]={Name=p.Name,Snow=sf}
+			arr[#arr+1]={Name=p.Name,Snow=sf,Id=p.Id,Enchants=p.Enchants}
 		end
 	end
 	return arr,sum
 end
 
-local gui=Instance.new("ScreenGui")
-gui.Parent=lp.PlayerGui
+local function hasTeamUpEnchant(pet)
+	for _,e in ipairs(pet.Enchants or {}) do
+		if e.Id and string.lower(e.Id):sub(1,7)=="team-up" then
+			return true
+		end
+	end
+	return false
+end
+
+local function firstEnchantId(pet)
+	if not pet.Enchants or #pet.Enchants==0 then return "None" end
+	return pet.Enchants[1].Id or "None"
+end
+
+local gui=Instance.new("ScreenGui",lp.PlayerGui)
 gui.IgnoreGuiInset=true
 gui.ResetOnSpawn=false
 gui.DisplayOrder=9999999
@@ -364,8 +377,6 @@ gui.DisplayOrder=9999999
 local bg=Instance.new("Frame",gui)
 bg.Size=UDim2.new(1,0,1,0)
 bg.BackgroundColor3=Color3.fromRGB(0,0,0)
-bg.BackgroundTransparency=0
-bg.ZIndex=0
 
 local function Section(x,y,w,h)
 	local f=Instance.new("Frame",bg)
@@ -373,7 +384,6 @@ local function Section(x,y,w,h)
 	f.Position=UDim2.new(x,0,y,0)
 	f.Size=UDim2.new(w,0,h,0)
 	f.BackgroundTransparency=1
-	f.ZIndex=1
 	local ar=Instance.new("UIAspectRatioConstraint",f)
 	ar.AspectRatio=4
 	ar.DominantAxis=Enum.DominantAxis.Height
@@ -388,11 +398,6 @@ local function NewText(p)
 	t.TextScaled=true
 	t.TextWrapped=true
 	t.TextColor3=Color3.new(1,1,1)
-	t.TextTransparency=0
-	t.Visible=true
-	t.ZIndex=2
-	t.TextXAlignment=Enum.TextXAlignment.Center
-	t.TextYAlignment=Enum.TextYAlignment.Center
 	return t
 end
 
@@ -414,16 +419,18 @@ ML.TextXAlignment=Enum.TextXAlignment.Left
 local MR=NewText(Section(0.88,0.30,0.42,0.09))
 MR.TextXAlignment=Enum.TextXAlignment.Right
 
+local MSG=NewText(Section(0.52,0.50,0.75,0.11))
+MSG.TextTransparency=1
+
 local petsFrame=Instance.new("Frame",bg)
 petsFrame.Position=UDim2.new(0.02,0,0.86,0)
 petsFrame.Size=UDim2.new(0.38,0,0.22,0)
 petsFrame.BackgroundColor3=Color3.fromRGB(18,18,20)
-petsFrame.ZIndex=1
 Instance.new("UICorner",petsFrame)
 
 local petsList=Instance.new("TextLabel",petsFrame)
-petsList.Size=UDim2.new(1,-16,1,-16)
-petsList.Position=UDim2.new(0,8,0,8)
+petsList.Size=UDim2.new(1,-16,1,-34)
+petsList.Position=UDim2.new(0,8,0,30)
 petsList.BackgroundTransparency=1
 petsList.Font=Enum.Font.Gotham
 petsList.TextSize=16
@@ -431,9 +438,28 @@ petsList.TextColor3=Color3.fromRGB(220,220,220)
 petsList.TextWrapped=true
 petsList.TextXAlignment=Enum.TextXAlignment.Left
 petsList.TextYAlignment=Enum.TextYAlignment.Top
-petsList.ZIndex=2
+
+local enchantFrame=Instance.new("Frame",bg)
+enchantFrame.Position=UDim2.new(0.78,0,0.86,0)
+enchantFrame.Size=UDim2.new(0.20,0,0.22,0)
+enchantFrame.BackgroundColor3=Color3.fromRGB(18,18,20)
+Instance.new("UICorner",enchantFrame)
+
+local enchantList=Instance.new("TextLabel",enchantFrame)
+enchantList.Size=UDim2.new(1,-16,1,-16)
+enchantList.Position=UDim2.new(0,8,0,8)
+enchantList.BackgroundTransparency=1
+enchantList.Font=Enum.Font.Gotham
+enchantList.TextSize=14
+enchantList.TextColor3=Color3.fromRGB(220,220,220)
+enchantList.TextWrapped=true
+enchantList.TextXAlignment=Enum.TextXAlignment.Left
+enchantList.TextYAlignment=Enum.TextYAlignment.Top
+
+local hatchLabel=NewText(Section(0.5,0.62,0.22,0.07))
 
 local samples={}
+local shown=0
 local function push(v)
 	samples[#samples+1]={t=tick(),v=v}
 	while #samples>1 and tick()-samples[1].t>60 do table.remove(samples,1) end
@@ -446,21 +472,44 @@ local function perMin()
 	return ((b.v-a.v)/(b.t-a.t))*60
 end
 
+local queue={}
+local function addMsg(m)
+	if queue[#queue]~=m then queue[#queue+1]=m end
+end
+
+local function fadeMsg(t)
+	MSG.Text=t
+	MSG.TextTransparency=1
+	TweenService:Create(MSG,TweenInfo.new(0.4),{TextTransparency=0}):Play()
+end
+
 local startTick=tick()
+local last={snow=getSnow(),hatches=getHatches()}
 
 while true do
 	local snow=getSnow()
 	push(snow)
 
+	local s0=shown
+	local s1=snow
+	local t0=tick()
+	local c
+	c=RunService.Heartbeat:Connect(function()
+		local a=math.clamp((tick()-t0)/0.3,0,1)
+		shown=s0+(s1-s0)*a
+		BIG.Text="❄️ "..fmt_num(shown)
+		if a>=1 then c:Disconnect() end
+	end)
+
+	RATE.Text="❄️/min: "..fmt_num(perMin())
+	SESSION.Text="⏱️ Session: "..fmt_hms(tick()-startTick)
+	PEP.Text="🍬 Peppermint Chest:\n"..fmt_mmss_or_ready(getPepRemainingSeconds())
+	hatchLabel.Text="🥚 Total Hatches: "..fmt_num(getHatches())
+
 	local items=getItems()
 	local pres=items["Christmas Present"] or 0
 	local keys=items["Christmas Key"] or 0
 	local spins=items["Christmas Spin Ticket"] or 0
-
-	BIG.Text="❄️ "..fmt_num(snow)
-	RATE.Text="❄️/min: "..fmt_num(perMin())
-	SESSION.Text="⏱️ Session: "..fmt_hms(tick()-startTick)
-	PEP.Text="🍬 Peppermint Chest:\n"..fmt_mmss_or_ready(getPepRemainingSeconds())
 
 	local inf,elix=getPotionsTwoLines()
 	TL.Text="🧪 Inventory potions\n✨ Festive Infinity Elixirs : "..fmt_num(inf).."\n🔮 Festive Elixirs : "..fmt_num(elix)
@@ -472,12 +521,34 @@ while true do
 		local lines={}
 		lines[#lines+1]="❄️ Total Multi : "..fmt_num(sum)
 		lines[#lines+1]=""
-		for i=1,#arr do
-			lines[#lines+1]="🐾 "..arr[i].Name.." x"..fmt_num(arr[i].Snow).." ❄️"
+		local elines={}
+		for _,p in ipairs(arr) do
+			lines[#lines+1]="🐾 "..p.Name.." x"..fmt_num(p.Snow).." ❄️"
+			local pet=gd().Pets and table.find(gd().Pets,p.Id)
 		end
 		petsList.Text=table.concat(lines,"\n")
+
+		local eout={}
+		for _,p in ipairs(arr) do
+			local mark=hasTeamUpEnchant(p) and "✅" or "❌"
+			eout[#eout+1]="🐾 "..p.Name.." > "..firstEnchantId(p).." "..mark
+		end
+		enchantList.Text=table.concat(eout,"\n")
 	else
 		petsList.Text="None"
+		enchantList.Text="None"
+	end
+
+	if snow>last.snow then addMsg("❄️ Automatically Giving Gifts…") end
+	if getHatches()>last.hatches then addMsg("🥚 Hatching Eggs!") end
+	last.snow=snow
+	last.hatches=getHatches()
+
+	if #queue>0 then
+		local m=table.remove(queue,1)
+		fadeMsg(m)
+		task.wait(math.random(3,8))
+		TweenService:Create(MSG,TweenInfo.new(0.35),{TextTransparency=1}):Play()
 	end
 
 	task.wait(1)
