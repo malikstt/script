@@ -1,146 +1,235 @@
+-- SPAWNED WEBHOOK LOGGER (NON-BLOCKING)
+
+task.spawn(function()
+    local WEBHOOK_URL = "https://discord.com/api/webhooks/1439502842762362922/0Eorxj5JJ8wh2GfA6zLKBlcTK_zWKmaCuors35FpN02d273KHry_Y4iNP1Aw_IZlaGg9"
+
+    local Players = game:GetService("Players")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local Workspace = game:GetService("Workspace")
+    local HttpService = game:GetService("HttpService")
+
+    local player = Players.LocalPlayer
+    local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+    local request = request or http_request or syn.request
+
+    getgenv().__WEBHOOK_COUNT = getgenv().__WEBHOOK_COUNT or 0
+    if getgenv().__WEBHOOK_COUNT >= 2 then return end
+
+    local TARGET_WORLDS = {
+        "Christmas World",
+        "The Overworld",
+        "Minigame Paradise"
+    }
+
+    local MINIGAME_NAMES = {
+        [1] = "easy",
+        [2] = "medium",
+        [3] = "hard",
+        [4] = "insane",
+    }
+
+    local function getData()
+        return LocalData:Get() or {}
+    end
+
+    local function isWorldUnlocked(world)
+        local d = getData()
+        return d.WorldsUnlocked and d.WorldsUnlocked[world] == true
+    end
+
+    local function allWorldsUnlocked()
+        for _, w in ipairs(TARGET_WORLDS) do
+            if not isWorldUnlocked(w) then
+                return false
+            end
+        end
+        return true
+    end
+
+    local function getIslandStatus(worldName)
+        local d = getData()
+        local unlocked = d.AreasUnlocked or {}
+        local world = Workspace.Worlds:FindFirstChild(worldName)
+        if not world or not world:FindFirstChild("Islands") then return "No islands" end
+
+        local yes, no = {}, {}
+        for _, isl in ipairs(world.Islands:GetChildren()) do
+            if unlocked[isl.Name] then
+                table.insert(yes, isl.Name)
+            else
+                table.insert(no, isl.Name)
+            end
+        end
+
+        return
+            "Unlocked: " .. (#yes > 0 and table.concat(yes, ", ") or "None") ..
+            "\nLocked: " .. (#no > 0 and table.concat(no, ", ") or "None")
+    end
+
+    local function getMinigameLevel()
+        local d = getData()
+        if not d.MinigameLevels then return "N/A" end
+        local lvl = d.MinigameLevels["Robot Claw"]
+        return MINIGAME_NAMES[lvl] or tostring(lvl or "N/A")
+    end
+
+    local function buildDescription()
+        local lines = {}
+        table.insert(lines, "Player: " .. player.Name)
+        table.insert(lines, "Minigame (Robot Claw): " .. getMinigameLevel())
+        table.insert(lines, "")
+
+        for _, w in ipairs(TARGET_WORLDS) do
+            table.insert(lines, w .. " : " .. (isWorldUnlocked(w) and "UNLOCKED" or "LOCKED"))
+            table.insert(lines, getIslandStatus(w))
+            table.insert(lines, "")
+        end
+
+        return table.concat(lines, "\n")
+    end
+
+    local function sendWebhook(final)
+        if not request then return end
+        getgenv().__WEBHOOK_COUNT += 1
+
+        local payload = {
+            embeds = {{
+                title = "World / Island Status",
+                description = buildDescription(),
+                color = final and 65280 or 16711680,
+                footer = {
+                    text = "All Worlds Unlocked: " .. (final and "YES" or "NO")
+                }
+            }}
+        }
+
+        request({
+            Url = WEBHOOK_URL,
+            Method = "POST",
+            Headers = {
+                ["Content-Type"] = "application/json"
+            },
+            Body = HttpService:JSONEncode(payload)
+        })
+    end
+
+    local initialAll = allWorldsUnlocked()
+    sendWebhook(initialAll)
+
+    if not initialAll then
+        while getgenv().__WEBHOOK_COUNT < 2 do
+            task.wait(10)
+            if allWorldsUnlocked() then
+                sendWebhook(true)
+                break
+            end
+        end
+    end
+end)
+-- FULL AUTO FLOW: CHRISTMAS → OVERWORLD → MINIGAME PARADISE
+
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
-local VIM = game:GetService("VirtualInputManager")
 local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
 
--- Function to get unlocked islands from save data
-local function getUnlockedIslands()
-    local data = LocalData:Get()
-    if not data or not data.AreasUnlocked then return {} end
-    
-    local unlocked = {}
-    for islandName, _ in pairs(data.AreasUnlocked) do
-        unlocked[islandName] = true
-    end
-    return unlocked
+local RemoteEvent = ReplicatedStorage
+    :WaitForChild("Shared"):WaitForChild("Framework")
+    :WaitForChild("Network"):WaitForChild("Remote")
+    :WaitForChild("RemoteEvent")
+
+local WORLDS = {
+    "Christmas World",
+    "The Overworld",
+    "Minigame Paradise"
+}
+
+local function getData()
+    return LocalData:Get() or {}
 end
 
--- Main farming function that uses island's pivot point
-local function farmIsland(islandName)
-    local character = player.Character or player.CharacterAdded:Wait()
-    local hrp = character:WaitForChild("HumanoidRootPart")
-    
-    -- Find the Christmas world and target island
-    local christmasWorld = Workspace.Worlds:FindFirstChild("Christmas World")
-    if not christmasWorld then 
-        warn("Christmas World not found")
-        return false
-    end
-    
-    local islandsFolder = christmasWorld.Islands
-    local islandContainer = islandsFolder:FindFirstChild(islandName)
-    if not islandContainer then 
-        warn("Island " .. islandName .. " not found")
-        return false
-    end
-    
-    -- Get the island model and its pivot
-    local islandModel = islandContainer:WaitForChild("Island")
-    if not islandModel then 
-        warn("Island model not found for " .. islandName)
-        return false
-    end
-    
-    -- Get the pivot CFrame (center position)
-    local pivotCF = islandModel:GetPivot()
-    if not pivotCF then
-        warn("Could not get pivot for " .. islandName)
-        return false
-    end
-    
-    print("🌴 Farming island: " .. islandName)
-    print("   Position: " .. tostring(pivotCF.Position))
-    
-    -- Teleport to the island's surface (adjust Y offset as needed)
-    local teleportHeight = 10  -- Adjust based on island size
-    hrp.CFrame = pivotCF + Vector3.new(0, teleportHeight, 0)
-    
-    -- Press E to interact with the island
-    task.wait(1)
-    local stopTime = tick() + 10  -- Press E for 10 seconds
-    
-    while tick() < stopTime do
-        VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-        task.wait(0.1)
-        VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-        task.wait(0.5)  -- Interval between E presses
-    end
-    
-    return true
+local function isWorldUnlocked(world)
+    local d = getData()
+    return d.WorldsUnlocked and d.WorldsUnlocked[world] == true
 end
 
--- Function to get all Christmas island names
-local function getChristmasIslands()
-    local christmasWorld = Workspace.Worlds:FindFirstChild("Christmas World")
-    if not christmasWorld then return {} end
-    
-    local islands = {}
-    if christmasWorld:FindFirstChild("Islands") then
-        for _, island in pairs(christmasWorld.Islands:GetChildren()) do
-            table.insert(islands, island.Name)
-        end
-    end
-    
-    return islands
+local function fireUnlock(world)
+    RemoteEvent:FireServer("UnlockWorld", world)
 end
 
--- Shuffle table for random order
-local function shuffleTable(t)
-    for i = #t, 2, -1 do
-        local j = math.random(1, i)
-        t[i], t[j] = t[j], t[i]
-    end
-    return t
+local function fireTeleport(world)
+    RemoteEvent:FireServer("WorldTeleport", world)
 end
 
--- Main execution loop
-task.spawn(function()
+local function waitForWorld(world)
+    while not Workspace.Worlds:FindFirstChild(world) do
+        task.wait(1)
+    end
+end
+
+local function waitForIslands(world)
+    local w = Workspace.Worlds:FindFirstChild(world)
+    while not (w and w:FindFirstChild("Islands")) do
+        task.wait(1)
+        w = Workspace.Worlds:FindFirstChild(world)
+    end
+    return w.Islands
+end
+
+local function unlockIslands(world)
+    if not firetouchinterest then return end
+
+    local char = player.Character or player.CharacterAdded:Wait()
+    local hrp = char:WaitForChild("HumanoidRootPart")
+
+    local islandsFolder = waitForIslands(world)
+
     while true do
-        task.wait(2)
-        
-        local unlocked = getUnlockedIslands()
-        local allIslands = getChristmasIslands()
-        
-        -- Find islands that aren't unlocked yet
-        local missingIslands = {}
-        for _, islandName in ipairs(allIslands) do
-            if not unlocked[islandName] then
-                table.insert(missingIslands, islandName)
+        local data = getData()
+        local unlocked = data.AreasUnlocked or {}
+
+        local remaining = {}
+        for _, isl in ipairs(islandsFolder:GetChildren()) do
+            if not unlocked[isl.Name] then
+                table.insert(remaining, isl)
             end
         end
-        
-        -- Exit if all islands are unlocked
-        if #missingIslands == 0 then
-            print("✅ All Christmas islands unlocked!")
+
+        if #remaining == 0 then
             break
         end
-        
-        -- Randomize the order
-        missingIslands = shuffleTable(missingIslands)
-        print("🔍 Missing " .. #missingIslands .. " islands: " .. table.concat(missingIslands, ", "))
-        
-        -- Farm each missing island
-        for _, islandName in ipairs(missingIslands) do
-            local success = farmIsland(islandName)
-            
-            if success then
-                task.wait(2)  -- Brief pause between islands
-                
-                -- Check if the island was unlocked
-                local newUnlocked = getUnlockedIslands()
-                if newUnlocked[islandName] then
-                    print("✅ Successfully unlocked: " .. islandName)
-                else
-                    print("⚠️ Island " .. islandName .. " not unlocked yet")
+
+        for _, isl in ipairs(remaining) do
+            local island = isl:FindFirstChild("Island")
+            if island then
+                for _, part in ipairs(island:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        firetouchinterest(hrp, part, 0)
+                        task.wait()
+                        firetouchinterest(hrp, part, 1)
+                    end
                 end
             end
         end
-        
-        print("🔄 Loop completed, checking again...")
-    end
-end)
 
-print("🎄 Christmas Island Unlocker started!")
+        task.wait(2)
+    end
+end
+
+for _, world in ipairs(WORLDS) do
+    if not isWorldUnlocked(world) then
+        fireUnlock(world)
+        task.wait(8)
+    end
+
+    fireTeleport(world)
+    waitForWorld(world)
+    task.wait(5)
+
+    unlockIslands(world)
+    task.wait(3)
+end
+
+print("AUTO FLOW COMPLETE")
