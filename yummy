@@ -29,26 +29,23 @@ local Points = {
 }
 
 -- ===============================
--- SHUFFLE HELPER
+-- FALLBACK
 -- ===============================
-local function shuffled(list)
-    local t = {}
-    for i, v in ipairs(list) do
-        t[i] = v
-    end
-    for i = #t, 2, -1 do
-        local j = math.random(i)
-        t[i], t[j] = t[j], t[i]
-    end
-    return t
-end
+local FALLBACK_CF = CFrame.new(-2567.06, 25681.68, 1148.91)
 
 -- ===============================
--- SWEEP PAD (NORMAL SPEED)
+-- TIMING
 -- ===============================
-local function sweepPad(cf)
+local SWEEP_TIME = 1.1
+local FALLBACK_WAIT = 10
+
+-- ===============================
+-- TIME-LIMITED SWEEP
+-- ===============================
+local function sweepPadTimed(cf, maxTime)
     local root = getRoot()
     local basePos = cf.Position
+    local start = tick()
 
     local yOffsets = {-5, 0, 5}
     local xzOffsets = {-3, 0, 3}
@@ -56,6 +53,10 @@ local function sweepPad(cf)
     for _, y in ipairs(yOffsets) do
         for _, x in ipairs(xzOffsets) do
             for _, z in ipairs(xzOffsets) do
+                if tick() - start >= maxTime then
+                    return
+                end
+
                 root.CFrame = CFrame.new(
                     basePos.X + x,
                     basePos.Y + y,
@@ -66,127 +67,28 @@ local function sweepPad(cf)
                     root.AssemblyLinearVelocity = Vector3.new(0, -30, 0)
                 end)
 
-                task.wait(0.25) -- ✅ BACK TO NORMAL SPEED
+                task.wait(0.1)
             end
         end
     end
 end
 
 -- ===============================
--- FARM LOOP
+-- FARM LOOP (100s)
 -- ===============================
 task.spawn(function()
     while true do
-        local order = shuffled(Points)
-        for _, cf in ipairs(order) do
-            sweepPad(cf)
+        local cycleStart = tick()
+
+        for _, cf in ipairs(Points) do
+            sweepPadTimed(cf, SWEEP_TIME)
+            getRoot().CFrame = FALLBACK_CF
+            task.wait(FALLBACK_WAIT)
         end
-    end
-end)
 
--- ===============================
--- NETWORK REMOTES
--- ===============================
-local RemoteFunction = ReplicatedStorage
-    :WaitForChild("Shared")
-    :WaitForChild("Framework")
-    :WaitForChild("Network")
-    :WaitForChild("Remote")
-    :WaitForChild("RemoteFunction")
-
-local RemoteEvent = ReplicatedStorage
-    :WaitForChild("Shared")
-    :WaitForChild("Framework")
-    :WaitForChild("Network")
-    :WaitForChild("Remote")
-    :WaitForChild("RemoteEvent")
-
--- ===============================
--- AUTO GIFT SETUP
--- ===============================
-local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
-local PhysicalItem = require(ReplicatedStorage.Client.Effects.PhysicalItem)
-local LocalDataModule = require(ReplicatedStorage.Client.Framework.Services.LocalData)
-
-local function getLocalData()
-    return LocalDataModule:Get()
-end
-
-getgenv().oldGift = getgenv().oldGift or PhysicalItem.Gift
-
-local function runAutoGift()
-    getgenv().autoGift = true
-
-    PhysicalItem.Gift = function(giftId)
-        task.spawn(function()
-            pcall(function()
-                Remote:FireServer("ClaimGift", giftId)
-            end)
-        end)
-        return nil
-    end
-
-    local genericFolder = workspace.Rendered:FindFirstChild("Generic")
-    if genericFolder then
-        for _, v in ipairs(genericFolder:GetChildren()) do
-            if v:IsA("Part") and #v.Name == 36 then
-                v:Destroy()
-            end
+        local elapsed = tick() - cycleStart
+        if elapsed < 100 then
+            task.wait(100 - elapsed)
         end
-    end
-
-    local data = getLocalData()
-    if not data or not data.Powerups then return end
-
-    local boxes = {}
-    for name, amount in pairs(data.Powerups) do
-        if string.find(name, "Mystery Box") and amount > 0 then
-            table.insert(boxes, {name = name, amount = amount})
-        end
-    end
-
-    table.sort(boxes, function(a, b)
-        return a.amount > b.amount
-    end)
-
-    for _, box in ipairs(boxes) do
-        local amt = data.Powerups[box.name] or 0
-        if amt > 0 then
-            Remote:FireServer("UseGift", box.name, math.min(50, amt))
-        end
-    end
-end
-
--- ===============================
--- RANDOM ACTIONS (EVERY 60s)
--- ===============================
-local RANDOM_ACTIONS = {
-
-    function()
-        RemoteFunction:InvokeServer("ChristmasWheelSpin")
-    end,
-
-    function()
-        RemoteEvent:FireServer("UpgradeMastery", "Christmas")
-    end,
-
-    function()
-        RemoteEvent:FireServer("ClaimAdventCalender")
-    end,
-
-    function()
-        runAutoGift()
-    end,
-
-    function()
-        RemoteEvent:FireServer("ClaimChest", "Peppermint Chest")
-    end,
-}
-
-task.spawn(function()
-    while true do
-        local action = RANDOM_ACTIONS[math.random(#RANDOM_ACTIONS)]
-        pcall(action)
-        task.wait(60)
     end
 end)
