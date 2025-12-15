@@ -1,55 +1,104 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+local RebirthMachineUtil = require(ReplicatedStorage.Shared.Utils.RebirthMachineUtil)
+local PetsData = require(ReplicatedStorage.Shared.Data.Pets)
+local TimeUtil = require(ReplicatedStorage.Shared.Framework.Utilities.Math.Time)
+local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
+
+local LocalPlayer = Players.LocalPlayer
+
+local AUTO_REBIRTH_ENABLED = true
+local CHECK_INTERVAL = 5
+
+local ALLOWED_SECRET_NAMES = {
+    ["The Golden Ticket"] = true,
+    ["Butter Dawg"] = true,
+    ["Man Face Lord"] = true,
+    ["Man Face Dogcat"] = true,
+    ["Drippy Slice"] = true,
+    ["Giant Emerald Golem"] = true,
+    ["Hot Dog Doggy"] = true,
+    ["Rumblecon Trophy"] = true,
+    ["Rumblecon Halftime Show"] = true,
+    ["Watermelon Round"] = true,
+    ["Eternal Burger"] = true,
+    ["Giftbox King Doggy"] = true,
+    ["Nert Giftbox"] = true,
+    ["Quamatic Giftbox"] = true,
+    ["ObscureEntity Giftbox"] = true,
+    ["Sircfenner Giftbox"] = true,
+    ["Sylently Giftbox"] = true,
+    ["FutureWebsiteOwner Giftbox"] = true,
+}
+
 task.spawn(function()
-    repeat task.wait() until game:IsLoaded()
+    while AUTO_REBIRTH_ENABLED do
+        task.wait(CHECK_INTERVAL)
 
-    local ReplicatedStorage = game:GetService("ReplicatedStorage")
-    local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
-
-    local RemoteEvent = ReplicatedStorage
-        :WaitForChild("Shared")
-        :WaitForChild("Framework")
-        :WaitForChild("Network")
-        :WaitForChild("Remote")
-        :WaitForChild("RemoteEvent")
-
-    -- ===== SEASON AUTO-CLAIMER =====
-    local function getSeason()
-        local d = LocalData:Get()
-        return d and d.Season
-    end
-
-    local function fire(remote, reason)
-        print("[SEASON]", remote, "|", reason)
-        RemoteEvent:FireServer(remote)
-    end
-
-    print("[SEASON] Auto-claimer started")
-
-    local lastPoints
-    local infiniteFired = false
-
-    while true do
-        local s = getSeason()
-        if not s then
-            task.wait(1)
+        local playerData = LocalData:Get()
+        if not playerData or not playerData.Pets or not playerData.Teams or not playerData.TeamEquipped then
             continue
         end
 
-        if not lastPoints then
-            lastPoints = s.Points
-            task.wait(0.5)
+        if TimeUtil.now() < playerData.NextRebirthMachineUse then
             continue
         end
 
-        if s.Level == 15 and not s.IsInfinite and not infiniteFired then
-            fire("BeginSeasonInfinite", "Level 15 reached")
-            infiniteFired = true
+        local equippedPetIds = {}
+        local activeTeamIndex = playerData.TeamEquipped
+
+        if activeTeamIndex and playerData.Teams[activeTeamIndex] and playerData.Teams[activeTeamIndex].Pets then
+            for _, petId in ipairs(playerData.Teams[activeTeamIndex].Pets) do
+                equippedPetIds[petId] = true
+            end
         end
 
-        if s.Points > lastPoints then
-            fire("ClaimSeason", "Points increased")
+        local petsByVariant = {}
+
+        for _, petData in ipairs(playerData.Pets) do
+            if equippedPetIds[petData.Id] or petData.Locked then
+                continue
+            end
+
+            local petInfo = PetsData[petData.Name]
+            if not petInfo then
+                continue
+            end
+
+            if petInfo.Rarity ~= "Secret" or petInfo.Infinity then
+                continue
+            end
+
+            if not ALLOWED_SECRET_NAMES[petData.Name] then
+                continue
+            end
+
+            local variant = RebirthMachineUtil:GetPetVariant(petData)
+            if not petsByVariant[variant] then
+                petsByVariant[variant] = {}
+            end
+
+            table.insert(petsByVariant[variant], petData.Id)
         end
 
-        lastPoints = s.Points
-        task.wait(0.5)
+        local petIdsToSend = nil
+        local requiredAmount = RebirthMachineUtil.NUM_SECRETS_REQUIRED
+
+        for variant, idList in pairs(petsByVariant) do
+            if #idList >= requiredAmount then
+                petIdsToSend = {}
+                for i = 1, requiredAmount do
+                    table.insert(petIdsToSend, idList[i])
+                end
+                break
+            end
+        end
+
+        if petIdsToSend then
+            local resultPet = Remote:InvokeServer("UseRebirthMachine", petIdsToSend)
+            task.wait(2)
+        end
     end
 end)
