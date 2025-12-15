@@ -1,104 +1,83 @@
+getgenv().waitTime = 2.5
+getgenv().autoGift = true
+
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
 
-local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
-local RebirthMachineUtil = require(ReplicatedStorage.Shared.Utils.RebirthMachineUtil)
-local PetsData = require(ReplicatedStorage.Shared.Data.Pets)
-local TimeUtil = require(ReplicatedStorage.Shared.Framework.Utilities.Math.Time)
+local Network = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
 local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
+local PhysicalItem = require(ReplicatedStorage.Client.Effects.PhysicalItem)
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
 
-local LocalPlayer = Players.LocalPlayer
+getgenv().oldGift = getgenv().oldGift or PhysicalItem.Gift
+PhysicalItem.Gift = function(giftId, giftType, giftPosition)
+    if not getgenv().autoGift then
+        return getgenv().oldGift(giftId, giftType, giftPosition)
+    end
+    task.spawn(function()
+        pcall(function()
+            Remote:FireServer("ClaimGift", giftId)
+        end)
+    end)
+    return nil
+end
 
-local AUTO_REBIRTH_ENABLED = true
-local CHECK_INTERVAL = 5
+local genericFolder = Workspace:FindFirstChild("Rendered") and Workspace.Rendered:FindFirstChild("Generic")
+if genericFolder then
+    genericFolder.ChildAdded:Connect(function(item)
+        if item:IsA("Part") and #item.Name == 36 then
+            item:Destroy()
+        end
+    end)
+end
 
-local ALLOWED_SECRET_NAMES = {
-    ["The Golden Ticket"] = true,
-    ["Butter Dawg"] = true,
-    ["Man Face Lord"] = true,
-    ["Man Face Dogcat"] = true,
-    ["Drippy Slice"] = true,
-    ["Giant Emerald Golem"] = true,
-    ["Hot Dog Doggy"] = true,
-    ["Rumblecon Trophy"] = true,
-    ["Rumblecon Halftime Show"] = true,
-    ["Watermelon Round"] = true,
-    ["Eternal Burger"] = true,
-    ["Giftbox King Doggy"] = true,
-    ["Nert Giftbox"] = true,
-    ["Quamatic Giftbox"] = true,
-    ["ObscureEntity Giftbox"] = true,
-    ["Sircfenner Giftbox"] = true,
-    ["Sylently Giftbox"] = true,
-    ["FutureWebsiteOwner Giftbox"] = true,
-}
+Remote:FireServer("SetSetting","Item Notifications",false)
+
+Network:FireServer(
+    "Teleport",
+    "Workspace.Worlds.Minigame Paradise.Islands.Hyperwave Island.Island.Portal.Spawn"
+)
+
+for _, world in pairs(Workspace.Worlds:GetChildren()) do
+    if world.Name ~= "Minigame Paradise" then
+        world:Destroy()
+    end
+end
+
+task.wait(30)
 
 task.spawn(function()
-    while AUTO_REBIRTH_ENABLED do
-        task.wait(CHECK_INTERVAL)
-
-        local playerData = LocalData:Get()
-        if not playerData or not playerData.Pets or not playerData.Teams or not playerData.TeamEquipped then
-            continue
+    while true do
+        local data = LocalData:Get()
+        if data and data.Powerups and (data.Powerups["Mystery Box"] or 0) > 0 then
+            Remote:FireServer("UseGift","Mystery Box",50)
         end
+        task.wait(getgenv().waitTime)
+    end
+end)
 
-        if TimeUtil.now() < playerData.NextRebirthMachineUse then
-            continue
-        end
-
-        local equippedPetIds = {}
-        local activeTeamIndex = playerData.TeamEquipped
-
-        if activeTeamIndex and playerData.Teams[activeTeamIndex] and playerData.Teams[activeTeamIndex].Pets then
-            for _, petId in ipairs(playerData.Teams[activeTeamIndex].Pets) do
-                equippedPetIds[petId] = true
-            end
-        end
-
-        local petsByVariant = {}
-
-        for _, petData in ipairs(playerData.Pets) do
-            if equippedPetIds[petData.Id] or petData.Locked then
-                continue
-            end
-
-            local petInfo = PetsData[petData.Name]
-            if not petInfo then
-                continue
-            end
-
-            if petInfo.Rarity ~= "Secret" or petInfo.Infinity then
-                continue
-            end
-
-            if not ALLOWED_SECRET_NAMES[petData.Name] then
-                continue
-            end
-
-            local variant = RebirthMachineUtil:GetPetVariant(petData)
-            if not petsByVariant[variant] then
-                petsByVariant[variant] = {}
-            end
-
-            table.insert(petsByVariant[variant], petData.Id)
-        end
-
-        local petIdsToSend = nil
-        local requiredAmount = RebirthMachineUtil.NUM_SECRETS_REQUIRED
-
-        for variant, idList in pairs(petsByVariant) do
-            if #idList >= requiredAmount then
-                petIdsToSend = {}
-                for i = 1, requiredAmount do
-                    table.insert(petIdsToSend, idList[i])
+task.spawn(function()
+    while true do
+        task.wait(10)
+        local data = LocalData:Get()
+        if data and data.Pets then
+            local ids = {}
+            for _, pet in pairs(data.Pets) do
+                if pet.Id then
+                    table.insert(ids, pet.Id)
                 end
-                break
+            end
+            if #ids > 0 then
+                Network:FireServer("ChoosePiece", ids[math.random(#ids)])
             end
         end
+        task.wait(120)
+    end
+end)
 
-        if petIdsToSend then
-            local resultPet = Remote:InvokeServer("UseRebirthMachine", petIdsToSend)
-            task.wait(2)
-        end
+task.spawn(function()
+    while true do
+        Network:FireServer("GumShopPurchase","Void Gum")
+        task.wait(1140)
     end
 end)
