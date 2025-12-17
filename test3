@@ -2,131 +2,160 @@
 local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 
 local Window = Rayfield:CreateWindow({
-    Name = "Teleport Control",
-    LoadingTitle = "Teleport UI",
+    Name = "Role Teleport & ESP",
+    LoadingTitle = "Utility UI",
     LoadingSubtitle = "Rayfield",
 })
 
-local Tab = Window:CreateTab("Teleport", 4483362458)
+local Tab = Window:CreateTab("Main", 4483362458)
 
 -- Services
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
 --------------------------------------------------
--- 🚫 BLACKLIST (ADD NAMES HERE)
---------------------------------------------------
-local BLACKLIST = {
-    ["YourNameHere"] = true,
-    ["FriendYouDontWant"] = true,
-}
-
---------------------------------------------------
 -- STATES
 --------------------------------------------------
-local TP_CYCLE = false
-local TP_STICKY = false
+local ESP_ON = false
+local TP_SEEKER = false
+local TP_HIDER = false
+-- "NONSTOP" or "UNTIL_DEATH"
+local TP_MODE = "NONSTOP"
 
 --------------------------------------------------
--- 🔤 GET SORTED + FILTERED PLAYER LIST
---------------------------------------------------
-local function getValidPlayers()
-    local list = {}
-
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer
-            and not BLACKLIST[player.Name]
-            and player.Character
-            and player.Character:FindFirstChild("HumanoidRootPart") then
-            table.insert(list, player)
-        end
-    end
-
-    table.sort(list, function(a, b)
-        return a.Name:lower() < b.Name:lower()
-    end)
-
-    return list
-end
-
---------------------------------------------------
--- 🚶‍♂️ MODE 1: CYCLE (always goes next)
+-- 🔴 RED ESP (ALL PLAYERS)
 --------------------------------------------------
 task.spawn(function()
     while true do
-        if TP_CYCLE then
-            local char = LocalPlayer.Character
-            local root = char and char:FindFirstChild("HumanoidRootPart")
-
-            if root then
-                local players = getValidPlayers()
-                for _, player in ipairs(players) do
-                    if not TP_CYCLE then break end
-                    local targetRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-                    if targetRoot then
-                        root.CFrame = targetRoot.CFrame + Vector3.new(0, 3, 0)
-                        task.wait(0.15)
+        for _, player in ipairs(Players:GetPlayers()) do
+            local char = player.Character
+            if char then
+                local h = char:FindFirstChild("ESP_Highlight")
+                if ESP_ON then
+                    if not h then
+                        h = Instance.new("Highlight")
+                        h.Name = "ESP_Highlight"
+                        h.Adornee = char
+                        h.Parent = char
                     end
+                    h.Enabled = true
+                    h.FillColor = Color3.fromRGB(255, 0, 0)
+                    h.OutlineColor = Color3.fromRGB(255, 0, 0)
+                    h.FillTransparency = 0.4
+                    h.OutlineTransparency = 0
+                    h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                else
+                    if h then h:Destroy() end
                 end
             end
         end
-        task.wait(0.1)
+        task.wait(0.5)
     end
 end)
 
 --------------------------------------------------
--- 🎯 MODE 2: STICKY (only switches if target gone)
+-- 🔎 FIND PLAYER BY ROLE (from workspace.CHARACTERS)
 --------------------------------------------------
-task.spawn(function()
-    local currentTarget = nil
-
-    while true do
-        if TP_STICKY then
-            local char = LocalPlayer.Character
-            local root = char and char:FindFirstChild("HumanoidRootPart")
-
-            if root then
-                -- validate current target
-                if not currentTarget
-                or not currentTarget.Parent
-                or BLACKLIST[currentTarget.Name]
-                or not currentTarget.Character
-                or not currentTarget.Character:FindFirstChild("HumanoidRootPart") then
-
-                    currentTarget = nil
-                    local players = getValidPlayers()
-                    currentTarget = players[1] -- alphabetically first valid
-                end
-
-                if currentTarget and currentTarget.Character then
-                    local targetRoot = currentTarget.Character:FindFirstChild("HumanoidRootPart")
-                    if targetRoot then
-                        root.CFrame = targetRoot.CFrame + Vector3.new(0, 3, 0)
-                    end
-                end
+local function getPlayerByRole(roleName)
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local folder = workspace:FindFirstChild("CHARACTERS")
+            local charFolder = folder and folder:FindFirstChild(player.Name)
+            if charFolder and charFolder:FindFirstChild(roleName) then
+                return player
             end
         end
+    end
+    return nil
+end
+
+--------------------------------------------------
+-- 🚶‍♂️ AUTO TP LOOP (WITH MODE LOGIC)
+--------------------------------------------------
+task.spawn(function()
+    local lockedTarget = nil
+
+    while true do
+        local myChar = LocalPlayer.Character
+        local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+
+        if myRoot then
+            local roleName = nil
+            if TP_SEEKER then roleName = "SeekerTitle" end
+            if TP_HIDER then roleName = "HiderTitle" end
+
+            if roleName then
+                if TP_MODE == "NONSTOP" then
+                    lockedTarget = getPlayerByRole(roleName)
+                else
+                    -- UNTIL_DEATH
+                    if not lockedTarget
+                    or not lockedTarget.Character
+                    or not lockedTarget.Character:FindFirstChildOfClass("Humanoid")
+                    or lockedTarget.Character:FindFirstChildOfClass("Humanoid").Health <= 0 then
+                        lockedTarget = getPlayerByRole(roleName)
+                    end
+                end
+
+                if lockedTarget and lockedTarget.Character then
+                    local targetRoot = lockedTarget.Character:FindFirstChild("HumanoidRootPart")
+                    if targetRoot then
+                        myRoot.CFrame = targetRoot.CFrame + Vector3.new(0, 3, 0)
+                    end
+                end
+            else
+                lockedTarget = nil
+            end
+        end
+
         task.wait(0.15)
     end
 end)
 
 --------------------------------------------------
--- 🧩 UI TOGGLES
+-- 🧩 UI CONTROLS
 --------------------------------------------------
 Tab:CreateToggle({
-    Name = "Cycle Teleport (A → Z)",
+    Name = "Red ESP (All Players)",
     CurrentValue = false,
     Callback = function(v)
-        TP_CYCLE = v
-        if v then TP_STICKY = false end
+        ESP_ON = v
+        Rayfield:Notify({
+            Title = "ESP",
+            Content = v and "Red ESP Enabled" or "Red ESP Disabled",
+            Duration = 2
+        })
     end
 })
 
 Tab:CreateToggle({
-    Name = "Sticky Teleport (Until Gone)",
+    Name = "Auto TP to Seeker",
     CurrentValue = false,
     Callback = function(v)
-        TP_STICKY = v
-        if v then TP_CYCLE = false end
+        TP_SEEKER = v
+        if v then TP_HIDER = false end
+    end
+})
+
+Tab:CreateToggle({
+    Name = "Auto TP to Hider",
+    CurrentValue = false,
+    Callback = function(v)
+        TP_HIDER = v
+        if v then TP_SEEKER = false end
+    end
+})
+
+Tab:CreateDropdown({
+    Name = "Teleport Mode",
+    Options = { "NONSTOP", "UNTIL_DEATH" },
+    CurrentOption = "NONSTOP",
+    Callback = function(opt)
+        TP_MODE = opt
+        Rayfield:Notify({
+            Title = "TP Mode",
+            Content = "Mode set to: "..opt,
+            Duration = 3
+        })
     end
 })
