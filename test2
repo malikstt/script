@@ -1,104 +1,122 @@
-for _,x in pairs(getconnections(game.Players.LocalPlayer.Idled)) do
-    x:Disable()
-end
-
+-- SERVICES
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
 local lp = Players.LocalPlayer
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
 
-local function getRoot()
-    local c = lp.Character or lp.CharacterAdded:Wait()
-    return c:WaitForChild("HumanoidRootPart")
+-- SAFE GET DATA
+local function gd()
+    local ok, d = pcall(function()
+        return LocalData:Get()
+    end)
+    return ok and d or {}
 end
 
-local Points = {
-    CFrame.new(-2605.55,20.60,1115.76),
-    CFrame.new(-2710.46,32.90,1190.03),
-    CFrame.new(-2598.21,21.22,1069.86),
-    CFrame.new(-2447.21,31.83,972.24),
-    CFrame.new(-2519.26,20.82,1066.89),
-    CFrame.new(-2414.90,31.83,1000.79),
-    CFrame.new(-2674.88,32.52,1214.75),
-    CFrame.new(-2710.10,32.12,1163.05),
-    CFrame.new(-2422.10,31.83,974.31)
-}
-
-local function ensure()
-    local root = getRoot()
-    local char = root.Parent
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum then
-        repeat task.wait() until char:FindFirstChildOfClass("Humanoid")
-        hum = char:FindFirstChildOfClass("Humanoid")
-    end
-    return root, hum
+-- NUMBER FORMAT
+local function fmt(n)
+    n = tonumber(n) or 0
+    if n >= 1e12 then return string.format("%.2fT", n/1e12)
+    elseif n >= 1e9 then return string.format("%.2fB", n/1e9)
+    elseif n >= 1e6 then return string.format("%.2fM", n/1e6)
+    elseif n >= 1e3 then return string.format("%.2fK", n/1e3)
+    else return tostring(n) end
 end
 
-local function sweepTouch(cf)
-    local root, hum = ensure()
-    local b = cf.Position
+-- GET SNOWFLAKES
+local function getSnow()
+    return gd().Snowflakes or 0
+end
 
-    local xs, zs = {-2,0,2}, {-2,0,2}
-    local ys_under, ys_over = {-6,-4,-2}, {1,3,5}
+-- GET TEAM MULTI
+local function getTeamMulti()
+    local d = gd()
+    local ids = (d.Teams and d.TeamEquipped and d.Teams[d.TeamEquipped]
+        and d.Teams[d.TeamEquipped].Pets) or {}
 
-    local t = 0
-    local function step(w)
-        task.wait(w)
-        t += w
-        return t >= 1.3
-    end
-
-    for _,y in ipairs(ys_under) do
-        for _,x in ipairs(xs) do
-            for _,z in ipairs(zs) do
-                root.CFrame = CFrame.new(b.X+x,b.Y+y,b.Z+z)
-                root.AssemblyLinearVelocity = Vector3.new(0,50,0)
-                if hum then pcall(function() hum:MoveTo(b+Vector3.new(x,y+1,z)) end) end
-                if step(0.10) then return end
-            end
+    local petMap = {}
+    if d.Pets then
+        for _, p in pairs(d.Pets) do
+            petMap[tostring(p.Id)] = p
         end
     end
 
-    for _,y in ipairs(ys_over) do
-        for _,x in ipairs(xs) do
-            for _,z in ipairs(zs) do
-                root.CFrame = CFrame.new(b.X+x,b.Y+y,b.Z+z)
-                root.AssemblyLinearVelocity = Vector3.new(0,-80,0)
-                if hum then pcall(function() hum:MoveTo(b+Vector3.new(x,y-1,z)) end) end
-                if step(0.10) then return end
-            end
+    local sum = 0
+    for _, id in ipairs(ids) do
+        local pet = petMap[tostring(id)]
+        if pet and PetsModule[pet.Name] and PetsModule[pet.Name].Stats then
+            sum += (PetsModule[pet.Name].Stats.Snowflakes or 0)
         end
     end
+    return sum
+end
 
-    for i=1,2 do
-        root.CFrame = CFrame.new(b.X,b.Y+2,b.Z)
-        root.AssemblyLinearVelocity = Vector3.new(0,-150,0)
-        if step(0.07) then return end
-
-        root.CFrame = CFrame.new(b.X,b.Y-2,b.Z)
-        root.AssemblyLinearVelocity = Vector3.new(0,150,0)
-        if step(0.07) then return end
-    end
-
-    for _,off in ipairs({
-        Vector3.new(0,0,0),
-        Vector3.new(1,0,0),
-        Vector3.new(-1,0,0),
-        Vector3.new(0,0,1),
-        Vector3.new(0,0,-1)
-    }) do
-        if hum then
-            pcall(function() hum:MoveTo(b+off) end)
-            pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
-        end
-        if step(0.10) then return end
+-- PER MIN CALC
+local samples = {}
+local function push(v)
+    samples[#samples+1] = {t = tick(), v = v}
+    while #samples > 1 and tick() - samples[1].t > 60 do
+        table.remove(samples, 1)
     end
 end
 
+local function perMin()
+    if #samples < 2 then return 0 end
+    local a, b = samples[1], samples[#samples]
+    if b.t - a.t <= 0 then return 0 end
+    return ((b.v - a.v) / (b.t - a.t)) * 60
+end
+
+-- UI
+local gui = Instance.new("ScreenGui", lp.PlayerGui)
+gui.Name = "SnowflakeStatsUI"
+gui.IgnoreGuiInset = true
+gui.ResetOnSpawn = false
+gui.DisplayOrder = 999999
+
+local bg = Instance.new("Frame", gui)
+bg.Size = UDim2.new(1,0,1,0)
+bg.BackgroundColor3 = Color3.fromRGB(0,0,0)
+
+local box = Instance.new("Frame", bg)
+box.AnchorPoint = Vector2.new(0.5,0.5)
+box.Position = UDim2.new(0.5,0,0.5,0)
+box.Size = UDim2.new(0.45,0,0.35,0)
+box.BackgroundColor3 = Color3.fromRGB(12,12,14)
+Instance.new("UICorner", box).CornerRadius = UDim.new(0,20)
+
+local function makeText(y, size)
+    local t = Instance.new("TextLabel", box)
+    t.Size = UDim2.new(1,-40,0,60)
+    t.Position = UDim2.new(0,20,0,y)
+    t.BackgroundTransparency = 1
+    t.Font = Enum.Font.GothamBlack
+    t.TextScaled = true
+    t.TextWrapped = true
+    t.TextColor3 = Color3.fromRGB(255,255,255)
+    t.TextSize = size
+    return t
+end
+
+-- TEXT ELEMENTS
+local USER = makeText(20, 28)
+local TOTAL = makeText(95, 40)
+local RATE = makeText(175, 28)
+local MULTI = makeText(245, 28)
+
+-- LOOP
 task.spawn(function()
-    task.wait(1)
     while true do
-        for _,cf in ipairs(Points) do
-            sweepTouch(cf)
-        end
+        local snow = getSnow()
+        push(snow)
+
+        USER.Text = "👤 "..lp.Name
+        TOTAL.Text = "❄️ "..fmt(snow).." Snowflakes"
+        RATE.Text = "⏱️ "..fmt(perMin()).." / min"
+        MULTI.Text = "✨ Team Multi: "..fmt(getTeamMulti())
+
+        task.wait(1)
     end
 end)
