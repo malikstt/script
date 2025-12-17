@@ -11,6 +11,7 @@ local Tab = Window:CreateTab("Main", 4483362458)
 
 -- Services
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 
 --------------------------------------------------
@@ -19,8 +20,10 @@ local LocalPlayer = Players.LocalPlayer
 local ESP_ON = false
 local TP_SEEKER = false
 local TP_HIDER = false
+local AUTO_ATTACK = false
+
 -- "NONSTOP" or "UNTIL_DEATH"
-local TP_MODE = "NONSTOP"
+local MODE = "NONSTOP"
 
 --------------------------------------------------
 -- 🔴 RED ESP (ALL PLAYERS)
@@ -54,53 +57,51 @@ task.spawn(function()
 end)
 
 --------------------------------------------------
--- 🔎 FIND PLAYER BY ROLE (from workspace.CHARACTERS)
+-- 🔎 FIND PLAYER BY ROLE
 --------------------------------------------------
 local function getPlayerByRole(roleName)
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer then
-            local folder = workspace:FindFirstChild("CHARACTERS")
-            local charFolder = folder and folder:FindFirstChild(player.Name)
-            if charFolder and charFolder:FindFirstChild(roleName) then
+            local chars = workspace:FindFirstChild("CHARACTERS")
+            local folder = chars and chars:FindFirstChild(player.Name)
+            if folder and folder:FindFirstChild(roleName) then
                 return player
             end
         end
     end
-    return nil
 end
 
 --------------------------------------------------
--- 🚶‍♂️ AUTO TP LOOP (WITH MODE LOGIC)
+-- 🚶‍♂️ AUTO TP + TARGET LOCK
 --------------------------------------------------
-task.spawn(function()
-    local lockedTarget = nil
+local lockedTarget = nil
 
+task.spawn(function()
     while true do
         local myChar = LocalPlayer.Character
         local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
 
         if myRoot then
-            local roleName = nil
-            if TP_SEEKER then roleName = "SeekerTitle" end
-            if TP_HIDER then roleName = "HiderTitle" end
+            local role = nil
+            if TP_SEEKER then role = "SeekerTitle" end
+            if TP_HIDER then role = "HiderTitle" end
 
-            if roleName then
-                if TP_MODE == "NONSTOP" then
-                    lockedTarget = getPlayerByRole(roleName)
+            if role then
+                if MODE == "NONSTOP" then
+                    lockedTarget = getPlayerByRole(role)
                 else
-                    -- UNTIL_DEATH
                     if not lockedTarget
                     or not lockedTarget.Character
                     or not lockedTarget.Character:FindFirstChildOfClass("Humanoid")
                     or lockedTarget.Character:FindFirstChildOfClass("Humanoid").Health <= 0 then
-                        lockedTarget = getPlayerByRole(roleName)
+                        lockedTarget = getPlayerByRole(role)
                     end
                 end
 
                 if lockedTarget and lockedTarget.Character then
-                    local targetRoot = lockedTarget.Character:FindFirstChild("HumanoidRootPart")
-                    if targetRoot then
-                        myRoot.CFrame = targetRoot.CFrame + Vector3.new(0, 3, 0)
+                    local tRoot = lockedTarget.Character:FindFirstChild("HumanoidRootPart")
+                    if tRoot then
+                        myRoot.CFrame = tRoot.CFrame + Vector3.new(0, 3, 0)
                     end
                 end
             else
@@ -113,6 +114,47 @@ task.spawn(function()
 end)
 
 --------------------------------------------------
+-- 🔪 AUTO ATTACK
+--------------------------------------------------
+local attackRemote =
+    ReplicatedStorage
+        :WaitForChild("Assets")
+        :WaitForChild("Knife")
+        :WaitForChild("Remotes")
+        :WaitForChild("Attack")
+
+task.spawn(function()
+    while true do
+        if AUTO_ATTACK and lockedTarget and lockedTarget.Character then
+            local char = LocalPlayer.Character
+            local knife = char and char:FindFirstChild("Knife")
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+
+            local hum = lockedTarget.Character:FindFirstChildOfClass("Humanoid")
+
+            if knife and root then
+                attackRemote:FireServer(
+                    os.clock(),
+                    knife,
+                    root.CFrame,
+                    {}
+                )
+            end
+
+            if MODE == "UNTIL_DEATH" and hum and hum.Health <= 0 then
+                AUTO_ATTACK = false
+                Rayfield:Notify({
+                    Title = "Auto Attack",
+                    Content = "Target eliminated.",
+                    Duration = 3
+                })
+            end
+        end
+        task.wait(0.25)
+    end
+end)
+
+--------------------------------------------------
 -- 🧩 UI CONTROLS
 --------------------------------------------------
 Tab:CreateToggle({
@@ -120,11 +162,6 @@ Tab:CreateToggle({
     CurrentValue = false,
     Callback = function(v)
         ESP_ON = v
-        Rayfield:Notify({
-            Title = "ESP",
-            Content = v and "Red ESP Enabled" or "Red ESP Disabled",
-            Duration = 2
-        })
     end
 })
 
@@ -146,16 +183,29 @@ Tab:CreateToggle({
     end
 })
 
+Tab:CreateToggle({
+    Name = "Auto Attack",
+    CurrentValue = false,
+    Callback = function(v)
+        AUTO_ATTACK = v
+        Rayfield:Notify({
+            Title = "Auto Attack",
+            Content = v and "Enabled" or "Disabled",
+            Duration = 2
+        })
+    end
+})
+
 Tab:CreateDropdown({
-    Name = "Teleport Mode",
+    Name = "Mode",
     Options = { "NONSTOP", "UNTIL_DEATH" },
     CurrentOption = "NONSTOP",
     Callback = function(opt)
-        TP_MODE = opt
+        MODE = opt
         Rayfield:Notify({
-            Title = "TP Mode",
+            Title = "Mode",
             Content = "Mode set to: "..opt,
-            Duration = 3
+            Duration = 2
         })
     end
 })
