@@ -18,37 +18,42 @@ local LocalPlayer = Players.LocalPlayer
 -- STATES
 --------------------------------------------------
 local ESP_ON = false
+
 local TP_SEEKER = false
 local TP_HIDER = false
-local AUTO_ATTACK = false
+
+local ATTACK_SEEKER = false
+local ATTACK_HIDER = false
 
 -- "NONSTOP" or "UNTIL_DEATH"
 local MODE = "NONSTOP"
 
 --------------------------------------------------
--- 🔴 RED ESP (ALL PLAYERS)
+-- 🔴 RED ESP (OTHERS ONLY)
 --------------------------------------------------
 task.spawn(function()
     while true do
         for _, player in ipairs(Players:GetPlayers()) do
-            local char = player.Character
-            if char then
-                local h = char:FindFirstChild("ESP_Highlight")
-                if ESP_ON then
-                    if not h then
-                        h = Instance.new("Highlight")
-                        h.Name = "ESP_Highlight"
-                        h.Adornee = char
-                        h.Parent = char
+            if player ~= LocalPlayer then
+                local char = player.Character
+                if char then
+                    local h = char:FindFirstChild("ESP_Highlight")
+                    if ESP_ON then
+                        if not h then
+                            h = Instance.new("Highlight")
+                            h.Name = "ESP_Highlight"
+                            h.Adornee = char
+                            h.Parent = char
+                        end
+                        h.Enabled = true
+                        h.FillColor = Color3.fromRGB(255, 0, 0)
+                        h.OutlineColor = Color3.fromRGB(255, 0, 0)
+                        h.FillTransparency = 0.4
+                        h.OutlineTransparency = 0
+                        h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                    else
+                        if h then h:Destroy() end
                     end
-                    h.Enabled = true
-                    h.FillColor = Color3.fromRGB(255, 0, 0)
-                    h.OutlineColor = Color3.fromRGB(255, 0, 0)
-                    h.FillTransparency = 0.4
-                    h.OutlineTransparency = 0
-                    h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                else
-                    if h then h:Destroy() end
                 end
             end
         end
@@ -57,44 +62,53 @@ task.spawn(function()
 end)
 
 --------------------------------------------------
--- 🔎 FIND PLAYER BY ROLE
+-- ROLE LOOKUP
 --------------------------------------------------
-local function getPlayerByRole(roleName)
+local function getPlayersByRole(roleName)
+    local list = {}
+    local chars = workspace:FindFirstChild("CHARACTERS")
+    if not chars then return list end
+
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer then
-            local chars = workspace:FindFirstChild("CHARACTERS")
-            local folder = chars and chars:FindFirstChild(player.Name)
+            local folder = chars:FindFirstChild(player.Name)
             if folder and folder:FindFirstChild(roleName) then
-                return player
+                table.insert(list, player)
             end
         end
     end
+    return list
 end
 
 --------------------------------------------------
--- 🚶‍♂️ AUTO TP + TARGET LOCK
+-- AUTO TP
 --------------------------------------------------
-local lockedTarget = nil
-
 task.spawn(function()
+    local index = 1
+    local lockedTarget = nil
+
     while true do
         local myChar = LocalPlayer.Character
         local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
 
         if myRoot then
-            local role = nil
-            if TP_SEEKER then role = "SeekerTitle" end
-            if TP_HIDER then role = "HiderTitle" end
+            local roleName =
+                TP_SEEKER and "SeekerTitle"
+                or TP_HIDER and "HiderTitle"
 
-            if role then
+            if roleName then
+                local targets = getPlayersByRole(roleName)
+
                 if MODE == "NONSTOP" then
-                    lockedTarget = getPlayerByRole(role)
+                    if #targets > 0 then
+                        lockedTarget = targets[index]
+                        index = (index % #targets) + 1
+                    end
                 else
                     if not lockedTarget
                     or not lockedTarget.Character
-                    or not lockedTarget.Character:FindFirstChildOfClass("Humanoid")
                     or lockedTarget.Character:FindFirstChildOfClass("Humanoid").Health <= 0 then
-                        lockedTarget = getPlayerByRole(role)
+                        lockedTarget = targets[1]
                     end
                 end
 
@@ -106,15 +120,16 @@ task.spawn(function()
                 end
             else
                 lockedTarget = nil
+                index = 1
             end
         end
 
-        task.wait(0.15)
+        task.wait(0.2)
     end
 end)
 
 --------------------------------------------------
--- 🔪 AUTO ATTACK
+-- AUTO ATTACK
 --------------------------------------------------
 local attackRemote =
     ReplicatedStorage
@@ -125,40 +140,39 @@ local attackRemote =
 
 task.spawn(function()
     while true do
-        if AUTO_ATTACK and lockedTarget and lockedTarget.Character then
-            local char = LocalPlayer.Character
-            local knife = char and char:FindFirstChild("Knife")
-            local root = char and char:FindFirstChild("HumanoidRootPart")
+        local roleName =
+            ATTACK_SEEKER and "SeekerTitle"
+            or ATTACK_HIDER and "HiderTitle"
 
-            local hum = lockedTarget.Character:FindFirstChildOfClass("Humanoid")
+        if roleName then
+            local targets = getPlayersByRole(roleName)
+            local target = targets[1]
 
-            if knife and root then
-                attackRemote:FireServer(
-                    os.clock(),
-                    knife,
-                    root.CFrame,
-                    {}
-                )
-            end
+            if target and target.Character then
+                local char = LocalPlayer.Character
+                local knife = char and char:FindFirstChild("Knife")
+                local root = char and char:FindFirstChild("HumanoidRootPart")
 
-            if MODE == "UNTIL_DEATH" and hum and hum.Health <= 0 then
-                AUTO_ATTACK = false
-                Rayfield:Notify({
-                    Title = "Auto Attack",
-                    Content = "Target eliminated.",
-                    Duration = 3
-                })
+                if knife and root then
+                    attackRemote:FireServer(
+                        os.clock(),
+                        knife,
+                        root.CFrame,
+                        {}
+                    )
+                end
             end
         end
+
         task.wait(0.25)
     end
 end)
 
 --------------------------------------------------
--- 🧩 UI CONTROLS
+-- UI
 --------------------------------------------------
 Tab:CreateToggle({
-    Name = "Red ESP (All Players)",
+    Name = "Red ESP (Others)",
     CurrentValue = false,
     Callback = function(v)
         ESP_ON = v
@@ -166,7 +180,7 @@ Tab:CreateToggle({
 })
 
 Tab:CreateToggle({
-    Name = "Auto TP to Seeker",
+    Name = "Auto TP Seeker",
     CurrentValue = false,
     Callback = function(v)
         TP_SEEKER = v
@@ -175,7 +189,7 @@ Tab:CreateToggle({
 })
 
 Tab:CreateToggle({
-    Name = "Auto TP to Hider",
+    Name = "Auto TP Hider",
     CurrentValue = false,
     Callback = function(v)
         TP_HIDER = v
@@ -184,15 +198,20 @@ Tab:CreateToggle({
 })
 
 Tab:CreateToggle({
-    Name = "Auto Attack",
+    Name = "Auto Attack Seeker",
     CurrentValue = false,
     Callback = function(v)
-        AUTO_ATTACK = v
-        Rayfield:Notify({
-            Title = "Auto Attack",
-            Content = v and "Enabled" or "Disabled",
-            Duration = 2
-        })
+        ATTACK_SEEKER = v
+        if v then ATTACK_HIDER = false end
+    end
+})
+
+Tab:CreateToggle({
+    Name = "Auto Attack Hider",
+    CurrentValue = false,
+    Callback = function(v)
+        ATTACK_HIDER = v
+        if v then ATTACK_SEEKER = false end
     end
 })
 
@@ -202,10 +221,5 @@ Tab:CreateDropdown({
     CurrentOption = "NONSTOP",
     Callback = function(opt)
         MODE = opt
-        Rayfield:Notify({
-            Title = "Mode",
-            Content = "Mode set to: "..opt,
-            Duration = 2
-        })
     end
 })
