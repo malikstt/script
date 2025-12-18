@@ -19,8 +19,12 @@ local CHARACTERS = workspace:WaitForChild("CHARACTERS")
 
 local State = {
     ESP = false,
-    AUTO_TP = false,
-    CAMERA_LOCK = false,
+    TP_SEEKER = false,
+    TP_HIDER = false,
+    AUTO_SWITCH = false,
+    MODE = "NONSTOP",
+    OLD_CAMERA = false,
+    NEW_CAMERA = false,
     NOCLIP = false,
     AUTO_ATTACK = false
 }
@@ -32,6 +36,7 @@ local OUTLINE_COLOR = Color3.fromRGB(255,255,255)
 local ESP_CACHE = {}
 local lockedTarget
 local cycleIndex = 1
+local camSaved
 
 local function getRole(p)
     local f = CHARACTERS:FindFirstChild(p.Name)
@@ -40,25 +45,19 @@ local function getRole(p)
     if f:FindFirstChild("HiderTitle") then return "HIDER" end
 end
 
-local function getTargets()
-    local seekers = {}
-    local hiders = {}
-    for _,p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer then
-            local r = getRole(p)
-            if r == "SEEKER" then
-                table.insert(seekers,p)
-            elseif r == "HIDER" then
-                table.insert(hiders,p)
-            end
-        end
-    end
-    return seekers,hiders
-end
-
 local function valid(p)
     local h = p.Character and p.Character:FindFirstChildOfClass("Humanoid")
     return h and h.Health > 0
+end
+
+local function getPlayersByRole(role)
+    local t = {}
+    for _,p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and getRole(p) == role then
+            table.insert(t,p)
+        end
+    end
+    return t
 end
 
 RunService.Heartbeat:Connect(function()
@@ -88,20 +87,38 @@ RunService.Heartbeat:Connect(function()
 end)
 
 RunService.Heartbeat:Connect(function()
-    if not State.AUTO_TP then
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local role
+    if State.AUTO_SWITCH then
+        local seekers = getPlayersByRole("SEEKER")
+        local hiders = getPlayersByRole("HIDER")
+        role = #seekers > 0 and "SEEKER" or "HIDER"
+    elseif State.TP_SEEKER then
+        role = "SEEKER"
+    elseif State.TP_HIDER then
+        role = "HIDER"
+    end
+
+    if not role then
         lockedTarget = nil
         cycleIndex = 1
         return
     end
-    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    local seekers,hiders = getTargets()
-    local pool = #seekers > 0 and seekers or hiders
-    if #pool == 0 then return end
-    if not lockedTarget or not valid(lockedTarget) then
-        lockedTarget = pool[cycleIndex]
-        cycleIndex = (cycleIndex % #pool) + 1
+
+    local targets = getPlayersByRole(role)
+    if #targets == 0 then return end
+
+    if State.MODE == "NONSTOP" then
+        lockedTarget = targets[cycleIndex]
+        cycleIndex = (cycleIndex % #targets) + 1
+    else
+        if not lockedTarget or not valid(lockedTarget) then
+            lockedTarget = targets[1]
+        end
     end
+
     if lockedTarget and lockedTarget.Character then
         local tRoot = lockedTarget.Character:FindFirstChild("HumanoidRootPart")
         if tRoot then
@@ -110,14 +127,25 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
-local camSaved
+RunService:BindToRenderStep("OldCam", Enum.RenderPriority.Camera.Value + 1, function()
+    if not State.OLD_CAMERA then return end
+    if not lockedTarget or not lockedTarget.Character then return end
+    local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    local focus = lockedTarget.Character:FindFirstChild("Head") or lockedTarget.Character:FindFirstChild("HumanoidRootPart")
+    if not myRoot or not focus then return end
+    camSaved = camSaved or Camera.CameraType
+    Camera.CameraType = Enum.CameraType.Scriptable
+    Camera.CFrame = CFrame.new(
+        myRoot.CFrame:PointToWorldSpace(Vector3.new(0,6,-10)),
+        focus.Position
+    )
+end)
 
-RunService:BindToRenderStep("BackLock", Enum.RenderPriority.Camera.Value + 2, function()
-    if not State.CAMERA_LOCK then return end
-    local char = LocalPlayer.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
+RunService:BindToRenderStep("NewCam", Enum.RenderPriority.Camera.Value + 2, function()
+    if not State.NEW_CAMERA then return end
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not root then return end
-    if not camSaved then camSaved = Camera.CameraType end
+    camSaved = camSaved or Camera.CameraType
     Camera.CameraType = Enum.CameraType.Scriptable
     local back = root.CFrame * CFrame.new(0,0,2)
     Camera.CFrame = CFrame.new(back.Position, root.Position)
@@ -151,32 +179,14 @@ task.spawn(function()
     end
 end)
 
-MainTab:CreateToggle({
-    Name = "ESP",
-    Callback = function(v) State.ESP = v end
-})
+MainTab:CreateToggle({ Name="ESP", Callback=function(v) State.ESP=v end })
+MainTab:CreateToggle({ Name="Auto TP Seeker", Callback=function(v) State.TP_SEEKER=v if v then State.TP_HIDER=false State.AUTO_SWITCH=false end end })
+MainTab:CreateToggle({ Name="Auto TP Hider", Callback=function(v) State.TP_HIDER=v if v then State.TP_SEEKER=false State.AUTO_SWITCH=false end end })
+MainTab:CreateToggle({ Name="Auto Switch Roles", Callback=function(v) State.AUTO_SWITCH=v if v then State.TP_SEEKER=false State.TP_HIDER=false end end })
+MainTab:CreateDropdown({ Name="Mode", Options={"NONSTOP","UNTIL_DEATH"}, Callback=function(v) State.MODE=v end })
+MainTab:CreateToggle({ Name="Old Camera Lock", Callback=function(v) State.OLD_CAMERA=v if not v then unlockCam() end end })
+MainTab:CreateToggle({ Name="New Camera Lock", Callback=function(v) State.NEW_CAMERA=v if not v then unlockCam() end end })
+MainTab:CreateToggle({ Name="No Collision", Callback=function(v) State.NOCLIP=v end })
+MainTab:CreateToggle({ Name="Auto Attack", Callback=function(v) State.AUTO_ATTACK=v end })
 
-MainTab:CreateToggle({
-    Name = "Auto TP (Smart Role Switch)",
-    Callback = function(v) State.AUTO_TP = v end
-})
-
-MainTab:CreateToggle({
-    Name = "New Camera Lock",
-    Callback = function(v)
-        State.CAMERA_LOCK = v
-        if not v then unlockCam() end
-    end
-})
-
-MainTab:CreateToggle({
-    Name = "No Collision",
-    Callback = function(v) State.NOCLIP = v end
-})
-
-MainTab:CreateToggle({
-    Name = "Auto Attack",
-    Callback = function(v) State.AUTO_ATTACK = v end
-})
-
-AddTab:CreateLabel("More coming")
+AddTab:CreateLabel("Extra features soon")
