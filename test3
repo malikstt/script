@@ -1,210 +1,182 @@
--- 🌈 Rayfield
 local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 
 local Window = Rayfield:CreateWindow({
-    Name = "Role Teleport & ESP",
-    LoadingTitle = "Utility UI",
-    LoadingSubtitle = "Rayfield",
+    Name = "Role Control",
+    LoadingTitle = "Utility",
+    LoadingSubtitle = "Rayfield"
 })
 
-local Tab = Window:CreateTab("Main", 4483362458)
+local MainTab = Window:CreateTab("Main", 4483362458)
+local AddTab = Window:CreateTab("Adds", 4483362458)
 
--- Services
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
+local CHARACTERS = workspace:WaitForChild("CHARACTERS")
 
---------------------------------------------------
--- STATES
---------------------------------------------------
-local ESP_ON = false
-local TP_SEEKER = false
-local TP_HIDER = false
-local CAMERA_LOCK = false
-local NOCLIP = false
-local DISABLE_FP = false
-local AUTO_ATTACK = false
-local MODE = "NONSTOP"
+local State = {
+    ESP = false,
+    AUTO_TP = false,
+    CAMERA_LOCK = false,
+    NOCLIP = false,
+    AUTO_ATTACK = false
+}
 
---------------------------------------------------
--- COLORS
---------------------------------------------------
-local SEEKER_COLOR = Color3.fromRGB(0, 255, 255)
-local HIDER_COLOR  = Color3.fromRGB(255, 0, 255)
-local OUTLINE_COLOR = Color3.fromRGB(255, 255, 255)
+local SEEKER_COLOR = Color3.fromRGB(0,255,255)
+local HIDER_COLOR = Color3.fromRGB(255,0,255)
+local OUTLINE_COLOR = Color3.fromRGB(255,255,255)
 
---------------------------------------------------
--- ROLE HELPERS
---------------------------------------------------
-local function getRole(player)
-    local chars = workspace:FindFirstChild("CHARACTERS")
-    if not chars then return nil end
-    local folder = chars:FindFirstChild(player.Name)
-    if not folder then return nil end
-    if folder:FindFirstChild("SeekerTitle") then return "SEEKER" end
-    if folder:FindFirstChild("HiderTitle") then return "HIDER" end
-end
-
-local function getPlayersByRole(roleName)
-    local list = {}
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer and getRole(p) == roleName then
-            table.insert(list, p)
-        end
-    end
-    return list
-end
-
---------------------------------------------------
--- ESP
---------------------------------------------------
-task.spawn(function()
-    while true do
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= LocalPlayer and p.Character then
-                local h = p.Character:FindFirstChild("ESP_Highlight")
-                if ESP_ON then
-                    if not h then
-                        h = Instance.new("Highlight")
-                        h.Name = "ESP_Highlight"
-                        h.Adornee = p.Character
-                        h.Parent = p.Character
-                    end
-                    local role = getRole(p)
-                    h.FillColor = role == "SEEKER" and SEEKER_COLOR or role == "HIDER" and HIDER_COLOR or Color3.new(1,1,1)
-                    h.OutlineColor = OUTLINE_COLOR
-                    h.FillTransparency = 0.25
-                    h.OutlineTransparency = 0
-                    h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                    h.Enabled = true
-                else
-                    if h then h:Destroy() end
-                end
-            end
-        end
-        task.wait(0.4)
-    end
-end)
-
---------------------------------------------------
--- AUTO TP (LOCKED TARGET)
---------------------------------------------------
+local ESP_CACHE = {}
 local lockedTarget
-task.spawn(function()
-    local index = 1
-    while true do
-        local char = LocalPlayer.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        if root then
-            local roleName = TP_SEEKER and "SEEKER" or TP_HIDER and "HIDER"
-            if roleName then
-                local targets = getPlayersByRole(roleName)
-                if MODE == "NONSTOP" then
-                    if #targets > 0 then
-                        lockedTarget = targets[index]
-                        index = (index % #targets) + 1
-                    end
-                else
-                    if not lockedTarget
-                        or not lockedTarget.Character
-                        or lockedTarget.Character:FindFirstChildOfClass("Humanoid").Health <= 0 then
-                        lockedTarget = targets[1]
-                    end
-                end
-                if lockedTarget and lockedTarget.Character then
-                    local tRoot = lockedTarget.Character:FindFirstChild("HumanoidRootPart")
-                    if tRoot then
-                        root.CFrame = tRoot.CFrame + Vector3.new(0, 3, 0)
-                    end
-                end
-            else
-                lockedTarget = nil
-                index = 1
+local cycleIndex = 1
+
+local function getRole(p)
+    local f = CHARACTERS:FindFirstChild(p.Name)
+    if not f then return nil end
+    if f:FindFirstChild("SeekerTitle") then return "SEEKER" end
+    if f:FindFirstChild("HiderTitle") then return "HIDER" end
+end
+
+local function getTargets()
+    local seekers = {}
+    local hiders = {}
+    for _,p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            local r = getRole(p)
+            if r == "SEEKER" then
+                table.insert(seekers,p)
+            elseif r == "HIDER" then
+                table.insert(hiders,p)
             end
         end
-        task.wait(0.2)
+    end
+    return seekers,hiders
+end
+
+local function valid(p)
+    local h = p.Character and p.Character:FindFirstChildOfClass("Humanoid")
+    return h and h.Health > 0
+end
+
+RunService.Heartbeat:Connect(function()
+    if not State.ESP then
+        for _,h in pairs(ESP_CACHE) do h:Destroy() end
+        table.clear(ESP_CACHE)
+        return
+    end
+    for _,p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character then
+            local h = ESP_CACHE[p]
+            if not h then
+                h = Instance.new("Highlight")
+                h.Parent = p.Character
+                h.Adornee = p.Character
+                h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                ESP_CACHE[p] = h
+            end
+            local r = getRole(p)
+            h.FillColor = r == "SEEKER" and SEEKER_COLOR or r == "HIDER" and HIDER_COLOR or Color3.new(1,1,1)
+            h.OutlineColor = OUTLINE_COLOR
+            h.FillTransparency = 0.25
+            h.OutlineTransparency = 0
+            h.Enabled = true
+        end
     end
 end)
 
---------------------------------------------------
--- CAMERA LOCK (THIRD-PERSON, ALWAYS LOOK AT TARGET)
---------------------------------------------------
-RunService:BindToRenderStep("CameraLookAtTarget", Enum.RenderPriority.Camera.Value + 1, function()
-    if not CAMERA_LOCK then return end
+RunService.Heartbeat:Connect(function()
+    if not State.AUTO_TP then
+        lockedTarget = nil
+        cycleIndex = 1
+        return
+    end
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local seekers,hiders = getTargets()
+    local pool = #seekers > 0 and seekers or hiders
+    if #pool == 0 then return end
+    if not lockedTarget or not valid(lockedTarget) then
+        lockedTarget = pool[cycleIndex]
+        cycleIndex = (cycleIndex % #pool) + 1
+    end
+    if lockedTarget and lockedTarget.Character then
+        local tRoot = lockedTarget.Character:FindFirstChild("HumanoidRootPart")
+        if tRoot then
+            root.CFrame = tRoot.CFrame
+        end
+    end
+end)
 
-    local myChar = LocalPlayer.Character
-    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
-    if not myRoot then return end
+local camSaved
 
-    if not lockedTarget or not lockedTarget.Character then return end
-    local targetChar = lockedTarget.Character
-    local focus = targetChar:FindFirstChild("Head") or targetChar:FindFirstChild("HumanoidRootPart")
-    if not focus then return end
-
+RunService:BindToRenderStep("BackLock", Enum.RenderPriority.Camera.Value + 2, function()
+    if not State.CAMERA_LOCK then return end
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    if not camSaved then camSaved = Camera.CameraType end
     Camera.CameraType = Enum.CameraType.Scriptable
-
-    local camOffset = Vector3.new(0, 6, -10)
-    local camPos = myRoot.CFrame:PointToWorldSpace(camOffset)
-    Camera.CFrame = CFrame.new(camPos, focus.Position)
+    local back = root.CFrame * CFrame.new(0,0,2)
+    Camera.CFrame = CFrame.new(back.Position, root.Position)
 end)
 
---------------------------------------------------
--- NOCLIP
---------------------------------------------------
-task.spawn(function()
-    while true do
-        if NOCLIP then
-            local char = LocalPlayer.Character
-            if char then
-                for _, bp in ipairs(char:GetDescendants()) do
-                    if bp:IsA("BasePart") then
-                        bp.CanCollide = false
-                    end
-                end
-            end
+local function unlockCam()
+    if camSaved then
+        Camera.CameraType = camSaved
+        camSaved = nil
+    end
+end
+
+RunService.Stepped:Connect(function()
+    if not State.NOCLIP then return end
+    local char = LocalPlayer.Character
+    if not char then return end
+    for _,p in ipairs(char:GetDescendants()) do
+        if p:IsA("BasePart") then
+            p.CanCollide = false
         end
-        task.wait()
     end
 end)
 
---------------------------------------------------
--- DISABLE FIRST PERSON
---------------------------------------------------
 task.spawn(function()
     while true do
-        if DISABLE_FP then
-            LocalPlayer.CameraMode = Enum.CameraMode.Classic
-            LocalPlayer.CameraMinZoomDistance = 8
-            LocalPlayer.CameraMaxZoomDistance = 50
-        end
-        task.wait(0.2)
-    end
-end)
-
---------------------------------------------------
--- AUTO ATTACK (SPAM CLICK)
---------------------------------------------------
-task.spawn(function()
-    while true do
-        if AUTO_ATTACK then
-            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
-            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+        if State.AUTO_ATTACK then
+            VirtualInputManager:SendMouseButtonEvent(0,0,0,true,game,0)
+            VirtualInputManager:SendMouseButtonEvent(0,0,0,false,game,0)
         end
         task.wait(0.05)
     end
 end)
 
---------------------------------------------------
--- UI
---------------------------------------------------
-Tab:CreateToggle({ Name="ESP (Role Colors)", CurrentValue=false, Callback=function(v) ESP_ON=v end })
-Tab:CreateToggle({ Name="Auto TP Seeker", CurrentValue=false, Callback=function(v) TP_SEEKER=v if v then TP_HIDER=false end end })
-Tab:CreateToggle({ Name="Auto TP Hider", CurrentValue=false, Callback=function(v) TP_HIDER=v if v then TP_SEEKER=false end end })
-Tab:CreateToggle({ Name="Camera Look At Target", CurrentValue=false, Callback=function(v) CAMERA_LOCK=v if not v then Camera.CameraType=Enum.CameraType.Custom end end })
-Tab:CreateToggle({ Name="Disable First Person", CurrentValue=false, Callback=function(v) DISABLE_FP=v end })
-Tab:CreateToggle({ Name="No Clip", CurrentValue=false, Callback=function(v) NOCLIP=v end })
-Tab:CreateToggle({ Name="Auto Attack", CurrentValue=false, Callback=function(v) AUTO_ATTACK=v end })
-Tab:CreateDropdown({ Name="Mode", Options={"NONSTOP","UNTIL_DEATH"}, CurrentOption="NONSTOP", Callback=function(opt) MODE=opt end })
+MainTab:CreateToggle({
+    Name = "ESP",
+    Callback = function(v) State.ESP = v end
+})
+
+MainTab:CreateToggle({
+    Name = "Auto TP (Smart Role Switch)",
+    Callback = function(v) State.AUTO_TP = v end
+})
+
+MainTab:CreateToggle({
+    Name = "New Camera Lock",
+    Callback = function(v)
+        State.CAMERA_LOCK = v
+        if not v then unlockCam() end
+    end
+})
+
+MainTab:CreateToggle({
+    Name = "No Collision",
+    Callback = function(v) State.NOCLIP = v end
+})
+
+MainTab:CreateToggle({
+    Name = "Auto Attack",
+    Callback = function(v) State.AUTO_ATTACK = v end
+})
+
+AddTab:CreateLabel("More coming")
