@@ -1,217 +1,128 @@
-local Players = game:GetService("Players")
-local lp = Players.LocalPlayer
-
-for _, c in ipairs(getconnections(lp.Idled)) do
-    c:Disable()
+repeat task.wait() until game:IsLoaded()
+local lp = game.Players.LocalPlayer
+repeat task.wait() until lp:FindFirstChild("PlayerGui")
+task.wait(math.random(0,3000)/1000) 
+local g = lp.PlayerGui:FindFirstChild("ScreenGui")
+if g and g:FindFirstChild("DailyRewards") then
+    g.DailyRewards:Destroy()
 end
+-- =========================
+-- TOGGLES
+-- =========================
+getgenv().running = not getgenv().running      -- potions
+getgenv().autoGift = getgenv().autoGift ~= true -- gifts
+getgenv().waitTime = 2.5
+
+-- =========================
+-- SERVICES / MODULES
+-- =========================
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local RemoteEvent = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
+local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
+local PhysicalItem = require(ReplicatedStorage.Client.Effects.PhysicalItem)
+local LocalDataModule = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+
+local function getLocalData()
+    return LocalDataModule:Get()
+end
+
+-- =========================
+-- POTION CYCLER
+-- =========================
+local potions = {
+    {"Speed", 7},
+    {"Lucky", 7},
+    {"Mythic", 7},
+    {"Infinity Elixir", 1},
+    {"Festive Elixir", 4},
+    {"Egg Elixir", 1},
+    {"Speed", 6},
+    {"Lucky", 6},
+    {"Mythic", 6},
+}
+
+local index = 1
+local lastUse = 0
+local COOLDOWN = 0.25
+
+RunService.Heartbeat:Connect(function()
+    if not getgenv().running then return end
+    if tick() - lastUse < COOLDOWN then return end
+
+    local potion = potions[index]
+    if potion then
+        RemoteEvent:FireServer("UsePotion", potion[1], potion[2])
+        lastUse = tick()
+    end
+
+    index += 1
+    if index > #potions then
+        index = 1
+    end
+end)
+
+-- =========================
+-- AUTO GIFT (FILTERED)
+-- =========================
+local TARGET_ITEMS = {
+    ["Admin Mystery Box"] = true,
+    ["Christmas Present"] = true,
+}
+
+-- Hook gift claim (background)
+getgenv().oldGift = getgenv().oldGift or PhysicalItem.Gift
+PhysicalItem.Gift = function(giftId, giftType, giftPosition)
+    if not getgenv().autoGift then
+        return getgenv().oldGift(giftId, giftType, giftPosition)
+    end
+
+    task.spawn(function()
+        pcall(function()
+            Remote:FireServer("ClaimGift", giftId)
+        end)
+    end)
+end
+
+-- Remove popup parts
+getgenv().popUpConnection = getgenv().popUpConnection or nil
+local genericFolder = workspace.Rendered:FindFirstChild("Generic")
+
+if getgenv().autoGift then
+    if genericFolder and not getgenv().popUpConnection then
+        getgenv().popUpConnection = genericFolder.ChildAdded:Connect(function(item)
+            if item:IsA("Part") and #item.Name == 36 then
+                item:Destroy()
+            end
+        end)
+    end
+else
+    if getgenv().popUpConnection then
+        getgenv().popUpConnection:Disconnect()
+        getgenv().popUpConnection = nil
+    end
+end
+
+Remote:FireServer("SetSetting", "Item Notifications", false)
+
+-- Background usage loop
 task.spawn(function()
-    local Players=game:GetService("Players")
-    local RunService=game:GetService("RunService")
-    local ReplicatedStorage=game:GetService("ReplicatedStorage")
-    local VirtualInputManager=game:GetService("VirtualInputManager")
-
-    local lp=Players.LocalPlayer
-    local hrp
-
-    local function bindChar(c)
-        hrp=c:WaitForChild("HumanoidRootPart")
-    end
-    if lp.Character then bindChar(lp.Character) end
-    lp.CharacterAdded:Connect(bindChar)
-
-    -- ===== DATA =====
-    local LocalData=require(ReplicatedStorage.Client.Framework.Services.LocalData)
-    local PetsModule=require(ReplicatedStorage.Shared.Data.Pets)
-    local RemoteFunction=ReplicatedStorage.Shared.Framework.Network.Remote.RemoteFunction
-
-    local function gd()
-        local ok,d=pcall(function()return LocalData:Get()end)
-        return ok and d or {}
-    end
-
-    -- ===== UI =====
-    local function fmt(n)
-        n=tonumber(n) or 0
-        if n>=1e12 then return string.format("%.2fT",n/1e12)
-        elseif n>=1e9 then return string.format("%.2fB",n/1e9)
-        elseif n>=1e6 then return string.format("%.2fM",n/1e6)
-        elseif n>=1e3 then return string.format("%.2fK",n/1e3)
-        else return tostring(n) end
-    end
-
-    local function getSnow()
-        return gd().Snowflakes or 0
-    end
-
-    local function getTeamMulti()
-        local d=gd()
-        local ids=(d.Teams and d.TeamEquipped and d.Teams[d.TeamEquipped] and d.Teams[d.TeamEquipped].Pets) or {}
-        local map={}
-        if d.Pets then
-            for _,p in pairs(d.Pets) do map[tostring(p.Id)]=p end
-        end
-        local sum=0
-        for _,id in ipairs(ids) do
-            local p=map[tostring(id)]
-            if p and PetsModule[p.Name] and PetsModule[p.Name].Stats then
-                sum+=(PetsModule[p.Name].Stats.Snowflakes or 0)
-            end
-        end
-        return sum
-    end
-
-    local samples={}
-    local function push(v)
-        samples[#samples+1]={t=os.clock(),v=v}
-        while #samples>1 and os.clock()-samples[1].t>60 do
-            table.remove(samples,1)
-        end
-    end
-
-    local function perMin()
-        if #samples<2 then return 0 end
-        local a,b=samples[1],samples[#samples]
-        return ((b.v-a.v)/(b.t-a.t))*60
-    end
-
-    local gui=Instance.new("ScreenGui",lp.PlayerGui)
-    gui.Name="SnowflakeStatsUI"
-    gui.IgnoreGuiInset=true
-    gui.ResetOnSpawn=false
-    gui.DisplayOrder=999999
-
-    local bg=Instance.new("Frame",gui)
-    bg.Size=UDim2.new(1,0,1,0)
-    bg.BackgroundColor3=Color3.fromRGB(0,0,0)
-
-    local box=Instance.new("Frame",bg)
-    box.AnchorPoint=Vector2.new(0.5,0.5)
-    box.Position=UDim2.new(0.5,0,0.5,0)
-    box.Size=UDim2.new(0.45,0,0.35,0)
-    box.BackgroundColor3=Color3.fromRGB(12,12,14)
-    Instance.new("UICorner",box).CornerRadius=UDim.new(0,20)
-
-    local function makeText(y)
-        local t=Instance.new("TextLabel",box)
-        t.Size=UDim2.new(1,-40,0,60)
-        t.Position=UDim2.new(0,20,0,y)
-        t.BackgroundTransparency=1
-        t.Font=Enum.Font.GothamBlack
-        t.TextScaled=true
-        t.TextWrapped=true
-        t.TextColor3=Color3.fromRGB(255,255,255)
-        return t
-    end
-
-    local USER=makeText(20)
-    local TOTAL=makeText(95)
-    local RATE=makeText(175)
-    local MULTI=makeText(245)
-
-    RunService.Heartbeat:Connect(function()
-        local snow=getSnow()
-        push(snow)
-        USER.Text="👤 "..lp.Name
-        TOTAL.Text="❄️ "..fmt(snow).." Snowflakes"
-        RATE.Text="⏱️ "..fmt(perMin()).." / min"
-        MULTI.Text="✨ Team Multi: "..fmt(getTeamMulti())
-    end)
-
-    -- ===== GIFTS =====
-    local GiveGifts=workspace.Worlds["Christmas World"].GiveGifts
-    local function getActivationPart(a)
-        if a:IsA("BasePart") then return a end
-        for _,d in ipairs(a:GetDescendants()) do
-            if d:IsA("BasePart") then return d end
-        end
-    end
-
-    local function touch(part)
-        if not hrp then return end
-        hrp.CFrame=part.CFrame*CFrame.new(0,4,0)
-        RunService.Heartbeat:Wait()
-        hrp.CFrame=part.CFrame*CFrame.new(0,-2.5,0)
-        RunService.Heartbeat:Wait()
-        local t=tick()
-        while tick()-t<0.25 do
-            hrp.AssemblyLinearVelocity=Vector3.zero
-            hrp.AssemblyAngularVelocity=Vector3.zero
-            hrp.CFrame=part.CFrame*CFrame.new(0,1.5,0)
-            RunService.Heartbeat:Wait()
-        end
-    end
-
-    task.spawn(function()
-        while true do
-            for _,h in ipairs(GiveGifts:GetChildren()) do
-                local a=h:FindFirstChild("Activation")
-                if a then
-                    local p=getActivationPart(a)
-                    if p then pcall(touch,p) task.wait(6.5) end
+    while getgenv().autoGift do
+        local data = getLocalData()
+        local powerups = data and data.Powerups
+        if powerups then
+            for name, amount in pairs(powerups) do
+                if TARGET_ITEMS[name] and amount > 0 then
+                    Remote:FireServer(
+                        "UseGift",
+                        name,
+                        math.min(25, amount)
+                    )
+                    task.wait(getgenv().waitTime)
                 end
             end
         end
-    end)
-
-    -- ===== PRESS B =====
-    task.spawn(function()
-        while true do
-            VirtualInputManager:SendKeyEvent(true,Enum.KeyCode.B,false,game)
-            task.wait(0.05)
-            VirtualInputManager:SendKeyEvent(false,Enum.KeyCode.B,false,game)
-            task.wait(60)
-        end
-    end)
-
-    -- ===== PICKUPS =====
-    local pickupRemote=ReplicatedStorage.Remotes.Pickups.CollectPickup
-    task.spawn(function()
-        local claimed={}
-        while true do
-            local r=workspace:FindFirstChild("Rendered")
-            if r then
-                local t=r:GetChildren()[15]
-                if t then
-                    for _,o in ipairs(t:GetChildren()) do
-                        if not claimed[o.Name] then
-                            claimed[o.Name]=true
-                            pcall(function()
-                                pickupRemote:FireServer(o.Name)
-                                o:Destroy()
-                            end)
-                        end
-                    end
-                end
-            end
-            task.wait(0.1)
-        end
-    end)
-
-    -- ===== ENCHANT =====
-    task.spawn(function()
-        if not LocalData:IsReady() then LocalData.DataReady:Wait() end
-        local function findPet(id)
-            for _,p in ipairs(LocalData:Get().Pets or {}) do
-                if p.Id==id then return p end
-            end
-        end
-        local function hasTU5(p)
-            for _,e in ipairs(p.Enchants or {}) do
-                if e.Id and string.lower(e.Id)=="team-up 5" then return true end
-            end
-        end
-        local d=LocalData:Get()
-        local team=d.TeamEquipped and d.Teams and d.Teams[d.TeamEquipped]
-        if not(team and team.Pets) then return end
-        for _,id in ipairs(team.Pets) do
-            task.spawn(function(pid)
-                while true do
-                    local p=findPet(pid)
-                    if not p or hasTU5(p) then return end
-                    RemoteFunction:InvokeServer("RerollEnchants",pid,"Gems")
-                    task.wait(0.5)
-                end
-            end,id)
-        end
-    end)
+        task.wait(0.5)
+    end
 end)
