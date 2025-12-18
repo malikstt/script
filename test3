@@ -7,7 +7,7 @@ local Window = Rayfield:CreateWindow({
 })
 
 local MainTab = Window:CreateTab("Main", 4483362458)
-local AddTab = Window:CreateTab("Adds", 4483362458)
+local MiscTab = Window:CreateTab("Misc", 4483362458)
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -18,25 +18,35 @@ local Camera = workspace.CurrentCamera
 local CHARACTERS = workspace:WaitForChild("CHARACTERS")
 
 local State = {
-    ESP = false,
+    ESP_ALL = false,
+    ESP_SEEKER = false,
+    ESP_HIDER = false,
     TP_SEEKER = false,
     TP_HIDER = false,
+    TP_RANDOM_SEEKER = false,
+    TP_RANDOM_HIDER = false,
     AUTO_SWITCH = false,
     MODE = "NONSTOP",
     OLD_CAMERA = false,
     NEW_CAMERA = false,
     NOCLIP = false,
-    AUTO_ATTACK = false
+    AUTO_ATTACK = false,
+    TP_DELAY = 0.5
 }
 
-local SEEKER_COLOR = Color3.fromRGB(0,255,255)
-local HIDER_COLOR = Color3.fromRGB(255,0,255)
-local OUTLINE_COLOR = Color3.fromRGB(255,255,255)
+local COLORS = {
+    ALL = Color3.fromRGB(255,255,255),
+    SEEKER = Color3.fromRGB(0,255,255),
+    HIDER = Color3.fromRGB(255,0,255),
+    OUTLINE = Color3.fromRGB(255,255,255)
+}
 
 local ESP_CACHE = {}
 local lockedTarget
 local cycleIndex = 1
 local camSaved
+local randomIndex = 1
+local lastTP = 0
 
 local function getRole(p)
     local f = CHARACTERS:FindFirstChild(p.Name)
@@ -61,27 +71,43 @@ local function getPlayersByRole(role)
 end
 
 RunService.Heartbeat:Connect(function()
-    if not State.ESP then
+    if not (State.ESP_ALL or State.ESP_SEEKER or State.ESP_HIDER) then
         for _,h in pairs(ESP_CACHE) do h:Destroy() end
         table.clear(ESP_CACHE)
         return
     end
+
     for _,p in ipairs(Players:GetPlayers()) do
         if p ~= LocalPlayer and p.Character then
+            local role = getRole(p)
+            local allow =
+                State.ESP_ALL or
+                (State.ESP_SEEKER and role == "SEEKER") or
+                (State.ESP_HIDER and role == "HIDER")
+
             local h = ESP_CACHE[p]
-            if not h then
-                h = Instance.new("Highlight")
-                h.Parent = p.Character
-                h.Adornee = p.Character
-                h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                ESP_CACHE[p] = h
+
+            if allow then
+                if not h then
+                    h = Instance.new("Highlight")
+                    h.Parent = p.Character
+                    h.Adornee = p.Character
+                    h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                    ESP_CACHE[p] = h
+                end
+                h.FillColor =
+                    State.ESP_ALL and COLORS.ALL or
+                    role == "SEEKER" and COLORS.SEEKER or
+                    role == "HIDER" and COLORS.HIDER or
+                    COLORS.ALL
+                h.OutlineColor = COLORS.OUTLINE
+                h.FillTransparency = 0.25
+                h.OutlineTransparency = 0
+                h.Enabled = true
+            elseif h then
+                h:Destroy()
+                ESP_CACHE[p] = nil
             end
-            local r = getRole(p)
-            h.FillColor = r == "SEEKER" and SEEKER_COLOR or r == "HIDER" and HIDER_COLOR or Color3.new(1,1,1)
-            h.OutlineColor = OUTLINE_COLOR
-            h.FillTransparency = 0.25
-            h.OutlineTransparency = 0
-            h.Enabled = true
         end
     end
 end)
@@ -93,7 +119,6 @@ RunService.Heartbeat:Connect(function()
     local role
     if State.AUTO_SWITCH then
         local seekers = getPlayersByRole("SEEKER")
-        local hiders = getPlayersByRole("HIDER")
         role = #seekers > 0 and "SEEKER" or "HIDER"
     elseif State.TP_SEEKER then
         role = "SEEKER"
@@ -101,28 +126,46 @@ RunService.Heartbeat:Connect(function()
         role = "HIDER"
     end
 
-    if not role then
-        lockedTarget = nil
-        cycleIndex = 1
-        return
-    end
+    if role then
+        local targets = getPlayersByRole(role)
+        if #targets == 0 then return end
 
-    local targets = getPlayersByRole(role)
-    if #targets == 0 then return end
+        if State.MODE == "NONSTOP" then
+            lockedTarget = targets[cycleIndex]
+            cycleIndex = (cycleIndex % #targets) + 1
+        else
+            if not lockedTarget or not valid(lockedTarget) then
+                lockedTarget = targets[1]
+            end
+        end
 
-    if State.MODE == "NONSTOP" then
-        lockedTarget = targets[cycleIndex]
-        cycleIndex = (cycleIndex % #targets) + 1
-    else
-        if not lockedTarget or not valid(lockedTarget) then
-            lockedTarget = targets[1]
+        if lockedTarget and lockedTarget.Character then
+            local tRoot = lockedTarget.Character:FindFirstChild("HumanoidRootPart")
+            if tRoot then
+                root.CFrame = tRoot.CFrame
+            end
         end
     end
 
-    if lockedTarget and lockedTarget.Character then
-        local tRoot = lockedTarget.Character:FindFirstChild("HumanoidRootPart")
-        if tRoot then
-            root.CFrame = tRoot.CFrame
+    local now = tick()
+    if now - lastTP < State.TP_DELAY then return end
+    lastTP = now
+
+    if State.TP_RANDOM_HIDER then
+        local hiders = getPlayersByRole("HIDER")
+        if #hiders > 0 then
+            local p = hiders[randomIndex]
+            randomIndex = (randomIndex % #hiders) + 1
+            local r = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+            if r then root.CFrame = r.CFrame end
+        end
+    elseif State.TP_RANDOM_SEEKER then
+        local seekers = getPlayersByRole("SEEKER")
+        if #seekers > 0 then
+            local p = seekers[randomIndex]
+            randomIndex = (randomIndex % #seekers) + 1
+            local r = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+            if r then root.CFrame = r.CFrame end
         end
     end
 end)
@@ -179,7 +222,6 @@ task.spawn(function()
     end
 end)
 
-MainTab:CreateToggle({ Name="ESP", Callback=function(v) State.ESP=v end })
 MainTab:CreateToggle({ Name="Auto TP Seeker", Callback=function(v) State.TP_SEEKER=v if v then State.TP_HIDER=false State.AUTO_SWITCH=false end end })
 MainTab:CreateToggle({ Name="Auto TP Hider", Callback=function(v) State.TP_HIDER=v if v then State.TP_SEEKER=false State.AUTO_SWITCH=false end end })
 MainTab:CreateToggle({ Name="Auto Switch Roles", Callback=function(v) State.AUTO_SWITCH=v if v then State.TP_SEEKER=false State.TP_HIDER=false end end })
@@ -189,4 +231,36 @@ MainTab:CreateToggle({ Name="New Camera Lock", Callback=function(v) State.NEW_CA
 MainTab:CreateToggle({ Name="No Collision", Callback=function(v) State.NOCLIP=v end })
 MainTab:CreateToggle({ Name="Auto Attack", Callback=function(v) State.AUTO_ATTACK=v end })
 
-AddTab:CreateLabel("Extra features soon")
+MiscTab:CreateToggle({ Name="ESP All", Callback=function(v) State.ESP_ALL=v end })
+MiscTab:CreateToggle({ Name="ESP Seekers", Callback=function(v) State.ESP_SEEKER=v end })
+MiscTab:CreateToggle({ Name="ESP Hiders", Callback=function(v) State.ESP_HIDER=v end })
+
+MiscTab:CreateColorPicker({
+    Name="ESP All Color",
+    Color=COLORS.ALL,
+    Callback=function(c) COLORS.ALL=c end
+})
+
+MiscTab:CreateColorPicker({
+    Name="ESP Seeker Color",
+    Color=COLORS.SEEKER,
+    Callback=function(c) COLORS.SEEKER=c end
+})
+
+MiscTab:CreateColorPicker({
+    Name="ESP Hider Color",
+    Color=COLORS.HIDER,
+    Callback=function(c) COLORS.HIDER=c end
+})
+
+MiscTab:CreateToggle({ Name="TP Random Hiders", Callback=function(v) State.TP_RANDOM_HIDER=v if v then State.TP_RANDOM_SEEKER=false end end })
+MiscTab:CreateToggle({ Name="TP Random Seekers", Callback=function(v) State.TP_RANDOM_SEEKER=v if v then State.TP_RANDOM_HIDER=false end end })
+
+MiscTab:CreateSlider({
+    Name="Random TP Delay",
+    Range={0.1,1},
+    Increment=0.1,
+    Suffix="sec",
+    CurrentValue=0.5,
+    Callback=function(v) State.TP_DELAY=v end
+})
