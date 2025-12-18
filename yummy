@@ -6,6 +6,123 @@ local g = lp.PlayerGui:FindFirstChild("ScreenGui")
 if g and g:FindFirstChild("DailyRewards") then
     g.DailyRewards:Destroy()
 end
---Script loader for every supported game
+-- =========================
+-- TOGGLES
+-- =========================
+getgenv().running = not getgenv().running      -- potions
+getgenv().autoGift = getgenv().autoGift ~= true -- gifts
+getgenv().waitTime = 2.5
 
-loadstring(game:HttpGet("https://raw.githubusercontent.com/IdiotHub/Scripts/main/Loader"))()
+-- =========================
+-- SERVICES / MODULES
+-- =========================
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local RemoteEvent = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
+local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
+local PhysicalItem = require(ReplicatedStorage.Client.Effects.PhysicalItem)
+local LocalDataModule = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+
+local function getLocalData()
+    return LocalDataModule:Get()
+end
+
+-- =========================
+-- POTION CYCLER
+-- =========================
+local potions = {
+    {"Speed", 7},
+    {"Lucky", 7},
+    {"Mythic", 7},
+    {"Infinity Elixir", 1},
+    {"Festive Elixir", 4},
+    {"Egg Elixir", 1},
+    {"Speed", 6},
+    {"Lucky", 6},
+    {"Mythic", 6},
+}
+
+local index = 1
+local lastUse = 0
+local COOLDOWN = 0.25
+
+RunService.Heartbeat:Connect(function()
+    if not getgenv().running then return end
+    if tick() - lastUse < COOLDOWN then return end
+
+    local potion = potions[index]
+    if potion then
+        RemoteEvent:FireServer("UsePotion", potion[1], potion[2])
+        lastUse = tick()
+    end
+
+    index += 1
+    if index > #potions then
+        index = 1
+    end
+end)
+
+-- =========================
+-- AUTO GIFT (FILTERED)
+-- =========================
+local TARGET_ITEMS = {
+    ["Admin Mystery Box"] = true,
+    ["Christmas Present"] = true,
+}
+
+-- Hook gift claim (background)
+getgenv().oldGift = getgenv().oldGift or PhysicalItem.Gift
+PhysicalItem.Gift = function(giftId, giftType, giftPosition)
+    if not getgenv().autoGift then
+        return getgenv().oldGift(giftId, giftType, giftPosition)
+    end
+
+    task.spawn(function()
+        pcall(function()
+            Remote:FireServer("ClaimGift", giftId)
+        end)
+    end)
+end
+
+-- Remove popup parts
+getgenv().popUpConnection = getgenv().popUpConnection or nil
+local genericFolder = workspace.Rendered:FindFirstChild("Generic")
+
+if getgenv().autoGift then
+    if genericFolder and not getgenv().popUpConnection then
+        getgenv().popUpConnection = genericFolder.ChildAdded:Connect(function(item)
+            if item:IsA("Part") and #item.Name == 36 then
+                item:Destroy()
+            end
+        end)
+    end
+else
+    if getgenv().popUpConnection then
+        getgenv().popUpConnection:Disconnect()
+        getgenv().popUpConnection = nil
+    end
+end
+
+Remote:FireServer("SetSetting", "Item Notifications", false)
+
+-- Background usage loop
+task.spawn(function()
+    while getgenv().autoGift do
+        local data = getLocalData()
+        local powerups = data and data.Powerups
+        if powerups then
+            for name, amount in pairs(powerups) do
+                if TARGET_ITEMS[name] and amount > 0 then
+                    Remote:FireServer(
+                        "UseGift",
+                        name,
+                        math.min(25, amount)
+                    )
+                    task.wait(getgenv().waitTime)
+                end
+            end
+        end
+        task.wait(0.5)
+    end
+end)
