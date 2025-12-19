@@ -72,24 +72,33 @@ task.spawn(function()
 		end
 
 		if pts > lastPoints then
-			local nextTier = (s.Level or 0) + 1
+			local level = s.Level or 0
 			local tiers = s.InfinityTiers or s.Tiers
-			local reward = tiers and tiers[nextTier] and tiers[nextTier].Premium
 
-			if reward and reward.Type == "Pet" then
-				local info = PetsModule[reward.Name]
-				if info and info.Rarity == "Secret" then
-					sendWebhook(
-						nextTier,
-						reward.Name,
-						"https://content.bgsi.io/" .. reward.Name:lower():gsub(" ", "_") .. ".webp"
-					)
-					break
+			if tiers then
+				for tier = level + 1, math.huge do
+					local tierData = tiers[tier]
+					if not tierData then break end
+
+					local reward = tierData.Premium
+					if reward and reward.Type == "Pet" then
+						local info = PetsModule[reward.Name]
+						if info and info.Rarity == "Secret" then
+							sendWebhook(
+								tier,
+								reward.Name,
+								"https://content.bgsi.io/" .. reward.Name:lower():gsub(" ", "_") .. ".webp"
+							)
+							break
+						end
+					end
 				end
 			end
 
-			RemoteEvent:FireServer("ClaimSeason")
-			lastPoints = pts
+			if not STOP then
+				RemoteEvent:FireServer("ClaimSeason")
+				lastPoints = pts
+			end
 		end
 
 		task.wait(5)
