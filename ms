@@ -25,11 +25,7 @@ task.spawn(function()
 	local lastPoints
 	local STOP = false
 
-	local function fire()
-		RemoteEvent:FireServer("ClaimSeason")
-	end
-
-	local function webhook(tier, pet, image)
+	local function sendWebhook(tier, pet, image)
 		if STOP then return end
 		STOP = true
 		if WEBHOOK == "" then return end
@@ -62,12 +58,16 @@ task.spawn(function()
 
 		local data = LocalData:Get()
 		local s = data and data.Season
-		if not s then task.wait(1) continue end
+		if not s then
+			task.wait(5)
+			continue
+		end
 
 		local pts = s.Points or 0
+
 		if lastPoints == nil then
 			lastPoints = pts
-			task.wait(1)
+			task.wait(5)
 			continue
 		end
 
@@ -79,7 +79,7 @@ task.spawn(function()
 			if reward and reward.Type == "Pet" then
 				local info = PetsModule[reward.Name]
 				if info and info.Rarity == "Secret" then
-					webhook(
+					sendWebhook(
 						nextTier,
 						reward.Name,
 						"https://content.bgsi.io/" .. reward.Name:lower():gsub(" ", "_") .. ".webp"
@@ -88,10 +88,10 @@ task.spawn(function()
 				end
 			end
 
-			fire()
+			RemoteEvent:FireServer("ClaimSeason")
 			lastPoints = pts
 		end
 
-		task.wait(1)
+		task.wait(5)
 	end
 end)
