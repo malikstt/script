@@ -1,144 +1,166 @@
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
 
+local player = Players.LocalPlayer
+
+local httpRequest =
+	(syn and syn.request) or
+	(http and http.request) or
+	(http_request) or
+	(fluxus and fluxus.request) or
+	(request)
+
+if not httpRequest then return end
+
+-- MODULES
 local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
 local RebirthMachineUtil = require(ReplicatedStorage.Shared.Utils.RebirthMachineUtil)
-local PetsData = require(ReplicatedStorage.Shared.Data.Pets)
 local TimeUtil = require(ReplicatedStorage.Shared.Framework.Utilities.Math.Time)
 local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
 
-local LocalPlayer = Players.LocalPlayer
+-- REMOTE EVENT
+local RemoteEvent = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
 
+-- WEBHOOK
+local WEBHOOK = "https://discord.com/api/webhooks/1439502842762362922/0Eorxj5JJ8wh2GfA6zLKBlcTK_zWKmaCuors35FpN02d273KHry_Y4iNP1Aw_IZlaGg9"
+
+-- =========================
+-- SEASON GUARD STATE
+-- =========================
+local lastPoints
+local SEASON_STOP = false
+
+local function sendWebhook(tier, pet, image)
+	if SEASON_STOP then return end
+	SEASON_STOP = true
+
+	httpRequest({
+		Url = WEBHOOK,
+		Method = "POST",
+		Headers = { ["Content-Type"] = "application/json" },
+		Body = HttpService:JSONEncode({
+			username = "BGSI Season Guard",
+			embeds = {{
+				title = "🚨 SECRET PET DETECTED – PREMIUM",
+				description = "Claiming has been **PERMANENTLY DISABLED**.",
+				color = 16711680,
+				thumbnail = { url = image },
+				fields = {
+					{ name = "Player", value = player.Name, inline = true },
+					{ name = "Tier", value = tostring(tier), inline = true },
+					{ name = "Pet", value = pet, inline = true },
+					{ name = "Rarity", value = "Secret", inline = true },
+					{ name = "Pass", value = "Premium", inline = true },
+				}
+			}}
+		})
+	})
+end
+
+task.spawn(function()
+	while true do
+		if SEASON_STOP then break end
+
+		local data = LocalData:Get()
+		local s = data and data.Season
+		if not s then task.wait(1) continue end
+
+		local pts = s.Points or 0
+		if lastPoints == nil then
+			lastPoints = pts
+			task.wait(1)
+			continue
+		end
+
+		if pts > lastPoints then
+			local nextTier = (s.Level or 0) + 1
+			local tiers = s.InfinityTiers or s.Tiers
+			local reward = tiers and tiers[nextTier] and tiers[nextTier].Premium
+
+			if reward and reward.Type == "Pet" then
+				local info = PetsModule[reward.Name]
+				if info and info.Rarity == "Secret" then
+					sendWebhook(
+						nextTier,
+						reward.Name,
+						"https://content.bgsi.io/" .. reward.Name:lower():gsub(" ", "_") .. ".webp"
+					)
+					break
+				end
+			end
+
+			RemoteEvent:FireServer("ClaimSeason")
+			lastPoints = pts
+		end
+
+		task.wait(1)
+	end
+end)
+
+-- =========================
+-- AUTO REBIRTH MACHINE
+-- =========================
 local AUTO_REBIRTH_ENABLED = true
 local CHECK_INTERVAL = 5
 
 local ALLOWED_SECRET_NAMES = {
-    -- ORIGINAL
-    ["The Golden Ticket"] = true,
-    ["Butter Dawg"] = true,
-    ["Man Face Lord"] = true,
-    ["Man Face Dogcat"] = true,
-    ["Drippy Slice"] = true,
-    ["Giant Emerald Golem"] = true,
-    ["Hot Dog Doggy"] = true,
-    ["Rumblecon Trophy"] = true,
-    ["Rumblecon Halftime Show"] = true,
-    ["Watermelon Round"] = true,
-    ["Eternal Burger"] = true,
-    ["Giftbox King Doggy"] = true,
-    ["Nert Giftbox"] = true,
-    ["Quamatic Giftbox"] = true,
-    ["ObscureEntity Giftbox"] = true,
-    ["Sircfenner Giftbox"] = true,
-    ["Sylently Giftbox"] = true,
-    ["FutureWebsiteOwner Giftbox"] = true,
-    ["Hyperwave Kitty"] = true,
-    ["King Doggy"] = true,
-    ["Maid Nert Plushie"] = true,
-    ["Santa Nert Plushie"] = true,
-    ["OG BGS Plaque"] = true,
-    ["OG Crystal Teddy"] = true,
-    ["OG Morning Star"] = true,
-    ["OG The Overlord"] = true,
-    ["Frosted Bond"] = true,
-    ["Giant One Eyed Monster"] = true,
-    ["Giant Pearl"] = true,
-    ["God Tamer"] = true,
-    ["Guardian Angel"] = true,
-    ["Hermit Crab"] = true,
-    ["Holy Bell"] = true,
-    ["Holy Candle"] = true,
-    ["Kitty Tophat"] = true,
-    ["Mech Robot"] = true,
-    ["Mech Kraken"] = true,
-    ["Moonlord"] = true,
-    ["OG Archangel"] = true,
-    ["Peppermint Heart"] = true,
-    ["Tidal God"] = true,
-    ["Whimsical Fairy"] = true,
-    ["Wicked Widow"] = true,
-    ["The Overlord"] = true,
-    ["Silly King Doggy"] = true,
-    ["Sinistar"] = true,
-    ["Pumpkin Pie"] = true,
-    ["Pumpgeist"] = true,
-    ["OG Soulflake"] = true,
-    ["OG Hellfire"] = true,
-    ["Giant NULLvoid"] = true,
-    ["Giant DOOF"] = true,
-    ["Ghosdeeri"] = true,
-    ["Giant Fall Turkey"] = true,
-    ["Fox O' Wisp"] = true,
-    ["Flake Spirit"] = true,
-    ["Box of Secrets"] = true,
-    ["Chronos"] = true,
-    ["Axolotl Army"] = true,
-    ["Archangel"] = true,
+	["The Golden Ticket"]=true,["Butter Dawg"]=true,["Man Face Lord"]=true,["Man Face Dogcat"]=true,
+	["Drippy Slice"]=true,["Giant Emerald Golem"]=true,["Hot Dog Doggy"]=true,["Rumblecon Trophy"]=true,
+	["Rumblecon Halftime Show"]=true,["Watermelon Round"]=true,["Eternal Burger"]=true,
+	["Giftbox King Doggy"]=true,["Nert Giftbox"]=true,["Quamatic Giftbox"]=true,
+	["ObscureEntity Giftbox"]=true,["Sircfenner Giftbox"]=true,["Sylently Giftbox"]=true,
+	["FutureWebsiteOwner Giftbox"]=true,["Hyperwave Kitty"]=true,["King Doggy"]=true,
+	["Maid Nert Plushie"]=true,["Santa Nert Plushie"]=true,["OG BGS Plaque"]=true,
+	["OG Crystal Teddy"]=true,["OG Morning Star"]=true,["OG The Overlord"]=true,
+	["Frosted Bond"]=true,["Giant One Eyed Monster"]=true,["Giant Pearl"]=true,
+	["God Tamer"]=true,["Guardian Angel"]=true,["Hermit Crab"]=true,["Holy Bell"]=true,
+	["Holy Candle"]=true,["Kitty Tophat"]=true,["Mech Robot"]=true,["Mech Kraken"]=true,
+	["Moonlord"]=true,["OG Archangel"]=true,["Peppermint Heart"]=true,["Tidal God"]=true,
+	["Whimsical Fairy"]=true,["Wicked Widow"]=true,["The Overlord"]=true,
+	["Silly King Doggy"]=true,["Sinistar"]=true,["Pumpkin Pie"]=true,["Pumpgeist"]=true,
+	["OG Soulflake"]=true,["OG Hellfire"]=true,["Giant NULLvoid"]=true,["Giant DOOF"]=true,
+	["Ghosdeeri"]=true,["Giant Fall Turkey"]=true,["Fox O' Wisp"]=true,
+	["Flake Spirit"]=true,["Box of Secrets"]=true,["Chronos"]=true,
+	["Axolotl Army"]=true,["Archangel"]=true,
 }
 
 task.spawn(function()
-    while AUTO_REBIRTH_ENABLED do
-        task.wait(CHECK_INTERVAL)
+	while AUTO_REBIRTH_ENABLED do
+		task.wait(CHECK_INTERVAL)
 
-        local playerData = LocalData:Get()
-        if not playerData or not playerData.Pets or not playerData.Teams or not playerData.TeamEquipped then
-            continue
-        end
+		local data = LocalData:Get()
+		if not data or not data.Pets or not data.Teams or not data.TeamEquipped then continue end
+		if TimeUtil.now() < data.NextRebirthMachineUse then continue end
 
-        if TimeUtil.now() < playerData.NextRebirthMachineUse then
-            continue
-        end
+		local equipped = {}
+		local team = data.Teams[data.TeamEquipped]
+		if team and team.Pets then
+			for _,id in ipairs(team.Pets) do equipped[id] = true end
+		end
 
-        local equippedPetIds = {}
-        local activeTeamIndex = playerData.TeamEquipped
+		local byVariant = {}
+		for _,pet in ipairs(data.Pets) do
+			if equipped[pet.Id] or pet.Locked then continue end
+			local info = PetsModule[pet.Name]
+			if not info or info.Rarity ~= "Secret" or info.Infinity then continue end
+			if not ALLOWED_SECRET_NAMES[pet.Name] then continue end
 
-        if activeTeamIndex and playerData.Teams[activeTeamIndex] and playerData.Teams[activeTeamIndex].Pets then
-            for _, petId in ipairs(playerData.Teams[activeTeamIndex].Pets) do
-                equippedPetIds[petId] = true
-            end
-        end
+			local variant = RebirthMachineUtil:GetPetVariant(pet)
+			byVariant[variant] = byVariant[variant] or {}
+			table.insert(byVariant[variant], pet.Id)
+		end
 
-        local petsByVariant = {}
-
-        for _, petData in ipairs(playerData.Pets) do
-            if equippedPetIds[petData.Id] or petData.Locked then
-                continue
-            end
-
-            local petInfo = PetsData[petData.Name]
-            if not petInfo then
-                continue
-            end
-
-            if petInfo.Rarity ~= "Secret" or petInfo.Infinity then
-                continue
-            end
-
-            if not ALLOWED_SECRET_NAMES[petData.Name] then
-                continue
-            end
-
-            local variant = RebirthMachineUtil:GetPetVariant(petData)
-            petsByVariant[variant] = petsByVariant[variant] or {}
-            table.insert(petsByVariant[variant], petData.Id)
-        end
-
-        local petIdsToSend
-        local requiredAmount = RebirthMachineUtil.NUM_SECRETS_REQUIRED
-
-        for _, idList in pairs(petsByVariant) do
-            if #idList >= requiredAmount then
-                petIdsToSend = {}
-                for i = 1, requiredAmount do
-                    petIdsToSend[#petIdsToSend + 1] = idList[i]
-                end
-                break
-            end
-        end
-
-        if petIdsToSend then
-            Remote:InvokeServer("UseRebirthMachine", petIdsToSend)
-            task.wait(2)
-        end
-    end
+		for _,list in pairs(byVariant) do
+			if #list >= RebirthMachineUtil.NUM_SECRETS_REQUIRED then
+				local send = {}
+				for i = 1, RebirthMachineUtil.NUM_SECRETS_REQUIRED do
+					send[#send+1] = list[i]
+				end
+				Remote:InvokeServer("UseRebirthMachine", send)
+				break
+			end
+		end
+	end
 end)
