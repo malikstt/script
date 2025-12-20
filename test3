@@ -1,252 +1,168 @@
-local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
-
-local Window = Rayfield:CreateWindow({
-    Name = "Role Control",
-    LoadingTitle = "Utility",
-    LoadingSubtitle = "Rayfield"
-})
-
-local MainTab = Window:CreateTab("Main", 4483362458)
-local MiscTab = Window:CreateTab("Misc", 4483362458)
+-- Rayfield Pink ESP + Auto Random TP + Forge TP (pure lua)
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local VirtualInputManager = game:GetService("VirtualInputManager")
-
 local LocalPlayer = Players.LocalPlayer
-local Camera = workspace.CurrentCamera
 
-local State = {
-    ESP_ALL = false,
-    ESP_SEEKER = false,
-    ESP_HIDER = false,
-    TP_SEEKER = false,
-    TP_HIDER = false,
-    TP_RANDOM_SEEKER = false,
-    TP_RANDOM_HIDER = false,
-    AUTO_SWITCH = false,
-    MODE = "NONSTOP",
-    OLD_CAMERA = false,
-    NEW_CAMERA = false,
-    NOCLIP = false,
-    AUTO_ATTACK = false,
-    TP_DELAY = 0.5
-}
+local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 
-local COLORS = {
-    ALL = Color3.fromRGB(255,255,255),
-    SEEKER = Color3.fromRGB(0,255,255),
-    HIDER = Color3.fromRGB(255,0,255),
-    OUTLINE = Color3.fromRGB(255,255,255)
-}
+local Window = Rayfield:CreateWindow({
+    Name = "Pink ESP + TP",
+    LoadingTitle = "Loaded",
+    LoadingSubtitle = "Rayfield",
+})
 
-local ESP_CACHE = {}
-local lockedTarget
-local cycleIndex = 1
-local camSaved
-local randomIndex = 1
-local lastTP = 0
+local Tab = Window:CreateTab("Main", 4483362458)
 
-local function getRole(player)
-    local model = workspace:FindFirstChild(player.Name)
-    if not model then return nil end
-    if model:FindFirstChild("SeekerHighlight") then
-        return "SEEKER"
+-- ===== ESP =====
+local ESP_COLOR = Color3.fromRGB(255,105,180)
+local espEnabled = false
+local espCache = {}
+
+local function addESP(plr)
+    if plr == LocalPlayer or not espEnabled then return end
+    if espCache[plr] then espCache[plr]:Destroy() end
+
+    if plr.Character then
+        local h = Instance.new("Highlight")
+        h.FillColor = ESP_COLOR
+        h.OutlineColor = ESP_COLOR
+        h.FillTransparency = 0.4
+        h.OutlineTransparency = 0
+        h.Adornee = plr.Character
+        h.Parent = plr.Character
+        espCache[plr] = h
     end
-    return "HIDER"
 end
 
-local function valid(p)
-    local h = p.Character and p.Character:FindFirstChildOfClass("Humanoid")
-    return h and h.Health > 0
+local function clearESP()
+    for _,h in pairs(espCache) do
+        if h then h:Destroy() end
+    end
+    table.clear(espCache)
 end
 
-local function getPlayersByRole(role)
-    local t = {}
+Tab:CreateToggle({
+    Name = "Pink ESP (Others)",
+    CurrentValue = false,
+    Callback = function(v)
+        espEnabled = v
+        clearESP()
+        if v then
+            for _,p in ipairs(Players:GetPlayers()) do
+                addESP(p)
+            end
+        end
+    end
+})
+
+Players.PlayerAdded:Connect(function(p)
+    p.CharacterAdded:Connect(function()
+        task.wait(0.5)
+        addESP(p)
+    end)
+end)
+
+-- ===== AUTO RANDOM TP =====
+local autoTP = false
+local tpDelay = 1
+
+local function getRandomPlayer()
+    local list = {}
     for _,p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer and getRole(p) == role then
-            table.insert(t,p)
+        if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+            table.insert(list,p)
         end
     end
-    return t
+    return list[math.random(#list)]
 end
-
-RunService.Heartbeat:Connect(function()
-    if not (State.ESP_ALL or State.ESP_SEEKER or State.ESP_HIDER) then
-        for _,h in pairs(ESP_CACHE) do h:Destroy() end
-        table.clear(ESP_CACHE)
-        return
-    end
-
-    for _,p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer and p.Character then
-            local role = getRole(p)
-            local allow =
-                State.ESP_ALL or
-                (State.ESP_SEEKER and role == "SEEKER") or
-                (State.ESP_HIDER and role == "HIDER")
-
-            local h = ESP_CACHE[p]
-
-            if allow then
-                if not h then
-                    h = Instance.new("Highlight")
-                    h.Parent = p.Character
-                    h.Adornee = p.Character
-                    h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                    ESP_CACHE[p] = h
-                end
-                h.FillColor =
-                    State.ESP_ALL and COLORS.ALL or
-                    role == "SEEKER" and COLORS.SEEKER or
-                    COLORS.HIDER
-                h.OutlineColor = COLORS.OUTLINE
-                h.FillTransparency = 0.25
-                h.OutlineTransparency = 0
-                h.Enabled = true
-            elseif h then
-                h:Destroy()
-                ESP_CACHE[p] = nil
-            end
-        end
-    end
-end)
-
-RunService.Heartbeat:Connect(function()
-    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-
-    local role
-    if State.AUTO_SWITCH then
-        local seekers = getPlayersByRole("SEEKER")
-        role = #seekers > 0 and "SEEKER" or "HIDER"
-    elseif State.TP_SEEKER then
-        role = "SEEKER"
-    elseif State.TP_HIDER then
-        role = "HIDER"
-    end
-
-    if role then
-        local targets = getPlayersByRole(role)
-        if #targets > 0 then
-            if State.MODE == "NONSTOP" then
-                lockedTarget = targets[cycleIndex]
-                cycleIndex = (cycleIndex % #targets) + 1
-            else
-                if not lockedTarget or not valid(lockedTarget) then
-                    lockedTarget = targets[1]
-                end
-            end
-
-            if lockedTarget and lockedTarget.Character then
-                local tRoot = lockedTarget.Character:FindFirstChild("HumanoidRootPart")
-                if tRoot then
-                    root.CFrame = tRoot.CFrame
-                end
-            end
-        end
-    end
-
-    local now = tick()
-    if now - lastTP < State.TP_DELAY then return end
-    lastTP = now
-
-    if State.TP_RANDOM_HIDER then
-        local hiders = getPlayersByRole("HIDER")
-        if #hiders > 0 then
-            local p = hiders[randomIndex]
-            randomIndex = (randomIndex % #hiders) + 1
-            local r = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
-            if r then root.CFrame = r.CFrame end
-        end
-    elseif State.TP_RANDOM_SEEKER then
-        local seekers = getPlayersByRole("SEEKER")
-        if #seekers > 0 then
-            local p = seekers[randomIndex]
-            randomIndex = (randomIndex % #seekers) + 1
-            local r = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
-            if r then root.CFrame = r.CFrame end
-        end
-    end
-end)
-
-RunService:BindToRenderStep("OldCam", Enum.RenderPriority.Camera.Value + 1, function()
-    if not State.OLD_CAMERA then return end
-    if not lockedTarget or not lockedTarget.Character then return end
-    local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    local focus = lockedTarget.Character:FindFirstChild("Head") or lockedTarget.Character:FindFirstChild("HumanoidRootPart")
-    if not myRoot or not focus then return end
-    camSaved = camSaved or Camera.CameraType
-    Camera.CameraType = Enum.CameraType.Scriptable
-    Camera.CFrame = CFrame.new(
-        myRoot.CFrame:PointToWorldSpace(Vector3.new(0,6,-10)),
-        focus.Position
-    )
-end)
-
-RunService:BindToRenderStep("NewCam", Enum.RenderPriority.Camera.Value + 2, function()
-    if not State.NEW_CAMERA then return end
-    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    camSaved = camSaved or Camera.CameraType
-    Camera.CameraType = Enum.CameraType.Scriptable
-    local back = root.CFrame * CFrame.new(0,0,2)
-    Camera.CFrame = CFrame.new(back.Position, root.Position)
-end)
-
-local function unlockCam()
-    if camSaved then
-        Camera.CameraType = camSaved
-        camSaved = nil
-    end
-end
-
-RunService.Stepped:Connect(function()
-    if not State.NOCLIP then return end
-    local char = LocalPlayer.Character
-    if not char then return end
-    for _,p in ipairs(char:GetDescendants()) do
-        if p:IsA("BasePart") then
-            p.CanCollide = false
-        end
-    end
-end)
 
 task.spawn(function()
     while true do
-        if State.AUTO_ATTACK then
-            VirtualInputManager:SendMouseButtonEvent(0,0,0,true,game,0)
-            VirtualInputManager:SendMouseButtonEvent(0,0,0,false,game,0)
+        if autoTP then
+            local target = getRandomPlayer()
+            if target and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                LocalPlayer.Character.HumanoidRootPart.CFrame =
+                    target.Character.HumanoidRootPart.CFrame * CFrame.new(0,0,2)
+            end
+            task.wait(tpDelay)
+        else
+            task.wait()
         end
-        task.wait(0.05)
     end
 end)
 
-MainTab:CreateToggle({ Name="Auto TP Seeker", Callback=function(v) State.TP_SEEKER=v if v then State.TP_HIDER=false State.AUTO_SWITCH=false end end })
-MainTab:CreateToggle({ Name="Auto TP Hider", Callback=function(v) State.TP_HIDER=v if v then State.TP_SEEKER=false State.AUTO_SWITCH=false end end })
-MainTab:CreateToggle({ Name="Auto Switch Roles", Callback=function(v) State.AUTO_SWITCH=v if v then State.TP_SEEKER=false State.TP_HIDER=false end end })
-MainTab:CreateDropdown({ Name="Mode", Options={"NONSTOP","UNTIL_DEATH"}, Callback=function(v) State.MODE=v end })
-MainTab:CreateToggle({ Name="Old Camera Lock", Callback=function(v) State.OLD_CAMERA=v if not v then unlockCam() end end })
-MainTab:CreateToggle({ Name="New Camera Lock", Callback=function(v) State.NEW_CAMERA=v if not v then unlockCam() end end })
-MainTab:CreateToggle({ Name="No Collision", Callback=function(v) State.NOCLIP=v end })
-MainTab:CreateToggle({ Name="Auto Attack", Callback=function(v) State.AUTO_ATTACK=v end })
+Tab:CreateToggle({
+    Name = "Auto TP Random Player",
+    CurrentValue = false,
+    Callback = function(v)
+        autoTP = v
+    end
+})
 
-MiscTab:CreateToggle({ Name="ESP All", Callback=function(v) State.ESP_ALL=v end })
-MiscTab:CreateToggle({ Name="ESP Seekers", Callback=function(v) State.ESP_SEEKER=v end })
-MiscTab:CreateToggle({ Name="ESP Hiders", Callback=function(v) State.ESP_HIDER=v end })
+Tab:CreateSlider({
+    Name = "Auto TP Delay",
+    Range = {0.2,10},
+    Increment = 0.1,
+    CurrentValue = 1,
+    Callback = function(v)
+        tpDelay = v
+    end
+})
 
-MiscTab:CreateColorPicker({ Name="ESP All Color", Color=COLORS.ALL, Callback=function(c) COLORS.ALL=c end })
-MiscTab:CreateColorPicker({ Name="ESP Seeker Color", Color=COLORS.SEEKER, Callback=function(c) COLORS.SEEKER=c end })
-MiscTab:CreateColorPicker({ Name="ESP Hider Color", Color=COLORS.HIDER, Callback=function(c) COLORS.HIDER=c end })
+-- ===== FORGE =====
+local forgePlayer = nil
+local forgeDelay = 0.2
 
-MiscTab:CreateToggle({ Name="TP Random Hiders", Callback=function(v) State.TP_RANDOM_HIDER=v if v then State.TP_RANDOM_SEEKER=false end end })
-MiscTab:CreateToggle({ Name="TP Random Seekers", Callback=function(v) State.TP_RANDOM_SEEKER=v if v then State.TP_RANDOM_HIDER=false end end })
+local function refreshPlayers()
+    local names = {}
+    for _,p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            table.insert(names,p.Name)
+        end
+    end
+    return names
+end
 
-MiscTab:CreateSlider({
-    Name="Random TP Delay",
-    Range={0.1,1},
-    Increment=0.1,
-    Suffix="sec",
-    CurrentValue=0.5,
-    Callback=function(v) State.TP_DELAY=v end
+local ForgeDropdown = Tab:CreateDropdown({
+    Name = "Forge Player",
+    Options = refreshPlayers(),
+    CurrentOption = {},
+    Callback = function(opt)
+        forgePlayer = Players:FindFirstChild(opt[1])
+    end
+})
+
+Players.PlayerAdded:Connect(function()
+    ForgeDropdown:Refresh(refreshPlayers())
+end)
+
+Players.PlayerRemoving:Connect(function()
+    ForgeDropdown:Refresh(refreshPlayers())
+end)
+
+Tab:CreateSlider({
+    Name = "Forge Delay",
+    Range = {0.2,1},
+    Increment = 0.05,
+    CurrentValue = 0.2,
+    Callback = function(v)
+        forgeDelay = v
+    end
+})
+
+Tab:CreateButton({
+    Name = "Forge TP",
+    Callback = function()
+        task.spawn(function()
+            while forgePlayer and forgePlayer.Character and autoTP == false do
+                local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                local thrp = forgePlayer.Character:FindFirstChild("HumanoidRootPart")
+                if hrp and thrp then
+                    hrp.CFrame = thrp.CFrame * CFrame.new(0,0,2)
+                end
+                task.wait(forgeDelay)
+            end
+        end)
+    end
 })
