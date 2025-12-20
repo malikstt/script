@@ -1,168 +1,115 @@
--- Rayfield Pink ESP + Auto Random TP + Forge TP (pure lua)
+-- ===== DAMAGE TAB =====
 
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local LocalPlayer = Players.LocalPlayer
+local DamageTab = Window:CreateTab("Damage", 4483362458)
 
-local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+local damageTarget = nil
+local damageAmount = 10
+local damageDelay = 0.5
+local damageLoop = false
+local damageAllLoop = false
 
-local Window = Rayfield:CreateWindow({
-    Name = "Pink ESP + TP",
-    LoadingTitle = "Loaded",
-    LoadingSubtitle = "Rayfield",
-})
-
-local Tab = Window:CreateTab("Main", 4483362458)
-
--- ===== ESP =====
-local ESP_COLOR = Color3.fromRGB(255,105,180)
-local espEnabled = false
-local espCache = {}
-
-local function addESP(plr)
-    if plr == LocalPlayer or not espEnabled then return end
-    if espCache[plr] then espCache[plr]:Destroy() end
-
-    if plr.Character then
-        local h = Instance.new("Highlight")
-        h.FillColor = ESP_COLOR
-        h.OutlineColor = ESP_COLOR
-        h.FillTransparency = 0.4
-        h.OutlineTransparency = 0
-        h.Adornee = plr.Character
-        h.Parent = plr.Character
-        espCache[plr] = h
-    end
-end
-
-local function clearESP()
-    for _,h in pairs(espCache) do
-        if h then h:Destroy() end
-    end
-    table.clear(espCache)
-end
-
-Tab:CreateToggle({
-    Name = "Pink ESP (Others)",
-    CurrentValue = false,
-    Callback = function(v)
-        espEnabled = v
-        clearESP()
-        if v then
-            for _,p in ipairs(Players:GetPlayers()) do
-                addESP(p)
-            end
+-- try common damage method
+local function dealDamage(plr, amount)
+    if plr and plr.Character then
+        local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+        if hum then
+            pcall(function()
+                hum:TakeDamage(amount)
+            end)
         end
     end
+end
+
+-- ===== TARGET SELECT =====
+local function getPlayerNames()
+    local t = {}
+    for _,p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            table.insert(t, p.Name)
+        end
+    end
+    return t
+end
+
+local DamageDropdown = DamageTab:CreateDropdown({
+    Name = "Target Player",
+    Options = getPlayerNames(),
+    CurrentOption = {},
+    Callback = function(opt)
+        damageTarget = Players:FindFirstChild(opt[1])
+    end
 })
 
-Players.PlayerAdded:Connect(function(p)
-    p.CharacterAdded:Connect(function()
-        task.wait(0.5)
-        addESP(p)
-    end)
+Players.PlayerAdded:Connect(function()
+    DamageDropdown:Refresh(getPlayerNames())
 end)
 
--- ===== AUTO RANDOM TP =====
-local autoTP = false
-local tpDelay = 1
+Players.PlayerRemoving:Connect(function()
+    DamageDropdown:Refresh(getPlayerNames())
+end)
 
-local function getRandomPlayer()
-    local list = {}
-    for _,p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
-            table.insert(list,p)
-        end
+-- ===== DAMAGE SLIDER =====
+DamageTab:CreateSlider({
+    Name = "Damage Amount",
+    Range = {10,1000},
+    Increment = 10,
+    CurrentValue = 10,
+    Callback = function(v)
+        damageAmount = v
     end
-    return list[math.random(#list)]
-end
+})
+
+-- ===== DELAY SLIDER =====
+DamageTab:CreateSlider({
+    Name = "Damage Delay",
+    Range = {0.5,1},
+    Increment = 0.05,
+    CurrentValue = 0.5,
+    Callback = function(v)
+        damageDelay = v
+    end
+})
+
+-- ===== DAMAGE TARGET LOOP =====
+DamageTab:CreateToggle({
+    Name = "Damage Selected Player",
+    CurrentValue = false,
+    Callback = function(v)
+        damageLoop = v
+    end
+})
 
 task.spawn(function()
     while true do
-        if autoTP then
-            local target = getRandomPlayer()
-            if target and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-                LocalPlayer.Character.HumanoidRootPart.CFrame =
-                    target.Character.HumanoidRootPart.CFrame * CFrame.new(0,0,2)
-            end
-            task.wait(tpDelay)
+        if damageLoop and damageTarget then
+            dealDamage(damageTarget, damageAmount)
+            task.wait(damageDelay)
         else
             task.wait()
         end
     end
 end)
 
-Tab:CreateToggle({
-    Name = "Auto TP Random Player",
+-- ===== DAMAGE ALL =====
+DamageTab:CreateToggle({
+    Name = "Damage All Players",
     CurrentValue = false,
     Callback = function(v)
-        autoTP = v
+        damageAllLoop = v
     end
 })
 
-Tab:CreateSlider({
-    Name = "Auto TP Delay",
-    Range = {0.2,10},
-    Increment = 0.1,
-    CurrentValue = 1,
-    Callback = function(v)
-        tpDelay = v
-    end
-})
-
--- ===== FORGE =====
-local forgePlayer = nil
-local forgeDelay = 0.2
-
-local function refreshPlayers()
-    local names = {}
-    for _,p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer then
-            table.insert(names,p.Name)
+task.spawn(function()
+    while true do
+        if damageAllLoop then
+            for _,p in ipairs(Players:GetPlayers()) do
+                if p ~= LocalPlayer then
+                    dealDamage(p, damageAmount)
+                    task.wait(0.5)
+                end
+            end
+        else
+            task.wait()
         end
     end
-    return names
-end
-
-local ForgeDropdown = Tab:CreateDropdown({
-    Name = "Forge Player",
-    Options = refreshPlayers(),
-    CurrentOption = {},
-    Callback = function(opt)
-        forgePlayer = Players:FindFirstChild(opt[1])
-    end
-})
-
-Players.PlayerAdded:Connect(function()
-    ForgeDropdown:Refresh(refreshPlayers())
 end)
-
-Players.PlayerRemoving:Connect(function()
-    ForgeDropdown:Refresh(refreshPlayers())
-end)
-
-Tab:CreateSlider({
-    Name = "Forge Delay",
-    Range = {0.2,1},
-    Increment = 0.05,
-    CurrentValue = 0.2,
-    Callback = function(v)
-        forgeDelay = v
-    end
-})
-
-Tab:CreateButton({
-    Name = "Forge TP",
-    Callback = function()
-        task.spawn(function()
-            while forgePlayer and forgePlayer.Character and autoTP == false do
-                local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-                local thrp = forgePlayer.Character:FindFirstChild("HumanoidRootPart")
-                if hrp and thrp then
-                    hrp.CFrame = thrp.CFrame * CFrame.new(0,0,2)
-                end
-                task.wait(forgeDelay)
-            end
-        end)
-    end
-})
