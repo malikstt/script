@@ -4,13 +4,11 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local VirtualInputManager = game:GetService("VirtualInputManager")
-local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
-local PlayerGui = player:WaitForChild("PlayerGui")
 local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
 
-local RE = ReplicatedStorage
+local RemoteEvent = ReplicatedStorage
     :WaitForChild("Shared")
     :WaitForChild("Framework")
     :WaitForChild("Network")
@@ -25,86 +23,19 @@ local PickupRemote = ReplicatedStorage
 local COIN_TARGET = 3500000000
 local TICKET_TARGET = 1000000000
 local OVERWORLD = "The Overworld"
+local MINIGAME = "Minigame Paradise"
+local FINAL_WORLD = "Seven Seas"
+
 local FARM_CFRAME = CFrame.new(-33.90,15971.73,37.79)
 
-local STATE = "Booting"
 local claimed = {}
 
 local function data()
     return LocalData:Get() or {}
 end
 
-local function fmt(n)
-    n = tonumber(n) or 0
-    if n >= 1e12 then return string.format("%.2fT", n/1e12) end
-    if n >= 1e9 then return string.format("%.2fB", n/1e9) end
-    if n >= 1e6 then return string.format("%.2fM", n/1e6) end
-    if n >= 1e3 then return string.format("%.2fK", n/1e3) end
-    return tostring(n)
-end
-
-local function ensureGui()
-    local g = PlayerGui:FindFirstChild("StatusUI")
-    if g then return g end
-    g = Instance.new("ScreenGui")
-    g.Name = "StatusUI"
-    g.ResetOnSpawn = false
-    g.IgnoreGuiInset = true
-    g.Parent = PlayerGui
-    local f = Instance.new("Frame")
-    f.Size = UDim2.new(1,0,1,0)
-    f.BackgroundColor3 = Color3.new(0,0,0)
-    f.Parent = g
-    local t = Instance.new("TextLabel")
-    t.Name = "Label"
-    t.Size = UDim2.new(1,0,1,0)
-    t.BackgroundTransparency = 1
-    t.TextColor3 = Color3.new(1,1,1)
-    t.TextWrapped = true
-    t.TextScaled = true
-    t.TextXAlignment = Enum.TextXAlignment.Center
-    t.TextYAlignment = Enum.TextYAlignment.Center
-    t.Font = Enum.Font.GothamBold
-    t.Text = ""
-    t.Parent = f
-    return g
-end
-
-local gui = ensureGui()
-player.CharacterAdded:Connect(function()
-    task.wait(0.5)
-    ensureGui()
-end)
-
-local label = gui:FindFirstChildOfClass("Frame"):FindFirstChild("Label")
-
-task.spawn(function()
-    local emojis = {"🚀","⚙️","🌍","💰","🎟️","❄️"}
-    local ei = 1
-    while true do
-        local d = data()
-        local wu = d.WorldsUnlocked or {}
-        local unlockedCount = 0
-        local totalUnlockedPossible = 0
-        for _,v in pairs(wu) do
-            totalUnlockedPossible += 1
-            if v then unlockedCount += 1 end
-        end
-        label.Text =
-            emojis[ei].." "..player.Name.."\n\n"..
-            STATE.."\n\n"..
-            "Worlds Unlocked "..unlockedCount.."/"..totalUnlockedPossible.."\n\n"..
-            "Coins "..fmt(d.Coins).."\n"..
-            "Tickets "..fmt(d.Tickets).."\n"..
-            "Pearls "..fmt(d.Pearls)
-        ei = ei % #emojis + 1
-        task.wait(0.4)
-    end
-end)
-
-local function tp(cf)
-    local c = player.Character or player.CharacterAdded:Wait()
-    c:WaitForChild("HumanoidRootPart").CFrame = cf
+local function log(msg)
+    warn("[SCRIPT]", msg)
 end
 
 local function pressB()
@@ -113,7 +44,44 @@ local function pressB()
     VirtualInputManager:SendKeyEvent(false,Enum.KeyCode.B,false,game)
 end
 
-local function waitIslands(world)
+local function tp(cf)
+    local c = player.Character or player.CharacterAdded:Wait()
+    c:WaitForChild("HumanoidRootPart").CFrame = cf
+end
+
+local function getAllWorlds()
+    local worlds = {}
+    if Workspace:FindFirstChild("Worlds") then
+        for _,w in ipairs(Workspace.Worlds:GetChildren()) do
+            table.insert(worlds, w.Name)
+        end
+    end
+    return worlds
+end
+
+local function isWorldUnlocked(world)
+    local wu = data().WorldsUnlocked
+    return wu and wu[world] == true
+end
+
+local function unlockWorld(world)
+    log("Attempting to unlock world: "..world)
+    RemoteEvent:FireServer("UnlockWorld", world)
+    task.wait(2)
+    if isWorldUnlocked(world) then
+        log("World unlocked: "..world)
+        return true
+    end
+    log("World unlock not confirmed (server may still update): "..world)
+    return false
+end
+
+local function teleportWorld(world)
+    log("Teleporting to "..world)
+    RemoteEvent:FireServer("WorldTeleport", world)
+end
+
+local function waitForIslands(world)
     local w
     repeat
         w = Workspace.Worlds:FindFirstChild(world)
@@ -122,19 +90,35 @@ local function waitIslands(world)
     return w.Islands
 end
 
+local function allIslandsUnlocked(world)
+    local unlocked = data().AreasUnlocked or {}
+    local w = Workspace.Worlds:FindFirstChild(world)
+    if not w or not w:FindFirstChild("Islands") then return false end
+    for _,i in ipairs(w.Islands:GetChildren()) do
+        if not unlocked[i.Name] then return false end
+    end
+    return true
+end
+
 local function unlockIslands(world)
-    if not firetouchinterest then return end
-    STATE = "Unlocking islands in "..world
+    if not firetouchinterest then
+        log("firetouchinterest missing, cannot unlock islands")
+        return
+    end
+    log("Unlocking islands in "..world)
     local c = player.Character or player.CharacterAdded:Wait()
     local hrp = c:WaitForChild("HumanoidRootPart")
-    local islands = waitIslands(world)
+    local islands = waitForIslands(world)
     while true do
         local unlocked = data().AreasUnlocked or {}
         local left = {}
         for _,i in ipairs(islands:GetChildren()) do
             if not unlocked[i.Name] then table.insert(left,i) end
         end
-        if #left == 0 then break end
+        if #left == 0 then
+            log("All islands unlocked in "..world)
+            break
+        end
         for _,i in ipairs(left) do
             local m = i:FindFirstChild("Island")
             if m then
@@ -151,22 +135,18 @@ local function unlockIslands(world)
     end
 end
 
-local function allIslandsUnlocked(world)
-    local unlocked = data().AreasUnlocked or {}
-    local w = Workspace.Worlds:FindFirstChild(world)
-    if not w or not w:FindFirstChild("Islands") then return false end
-    for _,i in ipairs(w.Islands:GetChildren()) do
-        if not unlocked[i.Name] then return false end
-    end
-    return true
+log("Enumerating worlds from Workspace")
+local worlds = getAllWorlds()
+if #worlds == 0 then
+    error("No worlds detected in Workspace.Worlds")
 end
 
-STATE = "Ensuring Overworld islands"
+log("Ensuring Overworld islands")
 unlockIslands(OVERWORLD)
 repeat task.wait(0.5) until allIslandsUnlocked(OVERWORLD)
 
 if (data().Coins or 0) < COIN_TARGET then
-    STATE = "Grinding coins"
+    log("Grinding coins")
     tp(FARM_CFRAME)
     task.wait(0.5)
     tp(FARM_CFRAME)
@@ -189,61 +169,35 @@ if (data().Coins or 0) < COIN_TARGET then
         end
         task.wait(0.1)
     end
+    log("Coin target reached")
+else
+    log("Coin target already met")
 end
 
-STATE = "Unlocking remaining worlds"
-local wu = data().WorldsUnlocked or {}
-for worldName, unlocked in pairs(wu) do
-    if worldName ~= OVERWORLD and not unlocked then
-        STATE = "Unlocking "..worldName
-        RE:FireServer("UnlockWorld", worldName)
-        task.wait(10)
-        RE:FireServer("WorldTeleport", worldName)
-        unlockIslands(worldName)
-        repeat task.wait(0.5) until allIslandsUnlocked(worldName)
+for _,world in ipairs(worlds) do
+    if world ~= OVERWORLD and not isWorldUnlocked(world) then
+        unlockWorld(world)
+        task.wait(6)
     end
 end
 
-STATE = "Teleporting to Minigame Paradise"
-RE:FireServer("WorldTeleport","Minigame Paradise")
+teleportWorld(MINIGAME)
 task.wait(3)
 for i=1,3 do pressB() task.wait(1) end
 
-unlockIslands("Minigame Paradise")
-repeat task.wait(0.5) until allIslandsUnlocked("Minigame Paradise")
+unlockIslands(MINIGAME)
+repeat task.wait(0.5) until allIslandsUnlocked(MINIGAME)
 
 if (data().Tickets or 0) < TICKET_TARGET then
-    STATE = "Grinding tickets"
+    log("Waiting for ticket target")
     repeat task.wait(1) until (data().Tickets or 0) >= TICKET_TARGET
+    log("Ticket target reached")
+else
+    log("Ticket target already met")
 end
 
-STATE = "Unlocking Seven Seas"
-RE:FireServer("UnlockWorld","Seven Seas")
-task.wait(6)
-STATE = "Teleporting to Seven Seas"
-RE:FireServer("WorldTeleport","Seven Seas")
+unlockWorld(FINAL_WORLD)
+task.wait(5)
+teleportWorld(FINAL_WORLD)
 
-getgenv().running = not getgenv().running
-
-local pots = {
-    {"UsePotion","Speed",7,10},
-    {"UsePotion","Lucky",7,10},
-    {"UsePotion","Mythic",7,10},
-    {"UsePotion","Egg Elixir",1,10},
-    {"UsePotion","Infinity Elixir",1,10},
-    {"UsePotion","Festive Elixir",4,10},
-    {"UsePotion","Festive Infinity Elixir",1,10},
-    {"UsePotion","Ultra Infinity Elixir",1,10},
-}
-
-if getgenv().running then
-    RunService:BindToRenderStep("PotionSpam",Enum.RenderPriority.First.Value,function()
-        for i=1,60 do
-            for _,a in ipairs(pots) do
-                RE:FireServer(unpack(a))
-            end
-        end
-    end)
-end
-
-STATE = "Idle – all goals complete"
+log("SCRIPT COMPLETE")
