@@ -18,30 +18,44 @@ local activeRift = nil
 local lastKeyAmount = nil
 local lastKeyChange = tick()
 
+local offsets = {
+    CFrame.new(0,0,0),
+    CFrame.new(0,2,0),
+    CFrame.new(2,0,0),
+    CFrame.new(-2,0,0),
+    CFrame.new(0,0,2),
+    CFrame.new(0,0,-2),
+}
+
 local function getAmount(name)
     local data = LocalData:Get()
     return (data and data.Powerups and data.Powerups[name]) or 0
 end
 
-local function anyDiceRiftExists()
+local function getAllDiceRifts()
+    local t = {}
     local rendered = Workspace:FindFirstChild("Rendered")
     local rifts = rendered and rendered:FindFirstChild("Rifts")
-    if not rifts then return false end
+    if not rifts then return t end
     for _, r in ipairs(rifts:GetChildren()) do
         if r.Name == "dice-rift" then
-            return true
+            table.insert(t, r)
         end
     end
-    return false
+    return t
 end
 
-local function getFirstDiceRift()
-    local rendered = Workspace:FindFirstChild("Rendered")
-    local rifts = rendered and rendered:FindFirstChild("Rifts")
-    if not rifts then return nil end
-    for _, r in ipairs(rifts:GetChildren()) do
-        if r.Name == "dice-rift" then
-            return r
+local function getChestFromRift(rift)
+    local chest = rift and rift:FindFirstChild("Chest", true)
+    if not chest then return nil end
+    return chest.PrimaryPart or chest:FindFirstChildWhichIsA("BasePart")
+end
+
+local function findAnyChest()
+    for _, r in ipairs(getAllDiceRifts()) do
+        local p = getChestFromRift(r)
+        if p then
+            return r, p
         end
     end
 end
@@ -54,74 +68,60 @@ local function setNoClip(state)
     end
 end
 
-local function getChestPart()
-    if not activeRift then return nil end
-    local chest = activeRift:FindFirstChild("Chest", true)
-    if not chest then return nil end
-    return chest.PrimaryPart or chest:FindFirstChildWhichIsA("BasePart")
-end
-
-local function teleportToChest()
-    local part = getChestPart()
+local function teleportTo(part)
     if not part then return end
     setNoClip(true)
-    hrp.CFrame = part.CFrame
+    hrp.CFrame = part
     RunService.Heartbeat:Wait()
     setNoClip(false)
 end
 
-local function bindRift(rift)
-    if activeRift then return end
-    activeRift = rift
-    teleportToChest()
-    rift.DescendantAdded:Connect(function(d)
-        if d.Name == "Chest" then
-            teleportToChest()
-        end
-    end)
+local function teleportSmart(part)
+    if not part then return end
+    local off = offsets[math.random(1,#offsets)]
+    teleportTo(part.CFrame * off)
+end
+
+local function clearRift()
+    activeRift = nil
+    lastKeyAmount = nil
 end
 
 task.spawn(function()
-    local rendered = Workspace:WaitForChild("Rendered")
-    local rifts = rendered:WaitForChild("Rifts")
-
-    local existing = getFirstDiceRift()
-    if existing then
-        bindRift(existing)
-    end
-
-    rifts.ChildAdded:Connect(function(r)
-        if r.Name == "dice-rift" then
-            bindRift(r)
-        end
-    end)
-end)
-
-task.spawn(function()
     while true do
-        if not anyDiceRiftExists() then
-            local checks = math.random(1,10)
-            local found = false
-            for _ = 1, checks do
-                if anyDiceRiftExists() then
-                    found = true
-                    break
-                end
-                task.wait(1)
-            end
-            if not found then
+        local rift, chest = findAnyChest()
+        if rift and chest then
+            activeRift = rift
+            teleportSmart(chest)
+        else
+            clearRift()
+            task.wait(math.random(1,20))
+            local r2, c2 = findAnyChest()
+            if not r2 then
                 RemoteFunction:InvokeServer(
                     "SummonRift",
                     {
                         Name = "dice-rift",
                         Type = "Chest",
-                        Time = 5,
+                        Time = 1,
                         World = "Minigame Paradise"
                     }
                 )
             end
         end
-        task.wait(3)
+        task.wait(2)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        if activeRift then
+            local chest = getChestFromRift(activeRift)
+            if not chest then
+                clearRift()
+            end
+        end
+        task.wait(1)
     end
 end)
 
@@ -136,7 +136,12 @@ task.spawn(function()
                 lastKeyAmount = current
                 lastKeyChange = tick()
             elseif current > 0 and tick() - lastKeyChange >= 30 then
-                teleportToChest()
+                local chest = getChestFromRift(activeRift)
+                if chest then
+                    teleportSmart(chest)
+                else
+                    clearRift()
+                end
                 lastKeyChange = tick()
             end
         end
@@ -154,88 +159,4 @@ task.spawn(function()
         end
         task.wait(0.05)
     end
-end)
-
-task.spawn(function()
-    while true do
-        if activeRift and not getChestPart() then
-            local checks = math.random(1,10)
-            local found = false
-            for _ = 1, checks do
-                if getChestPart() then
-                    found = true
-                    break
-                end
-                task.wait(1)
-            end
-            if not found then
-                RemoteFunction:InvokeServer(
-                    "SummonRift",
-                    {
-                        Name = "dice-rift",
-                        Type = "Chest",
-                        Time = 5,
-                        World = "Minigame Paradise"
-                    }
-                )
-            end
-        end
-        task.wait(2)
-    end
-end)
-
-local gui = Instance.new("ScreenGui")
-gui.ResetOnSpawn = false
-gui.Parent = player:WaitForChild("PlayerGui")
-
-local frame = Instance.new("Frame")
-frame.Size = UDim2.fromOffset(200,200)
-frame.Position = UDim2.new(0.5,-100,0,8)
-frame.BorderSizePixel = 0
-frame.Parent = gui
-
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0,14)
-corner.Parent = frame
-
-local layout = Instance.new("UIListLayout")
-layout.Padding = UDim.new(0,4)
-layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-layout.Parent = frame
-
-local padding = Instance.new("UIPadding")
-padding.PaddingTop = UDim.new(0,6)
-padding.PaddingBottom = UDim.new(0,6)
-padding.PaddingLeft = UDim.new(0,6)
-padding.PaddingRight = UDim.new(0,6)
-padding.Parent = frame
-
-local function label(h,b)
-    local l = Instance.new("TextLabel")
-    l.Size = UDim2.new(1,0,0,h)
-    l.BackgroundTransparency = 1
-    l.TextScaled = true
-    l.TextWrapped = true
-    l.Font = b and Enum.Font.GothamBold or Enum.Font.Gotham
-    l.TextColor3 = Color3.new(1,1,1)
-    local c = Instance.new("UITextSizeConstraint")
-    c.MinTextSize = 12
-    c.MaxTextSize = b and 22 or 18
-    c.Parent = l
-    l.Parent = frame
-    return l
-end
-
-local nameLabel = label(32,true)
-local diceKeyLabel = label(40,true)
-local superTicketLabel = label(36,false)
-local goldenDiceLabel = label(36,false)
-
-RunService.Heartbeat:Connect(function()
-    local dice = getAmount("Dice Key")
-    frame.BackgroundColor3 = dice > 0 and Color3.fromRGB(40,120,255) or Color3.fromRGB(200,45,45)
-    nameLabel.Text = "👤 "..player.Name
-    diceKeyLabel.Text = "🎲 Dice Key : "..dice
-    superTicketLabel.Text = "🎟️ Super Ticket : "..getAmount("Super Ticket")
-    goldenDiceLabel.Text = "✨ Golden Dice : "..getAmount("Golden Dice")
 end)
