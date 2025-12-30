@@ -2,6 +2,7 @@ getgenv().waitTime = 2.5
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local player = Players.LocalPlayer
@@ -12,6 +13,10 @@ local hrp = char:WaitForChild("HumanoidRootPart")
 local LocalDataModule = require(ReplicatedStorage.Client.Framework.Services.LocalData)
 local RemoteFunction = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteFunction
 
+local activeRift = nil
+local lastTeleport = 0
+local spamUntil = 0
+
 local function getLocalData()
     return LocalDataModule:Get()
 end
@@ -19,21 +24,6 @@ end
 local function getAmount(name)
     local data = getLocalData()
     return (data and data.Powerups and data.Powerups[name]) or 0
-end
-
-local function getDiceRiftChest()
-    local rendered = workspace:FindFirstChild("Rendered")
-    if not rendered then return end
-    local rifts = rendered:FindFirstChild("Rifts")
-    if not rifts then return end
-    for _, rift in pairs(rifts:GetChildren()) do
-        if rift.Name == "dice-rift" then
-            local chest = rift:FindFirstChild("Chest", true)
-            if chest then
-                return chest:FindFirstChildWhichIsA("BasePart")
-            end
-        end
-    end
 end
 
 local function setNoClip(state)
@@ -44,46 +34,104 @@ local function setNoClip(state)
     end
 end
 
-local function teleportToChest()
-    local chest = getDiceRiftChest()
-    if not chest then return end
-    setNoClip(true)
-    hrp.CFrame = chest.CFrame
-    task.wait(0.4)
-    setNoClip(false)
+local function spamKeys()
+    if tick() > spamUntil then return end
+    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
+    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
 end
+
+local function teleportToChest(chestPart)
+    if not chestPart then return end
+    if (hrp.Position - chestPart.Position).Magnitude < 3 then return end
+    setNoClip(true)
+    hrp.CFrame = chestPart.CFrame
+    task.wait()
+    setNoClip(false)
+    lastTeleport = tick()
+    spamUntil = tick() + 60
+end
+
+local function getChestFromRift(rift)
+    local chest = rift:FindFirstChild("Chest", true)
+    if chest then
+        return chest:FindFirstChildWhichIsA("BasePart")
+    end
+end
+
+local function watchRift(rift)
+    if activeRift and activeRift ~= rift then return end
+    activeRift = rift
+
+    local chest = getChestFromRift(rift)
+    if chest then
+        teleportToChest(chest)
+    end
+
+    rift.DescendantAdded:Connect(function(d)
+        if d.Name == "Chest" then
+            local p = d:FindFirstChildWhichIsA("BasePart")
+            teleportToChest(p)
+        end
+    end)
+end
+
+local function hookRifts()
+    local rendered = workspace:WaitForChild("Rendered")
+    local rifts = rendered:WaitForChild("Rifts")
+
+    for _, rift in pairs(rifts:GetChildren()) do
+        if rift.Name == "dice-rift" then
+            watchRift(rift)
+            break
+        end
+    end
+
+    rifts.ChildAdded:Connect(function(rift)
+        if rift.Name == "dice-rift" and not activeRift then
+            watchRift(rift)
+        end
+    end)
+end
+
+task.spawn(hookRifts)
 
 task.spawn(function()
     while true do
-        local start = getAmount("Dice Key")
-        if start > 0 then
-            local t = tick()
-            local changed = false
-            while tick() - t < 30 do
-                task.wait(1)
-                if getAmount("Dice Key") < start then
-                    changed = true
-                    break
-                end
-            end
-            if not changed and getAmount("Dice Key") > 0 then
-                teleportToChest()
+        if activeRift and tick() - lastTeleport > 30 then
+            local chest = getChestFromRift(activeRift)
+            if chest then
+                teleportToChest(chest)
             end
         end
-        task.wait(2)
+        task.wait(1)
     end
 end)
 
 task.spawn(function()
     while true do
-        if not getDiceRiftChest() then
+        spamKeys()
+        task.wait(0.05)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        if not activeRift then
             local checks = math.random(0,10)
             local found = false
             for i = 1, checks do
-                if getDiceRiftChest() then
-                    found = true
-                    break
+                if workspace:FindFirstChild("Rendered")
+                    and workspace.Rendered:FindFirstChild("Rifts") then
+                    for _, r in pairs(workspace.Rendered.Rifts:GetChildren()) do
+                        if r.Name == "dice-rift" then
+                            found = true
+                            break
+                        end
+                    end
                 end
+                if found then break end
                 task.wait(1)
             end
             if not found then
@@ -113,9 +161,7 @@ frame.Position = UDim2.new(0.5,-100,0,10)
 frame.BorderSizePixel = 0
 frame.Parent = gui
 
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0,16)
-corner.Parent = frame
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0,16)
 
 local function makeLabel(y, size, bold)
     local l = Instance.new("TextLabel")
@@ -136,13 +182,9 @@ local goldenDiceLabel = makeLabel(128,32,false)
 
 RunService.Heartbeat:Connect(function()
     local diceKeys = getAmount("Dice Key")
-    local superTickets = getAmount("Super Ticket")
-    local goldenDice = getAmount("Golden Dice")
-
     frame.BackgroundColor3 = diceKeys > 0 and Color3.fromRGB(45,120,255) or Color3.fromRGB(200,45,45)
-
     nameLabel.Text = "👤 "..player.Name
     diceKeyLabel.Text = "🎲 Dice Key : "..diceKeys
-    superTicketLabel.Text = "🎟️ Super Ticket : "..superTickets
-    goldenDiceLabel.Text = "✨ Golden Dice : "..goldenDice
+    superTicketLabel.Text = "🎟️ Super Ticket : "..getAmount("Super Ticket")
+    goldenDiceLabel.Text = "✨ Golden Dice : "..getAmount("Golden Dice")
 end)
