@@ -14,8 +14,8 @@ local LocalDataModule = require(ReplicatedStorage.Client.Framework.Services.Loca
 local RemoteFunction = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteFunction
 
 local activeRift = nil
-local lastTeleport = 0
-local spamUntil = 0
+local lastKeyChange = tick()
+local lastKeyAmount = nil
 
 local function getLocalData()
     return LocalDataModule:Get()
@@ -34,25 +34,6 @@ local function setNoClip(state)
     end
 end
 
-local function spamKeys()
-    if tick() > spamUntil then return end
-    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
-    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
-end
-
-local function teleportToChest(chestPart)
-    if not chestPart then return end
-    if (hrp.Position - chestPart.Position).Magnitude < 3 then return end
-    setNoClip(true)
-    hrp.CFrame = chestPart.CFrame
-    task.wait()
-    setNoClip(false)
-    lastTeleport = tick()
-    spamUntil = tick() + 60
-end
-
 local function getChestFromRift(rift)
     local chest = rift:FindFirstChild("Chest", true)
     if chest then
@@ -60,24 +41,33 @@ local function getChestFromRift(rift)
     end
 end
 
+local function teleportToChest()
+    if not activeRift then return end
+    local chest = getChestFromRift(activeRift)
+    if not chest then return end
+    setNoClip(true)
+    hrp.CFrame = chest.CFrame
+    task.wait()
+    setNoClip(false)
+end
+
 local function watchRift(rift)
-    if activeRift and activeRift ~= rift then return end
+    if activeRift then return end
     activeRift = rift
 
     local chest = getChestFromRift(rift)
     if chest then
-        teleportToChest(chest)
+        teleportToChest()
     end
 
     rift.DescendantAdded:Connect(function(d)
         if d.Name == "Chest" then
-            local p = d:FindFirstChildWhichIsA("BasePart")
-            teleportToChest(p)
+            teleportToChest()
         end
     end)
 end
 
-local function hookRifts()
+task.spawn(function()
     local rendered = workspace:WaitForChild("Rendered")
     local rifts = rendered:WaitForChild("Rifts")
 
@@ -89,21 +79,24 @@ local function hookRifts()
     end
 
     rifts.ChildAdded:Connect(function(rift)
-        if rift.Name == "dice-rift" and not activeRift then
+        if rift.Name == "dice-rift" then
             watchRift(rift)
         end
     end)
-end
-
-task.spawn(hookRifts)
+end)
 
 task.spawn(function()
     while true do
-        if activeRift and tick() - lastTeleport > 30 then
-            local chest = getChestFromRift(activeRift)
-            if chest then
-                teleportToChest(chest)
-            end
+        local current = getAmount("Dice Key")
+        if lastKeyAmount == nil then
+            lastKeyAmount = current
+            lastKeyChange = tick()
+        elseif current ~= lastKeyAmount then
+            lastKeyAmount = current
+            lastKeyChange = tick()
+        elseif current > 0 and tick() - lastKeyChange >= 30 then
+            teleportToChest()
+            lastKeyChange = tick()
         end
         task.wait(1)
     end
@@ -111,7 +104,12 @@ end)
 
 task.spawn(function()
     while true do
-        spamKeys()
+        if activeRift and getAmount("Dice Key") > 0 then
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
+        end
         task.wait(0.05)
     end
 end)
@@ -119,8 +117,8 @@ end)
 task.spawn(function()
     while true do
         if not activeRift then
-            local checks = math.random(0,10)
             local found = false
+            local checks = math.random(0,10)
             for i = 1, checks do
                 if workspace:FindFirstChild("Rendered")
                     and workspace.Rendered:FindFirstChild("Rifts") then
@@ -160,7 +158,6 @@ frame.Size = UDim2.fromOffset(200,200)
 frame.Position = UDim2.new(0.5,-100,0,10)
 frame.BorderSizePixel = 0
 frame.Parent = gui
-
 Instance.new("UICorner", frame).CornerRadius = UDim.new(0,16)
 
 local function makeLabel(y, size, bold)
