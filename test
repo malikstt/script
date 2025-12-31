@@ -1,5 +1,87 @@
-game:GetService("ReplicatedStorage")
-    .Shared.Framework.Network.Remote.RemoteEvent
-    :FireServer("WorldTeleport", "Minigame Paradise")
+getgenv().waitTime = 2.5
+getgenv().TARGET_OPENS = 1000
+getgenv().GEM_LIMIT = 2000000000
 
-loadstring(game:HttpGet("https://raw.githubusercontent.com/IdiotHub/Scripts/main/Loader"))()
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
+local PhysicalItem = require(ReplicatedStorage.Client.Effects.PhysicalItem)
+local LocalDataModule = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+
+local function getLocalData()
+    return LocalDataModule:Get()
+end
+
+getgenv().oldGift = getgenv().oldGift or PhysicalItem.Gift
+PhysicalItem.Gift = function(giftId, giftType, giftPosition)
+    if not getgenv().autoGift then
+        return getgenv().oldGift(giftId, giftType, giftPosition)
+    end
+    task.spawn(function()
+        pcall(function()
+            Remote:FireServer("ClaimGift", giftId)
+        end)
+    end)
+    return nil
+end
+
+getgenv().autoGift = true
+
+getgenv().popUpConnection = getgenv().popUpConnection or nil
+local genericFolder = workspace.Rendered:FindFirstChild("Generic")
+if genericFolder and not getgenv().popUpConnection then
+    getgenv().popUpConnection = genericFolder.ChildAdded:Connect(function(item)
+        if item:IsA("Part") and #item.Name == 36 then
+            item:Destroy()
+        end
+    end)
+end
+
+Remote:FireServer("SetSetting","Item Notifications",false)
+
+local data = getLocalData()
+local powerups = data.Powerups or {}
+
+local boxName
+if (powerups["Admin Mystery Box"] or 0) >= getgenv().TARGET_OPENS then
+    boxName = "Admin Mystery Box"
+else
+    boxName = "Mystery Box"
+end
+
+local opened = 0
+local stoppedByGems = false
+
+while getgenv().autoGift and opened < getgenv().TARGET_OPENS do
+    local dataNow = getLocalData()
+    if dataNow and dataNow.Gems and dataNow.Gems >= getgenv().GEM_LIMIT then
+        print("[💎 STOPPED] Detected Gems >= 2,000,000,000")
+        stoppedByGems = true
+        break
+    end
+
+    local current = (dataNow.Powerups and dataNow.Powerups[boxName]) or 0
+    if current <= 0 then break end
+
+    local remaining = getgenv().TARGET_OPENS - opened
+    local useAmount = math.min(50, current, remaining)
+
+    Remote:FireServer("UseGift", boxName, useAmount)
+    opened += useAmount
+
+    if opened % 50 == 0 then
+        print(string.format(
+            "[🎁 Mystery Box Opener]\n├─ Box: %s\n├─ Opened: %d / %d\n└─ Time: %s",
+            boxName,
+            opened,
+            getgenv().TARGET_OPENS,
+            os.date("%X")
+        ))
+    end
+
+    task.wait(getgenv().waitTime)
+end
+
+if opened >= getgenv().TARGET_OPENS or stoppedByGems then
+    print("Loading Loader, everything reached")
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/IdiotHub/Scripts/main/Loader"))()
+end
