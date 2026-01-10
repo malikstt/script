@@ -1,15 +1,30 @@
+--// =========================================================
+--// CIRCUS AUTOMATION — FULL WORKING SCRIPT (PURE LUA)
+--// =========================================================
+
 --// =========================
---// CONFIG (EDIT THIS)
+--// CONFIG (ONLY THIS)
 --// =========================
 local UPGRADE_PLAN = {
-    { Key = "Currency",     TargetLevel = 1 },
-    { Key = "Luck",         TargetLevel = 1 },
-    { Key = "SecretLuck",   TargetLevel = 1 },
-    { Key = "InfinityLuck", TargetLevel = 1 },
+    { Key = "Currency",     TargetLevel = 4 },
+    { Key = "Luck",         TargetLevel = 4 },
+    { Key = "SecretLuck",   TargetLevel = 4 },
+    { Key = "InfinityLuck", TargetLevel = 4 },
 }
 
-local STATUS_ROTATION_TIME = 2
-local PICKUP_DELAY = 0.1
+--// =========================
+--// CONSTANTS (LOCKED)
+--// =========================
+local WORST_REQUIRED = 10
+local MAX_TEAM_SIZE  = 10
+local HATCH_DURATION = 30
+local BOX_OPEN_DELAY = 2.5
+local PICKUP_DELAY   = 0.1
+
+local HATCH_CFRAME   = CFrame.new(-2433.08, 10.14, 264.05)
+local CIRCUS_SPAWN   = "Workspace.Circus Event.Spawn"
+local EGG_NAME       = "Magic Egg"
+local BOX_NAME_MATCH = "Circus Mystery Box"
 
 --// =========================
 --// SERVICES / MODULES
@@ -17,150 +32,189 @@ local PICKUP_DELAY = 0.1
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
-local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
-local CircusUpgrades = require(ReplicatedStorage.Shared.Data.CircusUpgrades)
-
 local RemoteEvent = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
+local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
 local PickupRemote = ReplicatedStorage.Remotes.Pickups.CollectPickup
 
---// =========================
---// TELEPORT TO CIRCUS
---// =========================
-RemoteEvent:FireServer("Teleport", "Workspace.Circus Event.Spawn")
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
+local CircusUpgrades = require(ReplicatedStorage.Shared.Data.CircusUpgrades)
+local PhysicalItem = require(ReplicatedStorage.Client.Effects.PhysicalItem)
 
 --// =========================
---// UI BUILD
+--// TELEPORT
+--// =========================
+RemoteEvent:FireServer("Teleport", CIRCUS_SPAWN)
+
+--// =========================
+--// UI
 --// =========================
 local gui = Instance.new("ScreenGui")
-gui.Name = "CircusAutomationUI"
 gui.IgnoreGuiInset = true
 gui.ResetOnSpawn = false
 gui.Parent = player.PlayerGui
 
-local bg = Instance.new("Frame")
+local bg = Instance.new("Frame", gui)
 bg.Size = UDim2.fromScale(1,1)
 bg.BackgroundColor3 = Color3.fromRGB(10,10,15)
 bg.BackgroundTransparency = 0.35
-bg.Parent = gui
 
-local title = Instance.new("TextLabel")
+local title = Instance.new("TextLabel", bg)
 title.Size = UDim2.fromScale(1,0.08)
 title.BackgroundTransparency = 1
 title.Text = "🎪 Circus Automation"
 title.TextScaled = true
 title.Font = Enum.Font.GothamBold
 title.TextColor3 = Color3.fromRGB(255,180,255)
-title.Parent = bg
 
-local status = Instance.new("TextLabel")
+local status = Instance.new("TextLabel", bg)
 status.Position = UDim2.fromScale(0,0.08)
 status.Size = UDim2.fromScale(1,0.05)
 status.BackgroundTransparency = 1
-status.Text = "Initializing…"
 status.TextScaled = true
 status.Font = Enum.Font.Gotham
 status.TextColor3 = Color3.fromRGB(220,220,220)
-status.Parent = bg
 
-local main = Instance.new("Frame")
-main.Position = UDim2.fromScale(0.25,0.18)
-main.Size = UDim2.fromScale(0.5,0.45)
-main.BackgroundColor3 = Color3.fromRGB(20,20,30)
-main.BackgroundTransparency = 0.25
-main.Parent = bg
-Instance.new("UICorner", main).CornerRadius = UDim.new(0,18)
+local panel = Instance.new("Frame", bg)
+panel.Position = UDim2.fromScale(0.25,0.22)
+panel.Size = UDim2.fromScale(0.5,0.42)
+panel.BackgroundColor3 = Color3.fromRGB(20,20,30)
+panel.BackgroundTransparency = 0.25
+Instance.new("UICorner", panel).CornerRadius = UDim.new(0,18)
 
-local upgradeLabel = Instance.new("TextLabel")
-upgradeLabel.Size = UDim2.fromScale(1,0.2)
-upgradeLabel.BackgroundTransparency = 1
-upgradeLabel.TextScaled = true
-upgradeLabel.Font = Enum.Font.GothamBold
-upgradeLabel.TextColor3 = Color3.fromRGB(255,255,255)
-upgradeLabel.Parent = main
+local line1 = Instance.new("TextLabel", panel)
+line1.Size = UDim2.fromScale(1,0.18)
+line1.BackgroundTransparency = 1
+line1.TextScaled = true
+line1.Font = Enum.Font.GothamBold
+line1.TextColor3 = Color3.fromRGB(255,255,255)
 
-local levelLabel = Instance.new("TextLabel")
-levelLabel.Position = UDim2.fromScale(0,0.2)
-levelLabel.Size = UDim2.fromScale(1,0.15)
-levelLabel.BackgroundTransparency = 1
-levelLabel.TextScaled = true
-levelLabel.Font = Enum.Font.Gotham
-levelLabel.TextColor3 = Color3.fromRGB(200,200,200)
-levelLabel.Parent = main
+local line2 = Instance.new("TextLabel", panel)
+line2.Position = UDim2.fromScale(0,0.18)
+line2.Size = UDim2.fromScale(1,0.12)
+line2.BackgroundTransparency = 1
+line2.TextScaled = true
+line2.Font = Enum.Font.Gotham
+line2.TextColor3 = Color3.fromRGB(200,200,200)
 
-local progressBg = Instance.new("Frame")
-progressBg.Position = UDim2.fromScale(0.1,0.42)
-progressBg.Size = UDim2.fromScale(0.8,0.08)
-progressBg.BackgroundColor3 = Color3.fromRGB(50,50,60)
-progressBg.BackgroundTransparency = 0.2
-progressBg.Parent = main
-Instance.new("UICorner", progressBg).CornerRadius = UDim.new(1,0)
+local barBg = Instance.new("Frame", panel)
+barBg.Position = UDim2.fromScale(0.1,0.38)
+barBg.Size = UDim2.fromScale(0.8,0.08)
+barBg.BackgroundColor3 = Color3.fromRGB(50,50,60)
+barBg.BackgroundTransparency = 0.2
+Instance.new("UICorner", barBg).CornerRadius = UDim.new(1,0)
 
-local progressBar = Instance.new("Frame")
-progressBar.Size = UDim2.fromScale(0,1)
-progressBar.BackgroundColor3 = Color3.fromRGB(255,120,255)
-progressBar.Parent = progressBg
-Instance.new("UICorner", progressBar).CornerRadius = UDim.new(1,0)
+local bar = Instance.new("Frame", barBg)
+bar.Size = UDim2.fromScale(0,1)
+bar.BackgroundColor3 = Color3.fromRGB(255,120,255)
+Instance.new("UICorner", bar).CornerRadius = UDim.new(1,0)
 
-local currencyLabel = Instance.new("TextLabel")
-currencyLabel.Position = UDim2.fromScale(0,0.55)
-currencyLabel.Size = UDim2.fromScale(1,0.15)
-currencyLabel.BackgroundTransparency = 1
-currencyLabel.TextScaled = true
-currencyLabel.Font = Enum.Font.Gotham
-currencyLabel.TextColor3 = Color3.fromRGB(180,255,180)
-currencyLabel.Parent = main
+local info = Instance.new("TextLabel", panel)
+info.Position = UDim2.fromScale(0,0.52)
+info.Size = UDim2.fromScale(1,0.14)
+info.BackgroundTransparency = 1
+info.TextScaled = true
+info.Font = Enum.Font.Gotham
+info.TextColor3 = Color3.fromRGB(180,255,180)
 
---// =========================
---// STATUS TEXT ROTATOR
---// =========================
-local statusMessages = {
-    "🚀 Teleporting to Circus World",
-    "📦 Farming pickups",
-    "🧮 Calculating upgrade cost",
-    "💰 Grinding Circus Tickets",
-    "⚙️ Preparing upgrade purchase",
-}
+local footer = Instance.new("TextLabel", panel)
+footer.Position = UDim2.fromScale(0,0.7)
+footer.Size = UDim2.fromScale(1,0.12)
+footer.BackgroundTransparency = 1
+footer.TextScaled = true
+footer.Font = Enum.Font.Gotham
+footer.TextColor3 = Color3.fromRGB(200,200,200)
 
-task.spawn(function()
-    local i = 1
-    while true do
-        status.Text = statusMessages[i]
-        i = i % #statusMessages + 1
-        task.wait(STATUS_ROTATION_TIME)
-    end
-end)
+local function setBar(p)
+    TweenService:Create(bar, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        Size = UDim2.fromScale(math.clamp(p,0,1),1)
+    }):Play()
+end
 
 --// =========================
 --// HELPERS
 --// =========================
+local function getData() return LocalData:Get() end
 local function getTickets()
-    local d = LocalData:Get()
-    return (d and d.CircusTickets) or 0
+    local d = getData()
+    return d and d.CircusTickets or 0
+end
+local function getUpgradeLevel(key)
+    local d = getData()
+    return d and d.CircusUpgrades and d.CircusUpgrades[key] or 0
 end
 
-local function getLevel(key)
-    local d = LocalData:Get()
-    return (d and d.CircusUpgrades and d.CircusUpgrades[key]) or 0
+local function getEquippedIds()
+    local d = getData()
+    local set = {}
+    if d and d.TeamEquipped and d.Teams and d.Teams[d.TeamEquipped] then
+        for _,id in ipairs(d.Teams[d.TeamEquipped].Pets or {}) do set[id]=true end
+    end
+    return set
+end
+
+local function circusMulti(pet)
+    local info = PetsModule[pet.Name]
+    return info and info.Stats and info.Stats.CircusTickets or 0
+end
+
+local function analyzeTeam()
+    local d = getData()
+    local total, worst, worstName = 0, math.huge, "--"
+    if d and d.Pets then
+        for id,_ in pairs(getEquippedIds()) do
+            local pet = d.Pets[id]
+            if pet then
+                local m = circusMulti(pet)
+                total += m
+                if m < worst then worst, worstName = m, pet.Name end
+            end
+        end
+    end
+    if worst == math.huge then worst = 0 end
+    return total, worst, worstName
+end
+
+local function equipBestPets()
+    local d = getData()
+    if not d or not d.Pets then return end
+    local pets = {}
+    for _,pet in pairs(d.Pets) do
+        local m = circusMulti(pet)
+        if m > 0 then table.insert(pets, {Id=pet.Id, M=m}) end
+    end
+    table.sort(pets, function(a,b) return a.M > b.M end)
+    local equipped = getEquippedIds()
+    for id in pairs(equipped) do
+        RemoteEvent:FireServer("UnequipPet", id)
+        task.wait(0.1)
+    end
+    local c = 0
+    for i=1,math.min(MAX_TEAM_SIZE,#pets) do
+        RemoteEvent:FireServer("EquipPet", pets[i].Id)
+        c += 1
+        task.wait(0.1)
+    end
 end
 
 --// =========================
---// PICKUP FARM
+--// PICKUP FARM (ALWAYS)
 --// =========================
 task.spawn(function()
     local claimed = {}
     while true do
-        local rendered = workspace:FindFirstChild("Rendered")
-        if rendered then
-            for _, folder in ipairs(rendered:GetChildren()) do
-                for _, obj in ipairs(folder:GetChildren()) do
-                    local id = obj.Name
-                    if not claimed[id] then
-                        claimed[id] = true
+        local r = workspace:FindFirstChild("Rendered")
+        if r then
+            for _,f in ipairs(r:GetChildren()) do
+                for _,o in ipairs(f:GetChildren()) do
+                    if not claimed[o.Name] then
+                        claimed[o.Name]=true
                         pcall(function()
-                            PickupRemote:FireServer(id)
-                            obj:Destroy()
+                            PickupRemote:FireServer(o.Name)
+                            o:Destroy()
                         end)
                     end
                 end
@@ -171,37 +225,87 @@ task.spawn(function()
 end)
 
 --// =========================
---// MAIN LOGIC
+--// HATCH (HOOK GIFT -> CLAIM)
 --// =========================
-task.spawn(function()
-    for _, plan in ipairs(UPGRADE_PLAN) do
-        local key = plan.Key
-        local target = plan.TargetLevel
-        local cfg = CircusUpgrades[key]
+local oldGift = PhysicalItem.Gift
+PhysicalItem.Gift = function(giftId, giftType, pos)
+    task.spawn(function()
+        pcall(function()
+            Remote:FireServer("ClaimGift", giftId)
+        end)
+    end)
+    return nil
+end
 
-        while true do
-            local level = getLevel(key)
-            if level >= target then break end
+--// =========================
+--// BOX OPENER
+--// =========================
+local function openCircusBoxes()
+    local d = getData()
+    if not d or not d.Powerups then return end
+    for name,amount in pairs(d.Powerups) do
+        if string.find(name, BOX_NAME_MATCH) and amount > 0 then
+            while amount > 0 do
+                status.Text = "📦 Opening Circus Mystery Boxes"
+                line1.Text = name
+                line2.Text = "Boxes Remaining"
+                Remote:FireServer("UseGift", name, math.min(25, amount))
+                task.wait(BOX_OPEN_DELAY)
+                amount = (getData().Powerups[name] or 0)
+            end
+        end
+    end
+end
 
-            local nextData = cfg.Upgrades[level + 1]
-            if not nextData then break end
-
-            upgradeLabel.Text = "🎯 "..cfg.Name
-            levelLabel.Text = "Level "..level.." → "..(level+1)
-            currencyLabel.Text = "💰 "..getTickets().." / "..nextData.Cost
-
-            while getTickets() < nextData.Cost do
-                local ratio = math.clamp(getTickets() / nextData.Cost, 0, 1)
-                progressBar:TweenSize(UDim2.fromScale(ratio,1), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.2, true)
-                currencyLabel.Text = "💰 "..getTickets().." / "..nextData.Cost
+--// =========================
+--// UPGRADE BUYER
+--// =========================
+local function buyUpgrades()
+    for _,plan in ipairs(UPGRADE_PLAN) do
+        local cfg = CircusUpgrades[plan.Key]
+        while getUpgradeLevel(plan.Key) < plan.TargetLevel do
+            local lvl = getUpgradeLevel(plan.Key)
+            local nextU = cfg.Upgrades[lvl+1]
+            line1.Text = cfg.Name
+            line2.Text = "Level "..lvl.." → "..(lvl+1)
+            while getTickets() < nextU.Cost do
+                info.Text = "💰 "..getTickets().." / "..nextU.Cost
+                setBar(getTickets()/nextU.Cost)
                 task.wait(0.25)
             end
-
             status.Text = "🛒 Buying "..cfg.Name
-            RemoteEvent:FireServer("BuyCircusUpgrade", key)
+            RemoteEvent:FireServer("BuyCircusUpgrade", plan.Key)
             task.wait(1)
         end
     end
+end
 
-    status.Text = "✅ All upgrades complete"
-end)
+--// =========================
+--// MAIN LOOP
+--// =========================
+while true do
+    status.Text = "🔍 Evaluating Pet Team"
+    equipBestPets()
+    task.wait(1)
+
+    local total, worst, worstName = analyzeTeam()
+    footer.Text = "Worst Pet: "..worstName.." x"..worst
+    info.Text = "Total Circus Multiplier: x"..total
+
+    if worst < WORST_REQUIRED then
+        status.Text = "🐣 Hatching for Pets [ "..EGG_NAME.." ]"
+        player.Character:PivotTo(HATCH_CFRAME)
+        local t0 = os.clock()
+        while os.clock()-t0 < HATCH_DURATION do
+            line1.Text = "Hatching..."
+            line2.Text = "Searching better multipliers"
+            setBar((os.clock()-t0)/HATCH_DURATION)
+            task.wait(0.2)
+        end
+    else
+        openCircusBoxes()
+        buyUpgrades()
+        status.Text = "✅ All tasks complete"
+        task.wait(5)
+    end
+end
