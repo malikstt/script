@@ -1,9 +1,5 @@
--- disable hatch animation
 require(game:GetService("ReplicatedStorage").Client.Effects.HatchEgg).Play = function() return end
 
---// =========================
---// CONFIG
---// =========================
 local MIN_REQUIRED_MULTI = 10
 local MAX_TEAM_SIZE = 8
 local PET_CHECK_INTERVAL = 120
@@ -16,9 +12,6 @@ local UPGRADE_PLAN = {
     { Key = "InfinityLuck", TargetLevel = 4 },
 }
 
---// =========================
---// SERVICES
---// =========================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualInputManager = game:GetService("VirtualInputManager")
@@ -31,9 +24,6 @@ local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
 local CircusUpgrades = require(ReplicatedStorage.Shared.Data.CircusUpgrades)
 local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
 
---// =========================
---// STATE
---// =========================
 local PetsReady = false
 local IsHatching = false
 local IsUpgrading = false
@@ -41,17 +31,11 @@ local CircusLoaded = false
 local Teleported = false
 local LastPetSignature = ""
 
---// =========================
---// TELEPORT ONCE
---// =========================
 RemoteEvent:FireServer("Teleport", "Workspace.Circus Event.Spawn")
 task.delay(6, function()
     CircusLoaded = true
 end)
 
---// =========================
---// UI
---// =========================
 local gui = Instance.new("ScreenGui", player.PlayerGui)
 gui.IgnoreGuiInset = true
 gui.ResetOnSpawn = false
@@ -73,7 +57,6 @@ local status = Instance.new("TextLabel", bg)
 status.Position = UDim2.fromScale(0,0.08)
 status.Size = UDim2.fromScale(1,0.05)
 status.BackgroundTransparency = 1
-status.Text = "Initializing…"
 status.TextScaled = true
 status.Font = Enum.Font.Gotham
 status.TextColor3 = Color3.fromRGB(220,220,220)
@@ -84,15 +67,6 @@ main.Size = UDim2.fromScale(0.5,0.55)
 main.BackgroundColor3 = Color3.fromRGB(20,20,30)
 main.BackgroundTransparency = 0.25
 Instance.new("UICorner", main).CornerRadius = UDim.new(0,18)
-
-local upgradeLabel = Instance.new("TextLabel", main)
-upgradeLabel.Size = UDim2.fromScale(1,0.12)
-upgradeLabel.BackgroundTransparency = 1
-upgradeLabel.Text = ""
-upgradeLabel.Visible = false
-upgradeLabel.TextScaled = true
-upgradeLabel.Font = Enum.Font.GothamBold
-upgradeLabel.TextColor3 = Color3.fromRGB(255,255,255)
 
 local petTitle = Instance.new("TextLabel", main)
 petTitle.Position = UDim2.fromScale(0,0.14)
@@ -124,9 +98,6 @@ timerLabel.Font = Enum.Font.GothamBold
 timerLabel.TextColor3 = Color3.fromRGB(180,255,180)
 timerLabel.Text = "02:00"
 
---// =========================
---// HELPERS
---// =========================
 local MULTI_KEY = "CircusTickets"
 
 local function pressE()
@@ -140,7 +111,7 @@ local function getPetMulti(name)
     return info and info.Stats and info.Stats[MULTI_KEY] or 0
 end
 
-local function getAllPetsSorted()
+local function getAllCircusPetsSorted()
     local data = LocalData:Get()
     if not data or not data.Pets then return {} end
     local pets = {}
@@ -155,10 +126,13 @@ local function getAllPetsSorted()
 end
 
 local function equipBestFromInventory()
-    local best = getAllPetsSorted()
+    local sorted = getAllCircusPetsSorted()
+    if #sorted == 0 then return 0, 0 end
+
+    local equipCount = math.min(MAX_TEAM_SIZE, #sorted)
     local desired = {}
-    for i = 1, math.min(MAX_TEAM_SIZE, #best) do
-        desired[best[i].Id] = best[i]
+    for i = 1, equipCount do
+        desired[sorted[i].Id] = sorted[i]
     end
 
     local data = LocalData:Get()
@@ -175,25 +149,26 @@ local function equipBestFromInventory()
     for id in pairs(equipped) do
         if not desired[id] then
             RemoteEvent:FireServer("UnequipPet", id)
-            task.wait(0.1)
+            task.wait(0.08)
         end
     end
 
     local count = 0
-    for _ in pairs(equipped) do count += 1 end
-
     for id in pairs(desired) do
-        if not equipped[id] and count < MAX_TEAM_SIZE then
+        if not equipped[id] then
             RemoteEvent:FireServer("EquipPet", id)
-            task.wait(0.1)
-            count += 1
+            task.wait(0.08)
         end
+        count += 1
     end
+
+    local worst = sorted[equipCount] and sorted[equipCount].Multi or 0
+    return count, worst
 end
 
-local function updatePetUIAndCheck()
-    local pets = {}
+local function updatePetUI()
     local data = LocalData:Get()
+    local pets = {}
     if data and data.Teams and data.TeamEquipped then
         local team = data.Teams[data.TeamEquipped]
         if team and team.Pets then
@@ -218,13 +193,8 @@ local function updatePetUIAndCheck()
         LastPetSignature = sig
         petList.Text = text ~= "" and text or "No pets equipped"
     end
-    if #pets < MAX_TEAM_SIZE then return false end
-    return pets[#pets].Multi >= MIN_REQUIRED_MULTI
 end
 
---// =========================
---// PICKUPS (SAFE)
---// =========================
 task.spawn(function()
     local remotes = ReplicatedStorage.Remotes.Pickups.CollectPickup
     local claimed = {}
@@ -252,9 +222,6 @@ task.spawn(function()
     end
 end)
 
---// =========================
---// HATCHING (NO TP SPAM)
---// =========================
 task.spawn(function()
     while true do
         if CircusLoaded and IsHatching and not IsUpgrading then
@@ -270,9 +237,6 @@ task.spawn(function()
     end
 end)
 
---// =========================
---// PET FARM LOOP (2 MIN CYCLE)
---// =========================
 task.spawn(function()
     while not CircusLoaded do task.wait(0.5) end
 
@@ -291,21 +255,19 @@ task.spawn(function()
 
         IsHatching = false
         timerLabel.Text = "00:00"
-        task.wait(0.5)
+        task.wait(0.4)
 
-        equipBestFromInventory()
-        PetsReady = updatePetUIAndCheck()
+        local count, worst = equipBestFromInventory()
+        updatePetUI()
 
-        if PetsReady then
+        if count == MAX_TEAM_SIZE and worst >= MIN_REQUIRED_MULTI then
+            PetsReady = true
             status.Text = "✅ Pets ready"
             break
         end
     end
 end)
 
---// =========================
---// UPGRADES
---// =========================
 task.spawn(function()
     while not PetsReady do task.wait(1) end
 
@@ -322,13 +284,10 @@ task.spawn(function()
             local level = data and data.CircusUpgrades and data.CircusUpgrades[key] or 0
             if level >= target then break end
 
-            upgradeLabel.Visible = true
-            upgradeLabel.Text = "🎯 "..cfg.Name
             RemoteEvent:FireServer("BuyCircusUpgrade", key)
             task.wait(1)
         end
     end
 
-    upgradeLabel.Visible = false
     status.Text = "✅ All upgrades complete"
 end)
