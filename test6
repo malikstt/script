@@ -1,3 +1,4 @@
+-- disable hatch animation
 require(game:GetService("ReplicatedStorage").Client.Effects.HatchEgg).Play = function() return end
 
 --// =========================
@@ -36,11 +37,12 @@ local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
 local PetsReady = false
 local IsHatching = false
 local IsUpgrading = false
-local LastPetSignature = ""
 local CircusLoaded = false
+local Teleported = false
+local LastPetSignature = ""
 
 --// =========================
---// TELEPORT
+--// TELEPORT ONCE
 --// =========================
 RemoteEvent:FireServer("Teleport", "Workspace.Circus Event.Spawn")
 task.delay(6, function()
@@ -103,7 +105,7 @@ petTitle.Text = "Equipped Pets"
 
 local petList = Instance.new("TextLabel", main)
 petList.Position = UDim2.fromScale(0.05,0.23)
-petList.Size = UDim2.fromScale(0.9,0.7)
+petList.Size = UDim2.fromScale(0.9,0.6)
 petList.BackgroundTransparency = 1
 petList.TextWrapped = true
 petList.TextYAlignment = Enum.TextYAlignment.Top
@@ -112,6 +114,15 @@ petList.TextScaled = true
 petList.Font = Enum.Font.Gotham
 petList.TextColor3 = Color3.fromRGB(200,200,200)
 petList.Text = "Grinding for pets…"
+
+local timerLabel = Instance.new("TextLabel", main)
+timerLabel.Position = UDim2.fromScale(0,0.84)
+timerLabel.Size = UDim2.fromScale(1,0.1)
+timerLabel.BackgroundTransparency = 1
+timerLabel.TextScaled = true
+timerLabel.Font = Enum.Font.GothamBold
+timerLabel.TextColor3 = Color3.fromRGB(180,255,180)
+timerLabel.Text = "02:00"
 
 --// =========================
 --// HELPERS
@@ -129,64 +140,110 @@ local function getPetMulti(name)
     return info and info.Stats and info.Stats[MULTI_KEY] or 0
 end
 
-local function getEquippedPets()
+local function getAllPetsSorted()
     local data = LocalData:Get()
+    if not data or not data.Pets then return {} end
     local pets = {}
+    for _, pet in pairs(data.Pets) do
+        local multi = getPetMulti(pet.Name)
+        if multi > 0 then
+            pets[#pets+1] = { Id = pet.Id, Name = pet.Name, Multi = multi }
+        end
+    end
+    table.sort(pets, function(a,b) return a.Multi > b.Multi end)
+    return pets
+end
+
+local function equipBestFromInventory()
+    local best = getAllPetsSorted()
+    local desired = {}
+    for i = 1, math.min(MAX_TEAM_SIZE, #best) do
+        desired[best[i].Id] = best[i]
+    end
+
+    local data = LocalData:Get()
+    local equipped = {}
     if data and data.Teams and data.TeamEquipped then
         local team = data.Teams[data.TeamEquipped]
         if team and team.Pets then
             for _, id in ipairs(team.Pets) do
-                for _, pet in pairs(data.Pets) do
-                    if pet.Id == id then
-                        table.insert(pets,{
-                            Id = pet.Id,
-                            Name = pet.Name,
-                            Multi = getPetMulti(pet.Name)
-                        })
+                equipped[id] = true
+            end
+        end
+    end
+
+    for id in pairs(equipped) do
+        if not desired[id] then
+            RemoteEvent:FireServer("UnequipPet", id)
+            task.wait(0.1)
+        end
+    end
+
+    local count = 0
+    for _ in pairs(equipped) do count += 1 end
+
+    for id in pairs(desired) do
+        if not equipped[id] and count < MAX_TEAM_SIZE then
+            RemoteEvent:FireServer("EquipPet", id)
+            task.wait(0.1)
+            count += 1
+        end
+    end
+end
+
+local function updatePetUIAndCheck()
+    local pets = {}
+    local data = LocalData:Get()
+    if data and data.Teams and data.TeamEquipped then
+        local team = data.Teams[data.TeamEquipped]
+        if team and team.Pets then
+            for _, id in ipairs(team.Pets) do
+                for _, p in pairs(data.Pets) do
+                    if p.Id == id then
+                        pets[#pets+1] = { Id = p.Id, Name = p.Name, Multi = getPetMulti(p.Name) }
                         break
                     end
                 end
             end
         end
     end
-    table.sort(pets,function(a,b) return a.Multi > b.Multi end)
-    return pets
-end
+    table.sort(pets, function(a,b) return a.Multi > b.Multi end)
 
-local function updatePetUI()
-    local pets = getEquippedPets()
-    local sig = ""
-    local text = ""
-
+    local sig, text = "", ""
     for _, p in ipairs(pets) do
         sig ..= p.Id
         text ..= p.Name.." x"..p.Multi.."\n"
     end
-
     if sig ~= LastPetSignature then
         LastPetSignature = sig
         petList.Text = text ~= "" and text or "No pets equipped"
     end
-
     if #pets < MAX_TEAM_SIZE then return false end
     return pets[#pets].Multi >= MIN_REQUIRED_MULTI
 end
 
 --// =========================
---// PICKUPS (ONLY PICKUPS)
+--// PICKUPS (SAFE)
 --// =========================
 task.spawn(function()
+    local remotes = ReplicatedStorage.Remotes.Pickups.CollectPickup
+    local claimed = {}
     while true do
         local rendered = workspace:FindFirstChild("Rendered")
         if rendered then
-            for _, folder in ipairs(rendered:GetChildren()) do
-                for _, obj in ipairs(folder:GetChildren()) do
-                    local id = obj.Name
-                    if tonumber(id) then
-                        pcall(function()
-                            PickupRemote:FireServer(id)
-                            obj:Destroy()
-                        end)
+            local children = rendered:GetChildren()
+            local target = children[15]
+            if target then
+                for _, obj in ipairs(target:GetChildren()) do
+                    if obj:IsA("Model") then
+                        local id = obj.Name
+                        if not claimed[id] then
+                            claimed[id] = true
+                            pcall(function()
+                                remotes:FireServer(id)
+                            end)
+                            obj.Parent = ReplicatedStorage
+                        end
                     end
                 end
             end
@@ -196,14 +253,17 @@ task.spawn(function()
 end)
 
 --// =========================
---// HATCHING
+--// HATCHING (NO TP SPAM)
 --// =========================
 task.spawn(function()
     while true do
         if CircusLoaded and IsHatching and not IsUpgrading then
-            pcall(function()
-                player.Character:PivotTo(HATCH_CFRAME)
-            end)
+            if not Teleported then
+                pcall(function()
+                    player.Character:PivotTo(HATCH_CFRAME)
+                end)
+                Teleported = true
+            end
             pressE()
         end
         task.wait(0.1)
@@ -211,22 +271,31 @@ task.spawn(function()
 end)
 
 --// =========================
---// PET CHECK
+--// PET FARM LOOP (2 MIN CYCLE)
 --// =========================
 task.spawn(function()
     while not CircusLoaded do task.wait(0.5) end
 
     while true do
-        status.Text = "🐣 Grinding for pets (need ≥10x team)"
         IsHatching = true
-        petList.Text = "Grinding for pets…"
+        status.Text = "🐣 Grinding for pets"
+        local start = os.clock()
 
-        task.wait(PET_CHECK_INTERVAL)
+        while os.clock() - start < PET_CHECK_INTERVAL do
+            local left = PET_CHECK_INTERVAL - (os.clock() - start)
+            local m = math.floor(left / 60)
+            local s = math.floor(left % 60)
+            timerLabel.Text = string.format("%02d:%02d", m, s)
+            task.wait(0.2)
+        end
 
         IsHatching = false
-        task.wait(1)
+        timerLabel.Text = "00:00"
+        task.wait(0.5)
 
-        PetsReady = updatePetUI()
+        equipBestFromInventory()
+        PetsReady = updatePetUIAndCheck()
+
         if PetsReady then
             status.Text = "✅ Pets ready"
             break
