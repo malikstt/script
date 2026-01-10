@@ -1,10 +1,11 @@
---// =========================================================
---// CIRCUS AUTOMATION — FULL WORKING SCRIPT (PURE LUA)
---// =========================================================
+--// =========================
+--// CONFIG
+--// =========================
+local MIN_REQUIRED_MULTI = 10
+local MAX_TEAM_SIZE = 8
+local PET_CHECK_INTERVAL = 120
+local HATCH_CFRAME = CFrame.new(-2433.08, 10.14, 264.05)
 
---// =========================
---// CONFIG (ONLY THIS)
---// =========================
 local UPGRADE_PLAN = {
     { Key = "Currency",     TargetLevel = 4 },
     { Key = "Luck",         TargetLevel = 4 },
@@ -13,49 +14,39 @@ local UPGRADE_PLAN = {
 }
 
 --// =========================
---// CONSTANTS (LOCKED)
---// =========================
-local WORST_REQUIRED = 10
-local MAX_TEAM_SIZE  = 10
-local HATCH_DURATION = 30
-local BOX_OPEN_DELAY = 2.5
-local PICKUP_DELAY   = 0.1
-
-local HATCH_CFRAME   = CFrame.new(-2433.08, 10.14, 264.05)
-local CIRCUS_SPAWN   = "Workspace.Circus Event.Spawn"
-local EGG_NAME       = "Magic Egg"
-local BOX_NAME_MATCH = "Circus Mystery Box"
-
---// =========================
---// SERVICES / MODULES
+--// SERVICES
 --// =========================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
-local RunService = game:GetService("RunService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local player = Players.LocalPlayer
 local RemoteEvent = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
-local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
 local PickupRemote = ReplicatedStorage.Remotes.Pickups.CollectPickup
 
 local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
-local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
 local CircusUpgrades = require(ReplicatedStorage.Shared.Data.CircusUpgrades)
-local PhysicalItem = require(ReplicatedStorage.Client.Effects.PhysicalItem)
+local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
 
 --// =========================
---// TELEPORT
+--// GLOBAL STATE
 --// =========================
-RemoteEvent:FireServer("Teleport", CIRCUS_SPAWN)
+local PetsReady = false
+local IsHatching = false
+local IsUpgrading = false
+local LastPetSignature = ""
+
+--// =========================
+--// TELEPORT TO CIRCUS
+--// =========================
+RemoteEvent:FireServer("Teleport", "Workspace.Circus Event.Spawn")
 
 --// =========================
 --// UI
 --// =========================
-local gui = Instance.new("ScreenGui")
+local gui = Instance.new("ScreenGui", player.PlayerGui)
 gui.IgnoreGuiInset = true
 gui.ResetOnSpawn = false
-gui.Parent = player.PlayerGui
 
 local bg = Instance.new("Frame", gui)
 bg.Size = UDim2.fromScale(1,1)
@@ -74,238 +65,184 @@ local status = Instance.new("TextLabel", bg)
 status.Position = UDim2.fromScale(0,0.08)
 status.Size = UDim2.fromScale(1,0.05)
 status.BackgroundTransparency = 1
+status.Text = "Initializing…"
 status.TextScaled = true
 status.Font = Enum.Font.Gotham
 status.TextColor3 = Color3.fromRGB(220,220,220)
 
-local panel = Instance.new("Frame", bg)
-panel.Position = UDim2.fromScale(0.25,0.22)
-panel.Size = UDim2.fromScale(0.5,0.42)
-panel.BackgroundColor3 = Color3.fromRGB(20,20,30)
-panel.BackgroundTransparency = 0.25
-Instance.new("UICorner", panel).CornerRadius = UDim.new(0,18)
+local main = Instance.new("Frame", bg)
+main.Position = UDim2.fromScale(0.25,0.18)
+main.Size = UDim2.fromScale(0.5,0.55)
+main.BackgroundColor3 = Color3.fromRGB(20,20,30)
+main.BackgroundTransparency = 0.25
+Instance.new("UICorner", main).CornerRadius = UDim.new(0,18)
 
-local line1 = Instance.new("TextLabel", panel)
-line1.Size = UDim2.fromScale(1,0.18)
-line1.BackgroundTransparency = 1
-line1.TextScaled = true
-line1.Font = Enum.Font.GothamBold
-line1.TextColor3 = Color3.fromRGB(255,255,255)
+local upgradeLabel = Instance.new("TextLabel", main)
+upgradeLabel.Size = UDim2.fromScale(1,0.15)
+upgradeLabel.BackgroundTransparency = 1
+upgradeLabel.TextScaled = true
+upgradeLabel.Font = Enum.Font.GothamBold
+upgradeLabel.TextColor3 = Color3.fromRGB(255,255,255)
 
-local line2 = Instance.new("TextLabel", panel)
-line2.Position = UDim2.fromScale(0,0.18)
-line2.Size = UDim2.fromScale(1,0.12)
-line2.BackgroundTransparency = 1
-line2.TextScaled = true
-line2.Font = Enum.Font.Gotham
-line2.TextColor3 = Color3.fromRGB(200,200,200)
+local petTitle = Instance.new("TextLabel", main)
+petTitle.Position = UDim2.fromScale(0,0.18)
+petTitle.Size = UDim2.fromScale(1,0.08)
+petTitle.BackgroundTransparency = 1
+petTitle.TextScaled = true
+petTitle.Font = Enum.Font.GothamBold
+petTitle.TextColor3 = Color3.fromRGB(255,220,180)
+petTitle.Text = "[ Equipped Pets ]"
 
-local barBg = Instance.new("Frame", panel)
-barBg.Position = UDim2.fromScale(0.1,0.38)
-barBg.Size = UDim2.fromScale(0.8,0.08)
-barBg.BackgroundColor3 = Color3.fromRGB(50,50,60)
-barBg.BackgroundTransparency = 0.2
-Instance.new("UICorner", barBg).CornerRadius = UDim.new(1,0)
-
-local bar = Instance.new("Frame", barBg)
-bar.Size = UDim2.fromScale(0,1)
-bar.BackgroundColor3 = Color3.fromRGB(255,120,255)
-Instance.new("UICorner", bar).CornerRadius = UDim.new(1,0)
-
-local info = Instance.new("TextLabel", panel)
-info.Position = UDim2.fromScale(0,0.52)
-info.Size = UDim2.fromScale(1,0.14)
-info.BackgroundTransparency = 1
-info.TextScaled = true
-info.Font = Enum.Font.Gotham
-info.TextColor3 = Color3.fromRGB(180,255,180)
-
-local footer = Instance.new("TextLabel", panel)
-footer.Position = UDim2.fromScale(0,0.7)
-footer.Size = UDim2.fromScale(1,0.12)
-footer.BackgroundTransparency = 1
-footer.TextScaled = true
-footer.Font = Enum.Font.Gotham
-footer.TextColor3 = Color3.fromRGB(200,200,200)
-
-local function setBar(p)
-    TweenService:Create(bar, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-        Size = UDim2.fromScale(math.clamp(p,0,1),1)
-    }):Play()
-end
+local petList = Instance.new("TextLabel", main)
+petList.Position = UDim2.fromScale(0.05,0.27)
+petList.Size = UDim2.fromScale(0.9,0.65)
+petList.BackgroundTransparency = 1
+petList.TextWrapped = true
+petList.TextYAlignment = Enum.TextYAlignment.Top
+petList.TextXAlignment = Enum.TextXAlignment.Left
+petList.TextScaled = true
+petList.Font = Enum.Font.Gotham
+petList.TextColor3 = Color3.fromRGB(200,200,200)
+petList.Text = "Scanning pets…"
 
 --// =========================
 --// HELPERS
 --// =========================
-local function getData() return LocalData:Get() end
-local function getTickets()
-    local d = getData()
-    return d and d.CircusTickets or 0
-end
-local function getUpgradeLevel(key)
-    local d = getData()
-    return d and d.CircusUpgrades and d.CircusUpgrades[key] or 0
+local MULTI_KEY = "CircusTickets"
+
+local function pressE()
+    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+    task.wait(0.04)
+    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
 end
 
-local function getEquippedIds()
-    local d = getData()
-    local set = {}
-    if d and d.TeamEquipped and d.Teams and d.Teams[d.TeamEquipped] then
-        for _,id in ipairs(d.Teams[d.TeamEquipped].Pets or {}) do set[id]=true end
-    end
-    return set
+local function getPetMulti(name)
+    local info = PetsModule[name]
+    return info and info.Stats and info.Stats[MULTI_KEY] or 0
 end
 
-local function circusMulti(pet)
-    local info = PetsModule[pet.Name]
-    return info and info.Stats and info.Stats.CircusTickets or 0
-end
-
-local function analyzeTeam()
-    local d = getData()
-    local total, worst, worstName = 0, math.huge, "--"
-    if d and d.Pets then
-        for id,_ in pairs(getEquippedIds()) do
-            local pet = d.Pets[id]
-            if pet then
-                local m = circusMulti(pet)
-                total += m
-                if m < worst then worst, worstName = m, pet.Name end
-            end
-        end
-    end
-    if worst == math.huge then worst = 0 end
-    return total, worst, worstName
-end
-
-local function equipBestPets()
-    local d = getData()
-    if not d or not d.Pets then return end
+local function getEquippedPets()
+    local data = LocalData:Get()
     local pets = {}
-    for _,pet in pairs(d.Pets) do
-        local m = circusMulti(pet)
-        if m > 0 then table.insert(pets, {Id=pet.Id, M=m}) end
-    end
-    table.sort(pets, function(a,b) return a.M > b.M end)
-    local equipped = getEquippedIds()
-    for id in pairs(equipped) do
-        RemoteEvent:FireServer("UnequipPet", id)
-        task.wait(0.1)
-    end
-    local c = 0
-    for i=1,math.min(MAX_TEAM_SIZE,#pets) do
-        RemoteEvent:FireServer("EquipPet", pets[i].Id)
-        c += 1
-        task.wait(0.1)
-    end
-end
-
---// =========================
---// PICKUP FARM (ALWAYS)
---// =========================
-task.spawn(function()
-    local claimed = {}
-    while true do
-        local r = workspace:FindFirstChild("Rendered")
-        if r then
-            for _,f in ipairs(r:GetChildren()) do
-                for _,o in ipairs(f:GetChildren()) do
-                    if not claimed[o.Name] then
-                        claimed[o.Name]=true
-                        pcall(function()
-                            PickupRemote:FireServer(o.Name)
-                            o:Destroy()
-                        end)
+    if data and data.Teams and data.TeamEquipped then
+        local team = data.Teams[data.TeamEquipped]
+        if team and team.Pets then
+            for _, id in ipairs(team.Pets) do
+                for _, pet in pairs(data.Pets) do
+                    if pet.Id == id then
+                        table.insert(pets,{
+                            Id = pet.Id,
+                            Name = pet.Name,
+                            Multi = getPetMulti(pet.Name)
+                        })
+                        break
                     end
                 end
             end
         end
-        task.wait(PICKUP_DELAY)
+    end
+    table.sort(pets,function(a,b) return a.Multi > b.Multi end)
+    return pets
+end
+
+local function updatePetUI()
+    local pets = getEquippedPets()
+    local sig = ""
+    local text = ""
+
+    for _, p in ipairs(pets) do
+        sig ..= p.Id
+        text ..= p.Name.." x"..p.Multi.."\n"
+    end
+
+    if sig ~= LastPetSignature then
+        LastPetSignature = sig
+        petList.Text = text ~= "" and text or "No pets equipped"
+    end
+
+    if #pets < MAX_TEAM_SIZE then return false end
+    return pets[#pets].Multi >= MIN_REQUIRED_MULTI
+end
+
+--// =========================
+--// PICKUP FARM
+--// =========================
+task.spawn(function()
+    while true do
+        local rendered = workspace:FindFirstChild("Rendered")
+        if rendered then
+            for _, folder in ipairs(rendered:GetChildren()) do
+                for _, obj in ipairs(folder:GetChildren()) do
+                    pcall(function()
+                        PickupRemote:FireServer(obj.Name)
+                        obj:Destroy()
+                    end)
+                end
+            end
+        end
+        task.wait(0.1)
     end
 end)
 
 --// =========================
---// HATCH (HOOK GIFT -> CLAIM)
+--// HATCHING LOOP
 --// =========================
-local oldGift = PhysicalItem.Gift
-PhysicalItem.Gift = function(giftId, giftType, pos)
-    task.spawn(function()
-        pcall(function()
-            Remote:FireServer("ClaimGift", giftId)
-        end)
-    end)
-    return nil
-end
+task.spawn(function()
+    while true do
+        if IsHatching and not IsUpgrading then
+            pcall(function()
+                player.Character:PivotTo(HATCH_CFRAME)
+            end)
+            pressE()
+        end
+        task.wait(0.1)
+    end
+end)
 
 --// =========================
---// BOX OPENER
+--// PET CHECK LOOP
 --// =========================
-local function openCircusBoxes()
-    local d = getData()
-    if not d or not d.Powerups then return end
-    for name,amount in pairs(d.Powerups) do
-        if string.find(name, BOX_NAME_MATCH) and amount > 0 then
-            while amount > 0 do
-                status.Text = "📦 Opening Circus Mystery Boxes"
-                line1.Text = name
-                line2.Text = "Boxes Remaining"
-                Remote:FireServer("UseGift", name, math.min(25, amount))
-                task.wait(BOX_OPEN_DELAY)
-                amount = (getData().Powerups[name] or 0)
-            end
+task.spawn(function()
+    while true do
+        status.Text = "🐣 Farming pets (need ≥10x team)"
+        IsHatching = true
+        task.wait(PET_CHECK_INTERVAL)
+
+        IsHatching = false
+        task.wait(1)
+
+        PetsReady = updatePetUI()
+        if PetsReady then
+            status.Text = "✅ Pets ready"
+            break
         end
     end
-end
+end)
 
 --// =========================
---// UPGRADE BUYER
+--// UPGRADE LOGIC
 --// =========================
-local function buyUpgrades()
-    for _,plan in ipairs(UPGRADE_PLAN) do
-        local cfg = CircusUpgrades[plan.Key]
-        while getUpgradeLevel(plan.Key) < plan.TargetLevel do
-            local lvl = getUpgradeLevel(plan.Key)
-            local nextU = cfg.Upgrades[lvl+1]
-            line1.Text = cfg.Name
-            line2.Text = "Level "..lvl.." → "..(lvl+1)
-            while getTickets() < nextU.Cost do
-                info.Text = "💰 "..getTickets().." / "..nextU.Cost
-                setBar(getTickets()/nextU.Cost)
-                task.wait(0.25)
-            end
-            status.Text = "🛒 Buying "..cfg.Name
-            RemoteEvent:FireServer("BuyCircusUpgrade", plan.Key)
+task.spawn(function()
+    while not PetsReady do task.wait(1) end
+
+    IsUpgrading = true
+    IsHatching = false
+
+    for _, plan in ipairs(UPGRADE_PLAN) do
+        local key = plan.Key
+        local target = plan.TargetLevel
+        local cfg = CircusUpgrades[key]
+
+        while true do
+            local data = LocalData:Get()
+            local level = data and data.CircusUpgrades and data.CircusUpgrades[key] or 0
+            if level >= target then break end
+
+            upgradeLabel.Text = "🎯 "..cfg.Name
+            RemoteEvent:FireServer("BuyCircusUpgrade", key)
             task.wait(1)
         end
     end
-end
 
---// =========================
---// MAIN LOOP
---// =========================
-while true do
-    status.Text = "🔍 Evaluating Pet Team"
-    equipBestPets()
-    task.wait(1)
-
-    local total, worst, worstName = analyzeTeam()
-    footer.Text = "Worst Pet: "..worstName.." x"..worst
-    info.Text = "Total Circus Multiplier: x"..total
-
-    if worst < WORST_REQUIRED then
-        status.Text = "🐣 Hatching for Pets [ "..EGG_NAME.." ]"
-        player.Character:PivotTo(HATCH_CFRAME)
-        local t0 = os.clock()
-        while os.clock()-t0 < HATCH_DURATION do
-            line1.Text = "Hatching..."
-            line2.Text = "Searching better multipliers"
-            setBar((os.clock()-t0)/HATCH_DURATION)
-            task.wait(0.2)
-        end
-    else
-        openCircusBoxes()
-        buyUpgrades()
-        status.Text = "✅ All tasks complete"
-        task.wait(5)
-    end
-end
+    status.Text = "✅ All upgrades complete"
+end)
