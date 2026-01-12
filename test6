@@ -1,16 +1,12 @@
-for _, x  in pairs(getconnections(game.Players.LocalPlayer.Idled)) do x:Disable() end
--- =====================================
--- CONFIG
--- =====================================
-local TARGET_AMOUNT = 50_000_000_000 -- 25B
-local RED_AMOUNT = 100_000_000_000   -- 100B
+for _, x in pairs(getconnections(game.Players.LocalPlayer.Idled)) do x:Disable() end
+
+local TARGET_AMOUNT = 50_000_000_000
+local RED_AMOUNT = 100_000_000_000
 local CURRENCY_KEY = "CircusTickets"
 local MAX_TEAM_SIZE = 13
 local BAR_TWEEN_TIME = 0.3
+local PET_CHECK_INTERVAL = 60
 
--- =====================================
--- SERVICES / MODULES
--- =====================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -24,9 +20,6 @@ local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
 
 local startTime = os.clock()
 
--- =====================================
--- UTILS
--- =====================================
 local function format(n)
 	if n >= 1e12 then
 		return string.format("%.2fT", n/1e12)
@@ -58,18 +51,14 @@ local function formatETA(sec)
 	return string.format("⏳ Approx %dmin left", m)
 end
 
--- =====================================
--- PET EQUIP
--- =====================================
 local function getPetMulti(name)
 	local info = PetsModule[name]
 	return info and info.Stats and info.Stats[CURRENCY_KEY] or 0
 end
 
 local function equipBestPets()
-	task.wait(3)
 	local data = LocalData:Get()
-	if not data or not data.Pets then return end
+	if not data or not data.Pets or not data.Teams or not data.TeamEquipped then return end
 
 	local pets = {}
 	for _, pet in pairs(data.Pets) do
@@ -81,15 +70,34 @@ local function equipBestPets()
 
 	table.sort(pets, function(a,b) return a.Multi > b.Multi end)
 
+	local desired = {}
 	for i = 1, math.min(MAX_TEAM_SIZE, #pets) do
-		RemoteEvent:FireServer("EquipPet", pets[i].Id)
-		task.wait(0.1)
+		desired[pets[i].Id] = true
+	end
+
+	local equipped = {}
+	local team = data.Teams[data.TeamEquipped]
+	if team and team.Pets then
+		for _, id in ipairs(team.Pets) do
+			equipped[id] = true
+		end
+	end
+
+	for id in pairs(equipped) do
+		if not desired[id] then
+			RemoteEvent:FireServer("UnequipPet", id)
+			task.wait(0.08)
+		end
+	end
+
+	for id in pairs(desired) do
+		if not equipped[id] then
+			RemoteEvent:FireServer("EquipPet", id)
+			task.wait(0.08)
+		end
 	end
 end
 
--- =====================================
--- FULLSCREEN UI (RESPONSIVE)
--- =====================================
 local gui = Instance.new("ScreenGui", player.PlayerGui)
 gui.IgnoreGuiInset = true
 gui.ResetOnSpawn = false
@@ -137,9 +145,6 @@ bar.Size = UDim2.fromScale(0,1)
 bar.BackgroundColor3 = Color3.fromRGB(120,255,150)
 Instance.new("UICorner", bar).CornerRadius = UDim.new(0,20)
 
--- =====================================
--- PICKUP FARM (DESTROY)
--- =====================================
 task.spawn(function()
 	while true do
 		local rendered = workspace:FindFirstChild("Rendered")
@@ -159,9 +164,6 @@ task.spawn(function()
 	end
 end)
 
--- =====================================
--- TRACKER + COLOR STATES
--- =====================================
 local lastAmount = 0
 local lastTick = os.clock()
 local avgRate = 0
@@ -210,8 +212,12 @@ task.spawn(function()
 	end
 end)
 
--- =====================================
--- START
--- =====================================
+task.spawn(function()
+	task.wait(7)
+	while true do
+		pcall(equipBestPets)
+		task.wait(PET_CHECK_INTERVAL)
+	end
+end)
+
 RemoteEvent:FireServer("Teleport", "Workspace.Circus Event.Spawn")
-task.delay(4, equipBestPets)
