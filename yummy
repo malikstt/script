@@ -1,9 +1,70 @@
-repeat task.wait() until game:IsLoaded()
-local lp = game.Players.LocalPlayer
-repeat task.wait() until lp:FindFirstChild("PlayerGui")
-task.wait(math.random(0,3000)/1000) 
-local g = lp.PlayerGui:FindFirstChild("ScreenGui")
-if g and g:FindFirstChild("DailyRewards") then
-    g.DailyRewards:Destroy()
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Network = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+
+local AUTO_DELETE_PETS = getgenv().AUTO_DELETE_PETS or {}
+
+-- get variant text
+local function getVariant(pet)
+    if pet.Shiny and pet.Mythic then
+        return "Shiny Mythic"
+    elseif pet.Shiny then
+        return "Shiny"
+    elseif pet.Mythic then
+        return "Mythic"
+    else
+        return "Normal"
+    end
 end
-loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/test4"))()
+
+-- should delete check
+local function shouldDelete(pet)
+    local rules = AUTO_DELETE_PETS[pet.Name]
+    if not rules then return false end
+
+    for _, rule in ipairs(rules) do
+        if rule == "All" then
+            return true
+        end
+    end
+
+    local variant = getVariant(pet)
+    for _, rule in ipairs(rules) do
+        if rule == variant then
+            return true
+        end
+    end
+
+    return false
+end
+
+-- auto delete loop
+task.spawn(function()
+    while true do
+        local data = LocalData:Get()
+        if data and data.Pets then
+            for _, pet in pairs(data.Pets) do
+                if pet.Id and shouldDelete(pet) then
+                    local totalDeleted = 0
+                    local variant = getVariant(pet)
+
+                    for _, amount in ipairs({100, 10, 1}) do
+                        Network:FireServer("DeletePet", pet.Id, amount, false)
+                        totalDeleted += amount
+                        task.wait(0.05)
+                    end
+
+                    if totalDeleted > 0 then
+                        print(string.format(
+                            "[wiped by malik] %s %s x%d",
+                            variant,
+                            pet.Name,
+                            totalDeleted
+                        ))
+                    end
+                end
+            end
+        end
+        task.wait(5)
+    end
+end)
