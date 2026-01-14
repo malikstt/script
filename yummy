@@ -3,21 +3,23 @@ local Network = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
 local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
 
 local AUTO_DELETE_PETS = getgenv().AUTO_DELETE_PETS or {}
+local SKIP_ALL_XL = getgenv().SKIP_ALL_XL
+local DELETE_XL_PETS = getgenv().DELETE_XL_PETS or {}
 
--- get variant text
+-- determine variant using REAL DATA
 local function getVariant(pet)
-    if pet.Shiny and pet.Mythic then
+    if pet.MythicShiny then
         return "Shiny Mythic"
-    elseif pet.Shiny then
-        return "Shiny"
     elseif pet.Mythic then
         return "Mythic"
+    elseif pet.Shiny then
+        return "Shiny"
     else
         return "Normal"
     end
 end
 
--- should delete check
+-- check if pet should be deleted
 local function shouldDelete(pet)
     local rules = AUTO_DELETE_PETS[pet.Name]
     if not rules then return false end
@@ -38,29 +40,42 @@ local function shouldDelete(pet)
     return false
 end
 
--- auto delete loop
+-- main loop
 task.spawn(function()
     while true do
         local data = LocalData:Get()
         if data and data.Pets then
             for _, pet in pairs(data.Pets) do
-                if pet.Id and shouldDelete(pet) then
-                    local totalDeleted = 0
+                if not pet.Id then continue end
+
+                -- XL handling
+                if pet.XL then
+                    if SKIP_ALL_XL and not DELETE_XL_PETS[pet.Name] then
+                        print(string.format(
+                            "Skipped XL %s %s",
+                            getVariant(pet),
+                            pet.Name
+                        ))
+                        continue
+                    end
+                end
+
+                -- delete logic
+                if shouldDelete(pet) then
                     local variant = getVariant(pet)
 
                     for _, amount in ipairs({100, 10, 1}) do
                         Network:FireServer("DeletePet", pet.Id, amount, false)
-                        totalDeleted += amount
-                        task.wait(0.05)
-                    end
 
-                    if totalDeleted > 0 then
                         print(string.format(
-                            "[wiped by malik] %s %s x%d",
+                            "[wiped by malik] %s%s %s x%d",
+                            pet.XL and "XL " or "",
                             variant,
                             pet.Name,
-                            totalDeleted
+                            amount
                         ))
+
+                        task.wait(0.05)
                     end
                 end
             end
