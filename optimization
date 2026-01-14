@@ -1,1 +1,195 @@
+-- =========================
+-- AUTO REBIRTH MACHINE
+-- =========================
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+local RebirthMachineUtil = require(ReplicatedStorage.Shared.Utils.RebirthMachineUtil)
+local PetsData = require(ReplicatedStorage.Shared.Data.Pets)
+local TimeUtil = require(ReplicatedStorage.Shared.Framework.Utilities.Math.Time)
+local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
+
+local LocalPlayer = Players.LocalPlayer
+
+local AUTO_REBIRTH_ENABLED = true
+local REBIRTH_CHECK_INTERVAL = 5
+
+local ALLOWED_SECRET_NAMES = {
+    ["Aero Heart"] = true,
+    ["Andromeda"] = true,
+    ["Archangel"] = true,
+    ["Big Flakey"] = true,
+    ["Big Rigby"] = true,
+    ["Borealis Elk"] = true,
+    ["Box Of Secrets"] = true,
+    ["Butter Dawg"] = true,
+    ["Christmas Tree"] = true,
+    ["Chronos"] = true,
+    ["Crystal Snowman"] = true,
+    ["Darkest Omen"] = true,
+    ["Drippy Slice"] = true,
+    ["Eternal Burger"] = true,
+    ["Festive Deity"] = true,
+    ["Festive Snow Jar"] = true,
+    ["Firecracker"] = true,
+    ["Flake Spirit"] = true,
+    ["Frosted Bond"] = true,
+    ["Frosted Dogcat"] = true,
+    ["Frosted Luminosity"] = true,
+    ["Frosty One"] = true,
+    ["FutureWebsiteOwner Giftbox"] = true,
+    ["Giant Doof"] = true,
+    ["Giant Emerald Golem"] = true,
+    ["Giant NULLvoid"] = true,
+    ["Giant Bongo Kitty"] = true,
+    ["Gingerbread Shard"] = true,
+    ["Giftbox King Doggy"] = true,
+    ["Gummy Overlord"] = true,
+    ["Holy Bell"] = true,
+    ["Holy Candle"] = true,
+    ["Hope Candle"] = true,
+    ["Hot Dog Doggy"] = true,
+    ["Hyperwave Kitty"] = true,
+    ["Iridescent Catcher"] = true,
+    ["Joy Candle"] = true,
+    ["King Doggy"] = true,
+    ["Kitty Tophat"] = true,
+    ["Love Candle"] = true,
+    ["Maid Nert Plushie"] = true,
+    ["Man Face Dogcat"] = true,
+    ["Man Face Lord"] = true,
+    ["Mech Robot"] = true,
+    ["Mecha Kraken"] = true,
+    ["Nert Giftbox"] = true,
+    ["Nert Plushie"] = true,
+    ["New Year's Overlord"] = true,
+    ["Northern Star"] = true,
+    ["ObscureEntity Giftbox"] = true,
+    ["ObscureEntity Plushie"] = true,
+    ["Peace Candle"] = true,
+    ["Peppermint Heart"] = true,
+    ["Peppermint Shard"] = true,
+    ["Prototype DR4GON"] = true,
+    ["Quamatic Giftbox"] = true,
+    ["Quamatic Plushie"] = true,
+    ["Radiant Soul"] = true,
+    ["Rumblecon Halftime Show"] = true,
+    ["Rumblecon Trophy"] = true,
+    ["Santa Nert Plushie"] = true,
+    ["Santander Hat"] = true,
+    ["Sircfenner Giftbox"] = true,
+    ["Sircfenner Plushie"] = true,
+    ["Snowglobe Doggy"] = true,
+    ["Snowstorm"] = true,
+    ["Snowverlord"] = true,
+    ["Solitaire"] = true,
+    ["Sweet Heart"] = true,
+    ["Sylently Giftbox"] = true,
+    ["Sylently Plushie"] = true,
+    ["The Golden Ticket"] = true,
+    ["Velvet Wolflord"] = true,
+    ["Watermelon Round"] = true,
+    ["Encore"] = true
+}
+
+task.spawn(function()
+    while AUTO_REBIRTH_ENABLED do
+        task.wait(REBIRTH_CHECK_INTERVAL)
+
+        local playerData = LocalData:Get()
+        if not playerData or not playerData.Pets or not playerData.Teams or not playerData.TeamEquipped then continue end
+        if TimeUtil.now() < playerData.NextRebirthMachineUse then continue end
+
+        local equippedPetIds = {}
+        local activeTeamIndex = playerData.TeamEquipped
+        if activeTeamIndex and playerData.Teams[activeTeamIndex] and playerData.Teams[activeTeamIndex].Pets then
+            for _, petId in ipairs(playerData.Teams[activeTeamIndex].Pets) do
+                equippedPetIds[petId] = true
+            end
+        end
+
+        local petsByVariant = {}
+        for _, petData in ipairs(playerData.Pets) do
+            if equippedPetIds[petData.Id] or petData.Locked then continue end
+            local petInfo = PetsData[petData.Name]
+            if not petInfo then continue end
+            if petInfo.Rarity ~= "Secret" or petInfo.Infinity then continue end
+            if not ALLOWED_SECRET_NAMES[petData.Name] then continue end
+
+            local variant = RebirthMachineUtil:GetPetVariant(petData)
+            petsByVariant[variant] = petsByVariant[variant] or {}
+            table.insert(petsByVariant[variant], petData.Id)
+        end
+
+        local requiredAmount = RebirthMachineUtil.NUM_SECRETS_REQUIRED
+        for _, idList in pairs(petsByVariant) do
+            if #idList >= requiredAmount then
+                local petIdsToSend = {}
+                for i = 1, requiredAmount do
+                    petIdsToSend[i] = idList[i]
+                end
+                Remote:InvokeServer("UseRebirthMachine", petIdsToSend)
+                task.wait(2)
+                break
+            end
+        end
+    end
+end)
+
+-- =========================
+-- AUTO SHRINE EGG DONATION
+-- =========================
+
+getgenv().CHECK_INTERVAL = 3600
+
+local LocalDataModule = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+local RemoteFunction =
+    ReplicatedStorage.Shared.Framework.Network.Remote.RemoteFunction
+
+local EGGS = {
+    "Stellaris Egg",
+    "Frost Egg",
+    "Royal Egg"
+}
+
+local function getAmount(name)
+    local data = LocalDataModule:Get()
+    return (data and data.Powerups and data.Powerups[name]) or 0
+end
+
+local function donate(name, amount)
+    if amount <= 0 then return end
+    pcall(function()
+        RemoteFunction:InvokeServer(
+            "DonateToShrine",
+            {
+                Type = "Powerup",
+                Name = name,
+                Amount = amount
+            }
+        )
+    end)
+end
+
+task.spawn(function()
+    while true do
+        local available = {}
+        for _, egg in ipairs(EGGS) do
+            local amt = getAmount(egg)
+            if amt > 0 then
+                table.insert(available, egg)
+            end
+        end
+
+        if #available == 0 then
+            break
+        end
+
+        local choice = available[math.random(1, #available)]
+        donate(choice, getAmount(choice))
+
+        task.wait(getgenv().CHECK_INTERVAL)
+    end
+end)
