@@ -1,245 +1,114 @@
-for _, x in pairs(getconnections(game.Players.LocalPlayer.Idled)) do x:Disable() end
-
-local TARGET_AMOUNT = 50_000_000_000
-local RED_AMOUNT = 100_000_000_000
-local CURRENCY_KEY = "CircusTickets"
-local MAX_TEAM_SIZE = 13
-local BAR_TWEEN_TIME = 0.3
-local PET_CHECK_INTERVAL = 60
+getgenv().waitTime = 2.5
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local player = Players.LocalPlayer
-local RemoteEvent = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
-local PickupRemote = ReplicatedStorage.Remotes.Pickups.CollectPickup
+local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
+local PhysicalItem = require(ReplicatedStorage.Client.Effects.PhysicalItem)
+local LocalDataModule = require(ReplicatedStorage.Client.Framework.Services.LocalData)
 
-local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
-local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
+local RebirthMachineUtil = require(ReplicatedStorage.Shared.Utils.RebirthMachineUtil)
+local PetsData = require(ReplicatedStorage.Shared.Data.Pets)
+local TimeUtil = require(ReplicatedStorage.Shared.Framework.Utilities.Math.Time)
 
-local startTime = os.clock()
-
-local function format(n)
-	if n >= 1e12 then
-		return string.format("%.2fT", n/1e12)
-	elseif n >= 1e9 then
-		return string.format("%.2fB", n/1e9)
-	elseif n >= 1e6 then
-		return string.format("%.2fM", n/1e6)
-	elseif n >= 1e3 then
-		return string.format("%.2fK", n/1e3)
-	else
-		return tostring(math.floor(n))
-	end
+local function getLocalData()
+    return LocalDataModule:Get()
 end
 
-local function formatRuntime(sec)
-	local h = math.floor(sec/3600)
-	local m = math.floor(sec%3600/60)
-	local s = math.floor(sec%60)
-	return string.format("%02d:%02d:%02d", h, m, s)
-end
-
-local function formatETA(sec)
-	sec = math.max(0, math.floor(sec))
-	local h = math.floor(sec/3600)
-	local m = math.floor(sec%3600/60)
-	if h > 0 then
-		return string.format("⏳ Approx %dh %dmin left", h, m)
-	end
-	return string.format("⏳ Approx %dmin left", m)
-end
-
-local function getPetMulti(name)
-	local info = PetsModule[name]
-	return info and info.Stats and info.Stats[CURRENCY_KEY] or 0
-end
-
-local function equipBestPets()
-	local data = LocalData:Get()
-	if not data or not data.Pets or not data.Teams or not data.TeamEquipped then return end
-
-	local pets = {}
-	for _, pet in pairs(data.Pets) do
-		local multi = getPetMulti(pet.Name)
-		if multi > 0 then
-			pets[#pets+1] = {Id = pet.Id, Multi = multi}
-		end
-	end
-
-	table.sort(pets, function(a,b) return a.Multi > b.Multi end)
-
-	local desired = {}
-	for i = 1, math.min(MAX_TEAM_SIZE, #pets) do
-		desired[pets[i].Id] = true
-	end
-
-	local equipped = {}
-	local team = data.Teams[data.TeamEquipped]
-	if team and team.Pets then
-		for _, id in ipairs(team.Pets) do
-			equipped[id] = true
-		end
-	end
-
-	for id in pairs(equipped) do
-		if not desired[id] then
-			RemoteEvent:FireServer("UnequipPet", id)
-			task.wait(0.08)
-		end
-	end
-
-	for id in pairs(desired) do
-		if not equipped[id] then
-			RemoteEvent:FireServer("EquipPet", id)
-			task.wait(0.08)
-		end
-	end
-end
-
-local gui = Instance.new("ScreenGui", player.PlayerGui)
-gui.IgnoreGuiInset = true
-gui.ResetOnSpawn = false
-
-local overlay = Instance.new("Frame", gui)
-overlay.Size = UDim2.fromScale(1,1)
-overlay.BackgroundColor3 = Color3.fromRGB(20,20,30)
-overlay.BackgroundTransparency = 0.15
-
-local panel = Instance.new("Frame", overlay)
-panel.AnchorPoint = Vector2.new(0.5,0.5)
-panel.Position = UDim2.fromScale(0.5,0.5)
-panel.Size = UDim2.fromScale(0.6,0.45)
-panel.BackgroundColor3 = Color3.fromRGB(16,16,24)
-Instance.new("UICorner", panel).CornerRadius = UDim.new(0,32)
-
-local uiScale = Instance.new("UIScale", panel)
-uiScale.Scale = math.clamp(workspace.CurrentCamera.ViewportSize.X / 1920, 0.75, 1)
-
-local title = Instance.new("TextLabel", panel)
-title.Size = UDim2.fromScale(1,0.18)
-title.BackgroundTransparency = 1
-title.TextScaled = true
-title.Font = Enum.Font.GothamBlack
-title.TextColor3 = Color3.fromRGB(255,200,140)
-title.Text = "🎪 Circus Ticket Grinder"
-
-local info = Instance.new("TextLabel", panel)
-info.Position = UDim2.fromScale(0,0.18)
-info.Size = UDim2.fromScale(1,0.44)
-info.BackgroundTransparency = 1
-info.TextWrapped = true
-info.TextScaled = true
-info.Font = Enum.Font.GothamMedium
-info.TextColor3 = Color3.fromRGB(235,235,235)
-
-local barBG = Instance.new("Frame", panel)
-barBG.Position = UDim2.fromScale(0.06,0.68)
-barBG.Size = UDim2.fromScale(0.88,0.14)
-barBG.BackgroundColor3 = Color3.fromRGB(45,45,65)
-Instance.new("UICorner", barBG).CornerRadius = UDim.new(0,20)
-
-local bar = Instance.new("Frame", barBG)
-bar.Size = UDim2.fromScale(0,1)
-bar.BackgroundColor3 = Color3.fromRGB(120,255,150)
-Instance.new("UICorner", bar).CornerRadius = UDim.new(0,20)
+-- =========================
+-- COIN CHECK + VIM B PRESS
+-- =========================
+getgenv().coinStopped = getgenv().coinStopped or false
 
 task.spawn(function()
-	while true do
-		local rendered = workspace:FindFirstChild("Rendered")
-		if rendered then
-			for _, folder in ipairs(rendered:GetChildren()) do
-				for _, obj in ipairs(folder:GetChildren()) do
-					if obj:IsA("Model") then
-						pcall(function()
-							PickupRemote:FireServer(obj.Name)
-							obj:Destroy()
-						end)
-					end
-				end
-			end
-		end
-		task.wait(0.08)
-	end
+    while not getgenv().coinStopped do
+        task.wait(1)
+        local data = getLocalData()
+        if not data then continue end
+
+        if data.Coins >= 10000000 then
+            getgenv().coinStopped = true
+            break
+        end
+
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.B, false, game)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.B, false, game)
+        task.wait(0.1)
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.B, false, game)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.B, false, game)
+    end
 end)
 
-local lastAmount = 0
-local lastTick = os.clock()
-local avgRate = 0
+-- =========================
+-- AUTO GIFT / MYSTERY BOX
+-- =========================
+getgenv().oldGift = getgenv().oldGift or PhysicalItem.Gift
+PhysicalItem.Gift = function(giftId, giftType, giftPosition)
+    if not getgenv().autoGift then
+        return getgenv().oldGift(giftId, giftType, giftPosition)
+    end
+    task.spawn(function()
+        pcall(function()
+            Remote:FireServer("ClaimGift", giftId)
+        end)
+    end)
+    return nil
+end
+
+getgenv().autoGift = not getgenv().autoGift
+
+getgenv().popUpConnection = getgenv().popUpConnection or nil
+local genericFolder = workspace.Rendered:FindFirstChild("Generic")
+
+if getgenv().autoGift then
+    if genericFolder and not getgenv().popUpConnection then
+        getgenv().popUpConnection = genericFolder.ChildAdded:Connect(function(item)
+            if item:IsA("Part") and #item.Name == 36 then
+                item:Destroy()
+            end
+        end)
+    end
+else
+    if getgenv().popUpConnection then
+        getgenv().popUpConnection:Disconnect()
+        getgenv().popUpConnection = nil
+    end
+end
+
+Remote:FireServer("SetSetting", "Item Notifications", false)
 
 task.spawn(function()
-	while true do
-		local data = LocalData:Get()
-		local current = data and data[CURRENCY_KEY] or 0
-		local now = os.clock()
+    if getgenv().coinStopped then return end
+    while getgenv().autoGift and not getgenv().coinStopped do
+        local data = getLocalData()
+        if not data then break end
+        if data.Coins >= 10000000 then
+            getgenv().coinStopped = true
+            break
+        end
 
-		local dt = now - lastTick
-		if dt >= 1 then
-			local gain = current - lastAmount
-			if gain > 0 then
-				local rate = gain / dt
-				avgRate = avgRate == 0 and rate or (avgRate*0.85 + rate*0.15)
-			end
-			lastAmount = current
-			lastTick = now
-		end
-
-		if current >= RED_AMOUNT then
-			overlay.BackgroundColor3 = Color3.fromRGB(120,20,20)
-		elseif current >= TARGET_AMOUNT then
-			overlay.BackgroundColor3 = Color3.fromRGB(20,120,20)
-		else
-			overlay.BackgroundColor3 = Color3.fromRGB(20,20,30)
-		end
-
-		local remaining = TARGET_AMOUNT - current
-		local eta = avgRate > 0 and remaining > 0 and remaining / avgRate or 0
-		local percent = math.clamp(current / TARGET_AMOUNT, 0, 1)
-
-		info.Text =
-			"💰 " .. format(current) .. " / " .. format(TARGET_AMOUNT) ..
-			"\n⏱ Runtime: " .. formatRuntime(now - startTime) ..
-			"\n" .. formatETA(eta)
-
-		TweenService:Create(
-			bar,
-			TweenInfo.new(BAR_TWEEN_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{Size = UDim2.fromScale(percent, 1)}
-		):Play()
-
-		task.wait(0.2)
-	end
+        local amount = data.Powerups and data.Powerups["Mystery Box"] or 0
+        if amount > 0 then
+            Remote:FireServer("UseGift", "Mystery Box", math.min(50, amount))
+            task.wait(getgenv().waitTime)
+        else
+            task.wait(1)
+        end
+    end
 end)
 
+-- =========================
+-- AUTO REBIRTH MACHINE
+-- =========================
 task.spawn(function()
-	task.wait(7)
-	while true do
-		pcall(equipBestPets)
-		task.wait(PET_CHECK_INTERVAL)
-	end
-end)
-
-RemoteEvent:FireServer("Teleport", "Workspace.Circus Event.Spawn")
-task.spawn(function()
-
-    -- =========================
-    -- AUTO REBIRTH MACHINE
-    -- =========================
-
-    local ReplicatedStorage = game:GetService("ReplicatedStorage")
-    local Players = game:GetService("Players")
-
-    local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
-    local RebirthMachineUtil = require(ReplicatedStorage.Shared.Utils.RebirthMachineUtil)
-    local PetsData = require(ReplicatedStorage.Shared.Data.Pets)
-    local TimeUtil = require(ReplicatedStorage.Shared.Framework.Utilities.Math.Time)
-    local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
-
     local AUTO_REBIRTH_ENABLED = true
     local REBIRTH_CHECK_INTERVAL = 5
 
     local ALLOWED_SECRET_NAMES = {
+        ["Giant Bongo Kitty"] = true,
+        ["Encore"] = true,
         ["Aero Heart"]=true,["Andromeda"]=true,["Archangel"]=true,["Big Flakey"]=true,
         ["Big Rigby"]=true,["Borealis Elk"]=true,["Box Of Secrets"]=true,["Butter Dawg"]=true,
         ["Christmas Tree"]=true,["Chronos"]=true,["Crystal Snowman"]=true,["Darkest Omen"]=true,
@@ -247,8 +116,8 @@ task.spawn(function()
         ["Firecracker"]=true,["Flake Spirit"]=true,["Frosted Bond"]=true,["Frosted Dogcat"]=true,
         ["Frosted Luminosity"]=true,["Frosty One"]=true,["FutureWebsiteOwner Giftbox"]=true,
         ["Giant Doof"]=true,["Giant Emerald Golem"]=true,["Giant NULLvoid"]=true,
-        ["Giant Bongo Kitty"]=true,["Gingerbread Shard"]=true,["Giftbox King Doggy"]=true,
-        ["Gummy Overlord"]=true,["Holy Bell"]=true,["Holy Candle"]=true,["Hope Candle"]=true,
+        ["Gingerbread Shard"]=true,["Giftbox King Doggy"]=true,["Gummy Overlord"]=true,
+        ["Holy Bell"]=true,["Holy Candle"]=true,["Hope Candle"]=true,
         ["Hot Dog Doggy"]=true,["Hyperwave Kitty"]=true,["Iridescent Catcher"]=true,
         ["Joy Candle"]=true,["King Doggy"]=true,["Kitty Tophat"]=true,["Love Candle"]=true,
         ["Maid Nert Plushie"]=true,["Man Face Dogcat"]=true,["Man Face Lord"]=true,
@@ -261,86 +130,91 @@ task.spawn(function()
         ["Sircfenner Giftbox"]=true,["Sircfenner Plushie"]=true,["Snowglobe Doggy"]=true,
         ["Snowstorm"]=true,["Snowverlord"]=true,["Solitaire"]=true,["Sweet Heart"]=true,
         ["Sylently Giftbox"]=true,["Sylently Plushie"]=true,["The Golden Ticket"]=true,
-        ["Velvet Wolflord"]=true,["Watermelon Round"]=true,["Encore"]=true
+        ["Velvet Wolflord"]=true,["Watermelon Round"]=true
     }
 
-    task.spawn(function()
-        while AUTO_REBIRTH_ENABLED do
-            task.wait(REBIRTH_CHECK_INTERVAL)
+    while AUTO_REBIRTH_ENABLED do
+        task.wait(REBIRTH_CHECK_INTERVAL)
 
-            local playerData = LocalData:Get()
-            if not playerData or TimeUtil.now() < playerData.NextRebirthMachineUse then continue end
+        local data = getLocalData()
+        if not data or TimeUtil.now() < data.NextRebirthMachineUse then continue end
 
-            local equipped = {}
-            local team = playerData.TeamEquipped
-            if team and playerData.Teams[team] then
-                for _,id in ipairs(playerData.Teams[team].Pets) do
-                    equipped[id]=true
-                end
-            end
-
-            local petsByVariant = {}
-            for _,pet in ipairs(playerData.Pets) do
-                if equipped[pet.Id] or pet.Locked then continue end
-                local info = PetsData[pet.Name]
-                if not info or info.Rarity~="Secret" or info.Infinity then continue end
-                if not ALLOWED_SECRET_NAMES[pet.Name] then continue end
-
-                local variant = RebirthMachineUtil:GetPetVariant(pet)
-                petsByVariant[variant]=petsByVariant[variant] or {}
-                table.insert(petsByVariant[variant],pet.Id)
-            end
-
-            for _,list in pairs(petsByVariant) do
-                if #list>=RebirthMachineUtil.NUM_SECRETS_REQUIRED then
-                    local send={}
-                    for i=1,RebirthMachineUtil.NUM_SECRETS_REQUIRED do
-                        send[i]=list[i]
-                    end
-                    Remote:InvokeServer("UseRebirthMachine",send)
-                    task.wait(2)
-                    break
-                end
+        local equipped = {}
+        if data.TeamEquipped and data.Teams[data.TeamEquipped] then
+            for _, id in ipairs(data.Teams[data.TeamEquipped].Pets) do
+                equipped[id] = true
             end
         end
-    end)
 
-    -- =========================
-    -- AUTO SHRINE EGG DONATION
-    -- =========================
+        local petsByVariant = {}
 
-    getgenv().CHECK_INTERVAL = 3600
+        for _, pet in ipairs(data.Pets) do
+            if equipped[pet.Id] or pet.Locked then continue end
+            local info = PetsData[pet.Name]
+            if not info or info.Rarity ~= "Secret" or info.Infinity then continue end
+            if not ALLOWED_SECRET_NAMES[pet.Name] then continue end
 
-    local LocalDataModule = require(ReplicatedStorage.Client.Framework.Services.LocalData)
-    local RemoteFunction = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteFunction
-
-    local EGGS = {"Stellaris Egg","Frost Egg","Royal Egg"}
-
-    local function getAmount(name)
-        local data = LocalDataModule:Get()
-        return (data and data.Powerups and data.Powerups[name]) or 0
-    end
-
-    local function donate(name, amount)
-        if amount<=0 then return end
-        pcall(function()
-            RemoteFunction:InvokeServer("DonateToShrine",{Type="Powerup",Name=name,Amount=amount})
-        end)
-    end
-
-    task.spawn(function()
-        while true do
-            local available={}
-            for _,egg in ipairs(EGGS) do
-                if getAmount(egg)>0 then
-                    table.insert(available,egg)
-                end
-            end
-            if #available==0 then break end
-            local choice=available[math.random(#available)]
-            donate(choice,getAmount(choice))
-            task.wait(getgenv().CHECK_INTERVAL)
+            local variant = RebirthMachineUtil:GetPetVariant(pet)
+            petsByVariant[variant] = petsByVariant[variant] or {}
+            table.insert(petsByVariant[variant], pet.Id)
         end
-    end)
 
+        for _, list in pairs(petsByVariant) do
+            if #list >= RebirthMachineUtil.NUM_SECRETS_REQUIRED then
+                local send = {}
+                for i = 1, RebirthMachineUtil.NUM_SECRETS_REQUIRED do
+                    send[i] = list[i]
+                end
+                Remote:InvokeServer("UseRebirthMachine", send)
+                task.wait(2)
+                break
+            end
+        end
+    end
+end)
+task.spawn(function()
+    repeat task.wait() until game:IsLoaded()
+
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+    local WORLD_NAME = "Seven Seas"
+    local MAX_ATTEMPTS = 5
+    local RETRY_DELAY = 2
+
+    local LocalData = require(
+        ReplicatedStorage
+            :WaitForChild("Client")
+            :WaitForChild("Framework")
+            :WaitForChild("Services")
+            :WaitForChild("LocalData")
+    )
+
+    local RemoteEvent = ReplicatedStorage
+        :WaitForChild("Shared")
+        :WaitForChild("Framework")
+        :WaitForChild("Network")
+        :WaitForChild("Remote")
+        :WaitForChild("RemoteEvent")
+
+    local function isWorldUnlocked()
+        local data = LocalData:Get()
+        return data and data.WorldsUnlocked and data.WorldsUnlocked[WORLD_NAME] == true
+    end
+
+    if isWorldUnlocked() then
+        print("SUCCESS")
+        return
+    end
+
+    for _ = 1, MAX_ATTEMPTS do
+        RemoteEvent:FireServer("UnlockWorld", WORLD_NAME)
+        task.wait(RETRY_DELAY)
+
+        if isWorldUnlocked() then
+            print("SUCCESS")
+            return
+        end
+    end
+
+    print("FAIL")
 end)
