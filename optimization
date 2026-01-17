@@ -4,6 +4,9 @@ task.spawn(function()
     getgenv().waitTime = 2.5
     getgenv().autoGift = true
 
+    local Players = game:GetService("Players")
+    local RunService = game:GetService("RunService")
+    local LocalPlayer = Players.LocalPlayer
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
     local PhysicalItem = require(ReplicatedStorage.Client.Effects.PhysicalItem)
@@ -40,10 +43,82 @@ task.spawn(function()
 
     Remote:FireServer("SetSetting", "Item Notifications", false)
 
+    -- ================= UI TRACKER SETUP =================
+    local SCREEN_WIDTH, SCREEN_HEIGHT = 250, 200
+    local earned = {}
+
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "PowerupTracker"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, SCREEN_WIDTH, 0, SCREEN_HEIGHT)
+    frame.Position = UDim2.new(0, 0, 0, 0)
+    frame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    frame.BorderSizePixel = 0
+    frame.Parent = screenGui
+
+    local uiList = Instance.new("UIListLayout")
+    uiList.Parent = frame
+    uiList.FillDirection = Enum.FillDirection.Vertical
+    uiList.HorizontalAlignment = Enum.HorizontalAlignment.Left
+    uiList.VerticalAlignment = Enum.VerticalAlignment.Top
+    uiList.SortOrder = Enum.SortOrder.LayoutOrder
+    uiList.Padding = UDim.new(0, 2)
+
+    local labels = {}
+    local function createLabel(name)
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, -4, 0, 20)
+        label.BackgroundTransparency = 1
+        label.TextColor3 = Color3.fromRGB(0, 0, 0)
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Font = Enum.Font.SourceSans
+        label.TextSize = 16
+        label.Text = name .. " : 0"
+        label.Parent = frame
+        return label
+    end
+
+    -- Initialize UI tracker with current powerups (ignoring keys/boxes/spins)
+    local function initLabels()
+        local powerups = data().Powerups or {}
+        for name, amount in pairs(powerups) do
+            if name ~= "Ringmaster Key" and name ~= "Neon Spin Ticket" and not name:find("Box") then
+                earned[name] = amount
+                labels[name] = createLabel(name)
+            end
+        end
+    end
+    initLabels()
+
+    -- Update tracker
+    RunService.Heartbeat:Connect(function()
+        local powerups = data().Powerups or {}
+        for name, oldAmount in pairs(earned) do
+            local current = powerups[name] or 0
+            if current > oldAmount then
+                earned[name] = current
+            end
+            if labels[name] then
+                labels[name].Text = name .. " : x" .. earned[name]
+            end
+        end
+        for name, amount in pairs(powerups) do
+            if not earned[name] and name ~= "Ringmaster Key" and name ~= "Neon Spin Ticket" and not name:find("Box") then
+                earned[name] = amount
+                labels[name] = createLabel(name)
+                labels[name].Text = name .. " : x" .. amount
+            end
+        end
+    end)
+
+    -- ================= AUTOMATION LOOP =================
     while true do
         local powerups = data().Powerups or {}
 
-        -- boxes (event only, no normal Mystery Box)
+        -- event boxes (excluding normal Mystery Box)
         local boxes = {}
         for name, amount in pairs(powerups) do
             if amount > 0 and name:find("Box") and name ~= "Mystery Box" then
@@ -77,22 +152,35 @@ task.spawn(function()
             keys = now
         end
 
-        -- open boxes + claim (print only on successful decrease)
+        -- open boxes + claim
         for _, box in ipairs(boxes) do
             while true do
                 local before = data().Powerups[box] or 0
                 if before <= 0 then break end
-
                 local use = math.min(before, 50)
                 Remote:FireServer("UseGift", box, use)
                 task.wait(getgenv().waitTime)
-
                 local after = data().Powerups[box] or 0
                 if after < before then
                     print("Opening Event Box [", box, "] [", before, "→", after, "]")
                 else
                     break
                 end
+            end
+        end
+
+        -- check Christmas Present if no other boxes
+        local cpAmount = powerups["Christmas Present"] or 0
+        if #boxes == 0 and cpAmount > 0 then
+            while cpAmount > 0 do
+                local use = math.min(cpAmount, 50)
+                Remote:FireServer("UseGift", "Christmas Present", use)
+                task.wait(getgenv().waitTime)
+                local now = (data().Powerups["Christmas Present"] or 0)
+                if now < cpAmount then
+                    print("Opening Event Box [Christmas Present] [", cpAmount, "→", now, "]")
+                end
+                cpAmount = now
             end
         end
 
