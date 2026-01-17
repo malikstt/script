@@ -4,10 +4,13 @@ task.spawn(function()
     getgenv().waitTime = 2.5
     getgenv().autoGift = true
 
+    -- Services
     local Players = game:GetService("Players")
     local RunService = game:GetService("RunService")
     local LocalPlayer = Players.LocalPlayer
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+    -- Modules
     local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
     local PhysicalItem = require(ReplicatedStorage.Client.Effects.PhysicalItem)
     local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
@@ -16,7 +19,7 @@ task.spawn(function()
         return LocalData:Get()
     end
 
-    -- claim gifts hook
+    -- ================== Claim Gift Hook ==================
     getgenv().oldGift = getgenv().oldGift or PhysicalItem.Gift
     PhysicalItem.Gift = function(giftId, giftType, giftPosition)
         if not getgenv().autoGift then
@@ -30,7 +33,7 @@ task.spawn(function()
         return nil
     end
 
-    -- remove popup junk
+    -- ================== Remove Popup Junk ==================
     getgenv().popUpConnection = getgenv().popUpConnection or nil
     local genericFolder = workspace.Rendered:FindFirstChild("Generic")
     if genericFolder and not getgenv().popUpConnection then
@@ -43,12 +46,13 @@ task.spawn(function()
 
     Remote:FireServer("SetSetting", "Item Notifications", false)
 
-    -- ================= UI TRACKER SETUP =================
-    local SCREEN_WIDTH, SCREEN_HEIGHT = 250, 200
-    local earned = {}
+    -- ================== UI TRACKER ==================
+    local SCREEN_WIDTH, SCREEN_HEIGHT = 270, 200
+    local earned = {} -- [name] = amount
+    local labels = {} -- [name] = TextLabel
 
     local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "PowerupTracker"
+    screenGui.Name = "NewPowerupTracker"
     screenGui.ResetOnSpawn = false
     screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
@@ -67,7 +71,6 @@ task.spawn(function()
     uiList.SortOrder = Enum.SortOrder.LayoutOrder
     uiList.Padding = UDim.new(0, 2)
 
-    local labels = {}
     local function createLabel(name)
         local label = Instance.new("TextLabel")
         label.Size = UDim2.new(1, -4, 0, 20)
@@ -76,49 +79,35 @@ task.spawn(function()
         label.TextXAlignment = Enum.TextXAlignment.Left
         label.Font = Enum.Font.SourceSans
         label.TextSize = 16
-        label.Text = name .. " : 0"
+        label.Text = name .. " : x0"
         label.Parent = frame
         return label
     end
 
-    -- Initialize UI tracker with current powerups (ignoring keys/boxes/spins)
-    local function initLabels()
-        local powerups = data().Powerups or {}
-        for name, amount in pairs(powerups) do
-            if name ~= "Ringmaster Key" and name ~= "Neon Spin Ticket" and not name:find("Box") then
-                earned[name] = amount
-                labels[name] = createLabel(name)
-            end
-        end
-    end
-    initLabels()
-
-    -- Update tracker
+    -- Update earned powerups every heartbeat
     RunService.Heartbeat:Connect(function()
         local powerups = data().Powerups or {}
-        for name, oldAmount in pairs(earned) do
-            local current = powerups[name] or 0
-            if current > oldAmount then
-                earned[name] = current
-            end
-            if labels[name] then
-                labels[name].Text = name .. " : x" .. earned[name]
-            end
-        end
+
         for name, amount in pairs(powerups) do
-            if not earned[name] and name ~= "Ringmaster Key" and name ~= "Neon Spin Ticket" and not name:find("Box") then
-                earned[name] = amount
-                labels[name] = createLabel(name)
-                labels[name].Text = name .. " : x" .. amount
+            if name ~= "Ringmaster Key" and name ~= "Neon Spin Ticket" and not name:find("Box") then
+                local old = earned[name] or 0
+                local delta = amount - old
+                if delta > 0 then
+                    earned[name] = amount
+                    if not labels[name] then
+                        labels[name] = createLabel(name)
+                    end
+                    labels[name].Text = name .. " : x" .. amount
+                end
             end
         end
     end)
 
-    -- ================= AUTOMATION LOOP =================
+    -- ================== AUTOMATION LOOP ==================
     while true do
         local powerups = data().Powerups or {}
 
-        -- event boxes (excluding normal Mystery Box)
+        -- Event boxes (exclude normal Mystery Box)
         local boxes = {}
         for name, amount in pairs(powerups) do
             if amount > 0 and name:find("Box") and name ~= "Mystery Box" then
@@ -126,7 +115,7 @@ task.spawn(function()
             end
         end
 
-        -- spin tickets
+        -- Neon Spin Tickets
         local tickets = powerups["Neon Spin Ticket"] or 0
         while tickets > 0 do
             Remote:InvokeServer("NeonWheelSpin")
@@ -140,7 +129,7 @@ task.spawn(function()
             tickets = now
         end
 
-        -- ringmaster keys
+        -- Ringmaster Keys
         local keys = powerups["Ringmaster Key"] or 0
         while keys > 0 do
             Remote:FireServer("UnlockEventChest", "Circus Chest", false)
@@ -152,7 +141,7 @@ task.spawn(function()
             keys = now
         end
 
-        -- open boxes + claim
+        -- Event Boxes
         for _, box in ipairs(boxes) do
             while true do
                 local before = data().Powerups[box] or 0
@@ -169,7 +158,7 @@ task.spawn(function()
             end
         end
 
-        -- check Christmas Present if no other boxes
+        -- Christmas Present if no other boxes
         local cpAmount = powerups["Christmas Present"] or 0
         if #boxes == 0 and cpAmount > 0 then
             while cpAmount > 0 do
