@@ -1,77 +1,123 @@
--- TS
-local args = {
-    "SetSetting",
-    "Debug",
-    false
-}
-game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Framework"):WaitForChild("Network"):WaitForChild("Remote"):WaitForChild("RemoteEvent"):FireServer(unpack(args))
+task.spawn(function()
+    repeat task.wait() until game:IsLoaded()
 
--- Toggle for the whole script
-getgenv().running = true
-getgenv().waitTime = 2
+    getgenv().waitTime = 2.5
+    getgenv().autoGift = true
 
-local RS = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
+    local Players = game:GetService("Players")
+    local RunService = game:GetService("RunService")
+    local LocalPlayer = Players.LocalPlayer
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local Remote = require(RS.Shared.Framework.Network.Remote)
-local RE = RS:WaitForChild("Shared")
-             :WaitForChild("Framework")
-             :WaitForChild("Network")
-             :WaitForChild("Remote")
-             :WaitForChild("RemoteEvent")
-local LocalData = require(RS.Client.Framework.Services.LocalData)
+    local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
+    local PhysicalItem = require(ReplicatedStorage.Client.Effects.PhysicalItem)
+    local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
 
-local pots = {
-    {"UsePotion", "Speed", 7, 10},
-    {"UsePotion", "Lucky", 7, 10},
-    {"UsePotion", "Mythic", 7, 10},
-    {"UsePotion", "Egg Elixir", 1, 10},    
-    {"UsePotion", "Infinity Elixir", 1, 10},       
-    {"UsePotion", "Festive Elixir", 4, 10},
-    {"UsePotion", "Festive Infinity Elixir", 1, 10},
-    {"UsePotion", "Ultra Infinity Elixir", 1,10},
-}
+    local function data()
+        return LocalData:Get()
+    end
 
-local function data()
-    return LocalData:Get()
-end
-
-RunService:BindToRenderStep("AutoFarmTask", Enum.RenderPriority.First.Value, function()
-    if not getgenv().running then return end
-
-    local powerups = data().Powerups or {}
-
-    -- AUTO TICKETS
-    for name, amount in pairs(powerups) do
-        if amount > 0 and name:find("Ticket") then
-            local before = amount
-            local remoteName = name:gsub(" Ticket", "").."WheelSpin"
+    -- Claim Gift Hook
+    getgenv().oldGift = getgenv().oldGift or PhysicalItem.Gift
+    PhysicalItem.Gift = function(giftId, giftType, giftPosition)
+        if not getgenv().autoGift then
+            return getgenv().oldGift(giftId, giftType, giftPosition)
+        end
+        task.spawn(function()
             pcall(function()
-                Remote:InvokeServer(remoteName)
+                Remote:FireServer("ClaimGift", giftId)
+            end)
+        end)
+        return nil
+    end
+
+    getgenv().popUpConnection = getgenv().popUpConnection or nil
+    local genericFolder = workspace.Rendered:FindFirstChild("Generic")
+    if genericFolder and not getgenv().popUpConnection then
+        getgenv().popUpConnection = genericFolder.ChildAdded:Connect(function(item)
+            if item:IsA("Part") and #item.Name == 36 then
+                item:Destroy()
+            end
+        end)
+    end
+
+    Remote:FireServer("SetSetting", "Item Notifications", false)
+
+    while true do
+        local powerups = data().Powerups or {}
+
+        -- Tickets (dynamic)
+        for name, amount in pairs(powerups) do
+            if amount > 0 and name:find("Ticket") then
+                local before = amount
+                local remoteName = name:gsub(" Ticket", "").."WheelSpin"
+                pcall(function()
+                    Remote:InvokeServer(remoteName)
+                    task.wait(1)
+                    Remote:FireServer("ClaimNeonWheelSpinQueue")
+                end)
                 task.wait(1)
-                Remote:FireServer("ClaimNeonWheelSpinQueue")
-            end)
-            task.wait(getgenv().waitTime)
+                local after = (data().Powerups[name] or 0)
+                if after < before then
+                    print("Spun Wheel [", name, "] [", before, "→", after, "]")
+                end
+            end
         end
-    end
 
-    -- AUTO KEYS
-    for name, amount in pairs(powerups) do
-        if amount > 0 and name:find("Key") then
-            pcall(function()
-                Remote:FireServer("UnlockEventChest", name:gsub(" Key", "") .. " Chest", false)
-            end)
-            task.wait(getgenv().waitTime)
+        -- Keys (dynamic)
+        for name, amount in pairs(powerups) do
+            if amount > 0 and name:find("Key") then
+                local before = amount
+                pcall(function()
+                    Remote:FireServer("UnlockEventChest", name:gsub(" Key", "").." Chest", false)
+                end)
+                task.wait(1)
+                local after = (data().Powerups[name] or 0)
+                if after < before then
+                    print("Opened Chest [", name, "] [", before, "→", after, "]")
+                end
+            end
         end
-    end
 
-    -- AUTO POTIONS
-    local iterations = 60
-    for _ = 1, iterations do
-        for _, args in ipairs(pots) do
-            pcall(function()
-                RE:FireServer(unpack(args))
-            end)
+        -- Event Boxes (exclude normal Mystery Box)
+        local boxes = {}
+        for name, amount in pairs(powerups) do
+            if amount > 0 and name:find("Box") and name ~= "Mystery Box" then
+                table.insert(boxes, name)
+            end
         end
+
+        for _, box in ipairs(boxes) do
+            while true do
+                local before = data().Powerups[box] or 0
+                if before <= 0 then break end
+                local use = math.min(before, 50)
+                Remote:FireServer("UseGift", box, use)
+                task.wait(getgenv().waitTime)
+                local after = data().Powerups[box] or 0
+                if after < before then
+                    print("Opened Event Box [", box, "] [", before, "→", after, "]")
+                else
+                    break
+                end
+            end
+        end
+
+        -- Christmas Present fallback
+        local cpAmount = powerups["Christmas Present"] or 0
+        if #boxes == 0 and cpAmount > 0 then
+            while cpAmount > 0 do
+                local use = math.min(cpAmount, 50)
+                Remote:FireServer("UseGift", "Christmas Present", use)
+                task.wait(getgenv().waitTime)
+                local after = data().Powerups["Christmas Present"] or 0
+                if after < cpAmount then
+                    print("Opened Event Box [Christmas Present] [", cpAmount, "→", after, "]")
+                end
+                cpAmount = after
+            end
+        end
+
+        task.wait(60)
     end
 end)
