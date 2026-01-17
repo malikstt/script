@@ -1,53 +1,97 @@
 task.spawn(function()
     repeat task.wait() until game:IsLoaded()
 
+    getgenv().waitTime = 2.5
+    getgenv().autoGift = true
+
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
+    local PhysicalItem = require(ReplicatedStorage.Client.Effects.PhysicalItem)
     local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
 
     local function data()
         return LocalData:Get()
     end
 
+    -- claim gifts hook
+    getgenv().oldGift = getgenv().oldGift or PhysicalItem.Gift
+    PhysicalItem.Gift = function(giftId, giftType, giftPosition)
+        if not getgenv().autoGift then
+            return getgenv().oldGift(giftId, giftType, giftPosition)
+        end
+        task.spawn(function()
+            pcall(function()
+                Remote:FireServer("ClaimGift", giftId)
+            end)
+        end)
+        return nil
+    end
+
+    -- remove popup junk
+    getgenv().popUpConnection = getgenv().popUpConnection or nil
+    local genericFolder = workspace.Rendered:FindFirstChild("Generic")
+    if genericFolder and not getgenv().popUpConnection then
+        getgenv().popUpConnection = genericFolder.ChildAdded:Connect(function(item)
+            if item:IsA("Part") and #item.Name == 36 then
+                item:Destroy()
+            end
+        end)
+    end
+
+    Remote:FireServer("SetSetting", "Item Notifications", false)
+
     while true do
         local powerups = data().Powerups or {}
 
+        -- boxes (event only, no normal Mystery Box)
         local boxes = {}
         for name, amount in pairs(powerups) do
             if amount > 0 and name:find("Box") and name ~= "Mystery Box" then
-                print("Found box:", name, amount)
                 table.insert(boxes, name)
             end
         end
 
+        -- spin tickets
         local tickets = powerups["Neon Spin Ticket"] or 0
+        while tickets > 0 do
+            Remote:InvokeServer("NeonWheelSpin")
+            task.wait(1)
+            Remote:FireServer("ClaimNeonWheelSpinQueue")
+            task.wait(1)
+            local now = (data().Powerups["Neon Spin Ticket"] or 0)
+            if now < tickets then
+                print("Spun Wheel [", tickets, "→", now, "]")
+            end
+            tickets = now
+        end
+
+        -- ringmaster keys
         local keys = powerups["Ringmaster Key"] or 0
-
-        print("Found Neon Spin Tickets:", tickets)
-        print("Found Ringmaster Keys:", keys)
-
-        if tickets > 0 then
-            while (data().Powerups["Neon Spin Ticket"] or 0) > 0 do
-                Remote:InvokeServer("NeonWheelSpin")
-                task.wait(1)
-                Remote:FireServer("ClaimNeonWheelSpinQueue")
-                task.wait(1)
+        while keys > 0 do
+            Remote:FireServer("UnlockEventChest", "Circus Chest", false)
+            task.wait(1)
+            local now = (data().Powerups["Ringmaster Key"] or 0)
+            if now < keys then
+                print("Opening Chest [", keys, "→", now, " Keys]")
             end
+            keys = now
+        end
 
-        elseif keys > 0 then
-            while (data().Powerups["Ringmaster Key"] or 0) > 0 do
-                print("Opening Chest [x" .. data().Powerups["Ringmaster Key"] .. " Keys]")
-                Remote:FireServer("UnlockEventChest", "Circus Chest", false)
-                task.wait(1)
-            end
+        -- open boxes + claim (print only on successful decrease)
+        for _, box in ipairs(boxes) do
+            while true do
+                local before = data().Powerups[box] or 0
+                if before <= 0 then break end
 
-        elseif #boxes > 0 then
-            for _, box in ipairs(boxes) do
-                while (data().Powerups[box] or 0) > 0 do
-                    local amt = math.min(data().Powerups[box], 50)
-                    print("Opening Box:", box, "x" .. amt)
-                    Remote:FireServer("UseGift", box, amt)
-                    task.wait(1)
+                local use = math.min(before, 50)
+                Remote:FireServer("UseGift", box, use)
+                task.wait(getgenv().waitTime)
+
+                local after = data().Powerups[box] or 0
+                if after < before then
+                    print("Opening Event Box [", box, "] [", before, "→", after, "]")
+                else
+                    break
                 end
             end
         end
