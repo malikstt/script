@@ -1,141 +1,90 @@
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+local LocalData = require(RS.Client.Framework.Services.LocalData)
+local RemoteEvent = RS.Shared.Framework.Network.Remote.RemoteEvent
+local PetsModule = require(RS.Shared.Data.Pets)
 
-local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
-local RebirthMachineUtil = require(ReplicatedStorage.Shared.Utils.RebirthMachineUtil)
-local PetsData = require(ReplicatedStorage.Shared.Data.Pets)
-local TimeUtil = require(ReplicatedStorage.Shared.Framework.Utilities.Math.Time)
-local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
-
-local LocalPlayer = Players.LocalPlayer
-
-local AUTO_REBIRTH_ENABLED = true
-local CHECK_INTERVAL = 5
-
-local ALLOWED_SECRET_NAMES = {
-    ["Aero Heart"] = true,
-    ["Andromeda"] = true,
-    ["Archangel"] = true,
-    ["Big Flakey"] = true,
-    ["Big Rigby"] = true,
-    ["Borealis Elk"] = true,
-    ["Box Of Secrets"] = true,
-    ["Butter Dawg"] = true,
-    ["Christmas Tree"] = true,
-    ["Chronos"] = true,
-    ["Crystal Snowman"] = true,
-    ["Darkest Omen"] = true,
-    ["Drippy Slice"] = true,
-    ["Eternal Burger"] = true,
-    ["Festive Deity"] = true,
-    ["Festive Snow Jar"] = true,
-    ["Firecracker"] = true,
-    ["Flake Spirit"] = true,
-    ["Frosted Bond"] = true,
-    ["Frosted Dogcat"] = true,
-    ["Frosted Luminosity"] = true,
-    ["Frosty One"] = true,
-    ["FutureWebsiteOwner Giftbox"] = true,
-    ["Giant Doof"] = true,
-    ["Giant Emerald Golem"] = true,
-    ["Giant NULLvoid"] = true,
-    ["Gingerbread Shard"] = true,
-    ["Giftbox King Doggy"] = true,
-    ["Gummy Overlord"] = true,
-    ["Holy Bell"] = true,
-    ["Holy Candle"] = true,
-    ["Hope Candle"] = true,
-    ["Hot Dog Doggy"] = true,
-    ["Hyperwave Kitty"] = true,
-    ["Iridescent Catcher"] = true,
-    ["Joy Candle"] = true,
-    ["King Doggy"] = true,
-    ["Kitty Tophat"] = true,
-    ["Love Candle"] = true,
-    ["Maid Nert Plushie"] = true,
-    ["Man Face Dogcat"] = true,
-    ["Man Face Lord"] = true,
-    ["Mech Robot"] = true,
-    ["Nert Giftbox"] = true,
-    ["Nert Plushie"] = true,
-    ["New Year's Overlord"] = true,
-    ["Northern Star"] = true,
-    ["ObscureEntity Giftbox"] = true,
-    ["ObscureEntity Plushie"] = true,
-    ["Peace Candle"] = true,
-    ["Peppermint Heart"] = true,
-    ["Peppermint Shard"] = true,
-    ["Prototype DR4GON"] = true,
-    ["Quamatic Giftbox"] = true,
-    ["Quamatic Plushie"] = true,
-    ["Radiant Soul"] = true,
-    ["Rumblecon Halftime Show"] = true,
-    ["Rumblecon Trophy"] = true,
-    ["Santa Nert Plushie"] = true,
-    ["Santander Hat"] = true,
-    ["Sircfenner Giftbox"] = true,
-    ["Sircfenner Plushie"] = true,
-    ["Snowglobe Doggy"] = true,
-    ["Snowstorm"] = true,
-    ["Snowverlord"] = true,
-    ["Solitaire"] = true,
-    ["Sweet Heart"] = true,
-    ["Sylently Giftbox"] = true,
-    ["Sylently Plushie"] = true,
-    ["The Golden Ticket"] = true,
-    ["Velvet Wolflord"] = true,
-    ["Watermelon Round"] = true,
-    ["Clown Rigby"] = true,
-    ["Clown Round"] = true,
-    ["Tophat Spitty"] = true,
-    ["Dark Omen"] = true,
-    ["Encore"] = true,
-    ["Giant Bongo Kitty"] = true
-}
+local TARGET_ENCHANT = "secret-hunter"
+local enchanted = {}
 
 task.spawn(function()
-    while AUTO_REBIRTH_ENABLED do
-        task.wait(CHECK_INTERVAL)
-
-        local playerData = LocalData:Get()
-        if not playerData or not playerData.Pets or not playerData.Teams or not playerData.TeamEquipped then continue end
-        if TimeUtil.now() < playerData.NextRebirthMachineUse then continue end
-
-        local equippedPetIds = {}
-        local activeTeamIndex = playerData.TeamEquipped
-        if activeTeamIndex and playerData.Teams[activeTeamIndex] and playerData.Teams[activeTeamIndex].Pets then
-            for _, petId in ipairs(playerData.Teams[activeTeamIndex].Pets) do
-                equippedPetIds[petId] = true
-            end
-        end
-
-        local petsByVariant = {}
-        for _, petData in ipairs(playerData.Pets) do
-            if equippedPetIds[petData.Id] or petData.Locked then continue end
-            local petInfo = PetsData[petData.Name]
-            if not petInfo then continue end
-            if petInfo.Rarity ~= "Secret" or petInfo.Infinity then continue end
-            if not ALLOWED_SECRET_NAMES[petData.Name] then continue end
-            local variant = RebirthMachineUtil:GetPetVariant(petData)
-            petsByVariant[variant] = petsByVariant[variant] or {}
-            table.insert(petsByVariant[variant], petData.Id)
-        end
-
-        local petIdsToSend = nil
-        local requiredAmount = RebirthMachineUtil.NUM_SECRETS_REQUIRED
-        for _, idList in pairs(petsByVariant) do
-            if #idList >= requiredAmount then
-                petIdsToSend = {}
-                for i = 1, requiredAmount do
-                    petIdsToSend[i] = idList[i]
+    while true do
+        local data = LocalData:Get()
+        if data and data.Pets and data.Teams and data.TeamEquipped then
+            local equipped = {}
+            local team = data.Teams[data.TeamEquipped]
+            if team and team.Pets then
+                for _, id in ipairs(team.Pets) do
+                    equipped[id] = true
                 end
-                break
+            end
+
+            local secrets = {}
+            for _, pet in pairs(data.Pets) do
+                local info = PetsModule[pet.Name]
+                if info and info.Rarity == "Secret" then
+                    table.insert(secrets, pet.Id)
+                end
+            end
+
+            local c = 0
+            for _, id in ipairs(secrets) do
+                if c >= 13 then break end
+                if not equipped[id] then
+                    RemoteEvent:FireServer("EquipPet", id)
+                    task.wait(0.15)
+                end
+                c += 1
+            end
+
+            for id in pairs(equipped) do
+                local keep = false
+                for i = 1, math.min(13, #secrets) do
+                    if id == secrets[i] then
+                        keep = true
+                        break
+                    end
+                end
+                if not keep then
+                    RemoteEvent:FireServer("UnequipPet", id)
+                    task.wait(0.15)
+                end
             end
         end
+        task.wait(0.3)
+    end
+end)
 
-        if petIdsToSend then
-            Remote:InvokeServer("UseRebirthMachine", petIdsToSend)
-            task.wait(2)
+task.spawn(function()
+    while true do
+        local data = LocalData:Get()
+        if data and data.Teams and data.TeamEquipped then
+            local team = data.Teams[data.TeamEquipped]
+            if team and team.Pets then
+                for _, petId in ipairs(team.Pets) do
+                    if not enchanted[petId] then
+                        local pet
+                        for _, p in ipairs(data.Pets or {}) do
+                            if p.Id == petId then pet = p break end
+                        end
+                        if pet then
+                            local has = false
+                            for _, e in ipairs(pet.Enchants or {}) do
+                                if e.Id == TARGET_ENCHANT then
+                                    has = true
+                                    break
+                                end
+                            end
+                            if has then
+                                enchanted[petId] = true
+                            else
+                                RemoteEvent:FireServer("UseShadowCrystal", petId)
+                            end
+                        end
+                    end
+                    task.wait(0.1)
+                end
+            end
         end
+        task.wait(0.1)
     end
 end)
