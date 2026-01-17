@@ -1,178 +1,77 @@
-task.spawn(function()
-    repeat task.wait() until game:IsLoaded()
+-- TS
+local args = {
+    "SetSetting",
+    "Debug",
+    false
+}
+game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Framework"):WaitForChild("Network"):WaitForChild("Remote"):WaitForChild("RemoteEvent"):FireServer(unpack(args))
 
-    getgenv().waitTime = 2.5
-    getgenv().autoGift = true
+-- Toggle for the whole script
+getgenv().running = true
+getgenv().waitTime = 2
 
-    -- SERVICES
-    local Players = game:GetService("Players")
-    local RunService = game:GetService("RunService")
-    local ReplicatedStorage = game:GetService("ReplicatedStorage")
-    local LocalPlayer = Players.LocalPlayer
+local RS = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
-    -- MODULES
-    local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
-    local PhysicalItem = require(ReplicatedStorage.Client.Effects.PhysicalItem)
-    local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+local Remote = require(RS.Shared.Framework.Network.Remote)
+local RE = RS:WaitForChild("Shared")
+             :WaitForChild("Framework")
+             :WaitForChild("Network")
+             :WaitForChild("Remote")
+             :WaitForChild("RemoteEvent")
+local LocalData = require(RS.Client.Framework.Services.LocalData)
 
-    local function data()
-        return LocalData:Get()
-    end
+local pots = {
+    {"UsePotion", "Speed", 7, 10},
+    {"UsePotion", "Lucky", 7, 10},
+    {"UsePotion", "Mythic", 7, 10},
+    {"UsePotion", "Egg Elixir", 1, 10},    
+    {"UsePotion", "Infinity Elixir", 1, 10},       
+    {"UsePotion", "Festive Elixir", 4, 10},
+    {"UsePotion", "Festive Infinity Elixir", 1, 10},
+    {"UsePotion", "Ultra Infinity Elixir", 1,10},
+}
 
-    -- ================== AUTO CLAIM GIFTS ==================
-    getgenv().oldGift = getgenv().oldGift or PhysicalItem.Gift
-    PhysicalItem.Gift = function(giftId, giftType, giftPosition)
-        if not getgenv().autoGift then
-            return getgenv().oldGift(giftId, giftType, giftPosition)
-        end
-        task.spawn(function()
+local function data()
+    return LocalData:Get()
+end
+
+RunService:BindToRenderStep("AutoFarmTask", Enum.RenderPriority.First.Value, function()
+    if not getgenv().running then return end
+
+    local powerups = data().Powerups or {}
+
+    -- AUTO TICKETS
+    for name, amount in pairs(powerups) do
+        if amount > 0 and name:find("Ticket") then
+            local before = amount
+            local remoteName = name:gsub(" Ticket", "").."WheelSpin"
             pcall(function()
-                Remote:FireServer("ClaimGift", giftId)
+                Remote:InvokeServer(remoteName)
+                task.wait(1)
+                Remote:FireServer("ClaimNeonWheelSpinQueue")
             end)
-        end)
-        return nil
+            task.wait(getgenv().waitTime)
+        end
     end
 
-    -- ================== REMOVE POPUP JUNK ==================
-    local genericFolder = workspace.Rendered:FindFirstChild("Generic")
-    if genericFolder then
-        genericFolder.ChildAdded:Connect(function(item)
-            if item:IsA("Part") and #item.Name == 36 then
-                item:Destroy()
-            end
-        end)
+    -- AUTO KEYS
+    for name, amount in pairs(powerups) do
+        if amount > 0 and name:find("Key") then
+            pcall(function()
+                Remote:FireServer("UnlockEventChest", name:gsub(" Key", "") .. " Chest", false)
+            end)
+            task.wait(getgenv().waitTime)
+        end
     end
 
-    Remote:FireServer("SetSetting", "Item Notifications", false)
-    Remote:FireServer("SetSetting", "Debug", false)
-
-    -- ================== UI ==================
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "DeltaPowerupTracker"
-    screenGui.ResetOnSpawn = false
-    screenGui.IgnoreGuiInset = true
-    screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-
-    local frame = Instance.new("Frame")
-    frame.AnchorPoint = Vector2.new(0.5, 0)
-    frame.Position = UDim2.new(0.5, 0, 0, 20)
-    frame.Size = UDim2.new(0.4, 0, 0.6, 0)
-    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    frame.BackgroundTransparency = 0.1
-    frame.BorderSizePixel = 0
-    frame.Parent = screenGui
-
-    local uiList = Instance.new("UIListLayout")
-    uiList.Padding = UDim.new(0, 4)
-    uiList.Parent = frame
-
-    local labels = {}
-
-    local function createLabel(name)
-        local label = Instance.new("TextLabel")
-        label.Size = UDim2.new(1, -10, 0, 22)
-        label.BackgroundTransparency = 1
-        label.TextXAlignment = Enum.TextXAlignment.Left
-        label.Font = Enum.Font.SourceSansBold
-        label.TextSize = 18
-        label.TextColor3 = Color3.fromRGB(255, 255, 255)
-        label.Text = ""
-        label.Parent = frame
-        return label
-    end
-
-    -- ================== BASELINE SNAPSHOT ==================
-    local baseline = {}
-    for name, amount in pairs(data().Powerups or {}) do
-        baseline[name] = amount
-    end
-
-    -- ================== JOB FINISHED CHECK ==================
-    local function jobFinished()
-        local p = data().Powerups or {}
-        for name, amount in pairs(p) do
-            if amount > 0 then
-                if name:find("Box")
-                or name == "Ringmaster Key"
-                or name == "Neon Spin Ticket" then
-                    return false
-                end
-            end
+    -- AUTO POTIONS
+    local iterations = 60
+    for _ = 1, iterations do
+        for _, args in ipairs(pots) do
+            pcall(function()
+                RE:FireServer(unpack(args))
+            end)
         end
-        return true
-    end
-
-    -- ================== DELTA TRACKER ==================
-    RunService.Heartbeat:Connect(function()
-        local powerups = data().Powerups or {}
-
-        for name, amount in pairs(powerups) do
-            local start = baseline[name] or 0
-            local gained = amount - start
-
-            if gained > 0 then
-                if not labels[name] then
-                    labels[name] = createLabel(name)
-                end
-                labels[name].Text = "+" .. gained .. " " .. name
-            end
-        end
-
-        if jobFinished() then
-            frame.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
-        end
-    end)
-
-    -- ================== AUTOMATION LOOP ==================
-    while true do
-        local powerups = data().Powerups or {}
-
-        -- EVENT BOXES (EXCEPT NORMAL MYSTERY BOX)
-        local boxes = {}
-        for name, amount in pairs(powerups) do
-            if amount > 0 and name:find("Box") and name ~= "Mystery Box" then
-                table.insert(boxes, name)
-            end
-        end
-
-        -- NEON SPIN TICKETS
-        local tickets = powerups["Neon Spin Ticket"] or 0
-        while tickets > 0 do
-            Remote:InvokeServer("NeonWheelSpin")
-            task.wait(1)
-            Remote:FireServer("ClaimNeonWheelSpinQueue")
-            task.wait(1)
-            tickets = data().Powerups["Neon Spin Ticket"] or 0
-        end
-
-        -- RINGMASTER KEYS
-        local keys = powerups["Ringmaster Key"] or 0
-        while keys > 0 do
-            Remote:FireServer("UnlockEventChest", "Circus Chest", false)
-            task.wait(1)
-            keys = data().Powerups["Ringmaster Key"] or 0
-        end
-
-        -- EVENT BOXES
-        for _, box in ipairs(boxes) do
-            while true do
-                local before = data().Powerups[box] or 0
-                if before <= 0 then break end
-                Remote:FireServer("UseGift", box, math.min(before, 50))
-                task.wait(getgenv().waitTime)
-            end
-        end
-
-        -- CHRISTMAS PRESENT (ONLY IF NO OTHER BOXES)
-        if #boxes == 0 then
-            local cp = powerups["Christmas Present"] or 0
-            while cp > 0 do
-                Remote:FireServer("UseGift", "Christmas Present", math.min(cp, 50))
-                task.wait(getgenv().waitTime)
-                cp = data().Powerups["Christmas Present"] or 0
-            end
-        end
-
-        task.wait(60)
     end
 end)
