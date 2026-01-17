@@ -4,13 +4,13 @@ task.spawn(function()
     getgenv().waitTime = 2.5
     getgenv().autoGift = true
 
-    -- Services
+    -- SERVICES
     local Players = game:GetService("Players")
     local RunService = game:GetService("RunService")
-    local LocalPlayer = Players.LocalPlayer
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local LocalPlayer = Players.LocalPlayer
 
-    -- Modules
+    -- MODULES
     local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
     local PhysicalItem = require(ReplicatedStorage.Client.Effects.PhysicalItem)
     local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
@@ -19,7 +19,7 @@ task.spawn(function()
         return LocalData:Get()
     end
 
-    -- ================== Claim Gift Hook ==================
+    -- ================== AUTO CLAIM GIFTS ==================
     getgenv().oldGift = getgenv().oldGift or PhysicalItem.Gift
     PhysicalItem.Gift = function(giftId, giftType, giftPosition)
         if not getgenv().autoGift then
@@ -33,11 +33,10 @@ task.spawn(function()
         return nil
     end
 
-    -- ================== Remove Popup Junk ==================
-    getgenv().popUpConnection = getgenv().popUpConnection or nil
+    -- ================== REMOVE POPUP JUNK ==================
     local genericFolder = workspace.Rendered:FindFirstChild("Generic")
-    if genericFolder and not getgenv().popUpConnection then
-        getgenv().popUpConnection = genericFolder.ChildAdded:Connect(function(item)
+    if genericFolder then
+        genericFolder.ChildAdded:Connect(function(item)
             if item:IsA("Part") and #item.Name == 36 then
                 item:Destroy()
             end
@@ -46,60 +45,80 @@ task.spawn(function()
 
     Remote:FireServer("SetSetting", "Item Notifications", false)
 
-    -- ================== UI TRACKER ==================
-    local SCREEN_WIDTH, SCREEN_HEIGHT = 270, 200
-    local earned = {} -- [name] = amount
-    local labels = {} -- [name] = TextLabel
-
+    -- ================== UI ==================
     local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "NewPowerupTracker"
+    screenGui.Name = "DeltaPowerupTracker"
     screenGui.ResetOnSpawn = false
+    screenGui.IgnoreGuiInset = true
     screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, SCREEN_WIDTH, 0, SCREEN_HEIGHT)
-    frame.Position = UDim2.new(0, 0, 0, 0)
-    frame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    frame.AnchorPoint = Vector2.new(0.5, 0)
+    frame.Position = UDim2.new(0.5, 0, 0, 20)
+    frame.Size = UDim2.new(0.4, 0, 0.6, 0)
+    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    frame.BackgroundTransparency = 0.1
     frame.BorderSizePixel = 0
     frame.Parent = screenGui
 
     local uiList = Instance.new("UIListLayout")
+    uiList.Padding = UDim.new(0, 4)
     uiList.Parent = frame
-    uiList.FillDirection = Enum.FillDirection.Vertical
-    uiList.HorizontalAlignment = Enum.HorizontalAlignment.Left
-    uiList.VerticalAlignment = Enum.VerticalAlignment.Top
-    uiList.SortOrder = Enum.SortOrder.LayoutOrder
-    uiList.Padding = UDim.new(0, 2)
+
+    local labels = {}
 
     local function createLabel(name)
         local label = Instance.new("TextLabel")
-        label.Size = UDim2.new(1, -4, 0, 20)
+        label.Size = UDim2.new(1, -10, 0, 22)
         label.BackgroundTransparency = 1
-        label.TextColor3 = Color3.fromRGB(0, 0, 0)
         label.TextXAlignment = Enum.TextXAlignment.Left
-        label.Font = Enum.Font.SourceSans
-        label.TextSize = 16
-        label.Text = name .. " : x0"
+        label.Font = Enum.Font.SourceSansBold
+        label.TextSize = 18
+        label.TextColor3 = Color3.fromRGB(255, 255, 255)
+        label.Text = ""
         label.Parent = frame
         return label
     end
 
-    -- Update earned powerups every heartbeat
+    -- ================== BASELINE SNAPSHOT ==================
+    local baseline = {}
+    for name, amount in pairs(data().Powerups or {}) do
+        baseline[name] = amount
+    end
+
+    -- ================== JOB FINISHED CHECK ==================
+    local function jobFinished()
+        local p = data().Powerups or {}
+        for name, amount in pairs(p) do
+            if amount > 0 then
+                if name:find("Box")
+                or name == "Ringmaster Key"
+                or name == "Neon Spin Ticket" then
+                    return false
+                end
+            end
+        end
+        return true
+    end
+
+    -- ================== DELTA TRACKER ==================
     RunService.Heartbeat:Connect(function()
         local powerups = data().Powerups or {}
 
         for name, amount in pairs(powerups) do
-            if name ~= "Ringmaster Key" and name ~= "Neon Spin Ticket" and not name:find("Box") then
-                local old = earned[name] or 0
-                local delta = amount - old
-                if delta > 0 then
-                    earned[name] = amount
-                    if not labels[name] then
-                        labels[name] = createLabel(name)
-                    end
-                    labels[name].Text = name .. " : x" .. amount
+            local start = baseline[name] or 0
+            local gained = amount - start
+
+            if gained > 0 then
+                if not labels[name] then
+                    labels[name] = createLabel(name)
                 end
+                labels[name].Text = "+" .. gained .. " " .. name
             end
+        end
+
+        if jobFinished() then
+            frame.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
         end
     end)
 
@@ -107,7 +126,7 @@ task.spawn(function()
     while true do
         local powerups = data().Powerups or {}
 
-        -- Event boxes (exclude normal Mystery Box)
+        -- EVENT BOXES (EXCEPT NORMAL MYSTERY BOX)
         local boxes = {}
         for name, amount in pairs(powerups) do
             if amount > 0 and name:find("Box") and name ~= "Mystery Box" then
@@ -115,61 +134,41 @@ task.spawn(function()
             end
         end
 
-        -- Neon Spin Tickets
+        -- NEON SPIN TICKETS
         local tickets = powerups["Neon Spin Ticket"] or 0
         while tickets > 0 do
             Remote:InvokeServer("NeonWheelSpin")
             task.wait(1)
             Remote:FireServer("ClaimNeonWheelSpinQueue")
             task.wait(1)
-            local now = (data().Powerups["Neon Spin Ticket"] or 0)
-            if now < tickets then
-                print("Spun Wheel [", tickets, "→", now, "]")
-            end
-            tickets = now
+            tickets = data().Powerups["Neon Spin Ticket"] or 0
         end
 
-        -- Ringmaster Keys
+        -- RINGMASTER KEYS
         local keys = powerups["Ringmaster Key"] or 0
         while keys > 0 do
             Remote:FireServer("UnlockEventChest", "Circus Chest", false)
             task.wait(1)
-            local now = (data().Powerups["Ringmaster Key"] or 0)
-            if now < keys then
-                print("Opening Chest [", keys, "→", now, " Keys]")
-            end
-            keys = now
+            keys = data().Powerups["Ringmaster Key"] or 0
         end
 
-        -- Event Boxes
+        -- EVENT BOXES
         for _, box in ipairs(boxes) do
             while true do
                 local before = data().Powerups[box] or 0
                 if before <= 0 then break end
-                local use = math.min(before, 50)
-                Remote:FireServer("UseGift", box, use)
+                Remote:FireServer("UseGift", box, math.min(before, 50))
                 task.wait(getgenv().waitTime)
-                local after = data().Powerups[box] or 0
-                if after < before then
-                    print("Opening Event Box [", box, "] [", before, "→", after, "]")
-                else
-                    break
-                end
             end
         end
 
-        -- Christmas Present if no other boxes
-        local cpAmount = powerups["Christmas Present"] or 0
-        if #boxes == 0 and cpAmount > 0 then
-            while cpAmount > 0 do
-                local use = math.min(cpAmount, 50)
-                Remote:FireServer("UseGift", "Christmas Present", use)
+        -- CHRISTMAS PRESENT (ONLY IF NO OTHER BOXES)
+        if #boxes == 0 then
+            local cp = powerups["Christmas Present"] or 0
+            while cp > 0 do
+                Remote:FireServer("UseGift", "Christmas Present", math.min(cp, 50))
                 task.wait(getgenv().waitTime)
-                local now = (data().Powerups["Christmas Present"] or 0)
-                if now < cpAmount then
-                    print("Opening Event Box [Christmas Present] [", cpAmount, "→", now, "]")
-                end
-                cpAmount = now
+                cp = data().Powerups["Christmas Present"] or 0
             end
         end
 
