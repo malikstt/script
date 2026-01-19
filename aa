@@ -1,7 +1,6 @@
 --// SERVICES
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
 
@@ -13,102 +12,107 @@ local IndexUtil = require(ReplicatedStorage.Shared.Util.IndexUtil)
 
 local Remote = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
 
---// ALLOWED WORLDS
-local ALLOWED_WORLDS = {
-    ["Overworld"] = true,
-    ["Minigame Paradise"] = true
-}
+--// STATE
+local INDEX_MODE = "Normal" -- auto switches to Shiny
+local EggOrder = {}
+local EggPointer = 1
+
+--// BUILD STABLE EGG LIST
+for eggName in pairs(Eggs) do
+    table.insert(EggOrder, eggName)
+end
+table.sort(EggOrder)
 
 --// UI
 local gui = Instance.new("ScreenGui", player.PlayerGui)
 gui.Name = "IndexAutoCompleter"
 
 local frame = Instance.new("Frame", gui)
-frame.Size = UDim2.fromScale(0.36, 0.32)
-frame.Position = UDim2.fromScale(0.32, 0.04)
+frame.Size = UDim2.fromScale(0.38, 0.36)
+frame.Position = UDim2.fromScale(0.31, 0.04)
 frame.BackgroundColor3 = Color3.fromRGB(18,18,18)
 frame.BorderSizePixel = 0
 
-local function newLabel(y)
+local function label(y)
     local l = Instance.new("TextLabel", frame)
-    l.Size = UDim2.fromScale(1, 0.11)
+    l.Size = UDim2.fromScale(1, 0.1)
     l.Position = UDim2.fromScale(0, y)
     l.BackgroundTransparency = 1
     l.TextColor3 = Color3.new(1,1,1)
     l.TextScaled = true
     l.Font = Enum.Font.GothamBold
     l.TextXAlignment = Enum.TextXAlignment.Left
-    l.Text = ""
     return l
 end
 
-local title = newLabel(0)
-local progress = newLabel(0.12)
-local worldLabel = newLabel(0.24)
-local eggLabel = newLabel(0.36)
-local petLabel = newLabel(0.48)
-local statusLabel = newLabel(0.60)
+local title = label(0)
+local modeLabel = label(0.1)
+local eggLabel = label(0.2)
+local petLabel = label(0.3)
+local eggProgress = label(0.4)
+local globalProgress = label(0.5)
+local status = label(0.6)
 
-title.Text = "📘 Auto Index Completer"
+title.Text = "📘 Index Auto Completer"
 
 --// HELPERS
 local function discoveredKey(pet)
-    if getgenv().INDEX_MODE == "Shiny" then
-        return "Shiny "..pet
-    end
-    return pet
+    return INDEX_MODE == "Shiny" and ("Shiny "..pet) or pet
 end
 
 local function hasPet(data, pet)
     return data.Discovered[discoveredKey(pet)] ~= nil
 end
 
---// FIND NEXT TARGET
-local function findNextTarget()
-    local data = LocalData:Get()
-    if not data then return end
+--// TELEPORT TO EGG (YOUR METHOD)
+local function teleportToEgg(eggName)
+    local egg = workspace.Rendered.Generic:FindFirstChild(eggName)
+    if not egg then return false end
+    if not player.Character then return false end
 
-    for eggName, egg in pairs(Eggs) do
-        if egg.World and ALLOWED_WORLDS[egg.World] then
-            for _, pool in ipairs(egg.Pool) do
-                if pool.Item.Type == "Pet" then
-                    local petName = pool.Item.Name
-                    local info = Pets[petName]
+    local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+    local eggPart = egg.PrimaryPart or egg:FindFirstChildWhichIsA("BasePart")
 
-                    if info and info.Rarity ~= "Secret" then
-                        if not hasPet(data, petName) then
-                            return {
-                                World = egg.World,
-                                Egg = eggName,
-                                Pet = petName
-                            }
-                        end
-                    end
+    if hrp and eggPart then
+        hrp.CFrame = eggPart.CFrame
+        return true
+    end
+    return false
+end
+
+--// FIND MISSING PET
+local function findMissingPet(data, eggName)
+    local egg = Eggs[eggName]
+    if not egg then return end
+
+    for _, pool in ipairs(egg.Pool) do
+        if pool.Item.Type == "Pet" then
+            local pet = pool.Item.Name
+            local info = Pets[pet]
+
+            if info and info.Rarity ~= "Secret" then
+                if not hasPet(data, pet) then
+                    return pet
                 end
             end
         end
     end
 end
 
---// TELEPORT TO EGG
-local function teleportToEgg(eggName)
-    local eggModel = workspace.Rendered.Generic:FindFirstChild(eggName)
-    if not eggModel then return end
-
-    local char = player.Character
-    if not char then return end
-
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    local part = eggModel.PrimaryPart or eggModel:FindFirstChildWhichIsA("BasePart")
-
-    if hrp and part then
-        hrp.CFrame = part.CFrame * CFrame.new(0, 0, -4)
-    end
+--// EGG COMPLETED?
+local function eggCompleted(data, eggName)
+    local res = IndexUtil:GetEggCompleted(data, nil, INDEX_MODE, eggName)
+    return res.Found >= res.Total and res.Total > 0
 end
 
---// HATCH
-local function hatchEgg(eggName)
-    Remote:FireServer("HatchEgg", eggName, getgenv().HATCH_AMOUNT)
+--// ALL EGGS DONE?
+local function allEggsCompleted(data)
+    for _, egg in ipairs(EggOrder) do
+        if not eggCompleted(data, egg) then
+            return false
+        end
+    end
+    return true
 end
 
 --// MAIN LOOP
@@ -117,34 +121,43 @@ task.spawn(function()
         local data = LocalData:Get()
         if not data then task.wait(1) continue end
 
-        local target = findNextTarget()
+        -- Switch to shiny only after ALL normals done
+        if INDEX_MODE == "Normal" and allEggsCompleted(data) then
+            INDEX_MODE = "Shiny"
+            EggPointer = 1
+        end
 
-        if not target then
-            statusLabel.Text = "✅ Index completed!"
+        local eggName = EggOrder[EggPointer]
+        if not eggName then
+            status.Text = "✅ FULL INDEX COMPLETE"
             task.wait(5)
             continue
         end
 
-        local completed = IndexUtil:GetEggCompleted(
-            data,
-            nil,
-            getgenv().INDEX_MODE,
-            target.Egg
-        )
+        -- Skip completed eggs
+        if eggCompleted(data, eggName) then
+            EggPointer += 1
+            task.wait(0.1)
+            continue
+        end
 
-        progress.Text = ("📊 Progress: %d / %d"):format(
-            completed.Found,
-            completed.Total
-        )
+        local missingPet = findMissingPet(data, eggName)
+        local prog = IndexUtil:GetEggCompleted(data, nil, INDEX_MODE, eggName)
 
-        worldLabel.Text = "🌍 World: "..target.World
-        eggLabel.Text = "🥚 Egg: "..target.Egg
-        petLabel.Text = "🎯 Target: "..target.Pet
-        statusLabel.Text = "🚀 Teleporting & hatching..."
+        -- UI
+        modeLabel.Text = "📂 Mode: "..INDEX_MODE
+        eggLabel.Text = "🥚 Egg: "..eggName
+        petLabel.Text = "🎯 Target: "..(missingPet or "Unknown")
+        eggProgress.Text = ("📊 Egg Progress: %d / %d"):format(prog.Found, prog.Total)
+        globalProgress.Text = ("🗂 Egg %d / %d"):format(EggPointer, #EggOrder)
+        status.Text = "📍 Teleporting & hatching..."
 
-        teleportToEgg(target.Egg)
-        task.wait(0.4)
-        hatchEgg(target.Egg)
+        -- TELEPORT FIRST
+        teleportToEgg(eggName)
+        task.wait(0.25)
+
+        -- HATCH
+        Remote:FireServer("HatchEgg", eggName, getgenv().HATCH_AMOUNT)
 
         task.wait(getgenv().UPDATE_RATE)
     end
