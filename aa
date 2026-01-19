@@ -1,92 +1,151 @@
-task.wait(math.random(1,60))
-
-local httpRequest =
-    (syn and syn.request) or
-    (http and http.request) or
-    (http_request) or
-    (fluxus and fluxus.request) or
-    (request)
-
-if not httpRequest then return end
-
-local HttpService = game:GetService("HttpService")
+--// SERVICES
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
-local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
-local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
+local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
-local detectorName = player and player.Name or "Unknown"
 
-local WEBHOOKS = {
-    "https://discord.com/api/webhooks/1454576467529699539/kKALub_3NXpXKV6o1zElqkFzfAagWA1NdRt8H2XmLGdLv0DH9po0xoXi1HNQe3btuDvf",
-    "https://discord.com/api/webhooks/1454576475167789138/O6uK3FYmQxQmI86s7-xMap4DccNbKGwGweqjX9aE9khUjKMcnDiSOVHbYlUrrtgbln-4",
-    "https://discord.com/api/webhooks/1451636124324728873/x-6Yl_dwHXiaRPe6_6uvg7_z3Aj3bbi2dZs-aqftmQfmCo-Fyd-_thY7j0TePvkRfPlt"
+--// MODULES
+local Eggs = require(ReplicatedStorage.Shared.Data.Eggs)
+local Pets = require(ReplicatedStorage.Shared.Data.Pets)
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+local IndexUtil = require(ReplicatedStorage.Shared.Util.IndexUtil)
+
+local Remote = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
+
+--// ALLOWED WORLDS
+local ALLOWED_WORLDS = {
+    ["Overworld"] = true,
+    ["Minigame Paradise"] = true
 }
 
-local IGNORE = {
-    ["Frosted Luminosity"] = true,
-    ["Radiant Soul"] = true
-}
+--// UI
+local gui = Instance.new("ScreenGui", player.PlayerGui)
+gui.Name = "IndexAutoCompleter"
 
-local function petImageFromName(name)
-    local slug = name:lower():gsub("%s+", "_")
-    return "https://content.bgsi.io/" .. slug .. ".webp"
+local frame = Instance.new("Frame", gui)
+frame.Size = UDim2.fromScale(0.36, 0.32)
+frame.Position = UDim2.fromScale(0.32, 0.04)
+frame.BackgroundColor3 = Color3.fromRGB(18,18,18)
+frame.BorderSizePixel = 0
+
+local function newLabel(y)
+    local l = Instance.new("TextLabel", frame)
+    l.Size = UDim2.fromScale(1, 0.11)
+    l.Position = UDim2.fromScale(0, y)
+    l.BackgroundTransparency = 1
+    l.TextColor3 = Color3.new(1,1,1)
+    l.TextScaled = true
+    l.Font = Enum.Font.GothamBold
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Text = ""
+    return l
 end
 
-local data = LocalData:Get()
-if not data or not data.Pets then return end
+local title = newLabel(0)
+local progress = newLabel(0.12)
+local worldLabel = newLabel(0.24)
+local eggLabel = newLabel(0.36)
+local petLabel = newLabel(0.48)
+local statusLabel = newLabel(0.60)
 
-local detected = {}
-local thumbnail
+title.Text = "📘 Auto Index Completer"
 
-for _, pet in pairs(data.Pets) do
-    if pet.XL and not IGNORE[pet.Name] then
-        local info = PetsModule[pet.Name]
-        if info and info.Rarity == "Secret" then
-            local name = "XL " .. pet.Name
+--// HELPERS
+local function discoveredKey(pet)
+    if getgenv().INDEX_MODE == "Shiny" then
+        return "Shiny "..pet
+    end
+    return pet
+end
 
-            if pet.Shiny and pet.Mythic then
-                name = name .. " (Shiny Mythic)"
-            elseif pet.Shiny then
-                name = name .. " (Shiny)"
-            elseif pet.Mythic then
-                name = name .. " (Mythic)"
+local function hasPet(data, pet)
+    return data.Discovered[discoveredKey(pet)] ~= nil
+end
+
+--// FIND NEXT TARGET
+local function findNextTarget()
+    local data = LocalData:Get()
+    if not data then return end
+
+    for eggName, egg in pairs(Eggs) do
+        if egg.World and ALLOWED_WORLDS[egg.World] then
+            for _, pool in ipairs(egg.Pool) do
+                if pool.Item.Type == "Pet" then
+                    local petName = pool.Item.Name
+                    local info = Pets[petName]
+
+                    if info and info.Rarity ~= "Secret" then
+                        if not hasPet(data, petName) then
+                            return {
+                                World = egg.World,
+                                Egg = eggName,
+                                Pet = petName
+                            }
+                        end
+                    end
+                end
             end
-
-            table.insert(detected, name)
-            thumbnail = thumbnail or petImageFromName(pet.Name)
         end
     end
 end
 
-if #detected == 0 then return end
+--// TELEPORT TO EGG
+local function teleportToEgg(eggName)
+    local eggModel = workspace.Rendered.Generic:FindFirstChild(eggName)
+    if not eggModel then return end
 
-local payload = {
-    username = "BGSI Pet Detector",
-    embeds = {{
-        title = "XL Secret Detected!",
-        color = 15761628,
-        thumbnail = { url = thumbnail },
-        fields = {
-            {
-                name = "Pets",
-                value = table.concat(detected, "\n"),
-                inline = false
-            },
-            {
-                name = "Detected By",
-                value = detectorName,
-                inline = true
-            }
-        }
-    }}
-}
+    local char = player.Character
+    if not char then return end
 
-httpRequest({
-    Url = WEBHOOKS[math.random(#WEBHOOKS)],
-    Method = "POST",
-    Headers = { ["Content-Type"] = "application/json" },
-    Body = HttpService:JSONEncode(payload)
-})
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local part = eggModel.PrimaryPart or eggModel:FindFirstChildWhichIsA("BasePart")
+
+    if hrp and part then
+        hrp.CFrame = part.CFrame * CFrame.new(0, 0, -4)
+    end
+end
+
+--// HATCH
+local function hatchEgg(eggName)
+    Remote:FireServer("HatchEgg", eggName, getgenv().HATCH_AMOUNT)
+end
+
+--// MAIN LOOP
+task.spawn(function()
+    while true do
+        local data = LocalData:Get()
+        if not data then task.wait(1) continue end
+
+        local target = findNextTarget()
+
+        if not target then
+            statusLabel.Text = "✅ Index completed!"
+            task.wait(5)
+            continue
+        end
+
+        local completed = IndexUtil:GetEggCompleted(
+            data,
+            nil,
+            getgenv().INDEX_MODE,
+            target.Egg
+        )
+
+        progress.Text = ("📊 Progress: %d / %d"):format(
+            completed.Found,
+            completed.Total
+        )
+
+        worldLabel.Text = "🌍 World: "..target.World
+        eggLabel.Text = "🥚 Egg: "..target.Egg
+        petLabel.Text = "🎯 Target: "..target.Pet
+        statusLabel.Text = "🚀 Teleporting & hatching..."
+
+        teleportToEgg(target.Egg)
+        task.wait(0.4)
+        hatchEgg(target.Egg)
+
+        task.wait(getgenv().UPDATE_RATE)
+    end
+end)
