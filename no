@@ -1,76 +1,74 @@
-local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
-local RunService = game:GetService("RunService")
+local Network = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
 
-local lp = Players.LocalPlayer
-repeat task.wait() until lp.Character
-local char = lp.Character
-local hrp = char:WaitForChild("HumanoidRootPart")
+local DELETE_AMOUNTS = {
+    1000000,
+    100000,
+    10000,
+    1000,
+    100,
+    10,
+    1,
+}
 
-local plots = Workspace:WaitForChild("Plots")
+local KEEP_PETS = {
+    ["Nexus"] = true,
+    ["Serendipity"] = true,
+    ["Hyperwave Kitty"] = true,
+    ["Leviathan Tophat"] = true,
+    ["OG New Year's Champion"] = true,
+    ["New Year's Champion"] = true,
+    ["Symphonic Hieromphant"] = true,
+    ["Bubble Circus Show"] = true,
+    ["Gigantic Spitty"] = true,
+    ["King Spitty"] = true,
+    ["Painted Daze"] = true,
+}
 
-local platform = Instance.new("Part")
-platform.Anchored = true
-platform.Size = Vector3.new(50,5,50)
-platform.Transparency = 1
-platform.CanCollide = true
-platform.Parent = plots
-platform.CFrame = CFrame.new(0,50,0)
-hrp.CFrame = platform.CFrame + Vector3.new(0,5,0)
+local KEEP_XL_PETS = {
+    ["Nexus"] = true,
+    ["Hyperwave Kitty"] = true,
+}
 
-local function isRemote(x)
-	return x:IsA("RemoteEvent") or x:IsA("RemoteFunction")
+local function isSecretPet(pet)
+    local info = PetsModule[pet.Name]
+    return info and info.Rarity == "Secret"
 end
 
-local function nuke(container, keep)
-	for _,v in ipairs(container:GetChildren()) do
-		if not keep(v) then
-			pcall(function() v:Destroy() end)
-		end
-	end
+local function deleteAll(petId)
+    for _, amount in ipairs(DELETE_AMOUNTS) do
+        Network:FireServer("DeletePet", petId, amount, false)
+        task.wait(0.02)
+    end
 end
 
-nuke(Workspace,function(v)
-	if v == plots then return true end
-	if v == char then return true end
-	return false
-end)
+task.spawn(function()
+    while true do
+        local data = LocalData:Get()
+        if data and data.Pets then
+            for _, pet in pairs(data.Pets) do
+                if not pet.Id then continue end
 
-for _,d in ipairs(plots:GetDescendants()) do
-	if d:IsA("Texture") or d:IsA("Decal") or d:IsA("MeshPart") or d:IsA("SpecialMesh") or d:IsA("UnionOperation") then
-		pcall(function() d:Destroy() end)
-	end
-end
+                local isSecret = isSecretPet(pet)
 
-for _,s in ipairs({
-	game:GetService("Lighting"),
-	game:GetService("SoundService"),
-	game:GetService("Chat"),
-	game:GetService("Debris"),
-	game:GetService("TweenService"),
-	game:GetService("CollectionService"),
-	game:GetService("PathfindingService"),
-	game:GetService("PhysicsService")
-}) do
-	nuke(s,function() return false end)
-end
+                if not isSecret then
+                    deleteAll(pet.Id)
+                    continue
+                end
 
-for _,d in ipairs(ReplicatedStorage:GetDescendants()) do
-	if not (d:IsA("LocalScript") or isRemote(d)) then
-		pcall(function() d:Destroy() end)
-	end
-end
+                if KEEP_PETS[pet.Name] then
+                    continue
+                end
 
-for _,v in ipairs(char:GetDescendants()) do
-	if v:IsA("BasePart") then
-		v.Anchored = true
-		v.CanCollide = false
-	end
-end
+                if pet.XL and KEEP_XL_PETS[pet.Name] then
+                    continue
+                end
 
-pcall(function()
-	if sethiddenproperty then
-		sethiddenproperty(RunService,"Is3dRenderingEnabled",false)
-	end
+                deleteAll(pet.Id)
+            end
+        end
+        task.wait(5)
+    end
 end)
