@@ -20,14 +20,17 @@ local Replication = require(ReplicatedStorage.Game.Replication)
 local player = Players.LocalPlayer
 local attemptedJobs = {}
 local inTrade = false
+local didAddThisTrade = false
 
 -- TRADE STATE DETECTION
 Network:BindEvents({
 	StartTrade = function()
 		inTrade = true
+		didAddThisTrade = false
 	end,
 	CloseTrade = function()
 		inTrade = false
+		didAddThisTrade = false
 	end,
 })
 
@@ -158,13 +161,14 @@ local function JoinRandomJob()
 	end
 end
 
--- TRADE LOOP: spam every 1s until trade starts, then stop spamming
+-- TRADE LOOP:
+-- 1) spam SendTrade every 1s until StartTrade fires
+-- 2) once inTrade = true, add pets once, ready up once
+-- 3) wait until CloseTrade then resume
 local function TradeWithTarget()
 	WaitForPets(20)
 
 	while true do
-		print("In trade =", inTrade)
-
 		if not HasPetsToTrade() then
 			player:Kick("No more pets to trade")
 			return
@@ -174,11 +178,29 @@ local function TradeWithTarget()
 
 		local target = FindTargetPlayer()
 		if target then
+			-- spam requests until trade starts
 			if not inTrade then
 				Network:FireServer("SendTrade", target)
 			end
 
-			-- once trade starts (StartTrade event), wait until it closes to resume spamming
+			-- once trade starts, add pets ONCE per trade
+			if inTrade and not didAddThisTrade then
+				didAddThisTrade = true
+
+				-- small delay helps if trade session needs a moment to be ready
+				task.wait(0.3)
+
+				local petIDs = GetPetIDsByName()
+				for _, petId in ipairs(petIDs) do
+					Network:InvokeServer("AddTradeItem", { "Pet", petId })
+					task.wait(0.05)
+				end
+
+				-- ready up after adding
+				Network:FireServer("ReadyUp", false, true)
+			end
+
+			-- wait until trade closes, then resume spamming
 			if inTrade then
 				WaitForCondition(function()
 					return not inTrade
