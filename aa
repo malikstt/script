@@ -1,164 +1,93 @@
---// SERVICES
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CoreGui = game:GetService("CoreGui")
 
-local player = Players.LocalPlayer
+local Network = require(ReplicatedStorage.Modules.Network)
 
---// MODULES
-local Eggs = require(ReplicatedStorage.Shared.Data.Eggs)
-local Pets = require(ReplicatedStorage.Shared.Data.Pets)
-local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
-local IndexUtil = require(ReplicatedStorage.Shared.Utils.IndexUtil)
-
-local Remote = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
-
---// STATE
-local INDEX_MODE = "Normal" -- auto switches to Shiny
-local EggOrder = {}
-local EggPointer = 1
-
---// BUILD STABLE EGG LIST
-for eggName in pairs(Eggs) do
-    table.insert(EggOrder, eggName)
-end
-table.sort(EggOrder)
-
---// UI
-local gui = Instance.new("ScreenGui", player.PlayerGui)
-gui.Name = "IndexAutoCompleter"
-
-local frame = Instance.new("Frame", gui)
-frame.Size = UDim2.fromScale(0.38, 0.36)
-frame.Position = UDim2.fromScale(0.31, 0.04)
-frame.BackgroundColor3 = Color3.fromRGB(18,18,18)
-frame.BorderSizePixel = 0
-
-local function label(y)
-    local l = Instance.new("TextLabel", frame)
-    l.Size = UDim2.fromScale(1, 0.1)
-    l.Position = UDim2.fromScale(0, y)
-    l.BackgroundTransparency = 1
-    l.TextColor3 = Color3.new(1,1,1)
-    l.TextScaled = true
-    l.Font = Enum.Font.GothamBold
-    l.TextXAlignment = Enum.TextXAlignment.Left
-    return l
-end
-
-local title = label(0)
-local modeLabel = label(0.1)
-local eggLabel = label(0.2)
-local petLabel = label(0.3)
-local eggProgress = label(0.4)
-local globalProgress = label(0.5)
-local status = label(0.6)
-
-title.Text = "📘 Index Auto Completer"
-
---// HELPERS
-local function discoveredKey(pet)
-    return INDEX_MODE == "Shiny" and ("Shiny "..pet) or pet
-end
-
-local function hasPet(data, pet)
-    return data.Discovered[discoveredKey(pet)] ~= nil
-end
-
---// TELEPORT TO EGG (YOUR METHOD)
-local function teleportToEgg(eggName)
-    local egg = workspace.Rendered.Generic:FindFirstChild(eggName)
-    if not egg then return false end
-    if not player.Character then return false end
-
-    local hrp = player.Character:FindFirstChild("HumanoidRootPart")
-    local eggPart = egg.PrimaryPart or egg:FindFirstChildWhichIsA("BasePart")
-
-    if hrp and eggPart then
-        hrp.CFrame = eggPart.CFrame
-        return true
-    end
-    return false
-end
-
---// FIND MISSING PET
-local function findMissingPet(data, eggName)
-    local egg = Eggs[eggName]
-    if not egg then return end
-
-    for _, pool in ipairs(egg.Pool) do
-        if pool.Item.Type == "Pet" then
-            local pet = pool.Item.Name
-            local info = Pets[pet]
-
-            if info and info.Rarity ~= "Secret" then
-                if not hasPet(data, pet) then
-                    return pet
-                end
-            end
-        end
-    end
-end
-
---// EGG COMPLETED?
-local function eggCompleted(data, eggName)
-    local res = IndexUtil:GetEggCompleted(data, nil, INDEX_MODE, eggName)
-    return res.Found >= res.Total and res.Total > 0
-end
-
---// ALL EGGS DONE?
-local function allEggsCompleted(data)
-    for _, egg in ipairs(EggOrder) do
-        if not eggCompleted(data, egg) then
-            return false
-        end
-    end
-    return true
-end
-
---// MAIN LOOP
-task.spawn(function()
-    while true do
-        local data = LocalData:Get()
-        if not data then task.wait(1) continue end
-
-        -- Switch to shiny only after ALL normals done
-        if INDEX_MODE == "Normal" and allEggsCompleted(data) then
-            INDEX_MODE = "Shiny"
-            EggPointer = 1
-        end
-
-        local eggName = EggOrder[EggPointer]
-        if not eggName then
-            status.Text = "✅ FULL INDEX COMPLETE"
-            task.wait(5)
-            continue
-        end
-
-        -- Skip completed eggs
-        if eggCompleted(data, eggName) then
-            EggPointer += 1
-            task.wait(0.1)
-            continue
-        end
-
-        local missingPet = findMissingPet(data, eggName)
-        local prog = IndexUtil:GetEggCompleted(data, nil, INDEX_MODE, eggName)
-
-        -- UI
-        modeLabel.Text = "📂 Mode: "..INDEX_MODE
-        eggLabel.Text = "🥚 Egg: "..eggName
-        petLabel.Text = "🎯 Target: "..(missingPet or "Unknown")
-        eggProgress.Text = ("📊 Egg Progress: %d / %d"):format(prog.Found, prog.Total)
-        globalProgress.Text = ("🗂 Egg %d / %d"):format(EggPointer, #EggOrder)
-        status.Text = "📍 Teleporting & hatching..."
-
-        -- TELEPORT FIRST
-        teleportToEgg(eggName)
-        task.wait(0.25)
-
-        -- HATCH
-        Remote:FireServer("HatchEgg", eggName, getgenv().HATCH_AMOUNT)
-
-        task.wait(getgenv().UPDATE_RATE)
-    end
+-- Anti-idle
+pcall(function()
+	for _, x in pairs(getconnections(Players.LocalPlayer.Idled)) do
+		x:Disable()
+	end
 end)
+
+-- UI: Copy JobId button
+local function makeCopyJobIdUI()
+	-- prevent duplicates
+	pcall(function()
+		local old = CoreGui:FindFirstChild("CopyJobIdUI")
+		if old then old:Destroy() end
+	end)
+
+	local sg = Instance.new("ScreenGui")
+	sg.Name = "CopyJobIdUI"
+	sg.ResetOnSpawn = false
+	sg.Parent = CoreGui
+
+	local btn = Instance.new("TextButton")
+	btn.Name = "CopyJobId"
+	btn.Size = UDim2.new(0, 170, 0, 38)
+	btn.Position = UDim2.new(0, 12, 0.5, -19)
+	btn.Text = "Copy JobId"
+	btn.BackgroundTransparency = 0.15
+	btn.Parent = sg
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 10)
+	corner.Parent = btn
+
+	btn.MouseButton1Click:Connect(function()
+		local job = game.JobId
+		pcall(function()
+			setclipboard(job)
+		end)
+		btn.Text = "Copied!"
+		task.delay(1.2, function()
+			if btn and btn.Parent then
+				btn.Text = "Copy JobId"
+			end
+		end)
+	end)
+end
+
+makeCopyJobIdUI()
+
+local inTrade = false
+
+Network:BindEvents({
+	-- Auto accept all incoming trade requests
+	TradeRequest = function(sender)
+		Network:FireServer("AcceptTrade", sender)
+	end,
+
+	-- Trade state detection
+	StartTrade = function(_tradeData)
+		inTrade = true
+	end,
+
+	CloseTrade = function()
+		inTrade = false
+	end,
+})
+
+-- While in trade: every 20 seconds, ready up once (repeats if still in trade)
+task.spawn(function()
+	while true do
+		while not inTrade do
+			task.wait(0.2)
+		end
+
+		while inTrade do
+			task.wait(20)
+			if inTrade then
+				Network:FireServer("ReadyUp", false, true)
+			end
+		end
+	end
+end)
+
+-- Status print every 1 second
+while true do
+	print("In trade status =", inTrade)
+	task.wait(1)
+end
