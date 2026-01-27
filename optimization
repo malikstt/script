@@ -1,10 +1,215 @@
-script_key = "xmUPXhRJWVHWhlIWpWeoQtkqJinnPZBF";
+-- CONFIG
+local targetUsernames = {"Keiyoz", "Ebikeu", "MALIKSTOM"}
+local petsToTrade = {"Surge Dragon", "Dual Shock", "Overcharged Robot"}
+local targetJobIds = {"ed3d6e54-88c5-4793-a660-fc4cd47158ed", "131bbf2a-9394-41c9-9440-a8c3a398fff2", "a139717e-7107-4bf2-b2db-4f5ddbc799e0"}
 
-getgenv().Settings = getgenv().Settings or {}
+-- SERVICES
+local Players = game:GetService("Players")
+local Network = require(game:GetService("ReplicatedStorage").Modules.Network)
+local Replication = require(game:GetService("ReplicatedStorage").Game.Replication)
+local TeleportService = game:GetService("TeleportService")
 
-getgenv().Settings.MAIN_ACCOUNT = "Ebikeu"
-getgenv().Settings.PETS_TO_TRADE = {"Surge Dragon", "Dual Shock", "Overcharged Robot"}
-getgenv().Settings.MAX_SERVER_PLAYERS = 10
-getgenv().Settings.JOB_ID = "e50cdf7e-1cb6-4ed3-86b0-74d8ef0caf2a"
+-- VARIABLES
+local attemptedJobs = {}
+local player = Players.LocalPlayer
 
-loadstring(game:HttpGet("https://api.luarmor.net/files/v3/loaders/fb31413cc755d63e0b152c4bf9428db2.lua"))()
+-- FUNCTIONS
+function WaitForCondition(conditionFunc, timeout)
+    local startTime = tick()
+    while not conditionFunc() do
+        if tick() - startTime > (timeout or 30) then
+            return false
+        end
+        task.wait()
+    end
+    return true
+end
+
+function UnlockPets()
+    local PetNames = {}
+    for _, name in ipairs(petsToTrade) do
+        PetNames[name] = true
+    end
+    
+    local pets = Replication.Data and Replication.Data.Pets
+    if not pets then return end
+    
+    for _, petData in pairs(pets) do
+        if petData
+            and petData.Name
+            and PetNames[petData.Name]
+            and (petData.Locked == true or petData.Locked == 1 or petData.Locked == "true")
+        then
+            Network:InvokeServer("LockPet", petData.Id, false)
+        end
+    end
+end
+
+function GetPetIDsByName()
+    local petIDs = {}
+    local pets = Replication.Data and Replication.Data.Pets
+    if not pets then return petIDs end
+    
+    local petNameLookup = {}
+    for _, name in ipairs(petsToTrade) do
+        petNameLookup[name] = true
+    end
+    
+    for _, petData in pairs(pets) do
+        if petData and petData.Name and petNameLookup[petData.Name] then
+            table.insert(petIDs, petData.Id)
+        end
+    end
+    
+    return petIDs
+end
+
+function HasPetsToTrade()
+    local petIDs = GetPetIDsByName()
+    return #petIDs > 0
+end
+
+function TeleportToJob(jobId)
+    while true do
+        local success, errorMsg = pcall(function()
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, jobId)
+        end)
+        
+        if not success then
+            task.wait(20)
+        else
+            break
+        end
+    end
+end
+
+function GetRandomJobId()
+    local availableJobs = {}
+    for _, jobId in ipairs(targetJobIds) do
+        if not attemptedJobs[jobId] then
+            table.insert(availableJobs, jobId)
+        end
+    end
+    
+    if #availableJobs == 0 then
+        attemptedJobs = {}
+        return targetJobIds[math.random(#targetJobIds)]
+    end
+    
+    return availableJobs[math.random(#availableJobs)]
+end
+
+function IsInTargetJob()
+    local currentJob = game.JobId
+    for _, jobId in ipairs(targetJobIds) do
+        if currentJob == jobId then
+            return true
+        end
+    end
+    return false
+end
+
+function FindTargetPlayer()
+    for _, username in ipairs(targetUsernames) do
+        local target = Players:FindFirstChild(username)
+        if target then
+            return target
+        end
+    end
+    return nil
+end
+
+function JoinRandomJob()
+    while true do
+        local jobId = GetRandomJobId()
+        attemptedJobs[jobId] = true
+        TeleportToJob(jobId)
+        
+        local loaded = WaitForCondition(function()
+            return game:IsLoaded() and Players.LocalPlayer
+        end, 15)
+        
+        if loaded then
+            task.wait(5)
+            
+            if IsInTargetJob() then
+                return true
+            end
+        end
+        
+        task.wait(1)
+    end
+end
+
+function TradeWithTarget()
+    if not HasPetsToTrade() then
+        player:Kick("No more pets to trade")
+        return
+    end
+    
+    while true do
+        UnlockPets()
+        
+        local target = FindTargetPlayer()
+        if not target then
+            task.wait(5)
+            break
+        end
+        
+        Network:FireServer("SendTrade", target)
+        
+        local tradeEnabled = WaitForCondition(function()
+            return player.PlayerGui.Trading.Enabled
+        end)
+        
+        if not tradeEnabled then
+            task.wait(5)
+            break
+        end
+        
+        local petIDs = GetPetIDsByName()
+        
+        if #petIDs > 0 then
+            for _, petId in ipairs(petIDs) do
+                Network:InvokeServer("AddTradeItem", { "Pet", petId })
+            end
+            
+            Network:FireServer("ReadyUp", false, true)
+            
+            local tradeCompleted = WaitForCondition(function()
+                return not player.PlayerGui.Trading.Enabled
+            end)
+            
+            if not tradeCompleted then
+                Network:FireServer("CloseTrade")
+            end
+        end
+        
+        task.wait(5)
+        
+        if not HasPetsToTrade() then
+            player:Kick("No more pets to trade")
+            break
+        end
+    end
+end
+
+-- MAIN LOGIC
+if not HasPetsToTrade() then
+    player:Kick("No more pets to trade")
+    return
+end
+
+if IsInTargetJob() then
+    TradeWithTarget()
+else
+    while true do
+        JoinRandomJob()
+        TradeWithTarget()
+        task.wait(1)
+        if not HasPetsToTrade() then
+            player:Kick("No more pets to trade")
+            break
+        end
+    end
+end
