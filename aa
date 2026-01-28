@@ -1,119 +1,160 @@
--- AUTO LIST (FULLY FIXED – REAL LIST BUTTON CLICK USING firesignal)
--- Uses the ACTUAL BoothListing UI flow exactly like the game.
--- No remotes guessed. No Activate(). This works.
+-- BOOTH CLAIMER (NO WEBHOOK)
 
-local RS = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local CollectionService = game:GetService("CollectionService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
 
+local player = Players.LocalPlayer
+local Network = require(ReplicatedStorage.Modules.Network)
+
+local character = player.Character or player.CharacterAdded:Wait()
+local hrp = character:WaitForChild("HumanoidRootPart")
+
+repeat task.wait(0.2) until #CollectionService:GetTagged("Booth") > 0
+math.randomseed(os.clock())
+
+local function shuffle(t)
+	for i = #t, 2, -1 do
+		local j = math.random(i)
+		t[i], t[j] = t[j], t[i]
+	end
+end
+
+local function getRandomPlayer()
+	local candidates = {}
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= player and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+			table.insert(candidates, plr)
+		end
+	end
+	if #candidates == 0 then return nil end
+	return candidates[math.random(#candidates)]
+end
+
+local function getBoothsNearPosition(pos, range)
+	local results = {}
+	for _, booth in ipairs(CollectionService:GetTagged("Booth")) do
+		if booth.PrimaryPart and booth:GetAttribute("BoothOwner") == nil then
+			if (booth.PrimaryPart.Position - pos).Magnitude <= range then
+				table.insert(results, booth)
+			end
+		end
+	end
+	return results
+end
+
+for _, booth in ipairs(CollectionService:GetTagged("Booth")) do
+	if booth:GetAttribute("BoothOwner") == player.UserId then
+		hrp.CFrame = booth.PrimaryPart.CFrame * CFrame.new(0, 5, 0)
+		goto BOOTH_DONE
+	end
+end
+
+local range = 20
+while true do
+	local targetPlayer = getRandomPlayer()
+	if targetPlayer then
+		local candidates = getBoothsNearPosition(targetPlayer.Character.HumanoidRootPart.Position, range)
+		if #candidates > 0 then
+			shuffle(candidates)
+			for _, booth in ipairs(candidates) do
+				Network:InvokeServer("ClaimBooth", booth)
+				local start = tick()
+				while tick() - start < 1 do
+					if booth:GetAttribute("BoothOwner") == player.UserId then
+						hrp.CFrame = booth.PrimaryPart.CFrame * CFrame.new(0, 5, 0)
+						hrp.AssemblyLinearVelocity = Vector3.zero
+						hrp.AssemblyAngularVelocity = Vector3.zero
+						goto BOOTH_DONE
+					end
+					task.wait()
+				end
+			end
+		end
+	end
+	range += 20
+	task.wait(0.5)
+end
+
+::BOOTH_DONE::
+
+----------------------------------------------------------------
+-- AUTO SELL + WEBHOOK
+----------------------------------------------------------------
+
+local RS = game:GetService("ReplicatedStorage")
 local Replication = require(RS.Game.Replication)
-local Network = require(RS.Modules.Network)
-local Signal = require(RS.Modules.Signal)
 
-local LP = Players.LocalPlayer
-local PG = LP:WaitForChild("PlayerGui")
-
--- ================= CONFIG =================
 getgenv().AutoSellConfig = {
-    Enabled = true,
-    ScanInterval = 1.5,
-    MaxListings = 12,
-    Pets = {
-        ["Surge Dragon"] = 75,
-        ["Dual Shock"] = 225
-    }
+	Enabled = true,
+	ScanInterval = 1.5,
+	MaxListings = 15,
+	Pets = {
+		["Surge Dragon"] = 50,
+		["Dual Shock"] = 150,
+		["Overcharged Robot"] = 650
+	}
 }
--- =========================================
 
--- open booth listing UI
-Signal.Fire("OpenMenu", "BoothListing")
-task.wait(0.3)
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1466018830391312532/fUDtg2f_MNlYnc449bHOqON5CMiQp4d8eHbUpNfOBrXOZlyY2zGyD7iT_EL61bYVz_qX"
+local notified = {}
 
--- get current listings
-local function getMyListings()
-    local ok, t = pcall(function()
-        return Network:InvokeServer("GetBoothListings", LP.UserId)
-    end)
-    return ok and t or {}
+local function sendWebhook(userId, petName, tier, amount, petId)
+	if notified[petId] then return end
+	notified[petId] = true
+
+	HttpService:RequestAsync({
+		Url = WEBHOOK_URL,
+		Method = "POST",
+		Headers = { ["Content-Type"] = "application/json" },
+		Body = HttpService:JSONEncode({
+			username = "accounts sales",
+			content = "💸 **"..userId.."** sold **"..petName.."**\n➕ **+"..amount.." tokens** | Tier: **"..tier.."** ✨"
+		})
+	})
 end
 
-local function listedCount()
-    local c = 0
-    for _ in pairs(getMyListings()) do c += 1 end
-    return c
+local listed = {}
+local busy = false
+
+local function getPrice(pet)
+	local baseName = pet.Nickname or pet.Name
+	local basePrice = getgenv().AutoSellConfig.Pets[baseName]
+	if not basePrice then return nil end
+	if pet.Tier == "Normal" then return basePrice end
+	if pet.Tier == "Golden" then return basePrice * 5 end
+	if pet.Tier == "Rainbow" then return basePrice * 10 end
+	return nil
 end
 
--- click REAL list button (this is the critical fix)
-local function clickListButton(petId)
-    for _, inst in ipairs(PG:GetDescendants()) do
-        if CollectionService:HasTag(inst, "BoothListingPet")
-        and inst:GetAttribute("Id") == petId then
+local function autoList()
+	if busy or not getgenv().AutoSellConfig.Enabled then return end
+	busy = true
 
-            local btn = inst:FindFirstChild("Main", true)
-            btn = btn and btn:FindFirstChild("Button", true)
+	local listings = 0
+	for petId, pet in pairs(Replication.Data.Pets or {}) do
+		if listings >= getgenv().AutoSellConfig.MaxListings then break end
+		if not listed[petId] and not pet.Locked and not pet.Trading then
+			local price = getPrice(pet)
+			if price then
+				local success = Network:InvokeServer("ListItem","Pet",petId,math.ceil(price))
+				if success then
+					listed[petId] = true
+					listings += 1
+					sendWebhook(player.UserId, pet.Nickname or pet.Name, pet.Tier, math.ceil(price), petId)
+				end
+				task.wait(0.15)
+			end
+		end
+	end
 
-            if btn and btn.Activated then
-                firesignal(btn.Activated)
-                return true
-            end
-        end
-    end
-    return false
+	busy = false
 end
 
--- set price + confirm
-local function setPriceAndConfirm(price)
-    local ui = PG:FindFirstChild("BoothListing", true)
-    if not ui then return false end
-
-    local priceBox, confirmBtn
-
-    for _, d in ipairs(ui:GetDescendants()) do
-        if d:IsA("TextBox") and not priceBox then
-            priceBox = d
-        elseif d:IsA("TextButton") then
-            local n = d.Name:lower()
-            if n:find("confirm") or n:find("list") then
-                confirmBtn = d
-            end
-        end
-    end
-
-    if priceBox and confirmBtn then
-        priceBox.Text = tostring(price)
-        priceBox:ReleaseFocus()
-        task.wait(0.05)
-        firesignal(confirmBtn.Activated)
-        return true
-    end
-
-    return false
-end
-
--- ================= MAIN LOOP =================
 task.spawn(function()
-    task.wait(1)
-
-    while getgenv().AutoSellConfig.Enabled do
-        local count = listedCount()
-        if count < getgenv().AutoSellConfig.MaxListings then
-            for petId, pet in pairs(Replication.Data.Pets or {}) do
-                if count >= getgenv().AutoSellConfig.MaxListings then break end
-
-                local name = pet.Nickname or pet.Name
-                local price = getgenv().AutoSellConfig.Pets[name]
-                if not price then continue end
-
-                if clickListButton(petId) then
-                    task.wait(0.12)
-                    if setPriceAndConfirm(price) then
-                        print("[AUTO SELL] LISTED:", name, "PRICE:", price)
-                        count += 1
-                        task.wait(0.25)
-                    end
-                end
-            end
-        end
-        task.wait(getgenv().AutoSellConfig.ScanInterval)
-    end
+	while true do
+		pcall(autoList)
+		task.wait(getgenv().AutoSellConfig.ScanInterval)
+	end
 end)
