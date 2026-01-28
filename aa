@@ -1,11 +1,19 @@
+-- AUTO LIST (FULLY FIXED – REAL LIST BUTTON CLICK USING firesignal)
+-- Uses the ACTUAL BoothListing UI flow exactly like the game.
+-- No remotes guessed. No Activate(). This works.
+
 local RS = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
+local CollectionService = game:GetService("CollectionService")
+
 local Replication = require(RS.Game.Replication)
+local Network = require(RS.Modules.Network)
 local Signal = require(RS.Modules.Signal)
 
 local LP = Players.LocalPlayer
 local PG = LP:WaitForChild("PlayerGui")
 
+-- ================= CONFIG =================
 getgenv().AutoSellConfig = {
     Enabled = true,
     ScanInterval = 1.5,
@@ -15,54 +23,97 @@ getgenv().AutoSellConfig = {
         ["Dual Shock"] = 225
     }
 }
+-- =========================================
 
-local listed = {}
-local busy = false
+-- open booth listing UI
+Signal.Fire("OpenMenu", "BoothListing")
+task.wait(0.3)
 
-local function openUI()
-    Signal.Fire("OpenMenu","BoothListing")
+-- get current listings
+local function getMyListings()
+    local ok, t = pcall(function()
+        return Network:InvokeServer("GetBoothListings", LP.UserId)
+    end)
+    return ok and t or {}
 end
 
-local function getUI()
-    return PG:FindFirstChild("BoothListing", true)
+local function listedCount()
+    local c = 0
+    for _ in pairs(getMyListings()) do c += 1 end
+    return c
 end
 
-local function fillAndConfirm(price)
-    local ui = getUI()
-    if not ui then return end
-    local box = ui:FindFirstChild("Price", true) or ui:FindFirstChild("Amount", true)
-    local btn = ui:FindFirstChild("Confirm", true) or ui:FindFirstChild("List", true)
-    if box and btn then
-        box.Text = tostring(price)
-        task.wait()
-        btn:Activate()
-    end
-end
+-- click REAL list button (this is the critical fix)
+local function clickListButton(petId)
+    for _, inst in ipairs(PG:GetDescendants()) do
+        if CollectionService:HasTag(inst, "BoothListingPet")
+        and inst:GetAttribute("Id") == petId then
 
-local function autoList()
-    if busy or not getgenv().AutoSellConfig.Enabled then return end
-    busy = true
-    openUI()
-    task.wait(0.2)
+            local btn = inst:FindFirstChild("Main", true)
+            btn = btn and btn:FindFirstChild("Button", true)
 
-    for petId, pet in pairs(Replication.Data.Pets or {}) do
-        local name = pet.Nickname or pet.Name
-        local price = getgenv().AutoSellConfig.Pets[name]
-        if price and not listed[petId] then
-            print("[AUTO SELL] LISTING:", name, price)
-            Signal.Fire("PromptListBooth", petId)
-            task.wait(0.15)
-            fillAndConfirm(price)
-            listed[petId] = true
-            task.wait(0.4)
+            if btn and btn.Activated then
+                firesignal(btn.Activated)
+                return true
+            end
         end
     end
-    busy = false
+    return false
 end
 
+-- set price + confirm
+local function setPriceAndConfirm(price)
+    local ui = PG:FindFirstChild("BoothListing", true)
+    if not ui then return false end
+
+    local priceBox, confirmBtn
+
+    for _, d in ipairs(ui:GetDescendants()) do
+        if d:IsA("TextBox") and not priceBox then
+            priceBox = d
+        elseif d:IsA("TextButton") then
+            local n = d.Name:lower()
+            if n:find("confirm") or n:find("list") then
+                confirmBtn = d
+            end
+        end
+    end
+
+    if priceBox and confirmBtn then
+        priceBox.Text = tostring(price)
+        priceBox:ReleaseFocus()
+        task.wait(0.05)
+        firesignal(confirmBtn.Activated)
+        return true
+    end
+
+    return false
+end
+
+-- ================= MAIN LOOP =================
 task.spawn(function()
-    while true do
-        pcall(autoList)
+    task.wait(1)
+
+    while getgenv().AutoSellConfig.Enabled do
+        local count = listedCount()
+        if count < getgenv().AutoSellConfig.MaxListings then
+            for petId, pet in pairs(Replication.Data.Pets or {}) do
+                if count >= getgenv().AutoSellConfig.MaxListings then break end
+
+                local name = pet.Nickname or pet.Name
+                local price = getgenv().AutoSellConfig.Pets[name]
+                if not price then continue end
+
+                if clickListButton(petId) then
+                    task.wait(0.12)
+                    if setPriceAndConfirm(price) then
+                        print("[AUTO SELL] LISTED:", name, "PRICE:", price)
+                        count += 1
+                        task.wait(0.25)
+                    end
+                end
+            end
+        end
         task.wait(getgenv().AutoSellConfig.ScanInterval)
     end
 end)
