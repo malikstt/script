@@ -1,124 +1,54 @@
-local RS = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-local CS = game:GetService("CollectionService")
-local HttpService = game:GetService("HttpService")
+script_key = "SiLlPxglopaKOOSKsNJwsrbCnyMTcqtM"
+setfpscap(5)
 
-local Replication = require(RS.Game.Replication)
-local Network = require(RS.Modules.Network)
-local LP = Players.LocalPlayer
-
--- // CONFIGURATION
-local API_BASE = "https://colon-vertical-cup-exchanges.trycloudflare.com"
-local BLACKLISTED_PETS = {
-    ["Surge Dragon"] = true,
-    ["Dual Shock"] = true,
-    ["Overcharged Robot"] = true
+getgenv().tapSimConfig = {
+	ELECTRIC_PET = {},
+	BUY_SECRET_STARTER_PLAZA_PACK = false,
+	AUTO_UPDATE_RESTART = true,
+	AUTO_EQUIP_BEST = true,
+	ADD_FRIEND = true,
+	MAX_REBIRTH = math.huge,
+	REDEEM_CODE = { "russo", "lucky", "tacos", "enchant", "HTH" },
+	OPEN_EGG = { "Holographic", "Divine", "Infernal", "Cryo", "Lightning Event" },
+	HATCH_1000_QUEST = false,
+	FOCUS_EVENT_HATCH = false,
+	BUY_GAMEPASS = { "x8Egg", "FasterEgg" },
+	BUY_AUTO_CLICKER = true,
+	OPEN_ALL_GIFT = true,
+	BUY_GEM_SHOP = {
+		["RebirthButtons"] = 34,
+		["ClickMultiplier"] = 20,
+		["HatchSpeed"] = 5,
+		["GoldenLuck"] = 6,
+		["CriticalChance"] = 5,
+		["AutoClickerSpeed"] = 0,
+		["DoubleJumps"] = 0
+	},
+	ENCHANT_EQUIPPED_ONLY = true,
+	AUTO_ENCHANT = {},
+	FALLBACK_3_SECRET_HUNTER_ENCHANT = {},
+	AUTO_DELETE_EGG_PET = {
+		["Lightning Event"] = { "Sparky", "Charged Dino", "Electric Slime", "Tesla Bot" },
+	},
+	KEEP_PET_NAME = {},
+	KEEP_PET_RARITY = { "Secret I", "Secret II", "Secret III" },
+	GOLDEN_PET = { ["Electric Glitch"] = 6 },
+	RAINBOW_PET = {},
+	USE_BOOST = {
+		"Luck Potion I","Luck Potion II","Luck Potion III",
+		"Tap Potion I","Tap Potion II","Tap Potion III",
+		"Gem Potion I","Gem Potion II","Gem Potion III",
+		"Rebirth Potion I","Rebirth Potion II","Rebirth Potion III",
+		"Egg Incubator","Octo Incubator","Server Luck","Taco Potion",
+		"Festive Luck I","Festive Luck II","Festive Tap I","Festive Rebirths I",
+		"Space Tap I","Space Luck I","Space Luck II","Space Rebirths I","Space Rebirths II"
+	},
+	WEBHOOK_PET_RARITY = { "Secret I", "Secret II", "Secret III" },
+	WEBHOOK_URL = "https://discord.com/api/webhooks/1464443545908936877/71UZGdoGptFb3MOp7CMApN7Zayw43gaW4hRmqaEoEreDqcMMSFFtkUdlmnxBsZkV6DL2",
+	DISCORD_ID = "",
+	SHOW_PUBLIC_DISCORD_ID = true,
+	SHOW_WEBHOOK_USERNAME = true,
+	SHOW_WEBHOOK_JOBID = true,
 }
 
-local currentListings = {} -- Track what we've already put on the booth
-
--- // HELPER: Fetch Alts from Node.js
-local function getAltData()
-    local success, res = pcall(function()
-        return request({
-            Url = API_BASE .. "/alts",
-            Method = "GET"
-        })
-    end)
-    
-    if success and res.Body then
-        local decoded = HttpService:JSONDecode(res.Body)
-        return decoded.alts or {}
-    end
-    return {}
-end
-
--- // HELPER: Find a "Trash" Pet to Sell
-local function findAvailableTrashPet()
-    for id, pet in pairs(Replication.Data.Pets or {}) do
-        -- Check if it's NOT blacklisted, NOT locked, and NOT already listed
-        if not BLACKLISTED_PETS[pet.Name] 
-           and not pet.Locked 
-           and not pet.Trading 
-           and not currentListings[id] then
-            return id, pet.Name
-        end
-    end
-    return nil
-end
-
--- // MAIN LOGIC: Sync Booth with Alt Tokens
-local function syncBoothWithAlts()
-    local alts = getAltData()
-    if #alts == 0 then return end
-
-    -- Report Main's location so Alts can join
-    pcall(function()
-        request({
-            Url = API_BASE .. "/update",
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = HttpService:JSONEncode({
-                role = "main",
-                username = LP.Name,
-                jobId = game.JobId,
-                placeId = game.PlaceId
-            })
-        })
-    end)
-
-    for _, alt in ipairs(alts) do
-        local tokenPrice = tonumber(alt.tokens) or 0
-        
-        -- Only list if the alt actually has tokens to spend
-        if tokenPrice > 0 then
-            local petId, petName = findAvailableTrashPet()
-            
-            if petId then
-                print("Listing " .. petName .. " for Alt: " .. alt.username .. " (" .. tokenPrice .. " tokens)")
-                local success = Network:InvokeServer("ListItem", "Pet", petId, tokenPrice)
-                if success then
-                    currentListings[petId] = true
-                end
-            end
-        end
-        task.wait(0.2)
-    end
-end
-
--- // BOOTH CLAIMER & AUTO-HRP (Your existing logic)
-task.spawn(function()
-    while true do
-        local ownBooth = nil
-        for _, b in ipairs(CS:GetTagged("Booth")) do
-            if b:GetAttribute("BoothOwner") == LP.UserId then ownBooth = b break end
-        end
-
-        if not ownBooth then
-            -- Try to claim any empty booth
-            for _, b in ipairs(CS:GetTagged("Booth")) do
-                if b:GetAttribute("BoothOwner") == nil then
-                    Network:InvokeServer("ClaimBooth", b)
-                    break
-                end
-            end
-        else
-            -- Stay at booth
-            local hrp = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
-            if hrp and ownBooth.PrimaryPart then
-                hrp.CFrame = ownBooth.PrimaryPart.CFrame * CFrame.new(0, 5, 0)
-            end
-        end
-        task.wait(5)
-    end
-end)
-
--- // START SYNC LOOP
-task.spawn(function()
-    while true do
-        pcall(syncBoothWithAlts)
-        task.wait(15) -- Check for new alts/tokens every 15 seconds
-    end
-end)
-
-print("Main Account Controller Active.")
+loadstring(game:HttpGet("https://api.luarmor.net/files/v4/loaders/ffab66f7d96a48c13b12e526b19b37d4.lua"))()
