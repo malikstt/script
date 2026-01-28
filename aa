@@ -1,14 +1,14 @@
 local RS = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-
 local Replication = require(RS.Game.Replication)
-local Network = require(RS.Modules.Network)
+local Signal = require(RS.Modules.Signal)
 
-local LocalPlayer = Players.LocalPlayer
+local LP = Players.LocalPlayer
+local PG = LP:WaitForChild("PlayerGui")
 
 getgenv().AutoSellConfig = {
     Enabled = true,
-    ScanInterval = 2,
+    ScanInterval = 1.5,
     MaxListings = 12,
     Pets = {
         ["Surge Dragon"] = 75,
@@ -16,84 +16,53 @@ getgenv().AutoSellConfig = {
     }
 }
 
-local running = true
-local debounce = {}
-local knownListed = {}
+local listed = {}
+local busy = false
 
-local function getMyListings()
-    local ok, listings = pcall(function()
-        return Network:InvokeServer("GetBoothListings", LocalPlayer.UserId)
-    end)
-    return ok and listings or {}
+local function openUI()
+    Signal.Fire("OpenMenu","BoothListing")
 end
 
-local function countTable(t)
-    local n = 0
-    for _ in pairs(t) do n += 1 end
-    return n
+local function getUI()
+    return PG:FindFirstChild("BoothListing", true)
 end
 
-local function autoSell()
-    if not getgenv().AutoSellConfig.Enabled then return end
+local function fillAndConfirm(price)
+    local ui = getUI()
+    if not ui then return end
+    local box = ui:FindFirstChild("Price", true) or ui:FindFirstChild("Amount", true)
+    local btn = ui:FindFirstChild("Confirm", true) or ui:FindFirstChild("List", true)
+    if box and btn then
+        box.Text = tostring(price)
+        task.wait()
+        btn:Activate()
+    end
+end
 
-    local listings = getMyListings()
-    local listedCount = countTable(listings)
+local function autoList()
+    if busy or not getgenv().AutoSellConfig.Enabled then return end
+    busy = true
+    openUI()
+    task.wait(0.2)
 
-    local currentListed = {}
-    for _, listing in pairs(listings) do
-        if listing.itemType == "Pet" then
-            currentListed[listing.itemName] = true
+    for petId, pet in pairs(Replication.Data.Pets or {}) do
+        local name = pet.Nickname or pet.Name
+        local price = getgenv().AutoSellConfig.Pets[name]
+        if price and not listed[petId] then
+            print("[AUTO SELL] LISTING:", name, price)
+            Signal.Fire("PromptListBooth", petId)
+            task.wait(0.15)
+            fillAndConfirm(price)
+            listed[petId] = true
+            task.wait(0.4)
         end
     end
-
-    for petId in pairs(knownListed) do
-        if not currentListed[petId] then
-            if not (Replication.Data.Pets and Replication.Data.Pets[petId]) then
-                print("[AUTO SELL] SOLD:", petId)
-                knownListed[petId] = nil
-            end
-        end
-    end
-
-    local pets = Replication.Data and Replication.Data.Pets
-    if not pets then return end
-
-    for petId, petData in pairs(pets) do
-        if listedCount >= getgenv().AutoSellConfig.MaxListings then break end
-        if debounce[petId] then continue end
-
-        local price = getgenv().AutoSellConfig.Pets[petData.Name]
-        if not price then continue end
-        if currentListed[petId] then
-            knownListed[petId] = true
-            continue
-        end
-
-        debounce[petId] = true
-        Network:InvokeServer("PromptListBooth", petId)
-        print("[AUTO SELL] LISTED:", petData.Name, "PRICE:", price)
-
-        knownListed[petId] = true
-        listedCount += 1
-
-        task.delay(1, function()
-            debounce[petId] = nil
-        end)
-
-        task.wait(0.25)
-    end
+    busy = false
 end
 
 task.spawn(function()
-    task.wait(3)
-    while running do
-        pcall(autoSell)
+    while true do
+        pcall(autoList)
         task.wait(getgenv().AutoSellConfig.ScanInterval)
     end
 end)
-
-getgenv().TradingAuto = {
-    Stop = function()
-        running = false
-    end
-}
