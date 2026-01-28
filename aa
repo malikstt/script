@@ -1,143 +1,34 @@
-local Players = game:GetService("Players")
-local CollectionService = game:GetService("CollectionService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local HttpService = game:GetService("HttpService")
-
-local player = Players.LocalPlayer
-local Network
-
-pcall(function()
-	Network = require(ReplicatedStorage:FindFirstChild("Network") or ReplicatedStorage:WaitForChild("Network"))
-end)
-
-if not Network then
-	pcall(function()
-		Network = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Network"))
-	end)
-end
-
-local character = player.Character or player.CharacterAdded:Wait()
-local hrp = character:WaitForChild("HumanoidRootPart")
-
-local maxWait = 30
-local startTime = tick()
-while #CollectionService:GetTagged("Booth") == 0 and tick() - startTime < maxWait do
-	task.wait(1)
-end
-
-if #CollectionService:GetTagged("Booth") == 0 then
-	warn("No booths found")
-	return
-end
-
-math.randomseed(os.clock() * 1000)
-
-local function shuffle(t)
-	for i = #t, 2, -1 do
-		local j = math.random(i)
-		t[i], t[j] = t[j], t[i]
-	end
-end
-
-local function getRandomPlayer()
-	local t = {}
-	for _, plr in ipairs(Players:GetPlayers()) do
-		if plr ~= player and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
-			table.insert(t, plr)
-		end
-	end
-	return #t > 0 and t[math.random(#t)] or nil
-end
-
-local function getBoothsNearPosition(pos, range)
-	local t = {}
-	for _, booth in ipairs(CollectionService:GetTagged("Booth")) do
-		if booth.PrimaryPart and booth:GetAttribute("BoothOwner") == nil then
-			if (booth.PrimaryPart.Position - pos).Magnitude <= range then
-				table.insert(t, booth)
-			end
-		end
-	end
-	return t
-end
-
-for _, booth in ipairs(CollectionService:GetTagged("Booth")) do
-	if booth:GetAttribute("BoothOwner") == player.UserId then
-		pcall(function()
-			hrp.CFrame = booth.PrimaryPart.CFrame * CFrame.new(0, 5, 0)
-		end)
-		goto BOOTH_DONE
-	end
-end
-
-local range = 20
-local attempts = 0
-local maxAttempts = 50
-
-while attempts < maxAttempts do
-	local target = getRandomPlayer()
-	if target and target.Character then
-		local th = target.Character:FindFirstChild("HumanoidRootPart")
-		if th then
-			local booths = getBoothsNearPosition(th.Position, range)
-			if #booths > 0 then
-				shuffle(booths)
-				for _, booth in ipairs(booths) do
-					attempts += 1
-					pcall(function()
-						if Network and Network.InvokeServer then
-							Network:InvokeServer("ClaimBooth", booth)
-						else
-							local r = ReplicatedStorage:FindFirstChild("ClaimBooth")
-							if not r then
-								local re = ReplicatedStorage:FindFirstChild("RemoteEvents")
-								r = re and re:FindFirstChild("ClaimBooth") or nil
-							end
-							if r and r.FireServer then
-								r:FireServer(booth)
-							end
-						end
-					end)
-
-					local s = tick()
-					while tick() - s < 2 do
-						if booth:GetAttribute("BoothOwner") == player.UserId then
-							pcall(function()
-								hrp.CFrame = booth.PrimaryPart.CFrame * CFrame.new(0, 5, 0)
-								hrp.AssemblyLinearVelocity = Vector3.zero
-								hrp.AssemblyAngularVelocity = Vector3.zero
-							end)
-							goto BOOTH_DONE
-						end
-						task.wait(0.1)
-					end
-					task.wait(0.3)
-				end
-			end
-		end
-	end
-	range += 10
-	attempts += 1
-	task.wait(0.5)
-end
-
-::BOOTH_DONE::
+----------------------------------------------------------------
+-- AUTO SELL + SOLD WEBHOOK (+ AMOUNT) + BOOTH CLAIMER
+----------------------------------------------------------------
 
 local httpRequest =
 	(syn and syn.request) or
+	(syn and syn.req) or
 	(http and http.request) or
 	(http_request) or
+	(httprequest) or
 	(fluxus and fluxus.request) or
+	(krnl and krnl.request) or
 	(request)
 
-if not httpRequest then
-	warn("NO_HTTP_SUPPORT")
-	return
-end
+if not httpRequest then return end
 
-getgenv().AutoSellConfig = {
+local RS = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local CS = game:GetService("CollectionService")
+local HttpService = game:GetService("HttpService")
+
+local Replication = require(RS.Game.Replication)
+local Network = require(RS.Modules.Network)
+
+local LP = Players.LocalPlayer
+
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1466018830391312532/fUDtg2f_MNlYnc449bHOqON5CMiQp4d8eHbUpNfOBrXOZlyY2zGyD7iT_EL61bYVz_qX"
+
+getgenv().AutoSellConfig = getgenv().AutoSellConfig or {
 	Enabled = true,
-	ScanInterval = 3,
+	ScanInterval = 1.5,
 	MaxListings = 15,
 	Pets = {
 		["Surge Dragon"] = 50,
@@ -146,124 +37,161 @@ getgenv().AutoSellConfig = {
 	}
 }
 
-local notified = {}
-local listed = {}
-local busy = false
+local listed, busy = {}, false
+local lastPets, sent = {}, {}
 
-local Replication
-pcall(function()
-	Replication = require(
-		ReplicatedStorage:FindFirstChild("Replication")
-			or ReplicatedStorage:WaitForChild("Game"):WaitForChild("Replication")
-			or (ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage:FindFirstChild("Modules"):FindFirstChild("Replication"))
-	)
-end)
-
-if not Replication then
-	getgenv().AutoSellConfig.Enabled = false
-	return
+local function getAmount(p)
+	local n = p.Nickname or p.Name
+	local b = getgenv().AutoSellConfig.Pets[n]
+	if not b then return end
+	local t = p.Tier
+	if t == "Golden" then return b * 5 end
+	if t == "Rainbow" then return b * 10 end
+	return b
 end
 
-local function sendWebhook(userId, petName, tier, amount, petId)
-	if notified[petId] then return end
-	notified[petId] = true
+local function sendSold(petId, pet)
+	if sent[petId] then return end
+	sent[petId] = true
+	local amt = getAmount(pet) or 0
 
-	local content = string.format(
-		"💸 **%s** (ID: %s) sold **%s**\n➕ **+%s tokens** | Tier: **%s** ✨",
-		player.Name, userId, petName, amount, tier
-	)
-
-	pcall(function()
-		httpRequest({
-			Url = WEBHOOK_URL,
-			Method = "POST",
-			Headers = { ["Content-Type"] = "application/json" },
-			Body = HttpService:JSONEncode({
-				username = "Auto Sell",
-				content = content
-			})
+	httpRequest({
+		Url = WEBHOOK_URL,
+		Method = "POST",
+		Headers = {["Content-Type"]="application/json"},
+		Body = HttpService:JSONEncode({
+			username = "Auto Sell",
+			embeds = {{
+				title = "💸 Pet Sold",
+				color = 0xff5555,
+				fields = {
+					{name="Player", value=LP.Name, inline=true},
+					{name="Pet", value=pet.Nickname or pet.Name or "Unknown", inline=true},
+					{name="Tier", value=pet.Tier or "Normal", inline=true},
+					{name="Amount", value="+ "..tostring(amt).." tokens", inline=true},
+					{name="Pet ID", value=tostring(petId), inline=true}
+				},
+				timestamp = DateTime.now():ToIsoDate()
+			}}
 		})
-	end)
+	})
 end
 
-local function getPrice(pet)
-	if not pet then return nil end
-	local name = pet.Nickname or pet.Name
-	local base = getgenv().AutoSellConfig.Pets[name]
-	if not base then
-		for k, v in pairs(getgenv().AutoSellConfig.Pets) do
-			if string.find(name, k) then
-				base = v
-				break
-			end
-		end
+local function snapshot()
+	local t = {}
+	for id, pet in pairs(Replication.Data.Pets or {}) do
+		t[id] = pet
 	end
-	if not base then return nil end
-
-	local tier = pet.Tier or "Normal"
-	if tier == "Golden" then
-		return base * 5
-	elseif tier == "Rainbow" or tier == "Shiny" then
-		return base * 10
-	elseif tier == "Normal" or tier == "Regular" then
-		return base
-	else
-		return base * 2
-	end
+	return t
 end
 
 local function autoList()
 	if busy or not getgenv().AutoSellConfig.Enabled then return end
 	busy = true
 
-	local pets = Replication.Data and Replication.Data.Pets
-	if not pets then busy = false return end
-
-	local count = 0
-	for petId, pet in pairs(pets) do
-		if count >= getgenv().AutoSellConfig.MaxListings then break end
-		if not listed[petId] and not pet.Locked and not pet.Trading then
-			local price = getPrice(pet)
-			if price then
-				local sellPrice = math.ceil(price)
-				local ok, res = pcall(function()
-					if Network and Network.InvokeServer then
-						return Network:InvokeServer("ListItem", "Pet", petId, sellPrice)
-					else
-						local r = ReplicatedStorage:FindFirstChild("ListItem")
-						if not r then
-							local re = ReplicatedStorage:FindFirstChild("RemoteEvents")
-							r = re and re:FindFirstChild("ListItem") or nil
-						end
-						if r and r.InvokeServer then
-							return r:InvokeServer("Pet", petId, sellPrice)
-						end
-						return false
-					end
-				end)
-
-				if ok and res then
-					listed[petId] = true
-					count += 1
-					sendWebhook(player.UserId, pet.Nickname or pet.Name or "Pet", pet.Tier or "Normal", sellPrice, petId)
+	local c = 0
+	for id, p in pairs(Replication.Data.Pets or {}) do
+		if c >= getgenv().AutoSellConfig.MaxListings then break end
+		if not listed[id] and not p.Locked and not p.Trading then
+			local amt = getAmount(p)
+			if amt then
+				if Network:InvokeServer("ListItem","Pet",id,math.ceil(amt)) then
+					listed[id] = true
+					c += 1
 				end
-				task.wait(0.25)
+				task.wait(0.15)
 			end
 		end
 	end
+
 	busy = false
 end
 
 task.spawn(function()
-	while task.wait(getgenv().AutoSellConfig.ScanInterval) do
+	while true do
 		pcall(autoList)
+		task.wait(getgenv().AutoSellConfig.ScanInterval)
 	end
 end)
 
 task.spawn(function()
-	while task.wait(300) do
-		notified = {}
+	lastPets = snapshot()
+	while true do
+		task.wait(1)
+		local now = snapshot()
+		for id, pet in pairs(lastPets) do
+			if not now[id] then
+				sendSold(id, pet)
+			end
+		end
+		lastPets = now
 	end
 end)
 
-print("Loaded")
+----------------------------------------------------------------
+-- BOOTH CLAIMER
+----------------------------------------------------------------
+
+local function ownBooth()
+	for _,b in ipairs(CS:GetTagged("Booth")) do
+		if b:GetAttribute("BoothOwner") == LP.UserId then
+			return b
+		end
+	end
+end
+
+local function hrp()
+	local ch = LP.Character or LP.CharacterAdded:Wait()
+	return ch:WaitForChild("HumanoidRootPart")
+end
+
+local function randPlr()
+	local t = {}
+	for _,p in ipairs(Players:GetPlayers()) do
+		if p ~= LP and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+			t[#t+1] = p
+		end
+	end
+	if #t == 0 then return end
+	return t[math.random(#t)]
+end
+
+task.spawn(function()
+	repeat task.wait(0.2) until #CS:GetTagged("Booth") > 0
+	math.randomseed(os.clock())
+	local r = 20
+
+	while true do
+		local ob = ownBooth()
+		if ob and ob.PrimaryPart then
+			local h = hrp()
+			h.CFrame = ob.PrimaryPart.CFrame * CFrame.new(0,5,0)
+			return
+		end
+
+		local tp = randPlr()
+		if tp and tp.Character and tp.Character:FindFirstChild("HumanoidRootPart") then
+			local pos = tp.Character.HumanoidRootPart.Position
+			for _,b in ipairs(CS:GetTagged("Booth")) do
+				if b.PrimaryPart and b:GetAttribute("BoothOwner") == nil
+				and (b.PrimaryPart.Position - pos).Magnitude <= r then
+					Network:InvokeServer("ClaimBooth", b)
+					local t0 = tick()
+					while tick() - t0 < 1 do
+						if b:GetAttribute("BoothOwner") == LP.UserId then
+							local h = hrp()
+							h.CFrame = b.PrimaryPart.CFrame * CFrame.new(0,5,0)
+							h.AssemblyLinearVelocity = Vector3.zero
+							h.AssemblyAngularVelocity = Vector3.zero
+							return
+						end
+						task.wait()
+					end
+				end
+			end
+		end
+
+		r += 20
+		task.wait(0.5)
+	end
+end)
