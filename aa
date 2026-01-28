@@ -37,6 +37,7 @@ getgenv().AutoSellConfig = getgenv().AutoSellConfig or {
 
 local listed, busy = {}, false
 local lastPets, sent = {}, {}
+local tracked = {}
 
 local function getAmount(p)
 	local b = getgenv().AutoSellConfig.Pets[p.Name]
@@ -45,10 +46,9 @@ local function getAmount(p)
 	return b
 end
 
-local function sendSold(petId, pet)
+local function sendSold(petId, info)
 	if sent[petId] then return end
 	sent[petId] = true
-	local amt = getAmount(pet) or 0
 
 	httpRequest({
 		Url = WEBHOOK_URL,
@@ -61,9 +61,9 @@ local function sendSold(petId, pet)
 				color = 0xff5555,
 				fields = {
 					{name="Player", value=LP.Name, inline=true},
-					{name="Pet", value=pet.Name or "Unknown", inline=true},
-					{name="Tier", value=pet.Tier or "Normal", inline=true},
-					{name="Amount", value="+ "..tostring(amt).." tokens", inline=true},
+					{name="Pet", value=info.name or "Unknown", inline=true},
+					{name="Tier", value=info.tier or "Normal", inline=true},
+					{name="Amount", value="+ "..tostring(info.amount or 0).." tokens", inline=true},
 					{name="Pet ID", value=tostring(petId), inline=true}
 				},
 				timestamp = DateTime.now():ToIsoDate()
@@ -75,7 +75,7 @@ end
 local function snapshot()
 	local t = {}
 	for id, pet in pairs(Replication.Data.Pets or {}) do
-		t[id] = pet
+		t[id] = true
 	end
 	return t
 end
@@ -90,8 +90,10 @@ local function autoList()
 		if not listed[id] and not p.Locked and not p.Trading then
 			local amt = getAmount(p)
 			if amt then
-				if Network:InvokeServer("ListItem","Pet",id,math.ceil(amt)) then
+				local sellAmt = math.ceil(amt)
+				if Network:InvokeServer("ListItem","Pet",id,sellAmt) then
 					listed[id] = true
+					tracked[id] = { name = p.Name, tier = p.Tier or "Normal", amount = sellAmt }
 					c += 1
 				end
 				task.wait(0.15)
@@ -114,11 +116,17 @@ task.spawn(function()
 	while true do
 		task.wait(1)
 		local now = snapshot()
-		for id, pet in pairs(lastPets) do
+
+		for id in pairs(lastPets) do
 			if not now[id] then
-				sendSold(id, pet)
+				local info = tracked[id]
+				if info then
+					sendSold(id, info)
+					tracked[id] = nil
+				end
 			end
 		end
+
 		lastPets = now
 	end
 end)
