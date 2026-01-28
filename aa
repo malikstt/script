@@ -4,9 +4,11 @@ local Players = game:GetService("Players")
 local Replication = require(RS.Game.Replication)
 local Network = require(RS.Modules.Network)
 
+local LocalPlayer = Players.LocalPlayer
+
 getgenv().AutoSellConfig = {
     Enabled = true,
-    ScanInterval = 3,
+    ScanInterval = 2,
     MaxListings = 12,
     Pets = {
         ["Surge Dragon"] = 75,
@@ -14,141 +16,84 @@ getgenv().AutoSellConfig = {
     }
 }
 
-getgenv().AutoBuyConfig = {
-    Enabled = false
-}
-
-local LocalPlayer = Players.LocalPlayer
-local running = false
+local running = true
 local debounce = {}
+local knownListed = {}
 
-local function updateMyListings()
-    local ok, list = pcall(function()
+local function getMyListings()
+    local ok, listings = pcall(function()
         return Network:InvokeServer("GetBoothListings", LocalPlayer.UserId)
     end)
-    if not ok then
-        warn("Failed to get listings:", list)
-        return {}
-    end
-    return list or {}
+    return ok and listings or {}
+end
+
+local function countTable(t)
+    local n = 0
+    for _ in pairs(t) do n += 1 end
+    return n
 end
 
 local function autoSell()
-    local myListings = updateMyListings()
-    local listedCount = 0
-    for _ in pairs(myListings) do listedCount = listedCount + 1 end
-    
-    local pets = Replication.Data and Replication.Data.Pets
-    if not pets then
-        warn("No pets data found")
-        return
+    if not getgenv().AutoSellConfig.Enabled then return end
+
+    local listings = getMyListings()
+    local listedCount = countTable(listings)
+
+    local currentListed = {}
+    for _, listing in pairs(listings) do
+        if listing.itemType == "Pet" then
+            currentListed[listing.itemName] = true
+        end
     end
-    
-    for _, pet in pairs(pets) do
-        if not pet or not pet.Id then continue end
-        if listedCount >= getgenv().AutoSellConfig.MaxListings then break end
-        
-        local price = getgenv().AutoSellConfig.Pets[pet.Name]
-        if not price then continue end
-        
-        local alreadyListed = false
-        for _, listing in pairs(myListings) do
-            if listing.itemName == pet.Id then
-                alreadyListed = true
-                break
+
+    for petId in pairs(knownListed) do
+        if not currentListed[petId] then
+            if not (Replication.Data.Pets and Replication.Data.Pets[petId]) then
+                print("[AUTO SELL] SOLD:", petId)
+                knownListed[petId] = nil
             end
         end
-        if alreadyListed then continue end
-        
-        if debounce[pet.Id] then continue end
-        debounce[pet.Id] = true
-        
-        local petName = pet.Name or "Unknown"
-        
-        local success, err = pcall(function()
-            Network:InvokeServer("UpdateBoothListing", pet.Id, price)
-        end)
-        
-        if success then
-            print(string.format("✅ Listed %s for %d", petName, price))
-            listedCount = listedCount + 1
-        else
-            warn(string.format("❌ Failed to list %s: %s", petName, err))
-        end
-        
-        task.wait(0.5)
-        debounce[pet.Id] = nil
     end
-    
-    if listedCount > 0 then
-        print(string.format("📊 Total listed this scan: %d", listedCount))
-    end
-end
 
-local function checkSoldPets()
-    local myListings = updateMyListings()
     local pets = Replication.Data and Replication.Data.Pets
     if not pets then return end
-    
-    local petIds = {}
-    for _, pet in pairs(pets) do
-        if pet and pet.Id then
-            petIds[pet.Id] = true
-        end
-    end
-    
-    local soldCount = 0
-    for _, listing in pairs(myListings) do
-        if listing.itemType == "Pet" and not petIds[listing.itemName] then
-            soldCount = soldCount + 1
-        end
-    end
-    
-    if soldCount > 0 then
-        print(string.format("🎉 %d pet(s) sold! Rescanning...", soldCount))
-        return true
-    end
-    return false
-end
 
-local function start()
-    if running then return end
-    running = true
-    
-    print("🚀 Auto Sell started")
-    print(string.format("📈 Listing: Surge Dragon = %d, Dual Shock = %d", 
-        getgenv().AutoSellConfig.Pets["Surge Dragon"],
-        getgenv().AutoSellConfig.Pets["Dual Shock"]))
-    
-    while running do
-        local success, err = pcall(function()
-            if checkSoldPets() then
-                task.wait(1)
-            end
-            autoSell()
+    for petId, petData in pairs(pets) do
+        if listedCount >= getgenv().AutoSellConfig.MaxListings then break end
+        if debounce[petId] then continue end
+
+        local price = getgenv().AutoSellConfig.Pets[petData.Name]
+        if not price then continue end
+        if currentListed[petId] then
+            knownListed[petId] = true
+            continue
+        end
+
+        debounce[petId] = true
+        Network:FireServer("PromptListBooth", petId)
+        print("[AUTO SELL] LISTED:", petData.Name, "PRICE:", price)
+
+        knownListed[petId] = true
+        listedCount += 1
+
+        task.delay(1, function()
+            debounce[petId] = nil
         end)
-        
-        if not success then
-            warn("Scan error:", err)
-        end
-        
-        task.wait(getgenv().AutoSellConfig.ScanInterval or 3)
-    end
-end
 
-local function stop()
-    running = false
-    print("⏹️ Auto Sell stopped")
+        task.wait(0.25)
+    end
 end
 
 task.spawn(function()
-    task.wait(5)
-    if getgenv().AutoSellConfig.Enabled then
-        start()
+    task.wait(3)
+    while running do
+        pcall(autoSell)
+        task.wait(getgenv().AutoSellConfig.ScanInterval)
     end
 end)
 
-getgenv().AutoSell = {
-    Start = start,
-    Stop = stop
+getgenv().TradingAuto = {
+    Stop = function()
+        running = false
+    end
 }
