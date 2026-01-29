@@ -1,153 +1,128 @@
-repeat task.wait() until game:IsLoaded()
+getgenv().MAIN_STATE = getgenv().MAIN_STATE or {
+    lockedJobId = nil,
+    lastTeleportAt = 0,
+}
 
-local Players = game:GetService("Players")
-local HttpService = game:GetService("HttpService")
-local TeleportService = game:GetService("TeleportService")
+local STATE = getgenv().MAIN_STATE
+local MIN_HOP_DELAY = 10 -- seconds, anti-spam
 
-local API_BASE = "https://arlington-survival-versus-containing.trycloudflare.com"
-local CHECK_INTERVAL = 3
-
-local LP = Players.LocalPlayer
-local lastJoinedJobId = nil
-
-local function getAlts()
-	local res = request({
-		Url = API_BASE .. "/alts",
-		Method = "GET"
-	})
-
-	if not res or not res.Body then
-		return nil
-	end
-
-	local decoded
-	pcall(function()
-		decoded = HttpService:JSONDecode(res.Body)
-	end)
-
-	return decoded
+local function now()
+    return os.time()
 end
 
-local function groupByJobId(alts)
-	local groups = {}
+local function canHop()
+    return (now() - (STATE.lastTeleportAt or 0)) >= MIN_HOP_DELAY
+end
 
-	for _, alt in ipairs(alts) do
-		local jobId = alt.jobId
-		if jobId and jobId ~= "" then
-			local g = groups[jobId]
-			if not g then
-				g = {
-					jobId = jobId,
-					spotsLeft = 0,
-					anyMainPresent = false,
-					anyHasSecret = false,
-					count = 0,
-				}
-				groups[jobId] = g
-			end
+local function pickBestSecretServer(groups)
+    local best = nil
+    for jobId, g in pairs(groups) do
+        if g.count > 0
+            and g.spotsLeft > 0
+            and g.anyMainPresent == false
+            and g.anyHasSecret == true
+        then
+            if not best then
+                best = g
+            else
+                -- prefer more spots; if tie, keep first
+                if g.spotsLeft > best.spotsLeft then
+                    best = g
+                end
+            end
+        end
+    end
+    return best
+end
 
-			g.count += 1
-
-			local spotsLeft = tonumber(alt.spotsLeft) or 0
-			if spotsLeft > g.spotsLeft then
-				g.spotsLeft = spotsLeft
-			end
-
-			if alt.mainPresent == true then
-				g.anyMainPresent = true
-			end
-
-			if alt.hasSecret == true then
-				g.anyHasSecret = true
-			end
-		end
-	end
-
-	return groups
+local function groupHasSecret(groups, jobId)
+    local g = groups[jobId]
+    return g and g.anyHasSecret == true
 end
 
 task.spawn(function()
-	while true do
-		local data = getAlts()
+    while true do
+        local data = getAlts()
 
-		if data and type(data.alts) == "table" then
-			local groups = groupByJobId(data.alts)
+        if data and type(data.alts) == "table" then
+            local groups = groupByJobId(data.alts)
 
-			for jobId, g in pairs(groups) do
-				-- TELEPORT ONLY IF ALL API PEOPLE IN THAT SERVER HAVE NO SECRET
-				-- (i.e. no api entry in that jobId has hasSecret=true)
-				if g.count > 0
-					and g.spotsLeft > 0
-					and g.anyMainPresent == false
-					and g.anyHasSecret == false
-					and jobId ~= lastJoinedJobId
-				then
-					lastJoinedJobId = jobId
-					print("[MAIN] Joining job (ALL API NO-SECRET):", jobId)
+            -- lock to our current server if not already locked
+            if not STATE.lockedJobId then
+                STATE.lockedJobId = game.JobId
+            end
 
-					TeleportService:TeleportToPlaceInstance(
-						game.PlaceId,
-						jobId,
-						LP
-					)
-					break
-				end
-			end
-		end
+            -- if we are locked AND that locked server STILL has secret -> STAY
+            if groupHasSecret(groups, STATE.lockedJobId) then
+                -- do nothing, keep sitting
+                -- print("[MAIN] Staying. Secret still present in:", STATE.lockedJobId)
+            else
+                -- secret is gone (or server not in API anymore) -> allowed to hop to a NEW secret server
+                local best = pickBestSecretServer(groups)
 
-		task.wait(CHECK_INTERVAL)
-	end
+                if best and best.jobId and best.jobId ~= STATE.lockedJobId and canHop() then
+                    STATE.lockedJobId = best.jobId
+                    STATE.lastTeleportAt = now()
+                    print("[MAIN] Secret gone. Hopping to secret server:", best.jobId)
+
+                    TeleportService:TeleportToPlaceInstance(game.PlaceId, best.jobId, LP)
+                    break
+                end
+            end
+        end
+
+        task.wait(CHECK_INTERVAL)
+    end
 end)
-
 script_key = "SiLlPxglopaKOOSKsNJwsrbCnyMTcqtM"
 setfpscap(5)
 
 getgenv().tapSimConfig = {
-	ELECTRIC_PET = {},
-	BUY_SECRET_STARTER_PLAZA_PACK = false,
-	AUTO_UPDATE_RESTART = true,
-	AUTO_EQUIP_BEST = true,
-	ADD_FRIEND = true,
-	MAX_REBIRTH = 0,
-	REDEEM_CODE = { "russo", "lucky", "tacos", "enchant", "HTH" },
-	OPEN_EGG = {},
-	HATCH_1000_QUEST = false,
-	FOCUS_EVENT_HATCH = false,
-	BUY_GAMEPASS = { "x8Egg", "FasterEgg" },
-	BUY_AUTO_CLICKER = true,
-	OPEN_ALL_GIFT = true,
-	BUY_GEM_SHOP = {
-		["RebirthButtons"] = 34,
-		["ClickMultiplier"] = 20,
-		["HatchSpeed"] = 5,
-		["GoldenLuck"] = 6,
-		["CriticalChance"] = 5,
-		["AutoClickerSpeed"] = 0,
-		["DoubleJumps"] = 0
-	},
-	ENCHANT_EQUIPPED_ONLY = true,
-	AUTO_ENCHANT = {},
-	FALLBACK_3_SECRET_HUNTER_ENCHANT = {},
-	AUTO_DELETE_EGG_PET = {
-		["Lightning Event"] = { "Sparky", "Charged Dino", "Electric Slime", "Tesla Bot" },
-	},
-	KEEP_PET_NAME = {},
-	KEEP_PET_RARITY = { "Secret I", "Secret II", "Secret III" },
-	GOLDEN_PET = { ["Electric Glitch"] = 6 },
-	RAINBOW_PET = {},
-	USE_BOOST = {},
-	WEBHOOK_PET_RARITY = { "Secret I", "Secret II", "Secret III" },
-	WEBHOOK_URL = "https://discord.com/api/webhooks/1464443545908936877/71UZGdoGptFb3MOp7CMApN7Zayw43gaW4hRmqaEoEreDqcMMSFFtkUdlmnxBsZkV6DL2",
-	DISCORD_ID = "",
-	SHOW_PUBLIC_DISCORD_ID = true,
-	SHOW_WEBHOOK_USERNAME = true,
-	SHOW_WEBHOOK_JOBID = true,
-	TRADE_PET_RARITY = {},
-	TRADE_USERNAME = {},
-	TRADE_PET_NAME = {},
-	KICK_IF_NO_TRADE_PET = false,
-	AUTO_ACCEPT_TRADE = true,
-	STABLE_HATCH = false,
+ELECTRIC_PET = {},
+BUY_SECRET_STARTER_PLAZA_PACK = false,
+AUTO_UPDATE_RESTART = true,
+AUTO_EQUIP_BEST = true,
+ADD_FRIEND = true,
+MAX_REBIRTH = 0,
+REDEEM_CODE = { "russo", "lucky", "tacos", "enchant", "HTH" },
+OPEN_EGG = {},
+HATCH_1000_QUEST = false,
+FOCUS_EVENT_HATCH = false,
+BUY_GAMEPASS = { "x8Egg", "FasterEgg" },
+BUY_AUTO_CLICKER = true,
+OPEN_ALL_GIFT = true,
+BUY_GEM_SHOP = {
+["RebirthButtons"] = 34,
+["ClickMultiplier"] = 20,
+["HatchSpeed"] = 5,
+["GoldenLuck"] = 6,
+["CriticalChance"] = 5,
+["AutoClickerSpeed"] = 0,
+["DoubleJumps"] = 0
+},
+ENCHANT_EQUIPPED_ONLY = true,
+AUTO_ENCHANT = {},
+FALLBACK_3_SECRET_HUNTER_ENCHANT = {},
+AUTO_DELETE_EGG_PET = {
+["Lightning Event"] = { "Sparky", "Charged Dino", "Electric Slime", "Tesla Bot" },
+},
+KEEP_PET_NAME = {},
+KEEP_PET_RARITY = { "Secret I", "Secret II", "Secret III" },
+GOLDEN_PET = { ["Electric Glitch"] = 6 },
+RAINBOW_PET = {},
+USE_BOOST = {},
+WEBHOOK_PET_RARITY = { "Secret I", "Secret II", "Secret III" },
+WEBHOOK_URL = "https://discord.com/api/webhooks/1464443545908936877/71UZGdoGptFb3MOp7CMApN7Zayw43gaW4hRmqaEoEreDqcMMSFFtkUdlmnxBsZkV6DL2",
+DISCORD_ID = "",
+SHOW_PUBLIC_DISCORD_ID = true,
+SHOW_WEBHOOK_USERNAME = true,
+SHOW_WEBHOOK_JOBID = true,
+TRADE_PET_RARITY = {},
+TRADE_USERNAME = {},
+TRADE_PET_NAME = {},
+KICK_IF_NO_TRADE_PET = false,
+AUTO_ACCEPT_TRADE = true,
+STABLE_HATCH = false,
 }
 
 loadstring(game:HttpGet("https://api.luarmor.net/files/v4/loaders/ffab66f7d96a48c13b12e526b19b37d4.lua"))()
