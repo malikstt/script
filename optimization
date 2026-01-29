@@ -107,9 +107,13 @@ local function startBuyingLogic(sellerId)
     -- Teleport close to seller first
     findAndTeleportToSeller()
     
+    -- Store processed listings to avoid repeats
+    local processedListings = {}
+    
     -- Ensure we ALWAYS clear isBuying even if something errors.
     local function cleanup()
         isBuying = false
+        processedListings = {}
     end
 
     local ok = xpcall(function()
@@ -123,6 +127,8 @@ local function startBuyingLogic(sellerId)
             if type(listings) == "table" then
                 local boughtSomething = false
                 
+                -- Build a queue of affordable items
+                local affordableQueue = {}
                 for listingId, data in pairs(listings) do
                     if type(data) == "table" then
                         local price = tonumber(data.itemPrice)
@@ -135,23 +141,43 @@ local function startBuyingLogic(sellerId)
                             pass = false
                         end
 
-                        if pass and price and price <= tokens then
-                            local success = safeInvokeServer("BuyItem", sellerId, listingId)
-                            if success then
-                                boughtSomething = true
-                                -- If StrictMatchTokens is true, we're done after one purchase
-                                if Config.StrictMatchTokens then
-                                    cleanup()
-                                    return
-                                end
-                                -- Otherwise continue looking for more purchases
+                        -- Check if we haven't processed this listing yet
+                        if pass and price and price <= tokens and not processedListings[listingId] then
+                            table.insert(affordableQueue, {
+                                listingId = listingId,
+                                price = price,
+                                data = data
+                            })
+                        end
+                    end
+                end
+                
+                -- Sort by price (cheapest first)
+                table.sort(affordableQueue, function(a, b)
+                    return a.price < b.price
+                end)
+                
+                -- Try to buy from queue
+                for _, item in ipairs(affordableQueue) do
+                    if tokens <= 0 then break end
+                    
+                    if item.price <= tokens then
+                        local success = safeInvokeServer("BuyItem", sellerId, item.listingId)
+                        if success then
+                            boughtSomething = true
+                            processedListings[item.listingId] = true
+                            tokens = getTokens()  -- Update token count
+                            
+                            -- If StrictMatchTokens is true, we're done after one purchase
+                            if Config.StrictMatchTokens then
+                                cleanup()
+                                return
                             end
                         end
                     end
                 end
                 
-                -- If we didn't buy anything and StrictMatchTokens is off,
-                -- keep trying with available tokens
+                -- If we didn't buy anything, wait before checking again
                 if not boughtSomething then
                     task.wait(Config.CheckInterval)
                 end
