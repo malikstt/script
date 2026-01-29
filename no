@@ -1,52 +1,132 @@
-script_key = "SiLlPxglopaKOOSKsNJwsrbCnyMTcqtM"
-setfpscap(5)
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService")
 
-getgenv().tapSimConfig = {
-	ELECTRIC_PET = {},
-	BUY_SECRET_STARTER_PLAZA_PACK = false,
-	AUTO_UPDATE_RESTART = true,
-	AUTO_EQUIP_BEST = true,
-	ADD_FRIEND = true,
-	MAX_REBIRTH = math.huge,
-	REDEEM_CODE = { "russo", "lucky", "tacos", "enchant", "HTH" },
-	OPEN_EGG = { "Holographic", "Divine", "Infernal", "Cryo", "Lightning Event" },
-	HATCH_1000_QUEST = false,
-	FOCUS_EVENT_HATCH = false,
-	BUY_GAMEPASS = { "x8Egg", "FasterEgg" },
-	BUY_AUTO_CLICKER = true,
-	OPEN_ALL_GIFT = true,
-	BUY_GEM_SHOP = {
-		["RebirthButtons"] = 34,
-		["ClickMultiplier"] = 20,
-		["HatchSpeed"] = 5,
-		["GoldenLuck"] = 6,
-		["CriticalChance"] = 5,
-		["AutoClickerSpeed"] = 0,
-		["DoubleJumps"] = 0
-	},
-	ENCHANT_EQUIPPED_ONLY = true,
-	AUTO_ENCHANT = {},
-	FALLBACK_3_SECRET_HUNTER_ENCHANT = {},
-	AUTO_DELETE_EGG_PET = {
-		["Lightning Event"] = { "Sparky", "Charged Dino", "Electric Slime", "Tesla Bot" },
-	},
-	KEEP_PET_NAME = {},
-	KEEP_PET_RARITY = { "Secret I", "Secret II", "Secret III" },
-	GOLDEN_PET = { ["Electric Glitch"] = 6 },
-	RAINBOW_PET = {},
-	USE_BOOST = {
-		"Luck Potion I","Luck Potion II","Luck Potion III",
-		"Gem Potion I","Gem Potion II","Gem Potion III",
-		"Egg Incubator","Octo Incubator","Server Luck","Taco Potion",
-		"Festive Luck I","Festive Luck II",
-		"Space Luck I","Space Luck II"
-	},
-	WEBHOOK_PET_RARITY = { "Secret I", "Secret II", "Secret III" },
-	WEBHOOK_URL = "https://discord.com/api/webhooks/1464443545908936877/71UZGdoGptFb3MOp7CMApN7Zayw43gaW4hRmqaEoEreDqcMMSFFtkUdlmnxBsZkV6DL2",
-	DISCORD_ID = "854709085974822922",
-	SHOW_PUBLIC_DISCORD_ID = true,
-	SHOW_WEBHOOK_USERNAME = true,
-	SHOW_WEBHOOK_JOBID = true,
+local RS = ReplicatedStorage
+local Replication = require(RS.Game.Replication)
+local Network = require(RS.Modules.Network)
+
+local LP = Players.LocalPlayer
+
+-- // CONFIG
+local API_BASE = "https://chips-workers-hammer-consulting.trycloudflare.com"
+
+local BLACKLISTED_PETS = {
+	["Surge Dragon"] = true,
+	["Dual Shock"] = true,
+	["Overcharged Robot"] = true
 }
 
-loadstring(game:HttpGet("https://api.luarmor.net/files/v4/loaders/ffab66f7d96a48c13b12e526b19b37d4.lua"))()
+local currentListings = {}
+
+-- // HELPER: get tokens (safe)
+local function getTokens()
+	return tonumber(
+		Replication.Data
+		and Replication.Data.Items
+		and Replication.Data.Items.PaidTokens
+	) or 0
+end
+
+-- // HELPER: find any non-blacklisted pet
+local function findTrashPet()
+	for id, pet in pairs(Replication.Data.Pets or {}) do
+		if not BLACKLISTED_PETS[pet.Name]
+			and not pet.Locked
+			and not pet.Trading
+			and not currentListings[id] then
+			return id, pet.Name
+		end
+	end
+end
+
+-- // TASK 1: MAIN heartbeat (jobId / placeId)
+task.spawn(function()
+	while true do
+		pcall(function()
+			request({
+				Url = API_BASE .. "/update",
+				Method = "POST",
+				Headers = { ["Content-Type"] = "application/json" },
+				Body = HttpService:JSONEncode({
+					role = "main",
+					username = LP.Name,
+					userId = LP.UserId,
+					jobId = game.JobId,
+					placeId = game.PlaceId,
+					tokens = getTokens()
+				})
+			})
+		end)
+		task.wait(5)
+	end
+end)
+
+-- // TASK 2: Booth claimer + stay at booth
+task.spawn(function()
+	while true do
+		local ownBooth
+
+		for _, booth in ipairs(CollectionService:GetTagged("Booth")) do
+			if booth:GetAttribute("BoothOwner") == LP.UserId then
+				ownBooth = booth
+				break
+			end
+		end
+
+		if not ownBooth then
+			for _, booth in ipairs(CollectionService:GetTagged("Booth")) do
+				if booth:GetAttribute("BoothOwner") == nil then
+					Network:InvokeServer("ClaimBooth", booth)
+					break
+				end
+			end
+		else
+			local hrp = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+			if hrp and ownBooth.PrimaryPart then
+				hrp.CFrame = ownBooth.PrimaryPart.CFrame * CFrame.new(0, 5, 0)
+			end
+		end
+
+		task.wait(5)
+	end
+end)
+
+-- // TASK 3: List pets when alts have tokens
+task.spawn(function()
+	while true do
+		local ok, res = pcall(function()
+			return request({
+				Url = API_BASE .. "/alts",
+				Method = "GET"
+			})
+		end)
+
+		if ok and res and res.Body then
+			local decoded
+			if pcall(function()
+				decoded = HttpService:JSONDecode(res.Body)
+			end) and decoded and decoded.alts then
+				for _, alt in ipairs(decoded.alts) do
+					local price = tonumber(alt.tokens) or 0
+					if price > 0 then
+						local petId, petName = findTrashPet()
+						if petId then
+							local success = Network:InvokeServer("ListItem", "Pet", petId, price)
+							if success then
+								currentListings[petId] = true
+								print("Listed", petName, "for", price, "tokens (alt:", alt.username .. ")")
+							end
+						end
+					end
+					task.wait(0.2)
+				end
+			end
+		end
+
+		task.wait(15)
+	end
+end)
+
+print("MAIN controller active.")
