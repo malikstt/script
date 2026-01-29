@@ -20,9 +20,10 @@ local BLACKLISTED_PETS = {
 
 local currentListings = {}
 local listedAccounts = {}
-local playersInServer = {}
+local serverPlayers = {}
+local reservedForByPetId = {}
 
--- // Get player list function
+-- // Get player list
 local function getPlayersInServer()
     local players = {}
     for _, player in ipairs(Players:GetPlayers()) do
@@ -31,178 +32,182 @@ local function getPlayersInServer()
     return players
 end
 
--- // HELPER: get tokens (safe)
+-- // Update player list periodically
+task.spawn(function()
+    while true do
+        serverPlayers = getPlayersInServer()
+        task.wait(5)
+    end
+end)
+
+-- // HELPER: get tokens
 local function getTokens()
-return tonumber(
-Replication.Data
-and Replication.Data.Items
-and Replication.Data.Items.PaidTokens
-) or 0
+    return tonumber(Replication.Data and Replication.Data.Items and Replication.Data.Items.PaidTokens) or 0
 end
 
 -- // HELPER: find any non-blacklisted pet
 local function findTrashPet()
-for id, pet in pairs(Replication.Data.Pets or {}) do
-if not BLACKLISTED_PETS[pet.Name]
-and not pet.Locked
-and not pet.Trading
-and not currentListings[id] then
-return id, pet.Name
-end
-end
-end
-
--- // HELPER: Get booth listing data
-local function getBoothListings()
-    return Network:InvokeServer("GetBoothListings", LP.UserId) or {}
-end
-
--- // HELPER: Remove listing
-local function removeListing(listingId)
-    return Network:InvokeServer("RemoveListing", listingId)
-end
-
--- // TASK 1: MAIN heartbeat (jobId / placeId)
-task.spawn(function()
-while true do
-pcall(function()
-request({
-Url = API_BASE .. "/update",
-Method = "POST",
-Headers = { ["Content-Type"] = "application/json" },
-Body = HttpService:JSONEncode({
-role = "main",
-username = LP.Name,
-userId = LP.UserId,
-jobId = game.JobId,
-placeId = game.PlaceId,
-tokens = getTokens()
-})
-})
-end)
-task.wait(5)
-end
-end)
-
--- // TASK 2: Booth claimer + stay at booth
-task.spawn(function()
-while true do
-local ownBooth
-
-for _, booth in ipairs(CollectionService:GetTagged("Booth")) do  
-		if booth:GetAttribute("BoothOwner") == LP.UserId then  
-			ownBooth = booth  
-			break  
-		end  
-	end  
-
-	if not ownBooth then  
-		for _, booth in ipairs(CollectionService:GetTagged("Booth")) do  
-			if booth:GetAttribute("BoothOwner") == nil then  
-				Network:InvokeServer("ClaimBooth", booth)  
-				break  
-			end  
-		end  
-	else  
-		local hrp = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")  
-		if hrp and ownBooth.PrimaryPart then  
-			hrp.CFrame = ownBooth.PrimaryPart.CFrame * CFrame.new(0, 5, 0)  
-		end  
-	end  
-
-	task.wait(5)  
-end
-
-end)
-
--- // TASK 3: List pets when alts have tokens
-task.spawn(function()
-while true do
-    -- Update player list
-    playersInServer = getPlayersInServer()
-    
-    -- Get current listings
-    local currentListingsData = getBoothListings()
-    local listingsToRemove = {}
-    
-    -- Check which listings should be removed
-    for listingId, listingData in pairs(currentListingsData) do
-        if listingData.itemType == "Pet" then
-            local isBlacklisted = BLACKLISTED_PETS[listingData.itemName]
-            local ownerInServer = playersInServer[listingData.sellerName or ""]
-            
-            if isBlacklisted or not ownerInServer then
-                table.insert(listingsToRemove, listingId)
-            end
+    for petId, pet in pairs(Replication.Data.Pets or {}) do
+        if not BLACKLISTED_PETS[pet.Name]
+        and not pet.Locked
+        and not pet.Trading
+        and not currentListings[petId] then
+            return petId, pet.Name
         end
     end
-    
-    -- Remove unwanted listings
-    for _, listingId in ipairs(listingsToRemove) do
-        removeListing(listingId)
-        currentListings[listingId] = nil
-        task.wait(0.5)
-    end
-    
-    -- Get alt data
-    local ok, res = pcall(function()
-        return request({
-            Url = API_BASE .. "/alts",
-            Method = "GET"
-        })
-    end)
+end
 
-    if ok and res and res.Body then  
-        local decoded  
-        if pcall(function()  
-            decoded = HttpService:JSONDecode(res.Body)  
-        end) and decoded and decoded.alts then  
-            -- Sort alts: players in server first
-            local sortedAlts = {}
-            local serverAlts = {}
-            local otherAlts = {}
+-- // HELPER: Get pet name from pet data
+local function getPetName(petId)
+    local pet = Replication.Data.Pets and Replication.Data.Pets[petId]
+    return pet and pet.Name or nil
+end
+
+-- // TASK 1: MAIN heartbeat
+task.spawn(function()
+    while true do
+        pcall(function()
+            request({
+                Url = API_BASE .. "/update",
+                Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = HttpService:JSONEncode({
+                    role = "main",
+                    username = LP.Name,
+                    userId = LP.UserId,
+                    jobId = game.JobId,
+                    placeId = game.PlaceId,
+                    tokens = getTokens()
+                })
+            })
+        end)
+        task.wait(5)
+    end
+end)
+
+-- // TASK 2: Booth claimer
+task.spawn(function()
+    while true do
+        local ownBooth
+        for _, booth in ipairs(CollectionService:GetTagged("Booth")) do
+            if booth:GetAttribute("BoothOwner") == LP.UserId then
+                ownBooth = booth
+                break
+            end
+        end
+
+        if not ownBooth then
+            for _, booth in ipairs(CollectionService:GetTagged("Booth")) do
+                if booth:GetAttribute("BoothOwner") == nil then
+                    pcall(function()
+                        Network:InvokeServer("ClaimBooth", booth)
+                    end)
+                    break
+                end
+            end
+        else
+            local hrp = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+            if hrp and ownBooth.PrimaryPart then
+                hrp.CFrame = ownBooth.PrimaryPart.CFrame * CFrame.new(0, 5, 0)
+            end
+        end
+        task.wait(5)
+    end
+end)
+
+-- // TASK 3: Smart listing system
+task.spawn(function()
+    while true do
+        pcall(function()
+            local desiredListings = {}
             
-            for _, alt in ipairs(decoded.alts) do
-                local username = alt.username or ""
-                if playersInServer[username] then
-                    table.insert(serverAlts, alt)
-                else
-                    table.insert(otherAlts, alt)
+            local ok, res = pcall(function()
+                return request({
+                    Url = API_BASE .. "/alts",
+                    Method = "GET"
+                })
+            end)
+
+            if ok and res and res.Body then
+                local decoded
+                if pcall(function()
+                    decoded = HttpService:JSONDecode(res.Body)
+                end) and decoded and decoded.alts then
+                    
+                    local serverAlts = {}
+                    local otherAlts = {}
+                    
+                    for _, alt in ipairs(decoded.alts) do
+                        local username = alt.username or ""
+                        local price = tonumber(alt.tokens) or 0
+                        if price > 0 then
+                            if serverPlayers[username] then
+                                table.insert(serverAlts, {username = username, price = price})
+                            else
+                                table.insert(otherAlts, {username = username, price = price})
+                            end
+                        end
+                    end
+                    
+                    for _, alt in ipairs(serverAlts) do
+                        desiredListings[alt.username] = alt.price
+                    end
+                    for _, alt in ipairs(otherAlts) do
+                        if not desiredListings[alt.username] then
+                            desiredListings[alt.username] = alt.price
+                        end
+                    end
+                end
+            end
+
+            local currentListingsData = pcall(function()
+                return Network:InvokeServer("GetBoothListings", LP.UserId) or {}
+            end)
+            
+            if type(currentListingsData) == "table" then
+                currentListings = {}
+                local toRemove = {}
+                
+                for listingId, listing in pairs(currentListingsData) do
+                    if listing.itemType == "Pet" then
+                        local petName = getPetName(listing.itemName)
+                        if petName and BLACKLISTED_PETS[petName] then
+                            table.insert(toRemove, listingId)
+                        else
+                            currentListings[listing.itemName] = true
+                        end
+                    end
+                end
+                
+                for _, listingId in ipairs(toRemove) do
+                    pcall(function()
+                        Network:InvokeServer("RemoveListing", listingId)
+                        task.wait(0.5)
+                    end)
                 end
             end
             
-            -- Combine: server alts first, then others
-            for _, alt in ipairs(serverAlts) do
-                table.insert(sortedAlts, alt)
+            listedAccounts = {}
+            for username, price in pairs(desiredListings) do
+                if not listedAccounts[username] then
+                    local petId, petName = findTrashPet()
+                    if petId then
+                        local success = pcall(function()
+                            return Network:InvokeServer("ListItem", "Pet", petId, price)
+                        end)
+                        if success then
+                            currentListings[petId] = true
+                            listedAccounts[username] = true
+                            print("Listed", petName, "for", price, "tokens (alt:", username .. ")")
+                            task.wait(0.2)
+                        end
+                    end
+                end
             end
-            for _, alt in ipairs(otherAlts) do
-                table.insert(sortedAlts, alt)
-            end
-            
-            -- Process alts
-            for _, alt in ipairs(sortedAlts) do  
-                local price = tonumber(alt.tokens) or 0  
-                local username = alt.username or ""  
-                
-                if price > 0 and not listedAccounts[username] then  
-                    local petId, petName = findTrashPet()  
-                    if petId then  
-                        local success = Network:InvokeServer("ListItem", "Pet", petId, price)  
-                        if success then  
-                            currentListings[petId] = true  
-                            listedAccounts[username] = true  
-                            print("Listed", petName, "for", price, "tokens (alt:", username .. ")")  
-                        end  
-                    end  
-                end  
-                task.wait(0.2)  
-            end  
-        end  
-    end  
-
-    task.wait(15)  
-end
-
+        end)
+        
+        task.wait(15)
+    end
 end)
 
 print("MAIN controller active.")
