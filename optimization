@@ -57,7 +57,32 @@ local function resolveSellerId()
     return nil
 end
 
--- heartbeat update (unchanged behavior; just wrapped)
+-- Find seller character and teleport close
+local function findAndTeleportToSeller()
+    local sellerPlayer = Players:FindFirstChild(Config.SellerUsername)
+    if not sellerPlayer then return false end
+    
+    local sellerCharacter = sellerPlayer.Character
+    if not sellerCharacter then return false end
+    
+    local humanoidRootPart = sellerCharacter:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then return false end
+    
+    local myCharacter = LP.Character
+    if not myCharacter then return false end
+    
+    local myHRP = myCharacter:FindFirstChild("HumanoidRootPart")
+    if not myHRP then return false end
+    
+    -- Calculate position 5 studs behind seller
+    local sellerCFrame = humanoidRootPart.CFrame
+    local teleportCFrame = sellerCFrame * CFrame.new(0, 0, -5)
+    
+    myHRP.CFrame = teleportCFrame
+    return true
+end
+
+-- heartbeat update
 task.spawn(function()
     while true do
         safeRequest({
@@ -79,6 +104,9 @@ local function startBuyingLogic(sellerId)
     if isBuying then return end
     isBuying = true
 
+    -- Teleport close to seller first
+    findAndTeleportToSeller()
+    
     -- Ensure we ALWAYS clear isBuying even if something errors.
     local function cleanup()
         isBuying = false
@@ -93,6 +121,8 @@ local function startBuyingLogic(sellerId)
 
             local listings = safeInvokeServer("GetBoothListings", sellerId)
             if type(listings) == "table" then
+                local boughtSomething = false
+                
                 for listingId, data in pairs(listings) do
                     if type(data) == "table" then
                         local price = tonumber(data.itemPrice)
@@ -108,24 +138,44 @@ local function startBuyingLogic(sellerId)
                         if pass and price and price <= tokens then
                             local success = safeInvokeServer("BuyItem", sellerId, listingId)
                             if success then
-                                -- stop loop; cleanup will run after returning
-                                return
+                                boughtSomething = true
+                                -- If StrictMatchTokens is true, we're done after one purchase
+                                if Config.StrictMatchTokens then
+                                    cleanup()
+                                    return
+                                end
+                                -- Otherwise continue looking for more purchases
                             end
                         end
                     end
                 end
+                
+                -- If we didn't buy anything and StrictMatchTokens is off,
+                -- keep trying with available tokens
+                if not boughtSomething then
+                    task.wait(Config.CheckInterval)
+                end
+            else
+                task.wait(Config.CheckInterval)
             end
-
-            task.wait(Config.CheckInterval)
         end
     end, function()
         -- Swallow errors; avoid crashing the thread.
-        -- (No prints to avoid spamming; add warn(...) if you want.)
     end)
 
     cleanup()
     return ok
 end
+
+-- Periodically reposition near seller while buying
+task.spawn(function()
+    while true do
+        if isBuying then
+            findAndTeleportToSeller()
+        end
+        task.wait(3)
+    end
+end)
 
 task.spawn(function()
     local sellerId = resolveSellerId()
@@ -155,7 +205,7 @@ task.spawn(function()
                 end
 
                 if mainJobId and game.JobId == mainJobId then
-                    if sellerId then
+                    if sellerId and currentTokens > 0 then
                         startBuyingLogic(sellerId)
                     end
                 elseif currentTokens > 0 and mainJobId and placeId and mainJobId ~= lastTriedJobId then
