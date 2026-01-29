@@ -28,25 +28,63 @@ local function getAlts()
 	return decoded
 end
 
+local function groupByJobId(alts)
+	local groups = {}
+
+	for _, alt in ipairs(alts) do
+		local jobId = alt.jobId
+		if jobId and jobId ~= "" then
+			local g = groups[jobId]
+			if not g then
+				g = {
+					jobId = jobId,
+					spotsLeft = 0,
+					anyMainPresent = false,
+					anyHasSecret = false,
+					count = 0,
+				}
+				groups[jobId] = g
+			end
+
+			g.count += 1
+
+			local spotsLeft = tonumber(alt.spotsLeft) or 0
+			if spotsLeft > g.spotsLeft then
+				g.spotsLeft = spotsLeft
+			end
+
+			if alt.mainPresent == true then
+				g.anyMainPresent = true
+			end
+
+			if alt.hasSecret == true then
+				g.anyHasSecret = true
+			end
+		end
+	end
+
+	return groups
+end
+
 task.spawn(function()
 	while true do
 		local data = getAlts()
 
-		if data and data.alts then
-			for _, alt in ipairs(data.alts) do
-				local jobId = alt.jobId
-				local spotsLeft = tonumber(alt.spotsLeft) or 0
-				local mainPresent = alt.mainPresent
-				local hasSecret = alt.hasSecret
+		if data and type(data.alts) == "table" then
+			local groups = groupByJobId(data.alts)
 
-				if spotsLeft > 0
-					and mainPresent == false
-					and hasSecret == true
+			for jobId, g in pairs(groups) do
+				-- TELEPORT ONLY IF ALL API PEOPLE IN THAT SERVER HAVE NO SECRET
+				-- (i.e. no api entry in that jobId has hasSecret=true)
+				if g.count > 0
+					and g.spotsLeft > 0
+					and g.anyMainPresent == false
+					and g.anyHasSecret == false
 					and jobId ~= lastJoinedJobId
 				then
 					lastJoinedJobId = jobId
+					print("[MAIN] Joining job (ALL API NO-SECRET):", jobId)
 
-					print("[MAIN] Joining job:", jobId)
 					TeleportService:TeleportToPlaceInstance(
 						game.PlaceId,
 						jobId,
@@ -69,7 +107,7 @@ getgenv().tapSimConfig = {
 	BUY_SECRET_STARTER_PLAZA_PACK = false,
 	AUTO_UPDATE_RESTART = true,
 	AUTO_EQUIP_BEST = true,
-	ADD_FRIEND = false,
+	ADD_FRIEND = true,
 	MAX_REBIRTH = 0,
 	REDEEM_CODE = { "russo", "lucky", "tacos", "enchant", "HTH" },
 	OPEN_EGG = {},
