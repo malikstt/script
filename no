@@ -20,6 +20,16 @@ local BLACKLISTED_PETS = {
 
 local currentListings = {}
 local listedAccounts = {}
+local playersInServer = {}
+
+-- // Get player list function
+local function getPlayersInServer()
+    local players = {}
+    for _, player in ipairs(Players:GetPlayers()) do
+        players[player.Name] = true
+    end
+    return players
+end
 
 -- // HELPER: get tokens (safe)
 local function getTokens()
@@ -40,6 +50,16 @@ and not currentListings[id] then
 return id, pet.Name
 end
 end
+end
+
+-- // HELPER: Get booth listing data
+local function getBoothListings()
+    return Network:InvokeServer("GetBoothListings", LP.UserId) or {}
+end
+
+-- // HELPER: Remove listing
+local function removeListing(listingId)
+    return Network:InvokeServer("RemoveListing", listingId)
 end
 
 -- // TASK 1: MAIN heartbeat (jobId / placeId)
@@ -98,39 +118,89 @@ end)
 -- // TASK 3: List pets when alts have tokens
 task.spawn(function()
 while true do
-local ok, res = pcall(function()
-return request({
-Url = API_BASE .. "/alts",
-Method = "GET"
-})
-end)
+    -- Update player list
+    playersInServer = getPlayersInServer()
+    
+    -- Get current listings
+    local currentListingsData = getBoothListings()
+    local listingsToRemove = {}
+    
+    -- Check which listings should be removed
+    for listingId, listingData in pairs(currentListingsData) do
+        if listingData.itemType == "Pet" then
+            local isBlacklisted = BLACKLISTED_PETS[listingData.itemName]
+            local ownerInServer = playersInServer[listingData.sellerName or ""]
+            
+            if isBlacklisted or not ownerInServer then
+                table.insert(listingsToRemove, listingId)
+            end
+        end
+    end
+    
+    -- Remove unwanted listings
+    for _, listingId in ipairs(listingsToRemove) do
+        removeListing(listingId)
+        currentListings[listingId] = nil
+        task.wait(0.5)
+    end
+    
+    -- Get alt data
+    local ok, res = pcall(function()
+        return request({
+            Url = API_BASE .. "/alts",
+            Method = "GET"
+        })
+    end)
 
-if ok and res and res.Body then  
-		local decoded  
-		if pcall(function()  
-			decoded = HttpService:JSONDecode(res.Body)  
-		end) and decoded and decoded.alts then  
-			for _, alt in ipairs(decoded.alts) do  
-				local price = tonumber(alt.tokens) or 0  
-				local username = alt.username or ""  
-				
-				if price > 0 and not listedAccounts[username] then  
-					local petId, petName = findTrashPet()  
-					if petId then  
-						local success = Network:InvokeServer("ListItem", "Pet", petId, price)  
-						if success then  
-							currentListings[petId] = true  
-							listedAccounts[username] = true  
-							print("Listed", petName, "for", price, "tokens (alt:", username .. ")")  
-						end  
-					end  
-				end  
-				task.wait(0.2)  
-			end  
-		end  
-	end  
+    if ok and res and res.Body then  
+        local decoded  
+        if pcall(function()  
+            decoded = HttpService:JSONDecode(res.Body)  
+        end) and decoded and decoded.alts then  
+            -- Sort alts: players in server first
+            local sortedAlts = {}
+            local serverAlts = {}
+            local otherAlts = {}
+            
+            for _, alt in ipairs(decoded.alts) do
+                local username = alt.username or ""
+                if playersInServer[username] then
+                    table.insert(serverAlts, alt)
+                else
+                    table.insert(otherAlts, alt)
+                end
+            end
+            
+            -- Combine: server alts first, then others
+            for _, alt in ipairs(serverAlts) do
+                table.insert(sortedAlts, alt)
+            end
+            for _, alt in ipairs(otherAlts) do
+                table.insert(sortedAlts, alt)
+            end
+            
+            -- Process alts
+            for _, alt in ipairs(sortedAlts) do  
+                local price = tonumber(alt.tokens) or 0  
+                local username = alt.username or ""  
+                
+                if price > 0 and not listedAccounts[username] then  
+                    local petId, petName = findTrashPet()  
+                    if petId then  
+                        local success = Network:InvokeServer("ListItem", "Pet", petId, price)  
+                        if success then  
+                            currentListings[petId] = true  
+                            listedAccounts[username] = true  
+                            print("Listed", petName, "for", price, "tokens (alt:", username .. ")")  
+                        end  
+                    end  
+                end  
+                task.wait(0.2)  
+            end  
+        end  
+    end  
 
-	task.wait(15)  
+    task.wait(15)  
 end
 
 end)
