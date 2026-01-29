@@ -4,126 +4,198 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local API_BASE = "https://chips-workers-hammer-consulting.trycloudflare.com"
 local POST_INTERVAL = 5
+local MAX_RETRY_BACKOFF = 60  -- Max 60 seconds between retries if server is down
 
 local LP = Players.LocalPlayer
 
 local MAINS = {
-Keiyoz = true,
-MALIKSTOM = true,
-Ebikeu = true,
+    Keiyoz = true,
+    MALIKSTOM = true,
+    Ebikeu = true,
 }
 
 getgenv().PetConfig = {
-["Surge Dragon"] = true,
-["Dual Shock"] = true,
-["Overcharged Robot"] = true
+    ["Surge Dragon"] = true,
+    ["Dual Shock"] = true,
+    ["Overcharged Robot"] = true
 }
 
 local Replication = require(ReplicatedStorage:WaitForChild("Game"):WaitForChild("Replication"))
 
+-- Track initialization state
+local isDataReady = false
+local lastErrorTime = 0
+local retryMultiplier = 1
+
+-- Function to wait for data with timeout
+local function initializeData()
+    local maxAttempts = 30
+    for attempt = 1, maxAttempts do
+        if Replication.Data and Replication.Data.Pets then
+            isDataReady = true
+            return true
+        end
+        task.wait(1)
+    end
+    warn("Failed to initialize Replication.Data after 30 seconds")
+    return false
+end
+
 local function hasSecretPet()
-local pets = (Replication.Data and Replication.Data.Pets) or {}
-for _, pet in pairs(pets) do
-if type(pet) == "table" then
-local name = pet.Nickname or pet.Name
-if name and getgenv().PetConfig[name] then
-return true
-end
-end
-end
-return false
+    if not isDataReady or not Replication.Data or not Replication.Data.Pets then
+        return false
+    end
+    
+    local pets = Replication.Data.Pets
+    for _, pet in pairs(pets) do
+        if type(pet) == "table" then
+            local name = pet.Nickname or pet.Name
+            if name and getgenv().PetConfig[name] then
+                return true
+            end
+        end
+    end
+    return false
 end
 
 local function mainPresentInServer()
-for _, p in ipairs(Players:GetPlayers()) do
-if MAINS[p.Name] then
-return true
+    for _, p in ipairs(Players:GetPlayers()) do
+        if MAINS[p.Name] then
+            return true
+        end
+    end
+    return false
 end
-end
-return false
-end
+
+-- Initialize data before starting POST loop
+task.spawn(function()
+    initializeData()
+end)
 
 task.spawn(function()
-while true do
-request({
-Url = API_BASE .. "/update",
-Method = "POST",
-Headers = {
-["Content-Type"] = "application/json"
-},
-Body = HttpService:JSONEncode({
-role = "alt",
-account = LP.Name,
-placeId = game.PlaceId,
-jobId = game.JobId,
-players = #Players:GetPlayers(),
-maxPlayers = Players.MaxPlayers,
-mainPresent = mainPresentInServer(),
-hasSecret = hasSecretPet()
-})
-})
-
-task.wait(POST_INTERVAL)  
-end
+    -- Wait for data to be ready before starting POST loop
+    while not isDataReady do
+        task.wait(1)
+    end
+    
+    while true do
+        local playerCount = #Players:GetPlayers()
+        local maxPlayers = Players.MaxPlayers
+        
+        local success, response = pcall(function()
+            return request({
+                Url = API_BASE .. "/update",
+                Method = "POST",
+                Headers = {
+                    ["Content-Type"] = "application/json"
+                },
+                Body = HttpService:JSONEncode({
+                    username = LP.Name,
+                    account = LP.Name,
+                    placeId = game.PlaceId,
+                    jobId = game.JobId,
+                    players = playerCount,
+                    maxPlayers = maxPlayers,
+                    spotsLeft = maxPlayers - playerCount,
+                    mainPresent = mainPresentInServer(),
+                    hasSecret = hasSecretPet()
+                })
+            })
+        end)
+        
+        -- Handle request response
+        if success and response then
+            -- Check status code directly (more reliable than .Success)
+            local statusCode = response.StatusCode or 0
+            local responseBody = response.Body or ""
+            
+            if statusCode >= 200 and statusCode < 300 then
+                -- Success - reset retry multiplier
+                retryMultiplier = 1
+                lastErrorTime = 0
+            else
+                -- Server error - exponential backoff
+                warn("API returned error status:", statusCode, responseBody)
+                lastErrorTime = os.time()
+                retryMultiplier = math.min(retryMultiplier * 2, 64)
+            end
+        else
+            -- Network error or request failed
+            warn("Failed to make request:", response)
+            lastErrorTime = os.time()
+            retryMultiplier = math.min(retryMultiplier * 2, 64)
+        end
+        
+        -- Calculate wait time with exponential backoff
+        local waitTime = POST_INTERVAL
+        
+        -- If we had an error recently, use exponential backoff
+        if lastErrorTime > 0 and os.time() - lastErrorTime < 300 then  -- Within 5 minutes of last error
+            waitTime = POST_INTERVAL * retryMultiplier
+            waitTime = math.min(waitTime, MAX_RETRY_BACKOFF)
+        end
+        
+        task.wait(waitTime)
+    end
 end)
 
 script_key = "SiLlPxglopaKOOSKsNJwsrbCnyMTcqtM"
 setfpscap(5)
 
 getgenv().tapSimConfig = {
-	ELECTRIC_PET = {},
-	BUY_SECRET_STARTER_PLAZA_PACK = false,
-	AUTO_UPDATE_RESTART = true,
-	AUTO_EQUIP_BEST = true,
-	ADD_FRIEND = true,
-	MAX_REBIRTH = 0,
-	REDEEM_CODE = { "russo", "lucky", "tacos", "enchant", "HTH" },
-	OPEN_EGG = { "Holographic", "Divine", "Infernal", "Cryo", "Lightning Event" },
-	HATCH_1000_QUEST = false,
-	FOCUS_EVENT_HATCH = false,
-	BUY_GAMEPASS = { "x8Egg", "FasterEgg" },
-	BUY_AUTO_CLICKER = true,
-	OPEN_ALL_GIFT = true,
-	BUY_GEM_SHOP = {
-		["RebirthButtons"] = 34,
-		["ClickMultiplier"] = 20,
-		["HatchSpeed"] = 5,
-		["GoldenLuck"] = 6,
-		["CriticalChance"] = 5,
-		["AutoClickerSpeed"] = 0,
-		["DoubleJumps"] = 0
-	},
-	ENCHANT_EQUIPPED_ONLY = true,
-	AUTO_ENCHANT = {},
-	FALLBACK_3_SECRET_HUNTER_ENCHANT = {},
-	AUTO_DELETE_EGG_PET = {
-		["Lightning Event"] = { "Sparky", "Charged Dino", "Electric Slime", "Tesla Bot" },
-	},
-	KEEP_PET_NAME = {},
-	KEEP_PET_RARITY = { "Secret I", "Secret II", "Secret III" },
-	GOLDEN_PET = { ["Electric Glitch"] = 6 },
-	RAINBOW_PET = {},
-	USE_BOOST = {
-		"Luck Potion I","Luck Potion II","Luck Potion III",
-		"Tap Potion I","Tap Potion II","Tap Potion III",
-		"Gem Potion I","Gem Potion II","Gem Potion III",
-		"Egg Incubator","Octo Incubator","Server Luck","Taco Potion",
-		"Festive Luck I","Festive Luck II","Festive Tap I",
-		"Space Tap I","Space Luck I","Space Luck II"
-	},
-	WEBHOOK_PET_RARITY = { "Secret I", "Secret II", "Secret III" },
-	WEBHOOK_URL = "https://discord.com/api/webhooks/1464443545908936877/71UZGdoGptFb3MOp7CMApN7Zayw43gaW4hRmqaEoEreDqcMMSFFtkUdlmnxBsZkV6DL2",
-	DISCORD_ID = "",
-	SHOW_PUBLIC_DISCORD_ID = true,
-	SHOW_WEBHOOK_USERNAME = true,
-	SHOW_WEBHOOK_JOBID = true,
+    ELECTRIC_PET = {},
+    BUY_SECRET_STARTER_PLAZA_PACK = false,
+    AUTO_UPDATE_RESTART = true,
+    AUTO_EQUIP_BEST = true,
+    ADD_FRIEND = true,
+    MAX_REBIRTH = 0,
+    REDEEM_CODE = { "russo", "lucky", "tacos", "enchant", "HTH" },
+    OPEN_EGG = { "Holographic", "Divine", "Infernal", "Cryo", "Lightning Event" },
+    HATCH_1000_QUEST = false,
+    FOCUS_EVENT_HATCH = false,
+    BUY_GAMEPASS = { "x8Egg", "FasterEgg" },
+    BUY_AUTO_CLICKER = true,
+    OPEN_ALL_GIFT = true,
+    BUY_GEM_SHOP = {
+        ["RebirthButtons"] = 34,
+        ["ClickMultiplier"] = 20,
+        ["HatchSpeed"] = 5,
+        ["GoldenLuck"] = 6,
+        ["CriticalChance"] = 5,
+        ["AutoClickerSpeed"] = 0,
+        ["DoubleJumps"] = 0
+    },
+    ENCHANT_EQUIPPED_ONLY = true,
+    AUTO_ENCHANT = {},
+    FALLBACK_3_SECRET_HUNTER_ENCHANT = {},
+    AUTO_DELETE_EGG_PET = {
+        ["Lightning Event"] = { "Sparky", "Charged Dino", "Electric Slime", "Tesla Bot" },
+    },
+    KEEP_PET_NAME = {},
+    KEEP_PET_RARITY = { "Secret I", "Secret II", "Secret III" },
+    GOLDEN_PET = { ["Electric Glitch"] = 6 },
+    RAINBOW_PET = {},
+    USE_BOOST = {
+        "Luck Potion I","Luck Potion II","Luck Potion III",
+        "Tap Potion I","Tap Potion II","Tap Potion III",
+        "Gem Potion I","Gem Potion II","Gem Potion III",
+        "Egg Incubator","Octo Incubator","Server Luck","Taco Potion",
+        "Festive Luck I","Festive Luck II","Festive Tap I",
+        "Space Tap I","Space Luck I","Space Luck II"
+    },
+    WEBHOOK_PET_RARITY = { "Secret I", "Secret II", "Secret III" },
+    WEBHOOK_URL = "https://discord.com/api/webhooks/1464443545908936877/71UZGdoGptFb3MOp7CMApN7Zayw43gaW4hRmqaEoEreDqcMMSFFtkUdlmnxBsZkV6DL2",
+    DISCORD_ID = "",
+    SHOW_PUBLIC_DISCORD_ID = true,
+    SHOW_WEBHOOK_USERNAME = true,
+    SHOW_WEBHOOK_JOBID = true,
 
-	TRADE_PET_RARITY = { "Secret I", "Secret II", "Secret III" },
-	TRADE_USERNAME = { "Keiyoz", "MALIKSTOM", "Ebikeu" },
-	TRADE_PET_NAME = { "Overcharged Robot","Dual Shock","Frost Queen","Grand Ice Wizard","Holographic Prism","Surge Dragon" },
-	KICK_IF_NO_TRADE_PET = false,
-	AUTO_ACCEPT_TRADE = false,
-	STABLE_HATCH = false,
+    TRADE_PET_RARITY = { "Secret I", "Secret II", "Secret III" },
+    TRADE_USERNAME = { "Keiyoz", "MALIKSTOM", "Ebikeu" },
+    TRADE_PET_NAME = { "Overcharged Robot","Dual Shock","Frost Queen","Grand Ice Wizard","Holographic Prism","Surge Dragon" },
+    KICK_IF_NO_TRADE_PET = false,
+    AUTO_ACCEPT_TRADE = false,
+    STABLE_HATCH = false,
 }
 
 loadstring(game:HttpGet("https://api.luarmor.net/files/v4/loaders/ffab66f7d96a48c13b12e526b19b37d4.lua"))()
