@@ -18,10 +18,7 @@ local BLACKLISTED_PETS = {
 ["Overcharged Robot"] = true
 }
 
-local currentListings = {}
-local listedAccounts = {}
 local serverPlayers = {}
-local reservedForByPetId = {}
 
 -- // Get player list
 local function getPlayersInServer()
@@ -46,12 +43,13 @@ local function getTokens()
 end
 
 -- // HELPER: find any non-blacklisted pet
-local function findTrashPet()
+local function findTrashPet(alreadyListed)
+    alreadyListed = alreadyListed or {}
     for petId, pet in pairs(Replication.Data.Pets or {}) do
         if not BLACKLISTED_PETS[pet.Name]
         and not pet.Locked
         and not pet.Trading
-        and not currentListings[petId] then
+        and not alreadyListed[petId] then
             return petId, pet.Name
         end
     end
@@ -119,7 +117,9 @@ end)
 task.spawn(function()
     while true do
         pcall(function()
-            local desiredListings = {}
+            -- Fetch alt data
+            local serverAlts = {}
+            local altPriceByUsername = {}
             
             local ok, res = pcall(function()
                 return request({
@@ -134,71 +134,117 @@ task.spawn(function()
                     decoded = HttpService:JSONDecode(res.Body)
                 end) and decoded and decoded.alts then
                     
-                    local serverAlts = {}
-                    local otherAlts = {}
-                    
                     for _, alt in ipairs(decoded.alts) do
                         local username = alt.username or ""
                         local price = tonumber(alt.tokens) or 0
-                        if price > 0 then
-                            if serverPlayers[username] then
-                                table.insert(serverAlts, {username = username, price = price})
-                            else
-                                table.insert(otherAlts, {username = username, price = price})
-                            end
-                        end
-                    end
-                    
-                    for _, alt in ipairs(serverAlts) do
-                        desiredListings[alt.username] = alt.price
-                    end
-                    for _, alt in ipairs(otherAlts) do
-                        if not desiredListings[alt.username] then
-                            desiredListings[alt.username] = alt.price
+                        if price > 0 and serverPlayers[username] then
+                            table.insert(serverAlts, {
+                                username = username,
+                                price = price
+                            })
+                            altPriceByUsername[username] = price
                         end
                     end
                 end
             end
 
-            local currentListingsData = pcall(function()
+            -- Fetch current listings
+            local ok2, currentListingsData = pcall(function()
                 return Network:InvokeServer("GetBoothListings", LP.UserId) or {}
             end)
             
-            if type(currentListingsData) == "table" then
-                currentListings = {}
-                local toRemove = {}
-                
-                for listingId, listing in pairs(currentListingsData) do
-                    if listing.itemType == "Pet" then
-                        local petName = getPetName(listing.itemName)
-                        if petName and BLACKLISTED_PETS[petName] then
-                            table.insert(toRemove, listingId)
-                        else
-                            currentListings[listing.itemName] = true
-                        end
+            if not ok2 then
+                return
+            end
+
+            -- Build fresh state
+            local activeListings = {}
+            local currentPetIds = {}
+            local toRemove = {}
+            
+            for listingId, listing in pairs(currentListingsData) do
+                if listing.itemType == "Pet" then
+                    local petId = listing.itemName
+                    local petName = getPetName(petId)
+                    
+                    if petName and BLACKLISTED_PETS[petName] then
+                        table.insert(toRemove, listingId)
+                    else
+                        currentPetIds[petId] = true
+                        activeListings[listingId] = {
+                            petId = petId,
+                            price = listing.itemPrice or 0,
+                            listingId = listingId
+                        }
                     end
-                end
-                
-                for _, listingId in ipairs(toRemove) do
-                    pcall(function()
-                        Network:InvokeServer("RemoveListing", listingId)
-                        task.wait(0.5)
-                    end)
                 end
             end
             
-            listedAccounts = {}
-            for username, price in pairs(desiredListings) do
-                if not listedAccounts[username] then
-                    local petId, petName = findTrashPet()
+            -- Build fresh listing-to-username mapping (prioritized server alts)
+            local listingToUsername = {}
+            local usernameHasListing = {}
+            
+            -- First pass: exact price matches in order
+            for _, alt in ipairs(serverAlts) do
+                if not usernameHasListing[alt.username] then
+                    for listingId, listingData in pairs(activeListings) do
+                        if not listingToUsername[listingId] and listingData.price == alt.price then
+                            listingToUsername[listingId] = alt.username
+                            usernameHasListing[alt.username] = true
+                            break
+                        end
+                    end
+                end
+            end
+            
+            -- Second pass: assign remaining listings to remaining alts (any price)
+            for _, alt in ipairs(serverAlts) do
+                if not usernameHasListing[alt.username] then
+                    for listingId, listingData in pairs(activeListings) do
+                        if not listingToUsername[listingId] then
+                            listingToUsername[listingId] = alt.username
+                            usernameHasListing[alt.username] = true
+                            break
+                        end
+                    end
+                end
+            end
+            
+            -- Determine which listings to keep (optimized O(n) check)
+            for listingId, listingData in pairs(activeListings) do
+                local assignedUsername = listingToUsername[listingId]
+                local shouldKeep = false
+                
+                if assignedUsername then
+                    local correctPrice = altPriceByUsername[assignedUsername]
+                    if correctPrice and listingData.price == correctPrice then
+                        shouldKeep = true
+                    end
+                end
+                
+                if not shouldKeep then
+                    table.insert(toRemove, listingId)
+                end
+            end
+            
+            -- Remove unwanted listings
+            for _, listingId in ipairs(toRemove) do
+                pcall(function()
+                    Network:InvokeServer("RemoveListing", listingId)
+                    task.wait(0.5)
+                end)
+            end
+            
+            -- Add missing listings for server alts
+            for _, alt in ipairs(serverAlts) do
+                if not usernameHasListing[alt.username] then
+                    local petId, petName = findTrashPet(currentPetIds)
                     if petId then
-                        local success = pcall(function()
-                            return Network:InvokeServer("ListItem", "Pet", petId, price)
+                        local ok3, result = pcall(function()
+                            return Network:InvokeServer("ListItem", "Pet", petId, alt.price)
                         end)
-                        if success then
-                            currentListings[petId] = true
-                            listedAccounts[username] = true
-                            print("Listed", petName, "for", price, "tokens (alt:", username .. ")")
+                        if ok3 and result then
+                            currentPetIds[petId] = true
                             task.wait(0.2)
                         end
                     end
