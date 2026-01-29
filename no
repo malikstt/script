@@ -1,259 +1,115 @@
+repeat task.wait() until game:IsLoaded()
+
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local CollectionService = game:GetService("CollectionService")
+local TeleportService = game:GetService("TeleportService")
 
-local RS = ReplicatedStorage
-local Replication = require(RS.Game.Replication)
-local Network = require(RS.Modules.Network)
+local API_BASE = "https://chips-workers-hammer-consulting.trycloudflare.com"
+local CHECK_INTERVAL = 3
 
 local LP = Players.LocalPlayer
+local lastJoinedJobId = nil
 
--- // CONFIG
-local API_BASE = "https://chips-workers-hammer-consulting.trycloudflare.com"
+local function getAlts()
+	local res = request({
+		Url = API_BASE .. "/alts",
+		Method = "GET"
+	})
 
-local BLACKLISTED_PETS = {
-["Surge Dragon"] = true,
-["Dual Shock"] = true,
-["Overcharged Robot"] = true
+	if not res or not res.Body then
+		return nil
+	end
+
+	local decoded
+	pcall(function()
+		decoded = HttpService:JSONDecode(res.Body)
+	end)
+
+	return decoded
+end
+
+task.spawn(function()
+	while true do
+		local data = getAlts()
+
+		if data and data.alts then
+			for _, alt in ipairs(data.alts) do
+				local jobId = alt.jobId
+				local spotsLeft = tonumber(alt.spotsLeft) or 0
+				local mainPresent = alt.mainPresent
+				local hasSecret = alt.hasSecret
+
+				if spotsLeft > 0
+					and mainPresent == false
+					and hasSecret == true
+					and jobId ~= lastJoinedJobId
+				then
+					lastJoinedJobId = jobId
+
+					print("[MAIN] Joining job:", jobId)
+					TeleportService:TeleportToPlaceInstance(
+						game.PlaceId,
+						jobId,
+						LP
+					)
+					break
+				end
+			end
+		end
+
+		task.wait(CHECK_INTERVAL)
+	end
+end)
+
+script_key = "SiLlPxglopaKOOSKsNJwsrbCnyMTcqtM"
+setfpscap(5)
+
+getgenv().tapSimConfig = {
+	ELECTRIC_PET = {},
+	BUY_SECRET_STARTER_PLAZA_PACK = false,
+	AUTO_UPDATE_RESTART = true,
+	AUTO_EQUIP_BEST = true,
+	ADD_FRIEND = true,
+	MAX_REBIRTH = 0,
+	REDEEM_CODE = { "russo", "lucky", "tacos", "enchant", "HTH" },
+	OPEN_EGG = {},
+	HATCH_1000_QUEST = false,
+	FOCUS_EVENT_HATCH = false,
+	BUY_GAMEPASS = { "x8Egg", "FasterEgg" },
+	BUY_AUTO_CLICKER = true,
+	OPEN_ALL_GIFT = true,
+	BUY_GEM_SHOP = {
+		["RebirthButtons"] = 34,
+		["ClickMultiplier"] = 20,
+		["HatchSpeed"] = 5,
+		["GoldenLuck"] = 6,
+		["CriticalChance"] = 5,
+		["AutoClickerSpeed"] = 0,
+		["DoubleJumps"] = 0
+	},
+	ENCHANT_EQUIPPED_ONLY = true,
+	AUTO_ENCHANT = {},
+	FALLBACK_3_SECRET_HUNTER_ENCHANT = {},
+	AUTO_DELETE_EGG_PET = {
+		["Lightning Event"] = { "Sparky", "Charged Dino", "Electric Slime", "Tesla Bot" },
+	},
+	KEEP_PET_NAME = {},
+	KEEP_PET_RARITY = { "Secret I", "Secret II", "Secret III" },
+	GOLDEN_PET = { ["Electric Glitch"] = 6 },
+	RAINBOW_PET = {},
+	USE_BOOST = {},
+	WEBHOOK_PET_RARITY = { "Secret I", "Secret II", "Secret III" },
+	WEBHOOK_URL = "https://discord.com/api/webhooks/1464443545908936877/71UZGdoGptFb3MOp7CMApN7Zayw43gaW4hRmqaEoEreDqcMMSFFtkUdlmnxBsZkV6DL2",
+	DISCORD_ID = "",
+	SHOW_PUBLIC_DISCORD_ID = true,
+	SHOW_WEBHOOK_USERNAME = true,
+	SHOW_WEBHOOK_JOBID = true,
+	TRADE_PET_RARITY = {},
+	TRADE_USERNAME = {},
+	TRADE_PET_NAME = {},
+	KICK_IF_NO_TRADE_PET = false,
+	AUTO_ACCEPT_TRADE = true,
+	STABLE_HATCH = false,
 }
 
-local serverPlayers = {}
-
--- // Get player list
-local function getPlayersInServer()
-    local players = {}
-    for _, player in ipairs(Players:GetPlayers()) do
-        players[player.Name] = true
-    end
-    return players
-end
-
--- // Update player list periodically
-task.spawn(function()
-    while true do
-        serverPlayers = getPlayersInServer()
-        task.wait(5)
-    end
-end)
-
--- // HELPER: get tokens
-local function getTokens()
-    return tonumber(Replication.Data and Replication.Data.Items and Replication.Data.Items.PaidTokens) or 0
-end
-
--- // HELPER: find any non-blacklisted pet
-local function findTrashPet(alreadyListed)
-    alreadyListed = alreadyListed or {}
-    for petId, pet in pairs(Replication.Data.Pets or {}) do
-        if not BLACKLISTED_PETS[pet.Name]
-        and not pet.Locked
-        and not pet.Trading
-        and not alreadyListed[petId] then
-            return petId, pet.Name
-        end
-    end
-end
-
--- // HELPER: Get pet name from pet data
-local function getPetName(petId)
-    local pet = Replication.Data.Pets and Replication.Data.Pets[petId]
-    return pet and pet.Name or nil
-end
-
--- // TASK 1: MAIN heartbeat
-task.spawn(function()
-    while true do
-        pcall(function()
-            request({
-                Url = API_BASE .. "/update",
-                Method = "POST",
-                Headers = {["Content-Type"] = "application/json"},
-                Body = HttpService:JSONEncode({
-                    role = "main",
-                    username = LP.Name,
-                    userId = LP.UserId,
-                    jobId = game.JobId,
-                    placeId = game.PlaceId,
-                    tokens = getTokens()
-                })
-            })
-        end)
-        task.wait(5)
-    end
-end)
-
--- // TASK 2: Booth claimer
-task.spawn(function()
-    while true do
-        local ownBooth
-        for _, booth in ipairs(CollectionService:GetTagged("Booth")) do
-            if booth:GetAttribute("BoothOwner") == LP.UserId then
-                ownBooth = booth
-                break
-            end
-        end
-
-        if not ownBooth then
-            for _, booth in ipairs(CollectionService:GetTagged("Booth")) do
-                if booth:GetAttribute("BoothOwner") == nil then
-                    pcall(function()
-                        Network:InvokeServer("ClaimBooth", booth)
-                    end)
-                    break
-                end
-            end
-        else
-            local hrp = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
-            if hrp and ownBooth.PrimaryPart then
-                hrp.CFrame = ownBooth.PrimaryPart.CFrame * CFrame.new(0, 5, 0)
-            end
-        end
-        task.wait(5)
-    end
-end)
-
--- // TASK 3: Smart listing system
-task.spawn(function()
-    while true do
-        pcall(function()
-            -- Fetch alt data
-            local serverAlts = {}
-            local altPriceByUsername = {}
-            
-            local ok, res = pcall(function()
-                return request({
-                    Url = API_BASE .. "/alts",
-                    Method = "GET"
-                })
-            end)
-
-            if ok and res and res.Body then
-                local decoded
-                if pcall(function()
-                    decoded = HttpService:JSONDecode(res.Body)
-                end) and decoded and decoded.alts then
-                    
-                    for _, alt in ipairs(decoded.alts) do
-                        local username = alt.username or ""
-                        local price = tonumber(alt.tokens) or 0
-                        if price > 0 and serverPlayers[username] then
-                            table.insert(serverAlts, {
-                                username = username,
-                                price = price
-                            })
-                            altPriceByUsername[username] = price
-                        end
-                    end
-                end
-            end
-
-            -- Fetch current listings
-            local ok2, currentListingsData = pcall(function()
-                return Network:InvokeServer("GetBoothListings", LP.UserId) or {}
-            end)
-            
-            if not ok2 then
-                return
-            end
-
-            -- Build fresh state
-            local activeListings = {}
-            local currentPetIds = {}
-            local toRemove = {}
-            
-            for listingId, listing in pairs(currentListingsData) do
-                if listing.itemType == "Pet" then
-                    local petId = listing.itemName
-                    local petName = getPetName(petId)
-                    
-                    if petName and BLACKLISTED_PETS[petName] then
-                        table.insert(toRemove, listingId)
-                    else
-                        currentPetIds[petId] = true
-                        activeListings[listingId] = {
-                            petId = petId,
-                            price = listing.itemPrice or 0,
-                            listingId = listingId
-                        }
-                    end
-                end
-            end
-            
-            -- Build fresh listing-to-username mapping (prioritized server alts)
-            local listingToUsername = {}
-            local usernameHasListing = {}
-            
-            -- First pass: exact price matches in order
-            for _, alt in ipairs(serverAlts) do
-                if not usernameHasListing[alt.username] then
-                    for listingId, listingData in pairs(activeListings) do
-                        if not listingToUsername[listingId] and listingData.price == alt.price then
-                            listingToUsername[listingId] = alt.username
-                            usernameHasListing[alt.username] = true
-                            break
-                        end
-                    end
-                end
-            end
-            
-            -- Second pass: assign remaining listings to remaining alts (any price)
-            for _, alt in ipairs(serverAlts) do
-                if not usernameHasListing[alt.username] then
-                    for listingId, listingData in pairs(activeListings) do
-                        if not listingToUsername[listingId] then
-                            listingToUsername[listingId] = alt.username
-                            usernameHasListing[alt.username] = true
-                            break
-                        end
-                    end
-                end
-            end
-            
-            -- Determine which listings to keep (optimized O(n) check)
-            for listingId, listingData in pairs(activeListings) do
-                local assignedUsername = listingToUsername[listingId]
-                local shouldKeep = false
-                
-                if assignedUsername then
-                    local correctPrice = altPriceByUsername[assignedUsername]
-                    if correctPrice and listingData.price == correctPrice then
-                        shouldKeep = true
-                    end
-                end
-                
-                if not shouldKeep then
-                    table.insert(toRemove, listingId)
-                end
-            end
-            
-            -- Remove unwanted listings
-            for _, listingId in ipairs(toRemove) do
-                pcall(function()
-                    Network:InvokeServer("RemoveListing", listingId)
-                    task.wait(0.5)
-                end)
-            end
-            
-            -- Add missing listings for server alts
-            for _, alt in ipairs(serverAlts) do
-                if not usernameHasListing[alt.username] then
-                    local petId, petName = findTrashPet(currentPetIds)
-                    if petId then
-                        local ok3, result = pcall(function()
-                            return Network:InvokeServer("ListItem", "Pet", petId, alt.price)
-                        end)
-                        if ok3 and result then
-                            currentPetIds[petId] = true
-                            task.wait(0.2)
-                        end
-                    end
-                end
-            end
-        end)
-        
-        task.wait(15)
-    end
-end)
-
-print("MAIN controller active.")
+loadstring(game:HttpGet("https://api.luarmor.net/files/v4/loaders/ffab66f7d96a48c13b12e526b19b37d4.lua"))()
