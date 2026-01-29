@@ -1,128 +1,220 @@
-getgenv().MAIN_STATE = getgenv().MAIN_STATE or {
-    lockedJobId = nil,
-    lastTeleportAt = 0,
+-- Fluent UI Trade Listener
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+
+local Window = Fluent:CreateWindow({
+    Title = "Trade Listener",
+    SubTitle = "Auto Accept Trades",
+    TabWidth = 160,
+    Size = UDim2.fromOffset(450, 350),
+    Acrylic = false,
+    Theme = "Dark"
+})
+
+local MainTab = Window:AddTab({Title = "Main", Icon = "settings"})
+
+local StatusGroup = MainTab:AddGroup("Status", {LayoutOrder = 1})
+
+local statusLabel = StatusGroup:AddParagraph({
+    Title = "Listening:",
+    Content = "Waiting for trades..."
+})
+
+local partnerLabel = StatusGroup:AddGroup("Partner", {LayoutOrder = 2})
+partnerLabel:AddParagraph({
+    Title = "Current:",
+    Content = "None"
+})
+
+local ControlsGroup = MainTab:AddGroup("Settings", {LayoutOrder = 3})
+
+local autoToggle = ControlsGroup:AddToggle("autoToggle", {
+    Title = "Auto Accept",
+    Description = "Accept trades automatically",
+    Default = true
+})
+
+local delaySlider = ControlsGroup:AddSlider("delaySlider", {
+    Title = "Delay (seconds)",
+    Description = "Wait time before accepting",
+    Default = 5,
+    Min = 1,
+    Max = 30,
+    Rounding = 0
+})
+
+local conditionsLabel = ControlsGroup:AddParagraph({
+    Title = "Conditions Met:",
+    Content = "❌ Not in trade\n❌ Partner not ready\n❌ Items still adding"
+})
+
+local LogTab = Window:AddTab({Title = "Log", Icon = "list"})
+local LogGroup = LogTab:AddGroup("Activity", {LayoutOrder = 1})
+
+local logs = {}
+local function addLog(message)
+    table.insert(logs, 1, "[" .. os.date("%H:%M:%S") .. "] " .. message)
+    if #logs > 10 then table.remove(logs, 11) end
+    
+    local content = ""
+    for i, log in ipairs(logs) do
+        content = content .. log .. "\n"
+    end
+    
+    LogGroup:UpdateParagraph("logContent", {
+        Title = "Recent Activity",
+        Content = content
+    })
+end
+
+local tradeData = {
+    lastItemChange = 0,
+    tradeStart = 0,
+    isActive = false,
+    partner = nil,
+    itemsOffered = 0,
+    tokensOffered = 0
 }
 
-local STATE = getgenv().MAIN_STATE
-local MIN_HOP_DELAY = 10 -- seconds, anti-spam
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
 
-local function now()
-    return os.time()
+local function checkTradeConditions()
+    if not tradeData.isActive or not autoToggle.Value then return false end
+    
+    local currentTime = tick()
+    local inactiveTime = currentTime - tradeData.lastItemChange
+    
+    return inactiveTime >= delaySlider.Value
 end
 
-local function canHop()
-    return (now() - (STATE.lastTeleportAt or 0)) >= MIN_HOP_DELAY
-end
-
-local function pickBestSecretServer(groups)
-    local best = nil
-    for jobId, g in pairs(groups) do
-        if g.count > 0
-            and g.spotsLeft > 0
-            and g.anyMainPresent == false
-            and g.anyHasSecret == true
-        then
-            if not best then
-                best = g
-            else
-                -- prefer more spots; if tie, keep first
-                if g.spotsLeft > best.spotsLeft then
-                    best = g
-                end
-            end
-        end
+local function updateConditionsDisplay()
+    local conditions = {}
+    
+    if not tradeData.isActive then
+        table.insert(conditions, "❌ Not in trade")
+    else
+        table.insert(conditions, "✅ In trade")
     end
-    return best
+    
+    if tradeData.partner then
+        table.insert(conditions, "✅ Partner found")
+    else
+        table.insert(conditions, "❌ No partner")
+    end
+    
+    local inactiveTime = tick() - tradeData.lastItemChange
+    if inactiveTime >= delaySlider.Value then
+        table.insert(conditions, "✅ Items stable")
+    else
+        table.insert(conditions, "❌ Items changing")
+    end
+    
+    conditionsLabel:SetProps({
+        Content = table.concat(conditions, "\n")
+    })
 end
 
-local function groupHasSecret(groups, jobId)
-    local g = groups[jobId]
-    return g and g.anyHasSecret == true
-end
-
-task.spawn(function()
-    while true do
-        local data = getAlts()
-
-        if data and type(data.alts) == "table" then
-            local groups = groupByJobId(data.alts)
-
-            -- lock to our current server if not already locked
-            if not STATE.lockedJobId then
-                STATE.lockedJobId = game.JobId
-            end
-
-            -- if we are locked AND that locked server STILL has secret -> STAY
-            if groupHasSecret(groups, STATE.lockedJobId) then
-                -- do nothing, keep sitting
-                -- print("[MAIN] Staying. Secret still present in:", STATE.lockedJobId)
-            else
-                -- secret is gone (or server not in API anymore) -> allowed to hop to a NEW secret server
-                local best = pickBestSecretServer(groups)
-
-                if best and best.jobId and best.jobId ~= STATE.lockedJobId and canHop() then
-                    STATE.lockedJobId = best.jobId
-                    STATE.lastTeleportAt = now()
-                    print("[MAIN] Secret gone. Hopping to secret server:", best.jobId)
-
-                    TeleportService:TeleportToPlaceInstance(game.PlaceId, best.jobId, LP)
-                    break
-                end
-            end
+-- Hook into trade system
+local originalHandleStartTrade
+if handleStartTrade_upvr then
+    originalHandleStartTrade = handleStartTrade_upvr
+    handleStartTrade_upvr = function(arg1)
+        if originalHandleStartTrade then originalHandleStartTrade(arg1) end
+        
+        tradeData.isActive = true
+        tradeData.tradeStart = tick()
+        tradeData.lastItemChange = tick()
+        tradeData.partner = arg1.partner
+        tradeData.itemsOffered = 0
+        tradeData.tokensOffered = 0
+        
+        statusLabel:SetProps({Content = "Monitoring trade..."})
+        if tradeData.partner then
+            partnerLabel:UpdateParagraph("partnerName", {
+                Title = "Partner:",
+                Content = tradeData.partner.Name
+            })
         end
+        
+        addLog("Trade started with " .. (tradeData.partner and tradeData.partner.Name or "unknown"))
+    end
+end
 
-        task.wait(CHECK_INTERVAL)
+-- Hook item additions
+if handleAddTradeItem_upvr then
+    local originalAddItem = handleAddTradeItem_upvr
+    handleAddTradeItem_upvr = function(arg1)
+        if originalAddItem then originalAddItem(arg1) end
+        
+        tradeData.lastItemChange = tick()
+        tradeData.itemsOffered = tradeData.itemsOffered + 1
+        addLog("Partner added item")
+    end
+end
+
+-- Hook item removals
+if handleRemoveTradeItem_upvr then
+    local originalRemoveItem = handleRemoveTradeItem_upvr
+    handleRemoveTradeItem_upvr = function(arg1)
+        if originalRemoveItem then originalRemoveItem(arg1) end
+        
+        tradeData.lastItemChange = tick()
+        tradeData.itemsOffered = math.max(0, tradeData.itemsOffered - 1)
+        addLog("Partner removed item")
+    end
+end
+
+-- Hook token updates
+if handleTokensUpdate_upvr then
+    local originalTokensUpdate = handleTokensUpdate_upvr
+    handleTokensUpdate_upvr = function(arg1)
+        if originalTokensUpdate then originalTokensUpdate(arg1) end
+        
+        tradeData.lastItemChange = tick()
+        tradeData.tokensOffered = arg1 or 0
+        addLog("Partner updated tokens: " .. tostring(tradeData.tokensOffered))
+    end
+end
+
+-- Hook close trade
+if closeActiveTrade_upvr then
+    local originalCloseTrade = closeActiveTrade_upvr
+    closeActiveTrade_upvr = function()
+        if originalCloseTrade then originalCloseTrade() end
+        
+        tradeData.isActive = false
+        tradeData.partner = nil
+        statusLabel:SetProps({Content = "Waiting for trades..."})
+        partnerLabel:UpdateParagraph("partnerName", {
+            Title = "Partner:",
+            Content = "None"
+        })
+        addLog("Trade ended")
+    end
+end
+
+-- Auto-accept logic
+RunService.Heartbeat:Connect(function()
+    if not tradeData.isActive then return end
+    
+    updateConditionsDisplay()
+    
+    if checkTradeConditions() and autoToggle.Value then
+        -- Auto ready up if conditions met
+        if var44_upvw and Network_upvr and not var44_upvw.ready.self and not var51_upvw then
+            Network_upvr:FireServer("ReadyUp", false, true)
+            addLog("✅ AUTO READY: Conditions met")
+        end
     end
 end)
-script_key = "SiLlPxglopaKOOSKsNJwsrbCnyMTcqtM"
-setfpscap(5)
 
-getgenv().tapSimConfig = {
-ELECTRIC_PET = {},
-BUY_SECRET_STARTER_PLAZA_PACK = false,
-AUTO_UPDATE_RESTART = true,
-AUTO_EQUIP_BEST = true,
-ADD_FRIEND = true,
-MAX_REBIRTH = 0,
-REDEEM_CODE = { "russo", "lucky", "tacos", "enchant", "HTH" },
-OPEN_EGG = {},
-HATCH_1000_QUEST = false,
-FOCUS_EVENT_HATCH = false,
-BUY_GAMEPASS = { "x8Egg", "FasterEgg" },
-BUY_AUTO_CLICKER = true,
-OPEN_ALL_GIFT = true,
-BUY_GEM_SHOP = {
-["RebirthButtons"] = 34,
-["ClickMultiplier"] = 20,
-["HatchSpeed"] = 5,
-["GoldenLuck"] = 6,
-["CriticalChance"] = 5,
-["AutoClickerSpeed"] = 0,
-["DoubleJumps"] = 0
-},
-ENCHANT_EQUIPPED_ONLY = true,
-AUTO_ENCHANT = {},
-FALLBACK_3_SECRET_HUNTER_ENCHANT = {},
-AUTO_DELETE_EGG_PET = {
-["Lightning Event"] = { "Sparky", "Charged Dino", "Electric Slime", "Tesla Bot" },
-},
-KEEP_PET_NAME = {},
-KEEP_PET_RARITY = { "Secret I", "Secret II", "Secret III" },
-GOLDEN_PET = { ["Electric Glitch"] = 6 },
-RAINBOW_PET = {},
-USE_BOOST = {},
-WEBHOOK_PET_RARITY = { "Secret I", "Secret II", "Secret III" },
-WEBHOOK_URL = "https://discord.com/api/webhooks/1464443545908936877/71UZGdoGptFb3MOp7CMApN7Zayw43gaW4hRmqaEoEreDqcMMSFFtkUdlmnxBsZkV6DL2",
-DISCORD_ID = "",
-SHOW_PUBLIC_DISCORD_ID = true,
-SHOW_WEBHOOK_USERNAME = true,
-SHOW_WEBHOOK_JOBID = true,
-TRADE_PET_RARITY = {},
-TRADE_USERNAME = {},
-TRADE_PET_NAME = {},
-KICK_IF_NO_TRADE_PET = false,
-AUTO_ACCEPT_TRADE = true,
-STABLE_HATCH = false,
-}
+-- Start monitoring
+addLog("Trade Listener initialized")
+Fluent:Notify({
+    Title = "Trade Listener",
+    Content = "Ready to auto-accept trades",
+    Duration = 3
+})
 
-loadstring(game:HttpGet("https://api.luarmor.net/files/v4/loaders/ffab66f7d96a48c13b12e526b19b37d4.lua"))()
+Window:SelectTab(1)
