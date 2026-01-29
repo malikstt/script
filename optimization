@@ -22,21 +22,55 @@ local function getTokens()
     return tonumber(Replication.Data and Replication.Data.Items and Replication.Data.Items.PaidTokens) or 0
 end
 
+local function safeRequest(opts)
+    local ok, res = pcall(function()
+        return request(opts)
+    end)
+    if not ok then return nil end
+    return res
+end
+
+local function safeJSONDecode(body)
+    if type(body) ~= "string" or body == "" then return nil end
+    local ok, decoded = pcall(function()
+        return HttpService:JSONDecode(body)
+    end)
+    if not ok then return nil end
+    return decoded
+end
+
+local function safeInvokeServer(...)
+    local ok, result = pcall(function()
+        return Network:InvokeServer(...)
+    end)
+    if not ok then return nil end
+    return result
+end
+
+local function resolveSellerId()
+    local ok, id = pcall(function()
+        return Players:GetUserIdFromNameAsync(Config.SellerUsername)
+    end)
+    if ok and type(id) == "number" then
+        return id
+    end
+    return nil
+end
+
+-- heartbeat update (unchanged behavior; just wrapped)
 task.spawn(function()
     while true do
-        pcall(function()
-            request({
-                Url = API_BASE .. "/update",
-                Method = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = HttpService:JSONEncode({
-                    role = "alt",
-                    username = LP.Name,
-                    userId = LP.UserId,
-                    tokens = getTokens()
-                })
+        safeRequest({
+            Url = API_BASE .. "/update",
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = HttpService:JSONEncode({
+                role = "alt",
+                username = LP.Name,
+                userId = LP.UserId,
+                tokens = getTokens()
             })
-        end)
+        })
         task.wait(5)
     end
 end)
@@ -45,60 +79,80 @@ local function startBuyingLogic(sellerId)
     if isBuying then return end
     isBuying = true
 
-    while isBuying do
-        local tokens = getTokens()
-        if tokens <= 0 then break end
+    -- Ensure we ALWAYS clear isBuying even if something errors.
+    local function cleanup()
+        isBuying = false
+    end
 
-        local ok, listings = pcall(function()
-            return Network:InvokeServer("GetBoothListings", sellerId)
-        end)
+    local ok = xpcall(function()
+        while isBuying do
+            local tokens = getTokens()
+            if tokens <= 0 then
+                break
+            end
 
-        if ok and type(listings) == "table" then
-            for listingId, data in pairs(listings) do
-                if type(data) == "table" then
-                    local price = tonumber(data.itemPrice)
-                    local pass = true
-                    if Config.OnlyPets and data.itemType ~= "Pet" then pass = false end
-                    if Config.StrictMatchTokens and price ~= tokens then pass = false end
+            local listings = safeInvokeServer("GetBoothListings", sellerId)
+            if type(listings) == "table" then
+                for listingId, data in pairs(listings) do
+                    if type(data) == "table" then
+                        local price = tonumber(data.itemPrice)
+                        local pass = true
 
-                    if pass and price and price <= tokens then
-                        local success = Network:InvokeServer("BuyItem", sellerId, listingId)
-                        if success then
-                            isBuying = false
-                            return
+                        if Config.OnlyPets and data.itemType ~= "Pet" then
+                            pass = false
+                        end
+                        if Config.StrictMatchTokens and price ~= tokens then
+                            pass = false
+                        end
+
+                        if pass and price and price <= tokens then
+                            local success = safeInvokeServer("BuyItem", sellerId, listingId)
+                            if success then
+                                -- stop loop; cleanup will run after returning
+                                return
+                            end
                         end
                     end
                 end
             end
+
+            task.wait(Config.CheckInterval)
         end
-        task.wait(Config.CheckInterval)
-    end
+    end, function()
+        -- Swallow errors; avoid crashing the thread.
+        -- (No prints to avoid spamming; add warn(...) if you want.)
+    end)
+
+    cleanup()
+    return ok
 end
 
 task.spawn(function()
-    local sellerId
-    do
-        local ok, id = pcall(function()
-            return Players:GetUserIdFromNameAsync(Config.SellerUsername)
-        end)
-        sellerId = ok and id or nil
-    end
+    local sellerId = resolveSellerId()
 
     while true do
-        local ok, res = pcall(function()
-            return request({ Url = API_BASE .. "/main", Method = "GET" })
-        end)
+        -- Retry sellerId occasionally if it was nil
+        if not sellerId then
+            sellerId = resolveSellerId()
+        end
 
-        if ok and res and res.Body then
-            local decoded
-            local okDecode = pcall(function()
-                decoded = HttpService:JSONDecode(res.Body)
-            end)
+        local res = safeRequest({ Url = API_BASE .. "/main", Method = "GET" })
+        if res and res.Body then
+            local decoded = safeJSONDecode(res.Body)
+            local data = decoded and decoded.data
 
-            if okDecode and decoded and decoded.data then
-                local mainJobId = decoded.data.jobId
-                local placeId = decoded.data.placeId
+            if type(data) == "table" then
+                local mainJobId = data.jobId
+                local placeId = data.placeId
                 local currentTokens = getTokens()
+
+                -- basic sanity checks
+                if type(mainJobId) ~= "string" or mainJobId == "" then
+                    mainJobId = nil
+                end
+                if type(placeId) ~= "number" then
+                    placeId = nil
+                end
 
                 if mainJobId and game.JobId == mainJobId then
                     if sellerId then
@@ -106,7 +160,9 @@ task.spawn(function()
                     end
                 elseif currentTokens > 0 and mainJobId and placeId and mainJobId ~= lastTriedJobId then
                     lastTriedJobId = mainJobId
-                    TeleportService:TeleportToPlaceInstance(placeId, mainJobId, LP)
+                    pcall(function()
+                        TeleportService:TeleportToPlaceInstance(placeId, mainJobId, LP)
+                    end)
                 end
             end
         end
