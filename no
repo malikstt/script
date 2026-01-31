@@ -1,94 +1,68 @@
-script_key = "SiLlPxglopaKOOSKsNJwsrbCnyMTcqtM"
-setfpscap(5)
+local Network = require(game:GetService("ReplicatedStorage").Modules.Network)
+local LocalPlayer = game.Players.LocalPlayer
 
-getgenv().tapSimConfig = {
-    ELECTRIC_PET = {
-        ["Lightning Wyvren"] = 3
-    },
+local WAIT_TIME = 5 -- 5 seconds after last item is added
+local lastItemAddedTime = 0
+local tradeStatus = false
+local isReady = false
 
-    STABLE_HATCH = false,
-    BUY_SECRET_STARTER_PLAZA_PACK = false,
+-- Automatically accept trade requests
+Network:BindEvents({
+    ["TradeRequest"] = function(sender)
+        print("Trade request received from: " .. sender.Name)
+        Network:FireServer("AcceptTrade", sender) -- Accept the trade automatically
+    end
+})
 
-    AUTO_UPDATE_RESTART = true,
-    AUTO_EQUIP_BEST = true,
-    ADD_FRIEND = true,
-    MAX_REBIRTH = math.huge,
-    REBIRTH_DELAY = 30,
-    REDEEM_CODE = { "russo", "lucky", "tacos", "enchant", "HTH" },
+-- Track when items (pets/tokens) are added to the trade
+Network:BindEvents({
+    ["AddTradeItem"] = function(itemData)
+        if tradeStatus then
+            print("Item added to trade: " .. itemData[1])  -- Print the name of the item added
+            lastItemAddedTime = tick()  -- Update the time when the last item was added
+            isReady = false -- Reset isReady whenever a new item is added
+        end
+    end,
 
-    OPEN_EGG = { "Holographic", "Lightning Event" },
-    FOCUS_EVENT_HATCH = false,
-    UNLOCK_WORLD_1_BEST_EGG = true,
-    UNLOCK_WORLD_2_BEST_EGG = true,
+    ["RemoveTradeItem"] = function(itemData)
+        if tradeStatus then
+            print("Item removed from trade: " .. itemData[1])  -- Print the name of the item removed
+            lastItemAddedTime = tick()  -- Update the time when an item was removed
+            isReady = false -- Reset isReady whenever an item is removed
+        end
+    end
+})
 
-    BUY_GAMEPASS = { "x8Egg", "FasterEgg" },
+-- Function to check if ReadyUp can be triggered (after 5 seconds of no items being added)
+local function shouldReadyUp()
+    local timeSinceLastItem = tick() - lastItemAddedTime
+    return timeSinceLastItem >= WAIT_TIME and not isReady
+end
 
-    BUY_AUTO_CLICKER = true,
-    OPEN_ALL_GIFT = true,
+-- Listen for when the trade UI is enabled
+LocalPlayer.PlayerGui.Trading:GetPropertyChangedSignal("Enabled"):Connect(function()
+    if LocalPlayer.PlayerGui.Trading.Enabled then
+        tradeStatus = true
+        print("In trade. Monitoring items...")
+    else
+        tradeStatus = false
+    end
+end)
 
-    BUY_GEM_SHOP = {
-        ["RebirthButtons"] = 34,
-        ["ClickMultiplier"] = 20,
-        ["HatchSpeed"] = 5,
-        ["GoldenLuck"] = 6,
-        ["CriticalChance"] = 5,
-        ["AutoClickerSpeed"] = 0,
-        ["DoubleJumps"] = 0
-    },
+-- Check if it's time to press ReadyUp
+local function checkTradeStatus()
+    if tradeStatus and shouldReadyUp() then
+        print("Ready to confirm trade...")
+        Network:FireServer("ReadyUp", false, true)  -- Trigger ReadyUp
+        isReady = true  -- Prevent firing ReadyUp again
+        print("Trade ready!")
+    end
+end
 
-    ENCHANT_EQUIPPED_ONLY = true,
-    AUTO_ENCHANT = {
-        ["Secret I"] = { "Secret Hunter" },
-        ["Secret II"] = { "Secret Hunter" },
-        ["Secret III"] = { "Secret Hunter" },
-    },
-
-    FALLBACK_3_SECRET_HUNTER_ENCHANT = {
-        ["Secret I"] = { "Rainbow Hunter" },
-        ["Secret II"] = { "Rainbow Hunter" },
-        ["Secret III"] = { "Rainbow Hunter" },
-    },
-
-    AUTO_DELETE_EGG_PET = {
-        ["Holographic"] = {
-            "Holo Crab",
-            "Virtual Cuboid",
-            "Glitched TV",
-            "Holo Dragon",
-            "Holographic Hybrid"
-        },
-    },
-
-    KEEP_PET_NAME = {},
-    KEEP_PET_RARITY = { "Secret I", "Secret II", "Secret III" },
-
-    GOLDEN_PET = {
-        ["Holo Crab"] = 6,
-        ["Virtual Cuboid"] = 6,
-        ["Glitched TV"] = 6,
-        ["Holo Dragon"] = 6,
-        ["Holographic Hybrid"] = 6
-    },
-
-    RAINBOW_PET = {},
-    USE_BOOST = {
-        "Egg Incubator","Octo Incubator","Taco Potion",
-        "Festive Luck I","Festive Luck II","Festive Tap I",
-        "Space Tap I","Space Luck I","Space Luck II"
-    },
-
-    WEBHOOK_PET_RARITY = { "Secret I", "Secret II", "Secret III" },
-    WEBHOOK_URL = "https://discord.com/api/webhooks/1464443545908936877/71UZGdoGptFb3MOp7CMApN7Zayw43gaW4hRmqaEoEreDqcMMSFFtkUdlmnxBsZkV6DL2",
-    DISCORD_ID = "1135837863603351573",
-    SHOW_PUBLIC_DISCORD_ID = true,
-    SHOW_WEBHOOK_USERNAME = true,
-    SHOW_WEBHOOK_JOBID = true,
-
-    TRADE_PET_NAME = {},
-    TRADE_PET_RARITY = {},
-    TRADE_USERNAME = {},
-    KICK_IF_NO_TRADE_PET = false,
-    AUTO_ACCEPT_TRADE = false,
-}
-
-loadstring(game:HttpGet("https://api.luarmor.net/files/v4/loaders/ffab66f7d96a48c13b12e526b19b37d4.lua"))()
+-- Loop to check trade status and handle ReadyUp
+while true do
+    task.wait(1)  -- Check every second
+    if tradeStatus then
+        checkTradeStatus()
+    end
+end
