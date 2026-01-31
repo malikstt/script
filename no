@@ -1,67 +1,57 @@
 local Network = require(game:GetService("ReplicatedStorage").Modules.Network)
-local LocalPlayer = game.Players.LocalPlayer
+local player = game.Players.LocalPlayer
 
-local WAIT_TIME = 5 -- 5 seconds after last item is added
+local WAIT_TIME = 5
 local lastItemAddedTime = 0
 local tradeStatus = false
 local isReady = false
 
--- Automatically accept trade requests
+-- Track trade item additions (both pets and tokens)
 Network:BindEvents({
     ["TradeRequest"] = function(sender)
-        print("Trade request received from: " .. sender.Name)
-        Network:FireServer("AcceptTrade", sender) -- Accept the trade automatically
+        Network:FireServer("AcceptTrade", sender)
     end
 })
 
--- Track when items (pets/tokens) are added to the trade
 Network:BindEvents({
     ["AddTradeItem"] = function(itemData)
         if tradeStatus then
-            print("Item added to trade: " .. itemData[1])  -- Print the name of the item added
-            lastItemAddedTime = tick()  -- Update the time when the last item was added
-            isReady = false -- Reset isReady whenever a new item is added
+            lastItemAddedTime = tick()  -- Update time when an item is added (either pet or token)
+            isReady = false  -- Reset isReady to ensure we don't ready up too soon
         end
     end,
 
     ["RemoveTradeItem"] = function(itemData)
         if tradeStatus then
-            print("Item removed from trade: " .. itemData[1])  -- Print the name of the item removed
-            lastItemAddedTime = tick()  -- Update the time when an item was removed
-            isReady = false -- Reset isReady whenever an item is removed
+            lastItemAddedTime = tick()  -- Update time when an item is removed
+            isReady = false  -- Reset isReady to ensure we don't ready up too soon
         end
     end
 })
 
--- Function to check if ReadyUp can be triggered (after 5 seconds of no items being added)
 local function shouldReadyUp()
     local timeSinceLastItem = tick() - lastItemAddedTime
     return timeSinceLastItem >= WAIT_TIME and not isReady
 end
 
--- Listen for when the trade UI is enabled
-LocalPlayer.PlayerGui.Trading:GetPropertyChangedSignal("Enabled"):Connect(function()
-    if LocalPlayer.PlayerGui.Trading.Enabled then
+player.PlayerGui.Trading:GetPropertyChangedSignal("Enabled"):Connect(function()
+    if player.PlayerGui.Trading.Enabled then
         tradeStatus = true
-        print("In trade. Monitoring items...")
     else
         tradeStatus = false
     end
 end)
 
--- Check if it's time to press ReadyUp
 local function checkTradeStatus()
     if tradeStatus and shouldReadyUp() then
-        print("Ready to confirm trade...")
-        Network:FireServer("ReadyUp", false, true)  -- Trigger ReadyUp
-        isReady = true  -- Prevent firing ReadyUp again
-        print("Trade ready!")
+        -- Ready up when the time since the last item (pet or token) is greater than WAIT_TIME
+        Network:FireServer("ReadyUp", false, true)
+        isReady = true
     end
 end
 
--- Loop to check trade status and handle ReadyUp
 while true do
-    task.wait(1)  -- Check every second
+    task.wait(1)  -- Run every second to check trade status
     if tradeStatus then
         checkTradeStatus()
     end
