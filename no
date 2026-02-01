@@ -1,66 +1,214 @@
-local Network = require(game:GetService("ReplicatedStorage").Modules.Network)
-local player = game.Players.LocalPlayer
+local RS = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local CS = game:GetService("CollectionService")
+local HttpService = game:GetService("HttpService")
 
-local WAIT_TIME = 5
-local lastItemAddedTime = 0
-local tradeStatus = false
-local isReady = false
-local inTrade = false
-local hasTradeItems = false  -- Track whether items have been added to the trade
+local Replication = require(RS.Game.Replication)
+local Network = require(RS.Modules.Network)
 
-Network:BindEvents({
-    ["TradeRequest"] = function(sender)
-        if not inTrade then
-            inTrade = true
-            Network:FireServer("AcceptTrade", sender)
-        end
-    end
-})
+local LP = Players.LocalPlayer
 
-Network:BindEvents({
-    ["AddTradeItem"] = function(itemData)
-        if tradeStatus then
-            lastItemAddedTime = tick()
-            isReady = false
-            hasTradeItems = true  -- Set flag when a trade item is added
-        end
-    end,
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1466018830391312532/fUDtg2f_MNlYnc449bHOqON5CMiQp4d8eHbUpNfOBrXOZlyY2zGyD7iT_EL61bYVz_qX"
 
-    ["RemoveTradeItem"] = function(itemData)
-        if tradeStatus then
-            lastItemAddedTime = tick()
-            isReady = false
-            -- If trade items are removed and there are no items left, reset flag
-            if not hasTradeItems then
-                hasTradeItems = false
-            end
-        end
-    end
-})
+getgenv().AutoSellConfig = getgenv().AutoSellConfig or {
+	Enabled = true,
+	ScanInterval = 1.5,
+	MaxListings = 15,
+	Pets = {
+		["Surge Dragon"] = 32,
+		["Dual Shock"] = 80,
+		["Overcharged Robot"] = 350
+	}
+}
 
-local function shouldReadyUp()
-    local timeSinceLastItem = tick() - lastItemAddedTime
-    return timeSinceLastItem >= WAIT_TIME and not isReady  -- Ready up after 5 seconds, regardless of items
+local PRIORITY = { "Overcharged Robot", "Dual Shock", "Surge Dragon" }
+local listed, busy = {}, false
+local lastPets, sent = {}, {}
+local tracked = {}
+
+local function getAmount(p)
+	local b = getgenv().AutoSellConfig.Pets[p.Name]
+	if not b then return end
+	if p.Tier and p.Tier ~= "Normal" then return end
+	return b
 end
 
-player.PlayerGui.Trading:GetPropertyChangedSignal("Enabled"):Connect(function()
-    if player.PlayerGui.Trading.Enabled then
-        tradeStatus = true
-    else
-        tradeStatus = false
-    end
+local function sendSold(petId, info)
+	if sent[petId] then return end
+	sent[petId] = true
+
+	print("Sold Pet: " .. info.name .. " at " .. tostring(info.amount) .. " tokens.")
+
+	request({
+		Url = WEBHOOK_URL,
+		Method = "POST",
+		Headers = {["Content-Type"]="application/json"},
+		Body = HttpService:JSONEncode({
+			username = "Auto Sell",
+			embeds = {{
+				title = "ðŸ’¸ Pet Sold",
+				color = 0xff5555,
+				fields = {
+					{name="Player", value=LP.Name, inline=true},
+					{name="Pet", value=info.name or "Unknown", inline=true},
+					{name="Tier", value=info.tier or "Normal", inline=true},
+					{name="Amount", value="+ "..tostring(info.amount or 0).." tokens", inline=true},
+					{name="Pet ID", value=tostring(petId), inline=true}
+				},
+				timestamp = DateTime.now():ToIsoDate()
+			}}
+		})
+	})
+end
+
+local function snapshot()
+	local t = {}
+	for id in pairs(Replication.Data.Pets or {}) do
+		t[id] = true
+	end
+	return t
+end
+
+local function autoList()
+	if busy or not getgenv().AutoSellConfig.Enabled then return end
+	busy = true
+
+	local pets = Replication.Data.Pets or {}
+	local c = 0
+
+	for _, wantedName in ipairs(PRIORITY) do
+		for id, p in pairs(pets) do
+			if c >= getgenv().AutoSellConfig.MaxListings then break end
+			if p.Name == wantedName and not listed[id] and not p.Locked and not p.Trading then
+				local amt = getAmount(p)
+				if amt then
+					local sellAmt = math.ceil(amt)
+					if Network:InvokeServer("ListItem","Pet",id,sellAmt) then
+						listed[id] = true
+						tracked[id] = { name = p.Name, tier = p.Tier or "Normal", amount = sellAmt }
+						print("Listed Pet: " .. p.Name .. " for " .. tostring(sellAmt) .. " tokens.")
+						c += 1
+					end
+					task.wait(0.15)
+				end
+			end
+		end
+		if c >= getgenv().AutoSellConfig.MaxListings then break end
+	end
+
+	busy = false
+end
+
+task.spawn(function()
+	while true do
+		pcall(autoList)
+		task.wait(getgenv().AutoSellConfig.ScanInterval)
+	end
 end)
 
-local function checkTradeStatus()
-    if tradeStatus and shouldReadyUp() then
-        Network:FireServer("ReadyUp", false, true)
-        isReady = true
-    end
+task.spawn(function()
+	lastPets = snapshot()
+	while true do
+		task.wait(1)
+		local now = snapshot()
+
+		for id in pairs(lastPets) do
+			if not now[id] then
+				local info = tracked[id]
+				if info then
+					print("Lost Pet: " .. info.name .. " at " .. tostring(info.amount) .. " tokens.")
+					sendSold(id, info)
+					tracked[id] = nil
+				end
+			end
+		end
+
+		lastPets = now
+	end
+end)
+
+local function countConfigPets()
+	local c = 0
+	for _, p in pairs(Replication.Data.Pets or {}) do
+		if p.Tier == "Normal" and getgenv().AutoSellConfig.Pets[p.Name] then
+			c += 1
+		end
+	end
+	return c
 end
 
-while true do
-    task.wait(1)
-    if tradeStatus then
-        checkTradeStatus()
-    end
+task.spawn(function()
+	while true do
+		task.wait(30)
+		if countConfigPets() == 0 then
+			pcall(function() LP:Kick("Out of configured pets") end)
+			return
+		end
+	end
+end)
+
+local function ownBooth()
+	for _,b in ipairs(CS:GetTagged("Booth")) do
+		if b:GetAttribute("BoothOwner") == LP.UserId then
+			return b
+		end
+	end
 end
+
+local function hrp()
+	local ch = LP.Character or LP.CharacterAdded:Wait()
+	return ch:WaitForChild("HumanoidRootPart")
+end
+
+local function randPlr()
+	local t = {}
+	for _,p in ipairs(Players:GetPlayers()) do
+		if p ~= LP and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+			t[#t+1] = p
+		end
+	end
+	if #t == 0 then return end
+	return t[math.random(#t)]
+end
+
+task.spawn(function()
+	repeat task.wait(0.2) until #CS:GetTagged("Booth") > 0
+	math.randomseed(os.clock())
+	local r = 20
+
+	while true do
+		local ob = ownBooth()
+		if ob and ob.PrimaryPart then
+			local h = hrp()
+			h.CFrame = ob.PrimaryPart.CFrame * CFrame.new(0,5,0)
+			print("Claimed Booth successfully.")
+			return
+		end
+
+		local tp = randPlr()
+		if tp and tp.Character and tp.Character:FindFirstChild("HumanoidRootPart") then
+			local pos = tp.Character.HumanoidRootPart.Position
+			for _,b in ipairs(CS:GetTagged("Booth")) do
+				if b.PrimaryPart and b:GetAttribute("BoothOwner") == nil
+				and (b.PrimaryPart.Position - pos).Magnitude <= r then
+					Network:InvokeServer("ClaimBooth", b)
+					local t0 = tick()
+					while tick() - t0 < 1 do
+						if b:GetAttribute("BoothOwner") == LP.UserId then
+							local h = hrp()
+							h.CFrame = b.PrimaryPart.CFrame * CFrame.new(0,5,0)
+							h.AssemblyLinearVelocity = Vector3.zero
+							h.AssemblyAngularVelocity = Vector3.zero
+							print("Claimed Booth successfully.")
+							return
+						end
+						task.wait()
+					end
+				end
+			end
+		end
+
+		r += 20
+		task.wait(0.5)
+	end
+end)
