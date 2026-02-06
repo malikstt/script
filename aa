@@ -18,22 +18,27 @@ getgenv().AutoSellConfig = getgenv().AutoSellConfig or {
 	ScanInterval = 1.5,
 	MaxListings = 15,
 	Pets = {
+		-- old pets with updated prices
 		["Surge Dragon"] = 50,
-		["Dual Shock"] = 120,
-		["Overcharged Robot"] = 450
+		["Dual Shock"] = 100,
+		["Overcharged Robot"] = 250,
+		-- new pets
+		["Fortunate Calico"] = 250,
+		["SUPER Luckyblock"] = 60,
+		["JACKPOT"] = 675,
+		["Frost Queen"] = 10
 	}
 }
 
-local PRIORITY = { "Overcharged Robot", "Dual Shock", "Surge Dragon" }
 local listed, busy = {}, false
 local lastPets, sent = {}, {}
 local tracked = {}
 
 local function getAmount(p)
-	local b = getgenv().AutoSellConfig.Pets[p.Name]
-	if not b then return end
+	local amt = getgenv().AutoSellConfig.Pets[p.Name]
+	if not amt then return end
 	if p.Tier and p.Tier ~= "Normal" then return end
-	return b
+	return amt
 end
 
 local function sendSold(petId, info)
@@ -70,30 +75,52 @@ local function snapshot()
 	return t
 end
 
+-- RANDOM LISTING (no priority)
 local function autoList()
 	if busy or not getgenv().AutoSellConfig.Enabled then return end
 	busy = true
 
 	local pets = Replication.Data.Pets or {}
-	local c = 0
+	local pool = {}
 
-	for _, wantedName in ipairs(PRIORITY) do
-		for id, p in pairs(pets) do
-			if c >= getgenv().AutoSellConfig.MaxListings then break end
-			if p.Name == wantedName and not listed[id] and not p.Locked and not p.Trading then
-				local amt = getAmount(p)
-				if amt then
-					local sellAmt = math.ceil(amt)
-					if Network:InvokeServer("ListItem","Pet",id,sellAmt) then
-						listed[id] = true
-						tracked[id] = { name = p.Name, tier = p.Tier or "Normal", amount = sellAmt }
-						c += 1
-					end
-					task.wait(0.15)
-				end
-			end
+	-- build pool of valid config pets
+	for id, p in pairs(pets) do
+		if not listed[id]
+			and not p.Locked
+			and not p.Trading
+			and p.Tier == "Normal"
+			and getgenv().AutoSellConfig.Pets[p.Name] then
+			pool[#pool+1] = { id = id, pet = p }
 		end
+	end
+
+	-- shuffle pool
+	for i = #pool, 2, -1 do
+		local j = math.random(i)
+		pool[i], pool[j] = pool[j], pool[i]
+	end
+
+	local c = 0
+	for _, entry in ipairs(pool) do
 		if c >= getgenv().AutoSellConfig.MaxListings then break end
+
+		local p = entry.pet
+		local id = entry.id
+		local amt = getAmount(p)
+
+		if amt then
+			local sellAmt = math.ceil(amt)
+			if Network:InvokeServer("ListItem", "Pet", id, sellAmt) then
+				listed[id] = true
+				tracked[id] = {
+					name = p.Name,
+					tier = p.Tier or "Normal",
+					amount = sellAmt
+				}
+				c += 1
+			end
+			task.wait(0.15)
+		end
 	end
 
 	busy = false
