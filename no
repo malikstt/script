@@ -1,89 +1,165 @@
-local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
 
-local player = Players.LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
-local hrp = character:WaitForChild("HumanoidRootPart")
+local Auctions = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
 
-local folder = workspace:WaitForChild("Debris"):WaitForChild("Snowflakes")
+local Config = {
+    AutoJoin = true,
+    AutoBid = true,
+    BidDelay = 0.5,
+    MaxBid = 50000,
+    Items = {
+        ["Golden Statue"] = true,
+        ["Diamond Ring"] = true,
+        ["Luxury Watch"] = true,
+        ["Antique Vase"] = true,
+        ["Rare Painting"] = true,
+    }
+}
 
--- UI
-local gui = Instance.new("ScreenGui")
-gui.ResetOnSpawn = false
-gui.Parent = player:WaitForChild("PlayerGui")
+local State = {
+    InAuction = false,
+    CurrentItem = nil,
+    CurrentBid = 0,
+    GarageId = nil
+}
 
-local label = Instance.new("TextLabel")
-label.Size = UDim2.new(0, 500, 0, 50)
-label.Position = UDim2.new(0.5, -250, 0, 10)
-label.BackgroundTransparency = 0.3
-label.BackgroundColor3 = Color3.fromRGB(0,0,0)
-label.TextColor3 = Color3.fromRGB(255,255,255)
-label.TextScaled = true
-label.Font = Enum.Font.GothamBold
-label.Parent = gui
-
--- Collect hearts
-local function getHearts()
-    local hearts = {}
-    for _, v in pairs(folder:GetChildren()) do
-        if v.Name == "DroppedHeart" and v:IsA("BasePart") then
-            table.insert(hearts, v)
-        end
-    end
-    return hearts
+local function log(...)
+    print("[AUTO AUCTION]", ...)
 end
 
--- Sort by distance
-local function sortByDistance(hearts)
-    table.sort(hearts, function(a, b)
-        return (hrp.Position - a.Position).Magnitude <
-               (hrp.Position - b.Position).Magnitude
+local function warnlog(...)
+    warn("[AUTO AUCTION ERROR]", ...)
+end
+
+local function safeFire(remote, ...)
+    local ok, err = pcall(function()
+        remote:FireServer(...)
     end)
+    if not ok then
+        warnlog("FireServer failed:", remote.Name, err)
+        return false
+    end
+    return true
 end
 
--- Tween function
-local function tweenTo(target)
-    local distance = (hrp.Position - target.Position).Magnitude
-    local speed = 120 -- studs per second
-    local time = distance / speed
+local function safeInvoke(remote, ...)
+    local ok, result = pcall(function()
+        return remote:InvokeServer(...)
+    end)
+    if not ok then
+        warnlog("InvokeServer failed:", remote.Name, result)
+        return nil
+    end
+    return result
+end
 
-    local tween = TweenService:Create(
-        hrp,
-        TweenInfo.new(time, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
-        {CFrame = target.CFrame + Vector3.new(0,3,0)}
-    )
-
-    tween:Play()
-
-    -- update distance live
-    while tween.PlaybackState == Enum.PlaybackState.Playing do
-        local distLeft = (hrp.Position - target.Position).Magnitude
-        label.Text = "Niggas collected: " .. collected .. 
-                     " | Distance to next nigger: " .. math.floor(distLeft)
-        task.wait()
+local function tryJoin()
+    if not Config.AutoJoin then return end
+    log("Attempting to join auction queue")
+    local ok = safeFire(Auctions.EnterQueue)
+    if ok then
+        log("Join request sent")
     end
 end
 
--- Main loop
-collected = 0
+local function shouldBid(itemName)
+    if not itemName then return false end
+    return Config.Items[itemName] == true
+end
 
-while true do
-    local hearts = getHearts()
-
-    if #hearts == 0 then
-        label.Text = "No nigga found"
-        break
+local function placeBid()
+    if not Config.AutoBid then return end
+    if not State.InAuction then return end
+    if not State.CurrentItem then return end
+    if not shouldBid(State.CurrentItem) then return end
+    if State.CurrentBid >= Config.MaxBid then
+        log("Max bid reached:", State.CurrentBid)
+        return
     end
 
-    sortByDistance(hearts)
+    task.wait(Config.BidDelay)
 
-    for _, heart in ipairs(hearts) do
-        if heart and heart.Parent then
-            tweenTo(heart)
-            collected += 1
-            task.wait(0.1)
+    local ok = safeFire(Auctions.PlaceBid)
+    if ok then
+        log("Bid placed on:", State.CurrentItem, "Current:", State.CurrentBid)
+    end
+end
+
+local function detectAuction()
+    local data = safeInvoke(Auctions.GetAuctionFromPlayer, LocalPlayer)
+    if data then
+        State.InAuction = true
+        log("Detected auction via invoke")
+    end
+end
+
+Auctions.SetupAuction.OnClientEvent:Connect(function(data)
+    log("Auction setup detected")
+
+    if typeof(data) == "table" then
+        if data.itemName then
+            State.CurrentItem = data.itemName
+            log("Item detected:", State.CurrentItem)
+        end
+        if data.garageId then
+            State.GarageId = data.garageId
+            log("Garage detected:", State.GarageId)
         end
     end
+end)
 
-    task.wait(1)
-end
+Auctions.StartAuction.OnClientEvent:Connect(function(...)
+    State.InAuction = true
+    log("Auction started")
+
+    task.spawn(function()
+        while State.InAuction do
+            placeBid()
+            task.wait(0.2)
+        end
+    end)
+end)
+
+Auctions.UpdateCurrentBid.OnClientEvent:Connect(function(bidData)
+    if typeof(bidData) == "table" then
+        if bidData.value then
+            State.CurrentBid = bidData.value
+            log("Current bid updated:", State.CurrentBid)
+        end
+        if bidData.itemName then
+            State.CurrentItem = bidData.itemName
+        end
+    elseif typeof(bidData) == "number" then
+        State.CurrentBid = bidData
+        log("Current bid updated:", State.CurrentBid)
+    end
+end)
+
+Auctions.EndAuction.OnClientEvent:Connect(function()
+    State.InAuction = false
+    State.CurrentItem = nil
+    State.CurrentBid = 0
+    State.GarageId = nil
+    log("Auction ended")
+end)
+
+Auctions.PlayerLeftAuction.OnClientEvent:Connect(function(player)
+    if player == LocalPlayer then
+        State.InAuction = false
+        log("You left auction")
+    end
+end)
+
+task.spawn(function()
+    while true do
+        if not State.InAuction then
+            tryJoin()
+            detectAuction()
+        end
+        task.wait(3)
+    end
+end)
+
+log("Auto auction initialized")
