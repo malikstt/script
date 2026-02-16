@@ -5,18 +5,18 @@ local TweenService = game:GetService("TweenService")
 
 local player = Players.LocalPlayer
 local RNGFolder = ReplicatedStorage:WaitForChild("Events"):WaitForChild("RNG")
-local GetUpgrades = RNGFolder:WaitForChild("GetHalloweenUpgrades") -- still server-side remote, trust me
+local GetUpgrades = RNGFolder:WaitForChild("GetHalloweenUpgrades") -- still called Halloween but it's Valentine
 local UpgradeData = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("HalloweenRNGUpgrades"))
 
--- Use Valentine naming
+-- Valentine upgrades
 local upgradeOrder = {"HeartsMultiplier","Luck","FasterRoll","AutoRoll","ValentinesSafeChance"}
 
+-- UI setup
 local gui = Instance.new("ScreenGui")
 gui.Name = "ValentineDashboard"
 gui.Parent = player:WaitForChild("PlayerGui")
 gui.ResetOnSpawn = false
 
--- Full screen transparent background
 local background = Instance.new("Frame")
 background.Size = UDim2.fromScale(1,1)
 background.BackgroundColor3 = Color3.fromRGB(0,0,0)
@@ -33,17 +33,7 @@ local layout = Instance.new("UIListLayout")
 layout.Padding = UDim.new(0,12)
 layout.Parent = container
 
--- Title
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1,0,0,60)
-title.BackgroundTransparency = 1
-title.Text = "💖 VALENTINE UPGRADE DASHBOARD 💖"
-title.TextScaled = true
-title.Font = Enum.Font.GothamBlack
-title.TextColor3 = Color3.fromRGB(255,200,220)
-title.Parent = container
-
--- User
+-- Username at top
 local userLabel = Instance.new("TextLabel")
 userLabel.Size = UDim2.new(1,0,0,40)
 userLabel.BackgroundTransparency = 1
@@ -62,22 +52,16 @@ heartsLabel.Font = Enum.Font.GothamBold
 heartsLabel.TextColor3 = Color3.fromRGB(255,255,255)
 heartsLabel.Parent = container
 
-local function formatNumber(n)
-    local absn = math.abs(n)
-    if absn >= 1e12 then
-        return string.format("%.2fT", n/1e12)
-    elseif absn >= 1e9 then
-        return string.format("%.2fB", n/1e9)
-    elseif absn >= 1e6 then
-        return string.format("%.2fM", n/1e6)
-    elseif absn >= 1e3 then
-        return string.format("%.1fK", n/1e3)
-    else
-        return tostring(n)
-    end
-end
+-- Status label (rotating/movable messages)
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1,0,0,35)
+statusLabel.BackgroundTransparency = 1
+statusLabel.TextScaled = true
+statusLabel.Font = Enum.Font.GothamBold
+statusLabel.TextColor3 = Color3.fromRGB(255,255,255)
+statusLabel.Parent = container
 
--- Upgrades
+-- Upgrade frames & bars
 local upgradeFrames = {}
 local upgradeBars = {}
 for _, name in ipairs(upgradeOrder) do
@@ -106,15 +90,35 @@ for _, name in ipairs(upgradeOrder) do
     upgradeBars[name] = bar
 end
 
--- Status rotating text
-local statusLabel = Instance.new("TextLabel")
-statusLabel.Size = UDim2.new(1,0,0,35)
-statusLabel.BackgroundTransparency = 1
-statusLabel.TextScaled = true
-statusLabel.Font = Enum.Font.GothamBold
-statusLabel.TextColor3 = Color3.fromRGB(255,255,255)
-statusLabel.Parent = container
+-- Formatting numbers K/M/B/T
+local function formatNumber(n)
+    local absn = math.abs(n)
+    if absn >= 1e12 then return string.format("%.2fT", n/1e12)
+    elseif absn >= 1e9 then return string.format("%.2fB", n/1e9)
+    elseif absn >= 1e6 then return string.format("%.2fM", n/1e6)
+    elseif absn >= 1e3 then return string.format("%.1fK", n/1e3)
+    else return tostring(n)
+    end
+end
 
+-- Get Hearts & Cash
+local heartsVar = player:WaitForChild("SaveVars"):WaitForChild("Hearts2026")
+local cashVar = player:WaitForChild("SaveVars"):WaitForChild("Cash")
+
+local lastHearts = heartsVar.Value
+local lastUpgrades = GetUpgrades:InvokeServer()
+
+-- Helper: detect purchased upgrade
+local function getPurchased(prev, current)
+    for _, name in ipairs(upgradeOrder) do
+        if prev[name] < (current[name] or 0) then
+            return name, prev[name], current[name]
+        end
+    end
+    return nil
+end
+
+-- Rotating texts
 local rotatingTexts = {
     "❤️ Collecting Hearts...",
     "💸 Saving for next upgrade",
@@ -123,62 +127,62 @@ local rotatingTexts = {
     "⏳ Waiting for enough Hearts"
 }
 local currentRotating = 1
+local tempMessageEnd = 0
+
 task.spawn(function()
     while true do
-        statusLabel.Text = rotatingTexts[currentRotating]
+        if tick() > tempMessageEnd then
+            statusLabel.Text = rotatingTexts[currentRotating]
+        end
         currentRotating = currentRotating + 1
         if currentRotating > #rotatingTexts then currentRotating = 1 end
         task.wait(4)
     end
 end)
 
--- Helper: Hearts & Cash
-local function getHearts()
-    return player:WaitForChild("SaveVars"):WaitForChild("Hearts2026").Value
-end
-local function getCash()
-    return player:WaitForChild("SaveVars"):WaitForChild("Cash").Value
-end
-
--- Helper: Find current upgrade priority
-local function currentPriority(levels)
-    for _, name in ipairs(upgradeOrder) do
-        if levels[name] < (#UpgradeData[name] or 1) then
-            return name
-        end
-    end
-    return "Maxed"
-end
-
 -- RenderStepped updates
 RunService.RenderStepped:Connect(function()
+    local hearts = heartsVar.Value
+    local cash = cashVar.Value
+    local deltaHearts = hearts - lastHearts
+    heartsLabel.Text = "❤️ "..formatNumber(hearts).." | 💸 "..formatNumber(cash)
+
     local levels = GetUpgrades:InvokeServer()
-    local hearts = getHearts()
-    local cash = getCash()
 
-    heartsLabel.Text = "❤️ "..hearts.." | 💸 "..formatNumber(cash)
-
+    -- Upgrade bars
     for _, name in ipairs(upgradeOrder) do
         local current = levels[name] or 0
-        local max = UpgradeData[name] and #UpgradeData[name] or 1
-        local bar = upgradeBars[name]
+        local max = 0
+        if UpgradeData[name] then
+            for _ in pairs(UpgradeData[name]) do max = max + 1 end
+        end
+        if max == 0 then max = 1 end
 
+        local bar = upgradeBars[name]
         local newSize = UDim2.new(current/max,0,1,0)
-        bar.Size = newSize
+        TweenService:Create(bar,TweenInfo.new(0.2),{Size=newSize}):Play()
 
         upgradeFrames[name].label.Text = "💘 "..name.." | "..current.."/"..max
+        if current < max then bar.BackgroundColor3 = Color3.fromRGB(255,0,150)
+        else bar.BackgroundColor3 = Color3.fromRGB(100,100,100) end
+    end
 
-        if current < max then
-            bar.BackgroundColor3 = Color3.fromRGB(255,0,150)
-        else
-            bar.BackgroundColor3 = Color3.fromRGB(100,100,100)
+    -- Dynamic temporary messages
+    if deltaHearts > 0 then
+        statusLabel.Text = "⬆ + "..formatNumber(deltaHearts).." ❤️"
+        tempMessageEnd = tick() + 2
+    elseif deltaHearts < 0 then
+        local purchased, prevLv, newLv = getPurchased(lastUpgrades, levels)
+        if purchased then
+            local cost = 0
+            if UpgradeData[purchased] and UpgradeData[purchased][newLv] then
+                cost = UpgradeData[purchased][newLv].Hearts or 0
+            end
+            statusLabel.Text = "🎉 Purchased "..purchased.." Level "..newLv.." for "..formatNumber(cost).." ❤️"
+            tempMessageEnd = tick() + 3
         end
     end
 
-    local nextTarget = currentPriority(levels)
-    if nextTarget ~= "Maxed" then
-        statusLabel.Text = "🎯 Upgrading: "..nextTarget.." | Hearts: "..hearts
-    else
-        statusLabel.Text = "🎉 All upgrades maxed!"
-    end
+    lastHearts = hearts
+    lastUpgrades = levels
 end)
