@@ -1,165 +1,184 @@
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 
-local Auctions = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
+local player = Players.LocalPlayer
+local RNGFolder = ReplicatedStorage:WaitForChild("Events"):WaitForChild("RNG")
+local GetUpgrades = RNGFolder:WaitForChild("GetHalloweenUpgrades") -- still server-side remote, trust me
+local UpgradeData = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("HalloweenRNGUpgrades"))
 
-local Config = {
-    AutoJoin = true,
-    AutoBid = true,
-    BidDelay = 0.5,
-    MaxBid = 50000,
-    Items = {
-        ["Golden Statue"] = true,
-        ["Diamond Ring"] = true,
-        ["Luxury Watch"] = true,
-        ["Antique Vase"] = true,
-        ["Rare Painting"] = true,
-    }
+-- Use Valentine naming
+local upgradeOrder = {"HeartsMultiplier","Luck","FasterRoll","AutoRoll","ValentinesSafeChance"}
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "ValentineDashboard"
+gui.Parent = player:WaitForChild("PlayerGui")
+gui.ResetOnSpawn = false
+
+-- Full screen transparent background
+local background = Instance.new("Frame")
+background.Size = UDim2.fromScale(1,1)
+background.BackgroundColor3 = Color3.fromRGB(0,0,0)
+background.BackgroundTransparency = 0.4
+background.Parent = gui
+
+local container = Instance.new("Frame")
+container.Size = UDim2.fromScale(0.6,0.75)
+container.Position = UDim2.fromScale(0.2,0.125)
+container.BackgroundTransparency = 1
+container.Parent = background
+
+local layout = Instance.new("UIListLayout")
+layout.Padding = UDim.new(0,12)
+layout.Parent = container
+
+-- Title
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1,0,0,60)
+title.BackgroundTransparency = 1
+title.Text = "💖 VALENTINE UPGRADE DASHBOARD 💖"
+title.TextScaled = true
+title.Font = Enum.Font.GothamBlack
+title.TextColor3 = Color3.fromRGB(255,200,220)
+title.Parent = container
+
+-- User
+local userLabel = Instance.new("TextLabel")
+userLabel.Size = UDim2.new(1,0,0,40)
+userLabel.BackgroundTransparency = 1
+userLabel.Text = "👤 "..player.Name
+userLabel.TextScaled = true
+userLabel.Font = Enum.Font.GothamBold
+userLabel.TextColor3 = Color3.fromRGB(255,255,255)
+userLabel.Parent = container
+
+-- Hearts & Cash
+local heartsLabel = Instance.new("TextLabel")
+heartsLabel.Size = UDim2.new(1,0,0,40)
+heartsLabel.BackgroundTransparency = 1
+heartsLabel.TextScaled = true
+heartsLabel.Font = Enum.Font.GothamBold
+heartsLabel.TextColor3 = Color3.fromRGB(255,255,255)
+heartsLabel.Parent = container
+
+local function formatNumber(n)
+    local absn = math.abs(n)
+    if absn >= 1e12 then
+        return string.format("%.2fT", n/1e12)
+    elseif absn >= 1e9 then
+        return string.format("%.2fB", n/1e9)
+    elseif absn >= 1e6 then
+        return string.format("%.2fM", n/1e6)
+    elseif absn >= 1e3 then
+        return string.format("%.1fK", n/1e3)
+    else
+        return tostring(n)
+    end
+end
+
+-- Upgrades
+local upgradeFrames = {}
+local upgradeBars = {}
+for _, name in ipairs(upgradeOrder) do
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1,0,0,30)
+    frame.BackgroundTransparency = 0.6
+    frame.BackgroundColor3 = Color3.fromRGB(30,30,30)
+    frame.Parent = container
+
+    local bar = Instance.new("Frame")
+    bar.Size = UDim2.new(0,0,1,0)
+    bar.BackgroundColor3 = Color3.fromRGB(255,0,150)
+    bar.BorderSizePixel = 0
+    bar.Parent = frame
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1,0,1,0)
+    label.BackgroundTransparency = 1
+    label.TextScaled = true
+    label.Font = Enum.Font.GothamBold
+    label.TextColor3 = Color3.fromRGB(255,255,255)
+    label.Text = "💘 "..name
+    label.Parent = frame
+
+    upgradeFrames[name] = {frame=frame,label=label}
+    upgradeBars[name] = bar
+end
+
+-- Status rotating text
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1,0,0,35)
+statusLabel.BackgroundTransparency = 1
+statusLabel.TextScaled = true
+statusLabel.Font = Enum.Font.GothamBold
+statusLabel.TextColor3 = Color3.fromRGB(255,255,255)
+statusLabel.Parent = container
+
+local rotatingTexts = {
+    "❤️ Collecting Hearts...",
+    "💸 Saving for next upgrade",
+    "🎯 Next target: Luck",
+    "🔮 Upgrade path: Multiplier → Luck → Speed",
+    "⏳ Waiting for enough Hearts"
 }
-
-local State = {
-    InAuction = false,
-    CurrentItem = nil,
-    CurrentBid = 0,
-    GarageId = nil
-}
-
-local function log(...)
-    print("[AUTO AUCTION]", ...)
-end
-
-local function warnlog(...)
-    warn("[AUTO AUCTION ERROR]", ...)
-end
-
-local function safeFire(remote, ...)
-    local ok, err = pcall(function()
-        remote:FireServer(...)
-    end)
-    if not ok then
-        warnlog("FireServer failed:", remote.Name, err)
-        return false
-    end
-    return true
-end
-
-local function safeInvoke(remote, ...)
-    local ok, result = pcall(function()
-        return remote:InvokeServer(...)
-    end)
-    if not ok then
-        warnlog("InvokeServer failed:", remote.Name, result)
-        return nil
-    end
-    return result
-end
-
-local function tryJoin()
-    if not Config.AutoJoin then return end
-    log("Attempting to join auction queue")
-    local ok = safeFire(Auctions.EnterQueue)
-    if ok then
-        log("Join request sent")
-    end
-end
-
-local function shouldBid(itemName)
-    if not itemName then return false end
-    return Config.Items[itemName] == true
-end
-
-local function placeBid()
-    if not Config.AutoBid then return end
-    if not State.InAuction then return end
-    if not State.CurrentItem then return end
-    if not shouldBid(State.CurrentItem) then return end
-    if State.CurrentBid >= Config.MaxBid then
-        log("Max bid reached:", State.CurrentBid)
-        return
-    end
-
-    task.wait(Config.BidDelay)
-
-    local ok = safeFire(Auctions.PlaceBid)
-    if ok then
-        log("Bid placed on:", State.CurrentItem, "Current:", State.CurrentBid)
-    end
-end
-
-local function detectAuction()
-    local data = safeInvoke(Auctions.GetAuctionFromPlayer, LocalPlayer)
-    if data then
-        State.InAuction = true
-        log("Detected auction via invoke")
-    end
-end
-
-Auctions.SetupAuction.OnClientEvent:Connect(function(data)
-    log("Auction setup detected")
-
-    if typeof(data) == "table" then
-        if data.itemName then
-            State.CurrentItem = data.itemName
-            log("Item detected:", State.CurrentItem)
-        end
-        if data.garageId then
-            State.GarageId = data.garageId
-            log("Garage detected:", State.GarageId)
-        end
-    end
-end)
-
-Auctions.StartAuction.OnClientEvent:Connect(function(...)
-    State.InAuction = true
-    log("Auction started")
-
-    task.spawn(function()
-        while State.InAuction do
-            placeBid()
-            task.wait(0.2)
-        end
-    end)
-end)
-
-Auctions.UpdateCurrentBid.OnClientEvent:Connect(function(bidData)
-    if typeof(bidData) == "table" then
-        if bidData.value then
-            State.CurrentBid = bidData.value
-            log("Current bid updated:", State.CurrentBid)
-        end
-        if bidData.itemName then
-            State.CurrentItem = bidData.itemName
-        end
-    elseif typeof(bidData) == "number" then
-        State.CurrentBid = bidData
-        log("Current bid updated:", State.CurrentBid)
-    end
-end)
-
-Auctions.EndAuction.OnClientEvent:Connect(function()
-    State.InAuction = false
-    State.CurrentItem = nil
-    State.CurrentBid = 0
-    State.GarageId = nil
-    log("Auction ended")
-end)
-
-Auctions.PlayerLeftAuction.OnClientEvent:Connect(function(player)
-    if player == LocalPlayer then
-        State.InAuction = false
-        log("You left auction")
-    end
-end)
-
+local currentRotating = 1
 task.spawn(function()
     while true do
-        if not State.InAuction then
-            tryJoin()
-            detectAuction()
-        end
-        task.wait(3)
+        statusLabel.Text = rotatingTexts[currentRotating]
+        currentRotating = currentRotating + 1
+        if currentRotating > #rotatingTexts then currentRotating = 1 end
+        task.wait(4)
     end
 end)
 
-log("Auto auction initialized")
+-- Helper: Hearts & Cash
+local function getHearts()
+    return player:WaitForChild("SaveVars"):WaitForChild("Hearts2026").Value
+end
+local function getCash()
+    return player:WaitForChild("SaveVars"):WaitForChild("Cash").Value
+end
+
+-- Helper: Find current upgrade priority
+local function currentPriority(levels)
+    for _, name in ipairs(upgradeOrder) do
+        if levels[name] < (#UpgradeData[name] or 1) then
+            return name
+        end
+    end
+    return "Maxed"
+end
+
+-- RenderStepped updates
+RunService.RenderStepped:Connect(function()
+    local levels = GetUpgrades:InvokeServer()
+    local hearts = getHearts()
+    local cash = getCash()
+
+    heartsLabel.Text = "❤️ "..hearts.." | 💸 "..formatNumber(cash)
+
+    for _, name in ipairs(upgradeOrder) do
+        local current = levels[name] or 0
+        local max = UpgradeData[name] and #UpgradeData[name] or 1
+        local bar = upgradeBars[name]
+
+        local newSize = UDim2.new(current/max,0,1,0)
+        bar.Size = newSize
+
+        upgradeFrames[name].label.Text = "💘 "..name.." | "..current.."/"..max
+
+        if current < max then
+            bar.BackgroundColor3 = Color3.fromRGB(255,0,150)
+        else
+            bar.BackgroundColor3 = Color3.fromRGB(100,100,100)
+        end
+    end
+
+    local nextTarget = currentPriority(levels)
+    if nextTarget ~= "Maxed" then
+        statusLabel.Text = "🎯 Upgrading: "..nextTarget.." | Hearts: "..hearts
+    else
+        statusLabel.Text = "🎉 All upgrades maxed!"
+    end
+end)
