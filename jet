@@ -1,29 +1,77 @@
-
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Shared = ReplicatedStorage:WaitForChild("Shared")
-local Framework = Shared:WaitForChild("Framework")
-local Network = Framework:WaitForChild("Network")
-local Remote = Network:WaitForChild("Remote"):WaitForChild("RemoteEvent")
+local RunService = game:GetService("RunService")
 
-while true do
-	for slot = 1, 3 do
-		for i = 1, 10 do
-			local args = {
-				"BuyShopItem",
-				"dice-shop",
-				slot,
-				true
-			}
-			Remote:FireServer(unpack(args))
-			task.wait(1)
-		end
-	end
-	
-	local rerollArgs = {
-		"ShopFreeReroll",
-		"dice-shop"
-	}
-	Remote:FireServer(unpack(rerollArgs))
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoidRoot = character:WaitForChild("HumanoidRootPart")
 
-	task.wait(0.5)
+local SaveVars = player:WaitForChild("SaveVars")
+local RNGFolder = ReplicatedStorage:WaitForChild("Events"):WaitForChild("RNG")
+
+local GetUpgrades = RNGFolder:WaitForChild("GetHalloweenUpgrades")
+local BuyUpgrade = RNGFolder:WaitForChild("BuyHalloweenUpgrade")
+local UpgradeData = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("HalloweenRNGUpgrades"))
+
+local SnowflakesFolder = workspace:WaitForChild("Debris"):WaitForChild("Snowflakes")
+
+local upgradeOrder = {"HeartsMultiplier","Luck","FasterRoll","AutoRoll","ValentinesSafeChance"}
+
+local touchedHearts = {}
+
+local function killNotifyFolder()
+    local notify = player:WaitForChild("PlayerGui"):FindFirstChild("NotifyFolder")
+    if notify then
+        notify:Destroy()
+    end
 end
+
+local function touchHeart(heart)
+    if heart:IsA("BasePart") and not touchedHearts[heart] then
+        firetouchinterest(humanoidRoot, heart, 0)
+        firetouchinterest(humanoidRoot, heart, 1)
+        touchedHearts[heart] = true
+    end
+end
+
+RunService.RenderStepped:Connect(function()
+    for _, heart in ipairs(SnowflakesFolder:GetChildren()) do
+        if heart.Name == "DroppedHeart" then
+            touchHeart(heart)
+        end
+    end
+end)
+
+task.spawn(function()
+    while true do
+        killNotifyFolder()
+
+        local levels = GetUpgrades:InvokeServer()
+        local hearts = SaveVars:WaitForChild("Hearts2026").Value
+        local anyPurchased = false
+
+        for _, name in ipairs(upgradeOrder) do
+            local current = levels[name] or 0
+            local maxLevel = UpgradeData[name] and #UpgradeData[name] or 0
+
+            while current < maxLevel do
+                hearts = SaveVars:WaitForChild("Hearts2026").Value
+                local cost = UpgradeData[name][current + 1].Hearts or 0
+
+                if hearts >= cost then
+                    BuyUpgrade:InvokeServer(name)
+                    task.wait(0.3)
+                    levels = GetUpgrades:InvokeServer()
+                    current = levels[name] or current
+                    anyPurchased = true
+                else
+                    break
+                end
+            end
+        end
+
+        if not anyPurchased then
+            task.wait(1)
+        end
+    end
+end)
