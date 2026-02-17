@@ -1,35 +1,29 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local player = Players.LocalPlayer
-local PlayerGui = player:WaitForChild("PlayerGui")
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "ValentineAuctionUI"
-gui.Parent = PlayerGui
+gui.Name = "ValentineAuctionDashboard"
+gui.Parent = player:WaitForChild("PlayerGui")
 gui.ResetOnSpawn = false
-
-local background = Instance.new("Frame")
-background.Size = UDim2.fromScale(1,1)
-background.BackgroundColor3 = Color3.fromRGB(0,0,0)
-background.BackgroundTransparency = 0.5
-background.Parent = gui
 
 local highlight = Instance.new("Frame")
 highlight.Size = UDim2.fromScale(1,1)
 highlight.Position = UDim2.new(0,0,0,0)
-highlight.BackgroundTransparency = 1
-highlight.BorderSizePixel = 4
-highlight.BorderColor3 = Color3.fromRGB(255,255,255)
+highlight.BackgroundColor3 = Color3.fromRGB(50,50,50)
+highlight.BackgroundTransparency = 0.6
+highlight.BorderSizePixel = 0
+highlight.ZIndex = 0
 highlight.Parent = gui
 
 local container = Instance.new("Frame")
-container.Size = UDim2.fromScale(0.6,0.78)
-container.Position = UDim2.fromScale(0.2,0.1)
+container.Size = UDim2.new(0.6,0,0.78,0)
+container.Position = UDim2.new(0.2,0,0.1,0)
 container.BackgroundTransparency = 1
-container.Parent = background
+container.Parent = highlight
+container.ZIndex = 1
 
 local userLabel = Instance.new("TextLabel")
 userLabel.Size = UDim2.new(1,0,0,50)
@@ -52,145 +46,62 @@ layout.Padding = UDim.new(0,12)
 layout.Parent = contentFrame
 
 local heartsLabel = Instance.new("TextLabel")
-heartsLabel.Size = UDim2.new(1,0,0,40)
+heartsLabel.Size = UDim2.new(1,0,0,45)
 heartsLabel.BackgroundTransparency = 1
 heartsLabel.TextScaled = true
 heartsLabel.Font = Enum.Font.GothamBold
 heartsLabel.TextColor3 = Color3.fromRGB(255,255,255)
+heartsLabel.Text = "❤️ 0 | 💸 0"
 heartsLabel.Parent = contentFrame
 
 local statusLabel = Instance.new("TextLabel")
-statusLabel.Size = UDim2.new(1,0,0,35)
+statusLabel.Size = UDim2.new(1,0,0,50)
 statusLabel.BackgroundTransparency = 1
 statusLabel.TextScaled = true
 statusLabel.Font = Enum.Font.GothamBold
 statusLabel.TextColor3 = Color3.fromRGB(255,255,255)
-statusLabel.Text = "🕓 Idle"
+statusLabel.Text = "⏳ Idle"
 statusLabel.Parent = contentFrame
 
-local valentineCount = 0
-local cashEarned = 0
-local auctionStep = "Idle"
+local itemsFoundLabel = Instance.new("TextLabel")
+itemsFoundLabel.Size = UDim2.new(1,0,0,45)
+itemsFoundLabel.BackgroundTransparency = 1
+itemsFoundLabel.TextScaled = true
+itemsFoundLabel.Font = Enum.Font.GothamBold
+itemsFoundLabel.TextColor3 = Color3.fromRGB(255,200,0)
+itemsFoundLabel.Text = "🎁 Valentine Safe: 0"
+itemsFoundLabel.Parent = contentFrame
 
-local function updateUI()
-    heartsLabel.Text = "💘 Valentines: "..valentineCount.." | 💸 Cash: "..cashEarned
-    if auctionStep == "Found" then
-        highlight.BorderColor3 = Color3.fromRGB(0,255,0)
-    elseif auctionStep == "Scanning" or auctionStep == "Bidding" then
-        highlight.BorderColor3 = Color3.fromRGB(255,255,0)
-    elseif auctionStep == "Idle" then
-        highlight.BorderColor3 = Color3.fromRGB(255,255,255)
-    elseif auctionStep == "Full" then
-        highlight.BorderColor3 = Color3.fromRGB(255,0,0)
+local function formatNumber(n)
+    local absn = math.abs(n)
+    if absn >= 1e12 then return string.format("%.2fT", n/1e12)
+    elseif absn >= 1e9 then return string.format("%.2fB", n/1e9)
+    elseif absn >= 1e6 then return string.format("%.2fM", n/1e6)
+    elseif absn >= 1e3 then return string.format("%.1fK", n/1e3)
+    else return tostring(n)
     end
-    statusLabel.Text = auctionStep
 end
 
-task.spawn(function()
-    while true do
-        updateUI()
-        task.wait(0.5)
-    end
+local heartsVar = player:WaitForChild("SaveVars"):WaitForChild("Hearts2026")
+local cashVar = player:WaitForChild("SaveVars"):WaitForChild("Cash")
+
+RunService.RenderStepped:Connect(function()
+    local hearts = heartsVar.Value
+    local cash = cashVar.Value
+    heartsLabel.Text = "❤️ "..formatNumber(hearts).." | 💸 "..formatNumber(cash)
 end)
 
-local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
-local ItemsModule = require(ReplicatedStorage.Modules.Items)
-local Auctions = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
-local EnterQueue = Auctions:WaitForChild("EnterQueue")
-local Skip = Auctions:WaitForChild("Skip")
-local SkipCountdown = Auctions:WaitForChild("SkipCountdown")
-local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
-local PlaceBid = Auctions:WaitForChild("PlaceBid")
+local AuctionStatusValue = Instance.new("StringValue")
+AuctionStatusValue.Name = "AuctionStatus"
+AuctionStatusValue.Value = "Idle"
+AuctionStatusValue.Parent = player
 
-local currentNextBid
-local currentBidder
-local foundValentine = false
-local inAuction = false
+local ItemsFoundValue = Instance.new("IntValue")
+ItemsFoundValue.Name = "ValentineFound"
+ItemsFoundValue.Value = 0
+ItemsFoundValue.Parent = player
 
-UpdateCurrentBid.OnClientEvent:Connect(function(data)
-    if not data then return end
-    currentNextBid = data.nextBid
-    currentBidder = data.player
+RunService.RenderStepped:Connect(function()
+    statusLabel.Text = "🔹 "..AuctionStatusValue.Value
+    itemsFoundLabel.Text = "🎁 Valentine Safe: "..ItemsFoundValue.Value
 end)
-
-AuctionsFolder.ChildAdded:Connect(function() inAuction = true end)
-AuctionsFolder.ChildRemoved:Connect(function() if #AuctionsFolder:GetChildren() == 0 then inAuction = false end end)
-
-task.spawn(function()
-    while true do
-        auctionStep = "Joining Auction Queue"
-        pcall(function() EnterQueue:InvokeServer("1") end)
-        repeat task.wait(0.5) until inAuction
-        auctionStep = "Scanning"
-        while inAuction and not foundValentine do
-            local garages = AuctionsFolder:GetChildren()
-            for _, garage in ipairs(garages) do
-                local itemsFolder = garage:FindFirstChild("Items")
-                local hasValentine = false
-                if itemsFolder then
-                    for _, itemInstance in pairs(itemsFolder:GetChildren()) do
-                        local itemData = ItemsModule[itemInstance.Name]
-                        if itemData and string.find(string.lower(itemData.Name),"valentine") then
-                            foundValentine = true
-                            hasValentine = true
-                            break
-                        end
-                    end
-                end
-                if not hasValentine then
-                    pcall(function() SkipCountdown:InvokeServer() end)
-                    task.wait(0.05)
-                    pcall(function() Skip:InvokeServer() end)
-                end
-                if foundValentine then break end
-            end
-            task.wait(0.5)
-        end
-        repeat task.wait(1) until not inAuction
-        if foundValentine then auctionStep = "Found" end
-        task.wait(0.5)
-    end
-end)
-
-task.spawn(function()
-    while true do
-        task.wait(0.3)
-        if inAuction and currentNextBid and currentBidder ~= player and not foundValentine then
-            auctionStep = "Bidding"
-            pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
-        end
-    end
-end)
-
-local function clickOkButton()
-    local function tryClick(obj)
-        pcall(function() obj:Activate() end)
-        if getconnections then
-            for _,v in pairs(getconnections(obj.MouseButton1Click)) do
-                pcall(function() v:Fire() end)
-            end
-        end
-    end
-    local function checkForButton()
-        local itemsWon = PlayerGui:FindFirstChild("ItemsWon",true)
-        if itemsWon then
-            local button = itemsWon:FindFirstChild("Button",true)
-            if button then tryClick(button) end
-        end
-    end
-    checkForButton()
-    PlayerGui.DescendantAdded:Connect(function(obj)
-        if obj.Name == "Button" then
-            task.wait()
-            tryClick(obj)
-        end
-    end)
-    task.spawn(function()
-        while true do
-            task.wait(0.5)
-            checkForButton()
-        end
-    end)
-end
-
-clickOkButton()
