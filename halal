@@ -25,7 +25,6 @@ local halted = false
 local currentNextBid
 local currentBidder
 local currentGarage = nil
-local targetGarage = nil  -- Store which garage has the target
 
 -- Add a cooldown for skipping to prevent spam
 local lastSkipTime = 0
@@ -48,7 +47,6 @@ AuctionsFolder.ChildRemoved:Connect(function(garage)
 	if #AuctionsFolder:GetChildren() == 0 then
 		inAuction = false
 		currentGarage = nil
-		targetGarage = nil  -- Reset target garage when leaving auction
 		print("🏁 Left auction")
 	end
 end)
@@ -136,10 +134,10 @@ local function sellOtherItems()
 	end
 end
 
-local function scanGarageForTarget(garage)
-	if not garage then return false end
+local function scanCurrentGarageForTarget()
+	if not currentGarage then return false end
 	
-	local itemsFolder = garage:FindFirstChild("Items")
+	local itemsFolder = currentGarage:FindFirstChild("Items")
 	if not itemsFolder then return false end
 	
 	-- Wait a bit for items to load
@@ -150,14 +148,14 @@ local function scanGarageForTarget(garage)
 		for _, itemInstance in pairs(itemsFolder:GetChildren()) do
 			local itemData = ItemsModule[itemInstance.Name]
 			if itemData and itemData.Name and string.find(string.lower(itemData.Name), TARGET_NAME) then
-				print("🎯 Target found in garage:", garage.Name)
+				print("🎯 Target found in current garage:", currentGarage.Name)
 				return true
 			end
 		end
 		taskWait(0.2)
 	end
 	
-	print("❌ Target not found in garage:", garage.Name)
+	print("❌ Target NOT found in current garage:", currentGarage.Name)
 	return false
 end
 
@@ -199,104 +197,43 @@ while not halted do
 	obtainedTarget = false
 	handleItemsWon()
 
-	-- Scan all garages to find which one has the target
-	targetGarage = nil
-	local garagesScanned = {}
+	-- Scan the CURRENT garage (only one that exists now)
+	local currentGarageHasTarget = scanCurrentGarageForTarget()
 	
-	for _, garage in ipairs(AuctionsFolder:GetChildren()) do
-		local hasTarget = scanGarageForTarget(garage)
-		garagesScanned[garage] = hasTarget
-		if hasTarget then
-			targetGarage = garage
-			print("🎯 Target garage identified:", garage.Name)
-			-- Don't break here, continue scanning to know status of all garages
-		end
-	end
-	
-	-- Now we know which garage has the target
-	if targetGarage then
-		print("💵 Target is in garage:", targetGarage.Name)
-		print("📍 Currently in garage:", currentGarage and currentGarage.Name or "none")
+	if currentGarageHasTarget then
+		print("💵 Target is in current garage! Bidding on:", currentGarage.Name)
 		
-		-- If we're not in the target garage yet, we need to skip until we get there
-		while inAuction and currentGarage ~= targetGarage do
-			print("⏭ Currently in wrong garage:", currentGarage and currentGarage.Name, "waiting for target garage:", targetGarage.Name)
-			
-			-- Only skip if we're in a garage that doesn't have the target
-			if currentGarage and not garagesScanned[currentGarage] then
-				-- We haven't scanned this garage yet? Scan it now
-				local hasTarget = scanGarageForTarget(currentGarage)
-				garagesScanned[currentGarage] = hasTarget
-				if hasTarget then
-					-- Update target garage if we found it in current garage
-					targetGarage = currentGarage
-					print("🎯 Found target in current garage during scan!")
-					break
-				end
-			end
-			
-			-- If current garage doesn't have target, skip it
-			if currentGarage and not garagesScanned[currentGarage] then
-				-- We still don't know about this garage, scan it first
-				local hasTarget = scanGarageForTarget(currentGarage)
-				garagesScanned[currentGarage] = hasTarget
-				if hasTarget then
-					targetGarage = currentGarage
-					break
-				end
-			end
-			
-			-- Now we know current garage doesn't have target, so skip it
-			if currentGarage and not garagesScanned[currentGarage] == false and tick() - lastSkipTime > SKIP_COOLDOWN then
-				print("⏭ Skipping garage without target:", currentGarage.Name)
-				pcall(function() SkipCountdown:InvokeServer() end)
-				taskWait(0.1)
-				pcall(function() Skip:InvokeServer() end)
-				lastSkipTime = tick()
-			end
-			
-			taskWait(0.5)
-		end
+		-- Bid until we win or leave auction
+		local bidStartTime = tick()
+		local BID_TIMEOUT = 60
 		
-		-- Now we should be in the target garage
-		if inAuction and currentGarage == targetGarage then
-			print("💵 Now in target garage, starting to bid:", targetGarage.Name)
-			
-			-- Bid until we win or leave auction
-			local bidStartTime = tick()
-			local BID_TIMEOUT = 60
-			
-			while not obtainedTarget and inAuction and currentGarage == targetGarage do
-				if currentNextBid and currentBidder ~= LocalPlayer then
-					local bidSuccess = pcall(function() 
-						return PlaceBid:InvokeServer(currentNextBid) 
-					end)
-					if bidSuccess then
-						print("✅ Placed bid:", currentNextBid)
-					end
+		while not obtainedTarget and inAuction and currentGarage do
+			if currentNextBid and currentBidder ~= LocalPlayer then
+				local bidSuccess = pcall(function() 
+					return PlaceBid:InvokeServer(currentNextBid) 
+				end)
+				if bidSuccess then
+					print("✅ Placed bid:", currentNextBid)
 				end
-				
-				if tick() - bidStartTime > BID_TIMEOUT then
-					print("⚠️ Bid timeout reached, moving on")
-					break
-				end
-				
-				taskWait(BID_CHECK_INTERVAL)
 			end
+			
+			if tick() - bidStartTime > BID_TIMEOUT then
+				print("⚠️ Bid timeout reached, moving on")
+				break
+			end
+			
+			taskWait(BID_CHECK_INTERVAL)
 		end
 	else
-		print("❌ No target found in any garage")
+		print("⏭ Current garage does NOT have target - skipping it:", currentGarage and currentGarage.Name)
 		
-		-- Skip all garages since none have the target
-		while inAuction do
-			if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
-				print("⏭ No target in any garage, skipping:", currentGarage.Name)
-				pcall(function() SkipCountdown:InvokeServer() end)
-				taskWait(0.1)
-				pcall(function() Skip:InvokeServer() end)
-				lastSkipTime = tick()
-			end
-			taskWait(0.5)
+		-- Skip this garage since it doesn't have target
+		if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
+			pcall(function() SkipCountdown:InvokeServer() end)
+			taskWait(0.1)
+			pcall(function() Skip:InvokeServer() end)
+			lastSkipTime = tick()
+			print("⏭ Skipped garage without target")
 		end
 	end
 
@@ -304,7 +241,7 @@ while not halted do
 		sellOtherItems()
 		taskWait(2)
 	else
-		print("ℹ️ No target obtained, waiting before rejoining")
+		print("ℹ️ No target obtained, waiting before rejoining queue")
 		taskWait(3)
 	end
 	
