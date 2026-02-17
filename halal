@@ -16,7 +16,6 @@ local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 
 local TARGET_NAME = "valentine"
-
 local inAuction = false
 local foundTargetGarage = nil
 local obtainedTarget = false
@@ -24,7 +23,6 @@ local halted = false
 local currentNextBid
 local currentBidder
 
--- Track current bid info
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
 	if data then
 		currentNextBid = data.nextBid
@@ -32,7 +30,6 @@ UpdateCurrentBid.OnClientEvent:Connect(function(data)
 	end
 end)
 
--- Detect auctions starting/stopping
 AuctionsFolder.ChildAdded:Connect(function()
 	inAuction = true
 end)
@@ -43,7 +40,6 @@ AuctionsFolder.ChildRemoved:Connect(function()
 	end
 end)
 
--- Check if storage is full
 local function storageFull()
 	local success, data = pcall(function() return DataEvent:InvokeServer() end)
 	if not success or not data then return false end
@@ -56,7 +52,6 @@ local function storageFull()
 	return invCount >= invSpace or carrySpace <= 0
 end
 
--- Safely click a button
 local function clickButton(obj)
 	if obj and (obj:IsA("TextButton") or obj:IsA("ImageButton")) then
 		pcall(function() obj:Activate() end)
@@ -68,57 +63,64 @@ local function clickButton(obj)
 	end
 end
 
--- Handle the "ItemsWon" GUI
 local function handleItemsWon()
-	local gui = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
-	if gui then
-		local itemsFrame = gui:FindFirstChild("ItemsFrame", true)
-		if itemsFrame then
-			local frame = itemsFrame:FindFirstChild("Frame")
-			if frame then
-				for _, child in pairs(frame:GetChildren()) do
-					if child:IsA("ImageButton") and child:FindFirstChild("Price") then
-						local itemData = ItemsModule[child.Name]
-						if itemData and itemData.Name and string.find(string.lower(itemData.Name), TARGET_NAME) then
-							print("✅ Obtained target item:", itemData.Name)
-							clickButton(child)
-							obtainedTarget = true
-							break
+	spawn(function()
+		while not obtainedTarget do
+			local gui = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
+			if gui then
+				local itemsFrame = gui:FindFirstChild("ItemsFrame", true)
+				if itemsFrame then
+					local frame = itemsFrame:FindFirstChild("Frame")
+					if frame then
+						for _, child in pairs(frame:GetChildren()) do
+							if child:IsA("ImageButton") and child:FindFirstChild("Price") then
+								local itemData = ItemsModule[child.Name]
+								if itemData and itemData.Name and string.find(string.lower(itemData.Name), TARGET_NAME) then
+									print("✅ Obtained target item:", itemData.Name)
+									clickButton(child)
+									obtainedTarget = true
+									break
+								end
+							end
 						end
+						local confirm = itemsFrame:FindFirstChild("ConfirmButton", true)
+						clickButton(confirm)
 					end
 				end
-				local confirm = itemsFrame:FindFirstChild("ConfirmButton", true)
-				clickButton(confirm)
+				local noItems = gui:FindFirstChild("NoItems", true)
+				if noItems and noItems.Visible then
+					local btn = noItems:FindFirstChild("Button", true)
+					clickButton(btn)
+				end
+			end
+			taskWait(1)
+		end
+	end)
+end
+
+local function sellOtherItems()
+	local start = tick()
+	while tick() - start < 2 do
+		local success, data = pcall(function() return DataEvent:InvokeServer() end)
+		if success and data then
+			local inv = data.Inventory or {}
+			local tblToSell = {}
+			for guid, item in pairs(inv) do
+				local itemData = ItemsModule[item.itemId]
+				if itemData and not string.find(string.lower(itemData.Name), TARGET_NAME) then
+					tblToSell[guid] = item
+				end
+			end
+			if next(tblToSell) then
+				print("💰 Selling other items:", #tblToSell)
+				pcall(function() ReplicatedStorage.Events.UI.SellItems:FireServer(tblToSell) end)
 			end
 		end
-		local noItems = gui:FindFirstChild("NoItems", true)
-		if noItems and noItems.Visible then
-			local btn = noItems:FindFirstChild("Button", true)
-			clickButton(btn)
-		end
+		taskWait(0.2)
 	end
 end
 
--- Sell all items except the target
-local function sellOtherItems()
-	local success, data = pcall(function() return DataEvent:InvokeServer() end)
-	if not success or not data then return end
-	local inv = data.Inventory or {}
-	local tblToSell = {}
-	for guid, item in pairs(inv) do
-		local itemData = ItemsModule[item.itemId]
-		if itemData and not string.find(string.lower(itemData.Name), TARGET_NAME) then
-			tblToSell[guid] = item
-		end
-	end
-	if next(tblToSell) then
-		print("💰 Selling other items:", #tblToSell)
-		pcall(function() ReplicatedStorage.Events.UI.SellItems:FireServer(tblToSell) end)
-	end
-end
-
--- Main loop
-while not halted and not obtainedTarget do
+while not halted do
 	if storageFull() then
 		print("❌ Storage full. Script halted.")
 		halted = true
@@ -126,54 +128,58 @@ while not halted and not obtainedTarget do
 	end
 
 	print("➡ Entering auction queue...")
-	pcall(function() EnterQueue:InvokeServer("1") end)
-
-	-- Wait for auction to start and garage replication
+	local successQueue = pcall(function() EnterQueue:InvokeServer("1") end)
+	if not successQueue then print("❌ Failed to enter queue") end
 	repeat taskWait(0.1) until inAuction
-	taskWait(0.5) -- small buffer for server replication
+	taskWait(0.5)
 
-	-- Scan garages for target
 	foundTargetGarage = nil
+	obtainedTarget = false
+	handleItemsWon()
+
 	local garages = AuctionsFolder:GetChildren()
 	for _, garage in ipairs(garages) do
 		print("🔎 Scanning garage:", garage.Name)
 		local itemsFolder = garage:FindFirstChild("Items")
+		local startTime = tick()
 		local hasTarget = false
-		if itemsFolder then
-			for _, itemInstance in pairs(itemsFolder:GetChildren()) do
-				local itemData = ItemsModule[itemInstance.Name]
-				if itemData and itemData.Name and string.find(string.lower(itemData.Name), TARGET_NAME) then
-					hasTarget = true
-					foundTargetGarage = garage
-					print("🎯 Found target in garage:", garage.Name)
-					break
+		while tick() - startTime < 2 do
+			if itemsFolder then
+				for _, itemInstance in pairs(itemsFolder:GetChildren()) do
+					local itemData = ItemsModule[itemInstance.Name]
+					if itemData and itemData.Name and string.find(string.lower(itemData.Name), TARGET_NAME) then
+						hasTarget = true
+						foundTargetGarage = garage
+						print("🎯 Found target in garage:", garage.Name)
+						break
+					end
 				end
 			end
+			if hasTarget then break end
+			taskWait(0.1)
 		end
-
-		if not hasTarget then
-			print("⏭ Target not in", garage.Name, "- skipping...")
+		if hasTarget then
+			print("💵 Bidding in target garage:", garage.Name)
+			repeat taskWait(0.1) until currentNextBid and currentBidder ~= LocalPlayer
+			pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
+			while foundTargetGarage and not obtainedTarget do
+				repeat taskWait(0.1) until currentNextBid and currentBidder ~= LocalPlayer
+				pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
+			end
+			break
+		else
+			print("⏭ Target not in", garage.Name, "- skipping")
 			pcall(function() SkipCountdown:InvokeServer() end)
 			pcall(function() Skip:InvokeServer() end)
-			taskWait(1) -- give server time to update next garage
 		end
-
-		if foundTargetGarage then break end
 	end
-
-	-- Bid only in the garage with target
-	if foundTargetGarage then
-		print("💵 Preparing to place bid in garage:", foundTargetGarage.Name)
-		repeat taskWait(0.1) until currentNextBid and currentBidder ~= LocalPlayer
-		pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
-		print("✅ Bid placed:", currentNextBid)
-	end
-
-	handleItemsWon()
 
 	if obtainedTarget then
 		sellOtherItems()
+	else
+		print("ℹ️ No target obtained, waiting 1s before rejoining")
+		taskWait(1)
 	end
 
-	taskWait(0.5)
+	taskWait(0.2)
 end
