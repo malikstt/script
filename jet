@@ -22,7 +22,6 @@ local UpgradeData = require(
     ReplicatedStorage:WaitForChild("Modules"):WaitForChild("HalloweenRNGUpgrades")
 )
 
---// ORDER (will auto skip invalid ones)
 local upgradeOrder = {
     "HeartsMultiplier",
     "Luck",
@@ -31,10 +30,8 @@ local upgradeOrder = {
     "ValentinesSafeChance"
 }
 
---// HEART TOUCH CACHE
 local touchedHearts = {}
 
---// REMOVE NOTIFY POPUPS
 local function killNotifyFolder()
     local gui = player:FindFirstChild("PlayerGui")
     if not gui then return end
@@ -44,7 +41,6 @@ local function killNotifyFolder()
     end
 end
 
---// TOUCH HEART
 local function touchHeart(heart)
     if heart:IsA("BasePart") and not touchedHearts[heart] then
         firetouchinterest(humanoidRoot, heart, 0)
@@ -53,7 +49,6 @@ local function touchHeart(heart)
     end
 end
 
---// AUTO COLLECT HEARTS
 RunService.RenderStepped:Connect(function()
     for _, heart in ipairs(SnowflakesFolder:GetChildren()) do
         if heart.Name == "DroppedHeart" then
@@ -62,14 +57,22 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
---// GET COST SAFE
 local function getCost(info)
     if not info then return 0 end
-    return info.Hearts or info.Candy or info.Coins or info.Snowflakes or 0
+    return info.Hearts or 0
 end
 
---// AUTO BUY LOOP
+local function findHeartUpgrade()
+    for name in pairs(UpgradeData) do
+        if string.find(string.lower(name), "heart") then
+            return name
+        end
+    end
+end
+
 task.spawn(function()
+    local heartFallbackUsed = false
+
     while true do
         task.wait(0.2)
 
@@ -86,10 +89,20 @@ task.spawn(function()
 
         local anyPurchased = false
 
-        for _, name in ipairs(upgradeOrder) do
+        for index, name in ipairs(upgradeOrder) do
             local data = UpgradeData[name]
+
+            if not data and not heartFallbackUsed and string.find(string.lower(name), "heart") then
+                local fallback = findHeartUpgrade()
+                if fallback then
+                    upgradeOrder[index] = fallback
+                    name = fallback
+                    data = UpgradeData[name]
+                    heartFallbackUsed = true
+                end
+            end
+
             if not data then
-                -- invalid upgrade name, skip
                 continue
             end
 
@@ -105,6 +118,8 @@ task.spawn(function()
                 local cost = getCost(info)
 
                 if hearts >= cost then
+                    local before = current
+
                     pcall(function()
                         BuyUpgrade:InvokeServer(name)
                     end)
@@ -116,9 +131,22 @@ task.spawn(function()
                     end)
 
                     if ok and newLevels then
+                        local after = newLevels[name] or before
                         levels = newLevels
-                        current = levels[name] or current
-                        anyPurchased = true
+
+                        if after > before then
+                            current = after
+                            anyPurchased = true
+                        else
+                            if not heartFallbackUsed and string.find(string.lower(name), "heart") then
+                                local fallback = findHeartUpgrade()
+                                if fallback and fallback ~= name then
+                                    upgradeOrder[index] = fallback
+                                    heartFallbackUsed = true
+                                end
+                            end
+                            break
+                        end
                     else
                         break
                     end
