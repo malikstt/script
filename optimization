@@ -1,6 +1,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
+local HttpService = game:GetService("HttpService")
 
 local Events = ReplicatedStorage:WaitForChild("Events")
 local RNG = Events:WaitForChild("RNG")
@@ -24,19 +25,32 @@ local RARITY_COLORS = {
     ["Insane"] = 0x8b4513
 }
 
+local PING_TEXT = "<@1135837863603351573> <@791082577939005450>"
+
 local function getItemData(id)
-    local key = tostring(id)
-    return ItemsModule[key]
+    return ItemsModule[tostring(id)]
 end
 
-local function sendDiscordNotification(playerName, itemName, rarity)
+local function sendDiscordNotification(playerName, itemData, serial)
+    local rarity = itemData.Rarity or "Unknown"
     local color = RARITY_COLORS[rarity] or 0xffffff
+    local price = itemData.Price or 0
+
+    local description =
+        "Item : " .. (itemData.Name or "Unknown") ..
+        "\nRarity : " .. rarity ..
+        "\nPrice : $" .. tostring(price)
+
+    if serial then
+        description = description .. "\nSerial : #" .. tostring(serial)
+    end
 
     local data = {
         ["username"] = "Notifier",
+        ["content"] = serial and PING_TEXT or nil,
         ["embeds"] = {{
             ["title"] = playerName .. " Rolled a " .. rarity .. " Item!",
-            ["description"] = "Item : " .. itemName,
+            ["description"] = description,
             ["color"] = color
         }}
     }
@@ -45,13 +59,13 @@ local function sendDiscordNotification(playerName, itemName, rarity)
         Url = WEBHOOK_URL,
         Method = "POST",
         Headers = {["Content-Type"] = "application/json"},
-        Body = game:GetService("HttpService"):JSONEncode(data)
+        Body = HttpService:JSONEncode(data)
     })
 end
 
 task.spawn(function()
     while true do
-        task.wait(1)
+        task.wait(5)
 
         local success, result = pcall(function()
             return Roll:InvokeServer()
@@ -64,16 +78,15 @@ task.spawn(function()
 
             local itemData = getItemData(result)
             if itemData then
-                print("Name:", itemData.Name, "Rarity:", itemData.Rarity)
                 rolledIDs[result] = true
-                sendDiscordNotification(LocalPlayer.Name, itemData.Name, itemData.Rarity)
-            else
-                print("Roll returned unknown ID:", result)
+
+                local serial = nil
+                if type(result) == "table" then
+                    serial = result.Serial or result.serial
+                end
+
+                sendDiscordNotification(LocalPlayer.Name, itemData, serial)
             end
-        elseif success then
-            print("Roll returned nil")
-        else
-            print("Roll call failed:", result)
         end
     end
 end)
