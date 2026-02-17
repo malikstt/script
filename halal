@@ -17,11 +17,11 @@ local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):
 
 local TARGET_NAME = "valentine"
 local inAuction = false
-local foundTargetGarage = nil
 local obtainedTarget = false
 local halted = false
 local currentNextBid
 local currentBidder
+local currentGarage = nil
 
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
 	if data then
@@ -30,13 +30,14 @@ UpdateCurrentBid.OnClientEvent:Connect(function(data)
 	end
 end)
 
-AuctionsFolder.ChildAdded:Connect(function()
+AuctionsFolder.ChildAdded:Connect(function(garage)
 	inAuction = true
 end)
+
 AuctionsFolder.ChildRemoved:Connect(function()
 	if #AuctionsFolder:GetChildren() == 0 then
 		inAuction = false
-		foundTargetGarage = nil
+		currentGarage = nil
 	end
 end)
 
@@ -128,17 +129,16 @@ while not halted do
 	end
 
 	print("➡ Entering auction queue...")
-	local successQueue = pcall(function() EnterQueue:InvokeServer("1") end)
-	if not successQueue then print("❌ Failed to enter queue") end
+	pcall(function() EnterQueue:InvokeServer("1") end)
 	repeat taskWait(0.1) until inAuction
 	taskWait(0.5)
 
-	foundTargetGarage = nil
 	obtainedTarget = false
 	handleItemsWon()
 
 	local garages = AuctionsFolder:GetChildren()
 	for _, garage in ipairs(garages) do
+		currentGarage = garage
 		print("🔎 Scanning garage:", garage.Name)
 		local itemsFolder = garage:FindFirstChild("Items")
 		local startTime = tick()
@@ -149,8 +149,7 @@ while not halted do
 					local itemData = ItemsModule[itemInstance.Name]
 					if itemData and itemData.Name and string.find(string.lower(itemData.Name), TARGET_NAME) then
 						hasTarget = true
-						foundTargetGarage = garage
-						print("🎯 Found target in garage:", garage.Name)
+						print("🎯 Target found in garage:", garage.Name)
 						break
 					end
 				end
@@ -160,17 +159,20 @@ while not halted do
 		end
 		if hasTarget then
 			print("💵 Bidding in target garage:", garage.Name)
-			repeat taskWait(0.1) until currentNextBid and currentBidder ~= LocalPlayer
-			pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
-			while foundTargetGarage and not obtainedTarget do
-				repeat taskWait(0.1) until currentNextBid and currentBidder ~= LocalPlayer
-				pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
+			while not obtainedTarget do
+				if currentGarage == garage and currentNextBid and currentBidder ~= LocalPlayer then
+					pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
+					print("✅ Placed bid:", currentNextBid, "in garage:", garage.Name)
+				end
+				taskWait(0.1)
 			end
 			break
 		else
 			print("⏭ Target not in", garage.Name, "- skipping")
-			pcall(function() SkipCountdown:InvokeServer() end)
-			pcall(function() Skip:InvokeServer() end)
+			if currentGarage == garage then
+				pcall(function() SkipCountdown:InvokeServer() end)
+				pcall(function() Skip:InvokeServer() end)
+			end
 		end
 	end
 
@@ -180,6 +182,5 @@ while not halted do
 		print("ℹ️ No target obtained, waiting 1s before rejoining")
 		taskWait(1)
 	end
-
 	taskWait(0.2)
 end
