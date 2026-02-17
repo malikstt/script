@@ -16,12 +16,19 @@ local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 
 local TARGET_NAME = "valentine"
+local SCAN_DURATION = 3 -- Increased from 2 to 3 seconds
+local BID_CHECK_INTERVAL = 0.2
+
 local inAuction = false
 local obtainedTarget = false
 local halted = false
 local currentNextBid
 local currentBidder
 local currentGarage = nil
+
+-- Add a cooldown for skipping to prevent spam
+local lastSkipTime = 0
+local SKIP_COOLDOWN = 1
 
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
 	if data then
@@ -32,12 +39,15 @@ end)
 
 AuctionsFolder.ChildAdded:Connect(function(garage)
 	inAuction = true
+	currentGarage = garage
+	print("🏁 Entered auction for garage:", garage.Name)
 end)
 
-AuctionsFolder.ChildRemoved:Connect(function()
+AuctionsFolder.ChildRemoved:Connect(function(garage)
 	if #AuctionsFolder:GetChildren() == 0 then
 		inAuction = false
 		currentGarage = nil
+		print("🏁 Left auction")
 	end
 end)
 
@@ -65,8 +75,11 @@ local function clickButton(obj)
 end
 
 local function handleItemsWon()
-	spawn(function()
-		while not obtainedTarget do
+	coroutine.wrap(function()
+		local timeout = 30 -- Max time to wait for ItemsWon GUI
+		local start = tick()
+		
+		while not obtainedTarget and tick() - start < timeout do
 			local gui = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
 			if gui then
 				local itemsFrame = gui:FindFirstChild("ItemsFrame", true)
@@ -94,9 +107,9 @@ local function handleItemsWon()
 					clickButton(btn)
 				end
 			end
-			taskWait(1)
+			taskWait(0.5)
 		end
-	end)
+	end)()
 end
 
 local function sellOtherItems()
@@ -121,6 +134,32 @@ local function sellOtherItems()
 	end
 end
 
+local function scanGarageForTarget(garage)
+	if not garage then return false end
+	
+	local itemsFolder = garage:FindFirstChild("Items")
+	if not itemsFolder then return false end
+	
+	-- Wait a bit for items to load
+	taskWait(0.5)
+	
+	local startTime = tick()
+	while tick() - startTime < SCAN_DURATION do
+		for _, itemInstance in pairs(itemsFolder:GetChildren()) do
+			local itemData = ItemsModule[itemInstance.Name]
+			if itemData and itemData.Name and string.find(string.lower(itemData.Name), TARGET_NAME) then
+				print("🎯 Target found in garage:", garage.Name)
+				return true
+			end
+		end
+		taskWait(0.2)
+	end
+	
+	print("❌ Target not found in garage:", garage.Name)
+	return false
+end
+
+-- Main loop
 while not halted do
 	if storageFull() then
 		print("❌ Storage full. Script halted.")
@@ -129,58 +168,92 @@ while not halted do
 	end
 
 	print("➡ Entering auction queue...")
-	pcall(function() EnterQueue:InvokeServer("1") end)
-	repeat taskWait(0.1) until inAuction
-	taskWait(0.5)
-
+	local success = pcall(function() return EnterQueue:InvokeServer("1") end)
+	if not success then
+		print("❌ Failed to enter queue, retrying...")
+		taskWait(2)
+		continue
+	end
+	
+	-- Wait for auction to start
+	local auctionStartTime = tick()
+	local AUTION_START_TIMEOUT = 10
+	
+	repeat 
+		taskWait(0.1)
+		if tick() - auctionStartTime > AUTION_START_TIMEOUT then
+			print("⚠️ Auction start timeout, retrying...")
+			break
+		end
+	until inAuction
+	
+	if not inAuction then
+		continue -- Restart the loop
+	end
+	
+	-- Wait a bit for items to load
+	taskWait(1)
+	
 	obtainedTarget = false
 	handleItemsWon()
 
-	local garages = AuctionsFolder:GetChildren()
-	for _, garage in ipairs(garages) do
-		currentGarage = garage
-		print("🔎 Scanning garage:", garage.Name)
-		local itemsFolder = garage:FindFirstChild("Items")
-		local startTime = tick()
-		local hasTarget = false
-		while tick() - startTime < 2 do
-			if itemsFolder then
-				for _, itemInstance in pairs(itemsFolder:GetChildren()) do
-					local itemData = ItemsModule[itemInstance.Name]
-					if itemData and itemData.Name and string.find(string.lower(itemData.Name), TARGET_NAME) then
-						hasTarget = true
-						print("🎯 Target found in garage:", garage.Name)
-						break
-					end
-				end
-			end
-			if hasTarget then break end
-			taskWait(0.1)
-		end
-		if hasTarget then
-			print("💵 Bidding in target garage:", garage.Name)
-			while not obtainedTarget do
-				if currentGarage == garage and currentNextBid and currentBidder ~= LocalPlayer then
-					pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
-					print("✅ Placed bid:", currentNextBid, "in garage:", garage.Name)
-				end
-				taskWait(0.1)
-			end
+	local targetGarage = nil
+	
+	-- Scan all available garages
+	for _, garage in ipairs(AuctionsFolder:GetChildren()) do
+		if scanGarageForTarget(garage) then
+			targetGarage = garage
 			break
-		else
-			print("⏭ Target not in", garage.Name, "- skipping")
-			if currentGarage == garage then
-				pcall(function() SkipCountdown:InvokeServer() end)
-				pcall(function() Skip:InvokeServer() end)
+		end
+	end
+	
+	if targetGarage then
+		print("💵 Bidding in target garage:", targetGarage.Name)
+		
+		-- Bid until we win or leave auction
+		local bidStartTime = tick()
+		local BID_TIMEOUT = 60 -- Max time to bid before giving up
+		
+		while not obtainedTarget and inAuction and currentGarage == targetGarage do
+			if currentNextBid and currentBidder ~= LocalPlayer then
+				local bidSuccess = pcall(function() 
+					return PlaceBid:InvokeServer(currentNextBid) 
+				end)
+				if bidSuccess then
+					print("✅ Placed bid:", currentNextBid)
+				end
 			end
+			
+			-- Check if we've been bidding too long
+			if tick() - bidStartTime > BID_TIMEOUT then
+				print("⚠️ Bid timeout reached, moving on")
+				break
+			end
+			
+			taskWait(BID_CHECK_INTERVAL)
+		end
+	else
+		print("⏭ No target found in any garage")
+		
+		-- Skip current garage if we're still in it
+		if inAuction and currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
+			pcall(function() SkipCountdown:InvokeServer() end)
+			taskWait(0.1)
+			pcall(function() Skip:InvokeServer() end)
+			lastSkipTime = tick()
+			print("⏭ Skipped garage")
 		end
 	end
 
 	if obtainedTarget then
 		sellOtherItems()
+		-- Wait a bit before rejoining
+		taskWait(2)
 	else
-		print("ℹ️ No target obtained, waiting 1s before rejoining")
-		taskWait(1)
+		print("ℹ️ No target obtained, waiting before rejoining")
+		taskWait(3)
 	end
-	taskWait(0.2)
+	
+	-- Small delay before next iteration
+	taskWait(1)
 end
