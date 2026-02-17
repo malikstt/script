@@ -24,9 +24,10 @@ local currentNextBid
 local currentBidder
 
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
-	if not data then return end
-	currentNextBid = data.nextBid
-	currentBidder = data.player
+	if data then
+		currentNextBid = data.nextBid
+		currentBidder = data.player
+	end
 end)
 
 AuctionsFolder.ChildAdded:Connect(function()
@@ -65,31 +66,30 @@ end
 
 local function handleItemsWon()
 	local gui = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
-	if not gui then return end
-	local itemsFrame = gui:FindFirstChild("ItemsFrame", true)
-	local noItems = gui:FindFirstChild("NoItems", true)
-
-	if itemsFrame and itemsFrame.Visible then
-		local frame = itemsFrame:FindFirstChild("Frame")
-		if frame then
-			for _, child in pairs(frame:GetChildren()) do
-				if child:IsA("ImageButton") and child:FindFirstChild("Price") then
-					local itemData = ItemsModule[child.Name]
-					if itemData and itemData.Name and string.find(string.lower(itemData.Name), TARGET_NAME) then
-						clickButton(child)
-						obtainedTarget = true
-						break
+	if gui then
+		local itemsFrame = gui:FindFirstChild("ItemsFrame", true)
+		if itemsFrame then
+			local frame = itemsFrame:FindFirstChild("Frame")
+			if frame then
+				for _, child in pairs(frame:GetChildren()) do
+					if child:IsA("ImageButton") and child:FindFirstChild("Price") then
+						local itemData = ItemsModule[child.Name]
+						if itemData and itemData.Name and string.find(string.lower(itemData.Name), TARGET_NAME) then
+							clickButton(child)
+							obtainedTarget = true
+							break
+						end
 					end
 				end
+				local confirm = itemsFrame:FindFirstChild("ConfirmButton", true)
+				clickButton(confirm)
 			end
-			local confirm = itemsFrame:FindFirstChild("ConfirmButton", true)
-			clickButton(confirm)
 		end
-	end
-
-	if noItems and noItems.Visible then
-		local btn = noItems:FindFirstChild("Button", true)
-		clickButton(btn)
+		local noItems = gui:FindFirstChild("NoItems", true)
+		if noItems and noItems.Visible then
+			local btn = noItems:FindFirstChild("Button", true)
+			clickButton(btn)
+		end
 	end
 end
 
@@ -112,8 +112,6 @@ local function sellOtherItems()
 end
 
 while not halted and not obtainedTarget do
-	task.wait(0.05)
-
 	if storageFull() then
 		print("Storage full. Script halted.")
 		halted = true
@@ -122,35 +120,38 @@ while not halted and not obtainedTarget do
 
 	pcall(function() EnterQueue:InvokeServer("1") end)
 
-	if inAuction then
-		local garages = AuctionsFolder:GetChildren()
-		foundTargetGarage = nil
-		for _, garage in ipairs(garages) do
-			local itemsFolder = garage:FindFirstChild("Items")
-			local hasTarget = false
-			if itemsFolder then
-				for _, itemInstance in pairs(itemsFolder:GetChildren()) do
-					local itemData = ItemsModule[itemInstance.Name]
-					if itemData and itemData.Name and string.find(string.lower(itemData.Name), TARGET_NAME) then
-						hasTarget = true
-						foundTargetGarage = garage
-						break
-					end
+	-- wait for auction start
+	repeat task.wait() until inAuction
+
+	-- scan garages until target found
+	foundTargetGarage = nil
+	local garages = AuctionsFolder:GetChildren()
+	for _, garage in ipairs(garages) do
+		local itemsFolder = garage:FindFirstChild("Items")
+		local hasTarget = false
+		if itemsFolder then
+			for _, itemInstance in pairs(itemsFolder:GetChildren()) do
+				local itemData = ItemsModule[itemInstance.Name]
+				if itemData and itemData.Name and string.find(string.lower(itemData.Name), TARGET_NAME) then
+					hasTarget = true
+					foundTargetGarage = garage
+					break
 				end
 			end
-
-			if not hasTarget then
-				pcall(function() SkipCountdown:InvokeServer() end)
-				pcall(function() Skip:InvokeServer() end)
-				task.wait(0.5)
-			end
-
-			if foundTargetGarage then break end
 		end
 
-		if foundTargetGarage and currentNextBid and currentBidder ~= LocalPlayer then
-			pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
+		if not hasTarget then
+			pcall(function() SkipCountdown:InvokeServer() end)
+			pcall(function() Skip:InvokeServer() end)
+			task.wait(0.5)
 		end
+
+		if foundTargetGarage then break end
+	end
+
+	-- bid only in the garage with target
+	if foundTargetGarage and currentNextBid and currentBidder ~= LocalPlayer then
+		pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
 	end
 
 	handleItemsWon()
