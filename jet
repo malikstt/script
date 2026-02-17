@@ -1,31 +1,50 @@
+--// SERVICES
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
+--// PLAYER
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
 local humanoidRoot = character:WaitForChild("HumanoidRootPart")
 
+--// FOLDERS
 local SaveVars = player:WaitForChild("SaveVars")
 local RNGFolder = ReplicatedStorage:WaitForChild("Events"):WaitForChild("RNG")
-
-local GetUpgrades = RNGFolder:WaitForChild("GetHalloweenUpgrades")
-local BuyUpgrade = RNGFolder:WaitForChild("BuyHalloweenUpgrade")
-local UpgradeData = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("HalloweenRNGUpgrades"))
-
 local SnowflakesFolder = workspace:WaitForChild("Debris"):WaitForChild("Snowflakes")
 
-local upgradeOrder = {"HeartsMultiplier","Luck","FasterRoll","AutoRoll","ValentinesSafeChance"}
+--// REMOTES
+local GetUpgrades = RNGFolder:WaitForChild("GetHalloweenUpgrades")
+local BuyUpgrade = RNGFolder:WaitForChild("BuyHalloweenUpgrade")
 
+--// MODULE
+local UpgradeData = require(
+    ReplicatedStorage:WaitForChild("Modules"):WaitForChild("HalloweenRNGUpgrades")
+)
+
+--// ORDER (will auto skip invalid ones)
+local upgradeOrder = {
+    "HeartsMultiplier",
+    "Luck",
+    "FasterRoll",
+    "AutoRoll",
+    "ValentinesSafeChance"
+}
+
+--// HEART TOUCH CACHE
 local touchedHearts = {}
 
+--// REMOVE NOTIFY POPUPS
 local function killNotifyFolder()
-    local notify = player:WaitForChild("PlayerGui"):FindFirstChild("NotifyFolder")
+    local gui = player:FindFirstChild("PlayerGui")
+    if not gui then return end
+    local notify = gui:FindFirstChild("NotifyFolder")
     if notify then
         notify:Destroy()
     end
 end
 
+--// TOUCH HEART
 local function touchHeart(heart)
     if heart:IsA("BasePart") and not touchedHearts[heart] then
         firetouchinterest(humanoidRoot, heart, 0)
@@ -34,6 +53,7 @@ local function touchHeart(heart)
     end
 end
 
+--// AUTO COLLECT HEARTS
 RunService.RenderStepped:Connect(function()
     for _, heart in ipairs(SnowflakesFolder:GetChildren()) do
         if heart.Name == "DroppedHeart" then
@@ -42,28 +62,66 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
+--// GET COST SAFE
+local function getCost(info)
+    if not info then return 0 end
+    return info.Hearts or info.Candy or info.Coins or info.Snowflakes or 0
+end
+
+--// AUTO BUY LOOP
 task.spawn(function()
     while true do
+        task.wait(0.2)
+
         killNotifyFolder()
 
-        local levels = GetUpgrades:InvokeServer()
-        local hearts = SaveVars:WaitForChild("Hearts2026").Value
+        local success, levels = pcall(function()
+            return GetUpgrades:InvokeServer()
+        end)
+
+        if not success or type(levels) ~= "table" then
+            task.wait(1)
+            continue
+        end
+
         local anyPurchased = false
 
         for _, name in ipairs(upgradeOrder) do
+            local data = UpgradeData[name]
+            if not data then
+                -- invalid upgrade name, skip
+                continue
+            end
+
             local current = levels[name] or 0
-            local maxLevel = UpgradeData[name] and #UpgradeData[name] or 0
+            local maxLevel = #data
 
             while current < maxLevel do
-                hearts = SaveVars:WaitForChild("Hearts2026").Value
-                local cost = UpgradeData[name][current + 1].Hearts or 0
+                local heartsValue = SaveVars:FindFirstChild("Hearts2026")
+                if not heartsValue then break end
+
+                local hearts = heartsValue.Value
+                local info = data[current + 1]
+                local cost = getCost(info)
 
                 if hearts >= cost then
-                    BuyUpgrade:InvokeServer(name)
-                    task.wait(0.3)
-                    levels = GetUpgrades:InvokeServer()
-                    current = levels[name] or current
-                    anyPurchased = true
+                    pcall(function()
+                        BuyUpgrade:InvokeServer(name)
+                    end)
+
+                    task.wait(0.35)
+
+                    local ok, newLevels = pcall(function()
+                        return GetUpgrades:InvokeServer()
+                    end)
+
+                    if ok and newLevels then
+                        levels = newLevels
+                        current = levels[name] or current
+                        anyPurchased = true
+                    else
+                        break
+                    end
                 else
                     break
                 end
