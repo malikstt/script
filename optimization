@@ -27,29 +27,38 @@ local RARITY_COLORS = {
 
 local PING_TEXT = "<@1135837863603351573> <@791082577939005450>"
 
-local function getItemData(id)
-    return ItemsModule[tostring(id)]
-end
-
+-- Helper function to send webhook notification
 local function sendDiscordNotification(playerName, itemData, serial)
     local rarity = itemData.Rarity or "Unknown"
     local color = RARITY_COLORS[rarity] or 0xffffff
     local price = itemData.Price or 0
 
-    local description =
-        "Item : " .. (itemData.Name or "Unknown") ..
-        "\nRarity : " .. rarity ..
-        "\nPrice : $" .. tostring(price)
+    local title
+    local description
+    local content = nil
 
     if serial then
-        description = description .. "\nSerial : #" .. tostring(serial)
+        -- Serial notifier
+        title = playerName .. " GOT A SERIAL!"
+        description =
+            "Item: " .. (itemData.Name or "Unknown") ..
+            "\nSerial: #" .. tostring(serial) ..
+            "\nRarity: " .. rarity
+        content = PING_TEXT
+    else
+        -- Normal notifier
+        title = playerName .. " Rolled a " .. rarity .. " Item!"
+        description =
+            "Item: " .. (itemData.Name or "Unknown") ..
+            "\nRarity: " .. rarity ..
+            "\nPrice: $" .. tostring(price)
     end
 
     local data = {
         ["username"] = "Notifier",
-        ["content"] = serial and PING_TEXT or nil,
+        ["content"] = content,
         ["embeds"] = {{
-            ["title"] = playerName .. " Rolled a " .. rarity .. " Item!",
+            ["title"] = title,
             ["description"] = description,
             ["color"] = color
         }}
@@ -72,20 +81,27 @@ task.spawn(function()
         end)
 
         if success and result then
-            if rolledIDs[result] then
-                continue
+            local itemID
+            local serial
+
+            if type(result) == "table" then
+                itemID = tostring(result.ID or result.Id or result.id)
+                serial = result.Serial or result.Serials or result.serial
+            else
+                itemID = tostring(result)
             end
 
-            local itemData = getItemData(result)
-            if itemData then
-                rolledIDs[result] = true
+            if itemID then
+                local itemData = ItemsModule[itemID]
 
-                local serial = nil
-                if type(result) == "table" then
-                    serial = result.Serial or result.serial
+                if itemData then
+                    -- Track duplicates: use serial if exists, otherwise just ID
+                    local uniqueKey = serial and (itemID .. "_" .. serial) or itemID
+                    if not rolledIDs[uniqueKey] then
+                        rolledIDs[uniqueKey] = true
+                        sendDiscordNotification(LocalPlayer.Name, itemData, serial)
+                    end
                 end
-
-                sendDiscordNotification(LocalPlayer.Name, itemData, serial)
             end
         end
     end
