@@ -15,6 +15,11 @@ local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
 local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 
+-- Get UI remotes
+local Events = ReplicatedStorage:WaitForChild("Events")
+local UI = Events:WaitForChild("UI")
+local SellItemsRemote = UI:WaitForChild("SellItems")
+
 local TARGET_NAME = "valentine"
 local SCAN_DURATION = 3
 local BID_CHECK_INTERVAL = 0.2
@@ -32,6 +37,21 @@ local MAX_GARAGES = 3
 -- Add a cooldown for skipping to prevent spam
 local lastSkipTime = 0
 local SKIP_COOLDOWN = 1
+
+-- Store target item ID once found
+local targetItemId = nil
+local targetItemName = nil
+
+-- Find target item ID at startup
+for itemId, itemData in pairs(ItemsModule) do
+	if itemData and itemData.Name and 
+	   string.find(string.lower(itemData.Name), TARGET_NAME) then
+		targetItemId = itemId
+		targetItemName = itemData.Name
+		print("🔍 Target found:", targetItemName, "ID:", targetItemId)
+		break
+	end
+end
 
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
 	if data then
@@ -70,177 +90,141 @@ end
 
 local function clickButton(obj)
 	if obj and (obj:IsA("TextButton") or obj:IsA("ImageButton")) then
-		pcall(function() 
-			obj:Activate() 
+		pcall(function()
+			-- Fire MouseButton1Click connections
 			if getconnections then
-				for _, c in pairs(getconnections(obj.MouseButton1Click)) do
-					pcall(function() c:Function() end)
+				for _, connection in pairs(getconnections(obj.MouseButton1Click)) do
+					pcall(function() connection:Function() end)
 				end
 			end
+			-- Try Activate as backup
+			obj:Activate()
 		end)
 	end
 end
 
--- FIXED: Handle both cases - items won OR no items won
+-- NEW: Fire remote directly to sell items
+local function sellNonTargetItems()
+	local success, data = pcall(function() return DataEvent:InvokeServer() end)
+	if not success or not data then 
+		print("❌ Failed to get inventory data")
+		return 
+	end
+	
+	local inv = data.Inventory or {}
+	local tblToSell = {}
+	
+	-- Find all items that are NOT the target
+	for guid, item in pairs(inv) do
+		local itemData = ItemsModule[item.itemId]
+		-- If it's not the target item, add to sell table
+		if itemData and item.itemId ~= targetItemId then
+			tblToSell[guid] = item
+		end
+	end
+	
+	-- Sell non-target items
+	if next(tblToSell) then
+		print("💰 Firing SellItems remote for", #tblToSell, "items")
+		local success = pcall(function()
+			SellItemsRemote:FireServer(tblToSell)
+		end)
+		if success then
+			print("✅ Successfully sold non-target items")
+		else
+			print("❌ Failed to sell items")
+		end
+	else
+		print("ℹ️ No non-target items to sell")
+	end
+end
+
+-- NEW: Handle auction end by firing remotes directly
 local function handleAuctionEnd()
 	coroutine.wrap(function()
 		local timeout = 30
 		local start = tick()
 		local handled = false
 		
-		-- First, find the target itemId from the module
-		local targetItemId = nil
-		local targetItemName = nil
-		for itemId, itemData in pairs(ItemsModule) do
-			if itemData and itemData.Name and 
-			   string.find(string.lower(itemData.Name), TARGET_NAME) then
-				targetItemId = itemId
-				targetItemName = itemData.Name
-				print("🔍 Target item found in module:", targetItemName, "ID:", targetItemId)
-				break
-			end
-		end
-		
 		while not handled and tick() - start < timeout do
-			local gui = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
+			local gui = LocalPlayer:FindFirstChild("PlayerGui") and 
+					   LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
 			
 			if gui then
-				-- Check for NoItems GUI first
+				-- Check for NoItems GUI (won nothing)
 				local noItems = gui:FindFirstChild("NoItems", true)
 				if noItems and noItems.Visible then
-					print("📦 No items won - clicking Okay button")
+					print("📦 No items won - closing GUI")
 					local okButton = noItems:FindFirstChild("Button", true)
 					if okButton then
 						clickButton(okButton)
-						handled = true
-						auctionEnded = true
-						print("✅ No items dialog closed")
-						break
+					else
+						-- Just destroy the GUI if button not found
+						gui:Destroy()
 					end
+					handled = true
+					auctionEnded = true
+					break
 				end
 				
-				-- Check for ItemsFrame (when you won items)
+				-- Check for ItemsFrame (won items)
 				local itemsFrame = gui:FindFirstChild("ItemsFrame", true)
 				if itemsFrame and itemsFrame.Visible then
 					local frame = itemsFrame:FindFirstChild("Frame")
-					if frame then
-						-- Loop through all item buttons
-						local targetFound = false
-						local targetButton = nil
-						
+					
+					-- Find and click the target item button if it exists
+					if frame and targetItemId then
 						for _, child in pairs(frame:GetChildren()) do
 							if child:IsA("ImageButton") and child:FindFirstChild("Price") then
+								-- Check if this is the target item
+								local isTarget = false
 								
-								-- METHOD 1: Check the actual item data by looking at the button's properties
-								-- Sometimes the itemId is stored in the button's Name or as an attribute
-								if child.Name == targetItemId or child:GetAttribute("itemId") == targetItemId then
-									print("🎯 Found target by ID:", child.Name)
-									targetButton = child
-									targetFound = true
+								-- Check by item ID if stored in button
+								if child.Name == targetItemId then
+									isTarget = true
+								end
+								
+								-- Check ViewportFrame for model name
+								if not isTarget then
+									local viewport = child:FindFirstChild("ViewportFrame")
+									if viewport then
+										local model = viewport:FindFirstChildWhichIsA("Model")
+										if model and targetItemName and model.Name == targetItemName then
+											isTarget = true
+										end
+									end
+								end
+								
+								if isTarget then
+									print("🎯 Clicking target item:", targetItemName)
+									clickButton(child)
+									obtainedTarget = true
+									taskWait(0.2)
 									break
 								end
-								
-								-- METHOD 2: Look at the Price text - sometimes contains item name
-								local priceLabel = child:FindFirstChild("Price")
-								if priceLabel then
-									local priceText = priceLabel.Text or ""
-									if string.find(string.lower(priceText), TARGET_NAME) then
-										print("🎯 Found target by price text")
-										targetButton = child
-										targetFound = true
-										break
-									end
-								end
-								
-								-- METHOD 3: Look at any text labels that might contain the item name
-								for _, label in pairs(child:GetDescendants()) do
-									if label:IsA("TextLabel") or label:IsA("TextButton") then
-										local text = label.Text or ""
-										if string.find(string.lower(text), TARGET_NAME) then
-											print("🎯 Found target by text label:", text)
-											targetButton = child
-											targetFound = true
-											break
-										end
-									end
-								end
-								
-								-- METHOD 4: Check if there's a ViewportFrame with a model that matches
-								if not targetFound then
-									local viewportFrame = child:FindFirstChild("ViewportFrame")
-									if viewportFrame then
-										-- Wait a tiny bit for the model to load
-										task.wait(0.1)
-										local model = viewportFrame:FindFirstChildWhichIsA("Model")
-										if model and targetItemName then
-											if model.Name == targetItemName or 
-											   string.find(string.lower(model.Name), TARGET_NAME) then
-												print("🎯 Found target by model name:", model.Name)
-												targetButton = child
-												targetFound = true
-												break
-											end
-										end
-									end
-								end
 							end
 						end
+					end
+					
+					-- Click Confirm button
+					taskWait(0.3)
+					local confirm = itemsFrame:FindFirstChild("ConfirmButton", true)
+					if confirm then
+						print("✅ Clicking Confirm button")
+						clickButton(confirm)
+						handled = true
+						taskWait(1) -- Wait for items to be added to inventory
 						
-						-- If we found the target button, click it
-						if targetButton then
-							print("✅ Clicking Valentine item button")
-							clickButton(targetButton)
-							taskWait(0.3) -- Wait for selection
-							obtainedTarget = true
-						else
-							-- If we didn't find target, let's debug what items we DID win
-							print("⚠️ Valentine item not found in won items! Debugging...")
-							for _, child in pairs(frame:GetChildren()) do
-								if child:IsA("ImageButton") and child:FindFirstChild("Price") then
-									print("  - Button name:", child.Name)
-									-- Check for any identifying text
-									for _, label in pairs(child:GetDescendants()) do
-										if label:IsA("TextLabel") then
-											print("    Text:", label.Text)
-										end
-									end
-								end
-							end
+						-- NOW sell non-target items via remote
+						if obtainedTarget then
+							print("💰 Selling non-target items via remote...")
+							sellNonTargetItems()
 						end
 						
-						-- Click Confirm button to proceed
-						taskWait(0.3)
-						local confirm = itemsFrame:FindFirstChild("ConfirmButton", true)
-						if confirm then
-							print("✅ Clicking Confirm button")
-							clickButton(confirm)
-							handled = true
-							taskWait(1)
-							
-							-- Handle SellItems GUI
-							local sellHandled = false
-							local sellTimeout = tick() + 5
-							
-							while not sellHandled and tick() < sellTimeout do
-								local sellGui = LocalPlayer:FindFirstChild("PlayerGui") and 
-											   LocalPlayer.PlayerGui:FindFirstChild("SellItems", true)
-								
-								if sellGui and sellGui.Visible then
-									print("💰 SellItems GUI found")
-									
-									-- Click the normal sell button
-									local normalButton = sellGui:FindFirstChild("Frame") and 
-													   sellGui.Frame:FindFirstChild("Normal")
-									
-									if normalButton then
-										print("💰 Clicking sell button")
-										clickButton(normalButton)
-										sellHandled = true
-										taskWait(0.5)
-									end
-								end
-								taskWait(0.2)
-							end
+						-- Close any remaining GUI
+						taskWait(1)
+						if gui and gui.Parent then
+							gui:Destroy()
 						end
 					end
 				end
@@ -250,6 +234,12 @@ local function handleAuctionEnd()
 		
 		if not handled then
 			print("⚠️ Timed out waiting for auction end GUI")
+			-- Force close any stuck GUI
+			local gui = LocalPlayer:FindFirstChild("PlayerGui") and 
+					   LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
+			if gui then
+				gui:Destroy()
+			end
 		end
 		auctionEnded = true
 	end)()
