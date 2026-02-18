@@ -56,12 +56,14 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
 	auctionEnded = false
 	currentGarage = garage
 	garagesSkipped = 0
+	print("🏁 Entered garage:", garage.Name)
 end)
 
 AuctionsFolder.ChildRemoved:Connect(function(garage)
 	if #AuctionsFolder:GetChildren() == 0 then
 		inAuction = false
 		currentGarage = nil
+		print("🏁 Left auction")
 	end
 end)
 
@@ -77,7 +79,18 @@ local function storageFull()
 	return invCount >= invSpace or carrySpace <= 0
 end
 
--- FIXED: Actually select the Valentine item instead of destroying GUI
+local function clickButton(btn)
+	if not btn then return end
+	pcall(function()
+		btn:Activate()
+		if getconnections then
+			for _, connection in pairs(getconnections(btn.MouseButton1Click)) do
+				pcall(function() connection:Function() end)
+			end
+		end
+	end)
+end
+
 local function handleAuctionEnd()
 	coroutine.wrap(function()
 		local timeout = 30
@@ -92,10 +105,12 @@ local function handleAuctionEnd()
 				-- Check for NoItems GUI (won nothing)
 				local noItems = gui:FindFirstChild("NoItems", true)
 				if noItems and noItems.Visible then
-					print("📦 No items won - clicking OK")
+					print("📦 No items won - closing")
 					local okButton = noItems:FindFirstChild("Button", true)
 					if okButton then
-						okButton.MouseButton1Click:Fire()
+						clickButton(okButton)
+					else
+						gui:Destroy()
 					end
 					handled = true
 					auctionEnded = true
@@ -105,113 +120,46 @@ local function handleAuctionEnd()
 				-- Check for ItemsFrame (won items)
 				local itemsFrame = gui:FindFirstChild("ItemsFrame", true)
 				if itemsFrame and itemsFrame.Visible then
-					-- Get items won data from the Init event
-					local itemsWon = nil
-					local initEvent = gui:FindFirstChild("Init")
-					if initEvent then
-						-- The Init event fires with itemsWon as first argument
-						-- We need to find a way to get this data
-						-- For now, we'll use a different approach
-					end
+					print("🎁 Items won GUI detected")
 					
-					-- Find the internal selection table (tbl_6_upvr in the module)
-					local selectionTable = nil
-					for _, v in pairs(getgc(true)) do
-						if type(v) == "table" then
-							-- Look for the table that holds selected GUIDs
-							-- In the module, it's tbl_6_upvr which starts empty
-							if #v < 10 and not rawget(v, "guid") then
-								-- Check if this might be the selection table
-								local isSelectionTable = false
-								for __, val in pairs(v) do
-									if type(val) == "string" and #val > 20 then -- Looks like a GUID
-										isSelectionTable = true
-										break
-									end
-								end
-								if isSelectionTable then
-									selectionTable = v
-									break
-								end
-							end
-						end
-					end
-					
-					-- Get inventory data for space checks
-					local data = DataEvent:InvokeServer()
-					local inventory = data.Inventory or {}
-					local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, data.CarryLevel)
-					local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, data.InventoryLevel)
-					local invCount = RepLibrary:GetLengthOfInventory(inventory)
-					
-					-- Find and select Valentine items
-					local selectedCount = 0
+					-- Find and click Valentine item
 					local frame = itemsFrame:FindFirstChild("Frame")
 					if frame then
 						for _, child in pairs(frame:GetChildren()) do
-							if child:IsA("ImageButton") and child:FindFirstChild("Price") then
+							if child:IsA("ImageButton") then
 								-- Check if this is the Valentine item
 								local viewport = child:FindFirstChild("ViewportFrame")
 								if viewport then
 									local model = viewport:FindFirstChildWhichIsA("Model")
-									if model then
-										-- Find the item data
-										for itemId, itemData in pairs(ItemsModule) do
-											if itemData.Name == model.Name and itemId == targetItemId then
-												print("🎯 Found Valentine item in GUI")
-												
-												-- Check if we have space
-												if selectedCount < carrySpace and invCount + selectedCount < invSpace then
-													-- Click to select
-													child.MouseButton1Click:Fire()
-													taskWait(0.1)
-													
-													-- Also add to selection table if found
-													if selectionTable then
-														-- Try to get GUID from the button's connection
-														if getconnections then
-															for _, connection in pairs(getconnections(child.MouseButton1Click)) do
-																local upvalues = debug.getupvalues(connection.Function)
-																for _, upvalue in pairs(upvalues) do
-																	if type(upvalue) == "string" and #upvalue > 20 then
-																		table.insert(selectionTable, upvalue)
-																		print("✅ Added GUID to selection:", upvalue)
-																		selectedCount = selectedCount + 1
-																		obtainedTarget = true
-																		break
-																	end
-																end
-															end
-														end
-													end
-												end
-												break
-											end
-										end
+									if model and model.Name and string.find(string.lower(model.Name), TARGET_NAME) then
+										print("🎯 Found and clicking Valentine item")
+										clickButton(child)
+										obtainedTarget = true
+										taskWait(0.3)
+										break
 									end
 								end
 							end
 						end
 					end
 					
-					-- Click Confirm button
-					taskWait(0.3)
+					-- Click Confirm
 					local confirm = itemsFrame:FindFirstChild("ConfirmButton", true)
 					if confirm then
-						print("✅ Clicking Confirm button")
-						confirm.MouseButton1Click:Fire()
+						print("✅ Clicking Confirm")
+						clickButton(confirm)
 						handled = true
 						taskWait(1)
 						
-						-- Now sell non-target items (they'll be auto-selected for selling)
+						-- Now sell other items
 						if obtainedTarget then
 							taskWait(0.5)
-							local sellSuccess, sellData = pcall(function() return DataEvent:InvokeServer() end)
-							if sellSuccess and sellData then
-								local inv = sellData.Inventory or {}
+							local success, data = pcall(function() return DataEvent:InvokeServer() end)
+							if success and data then
+								local inv = data.Inventory or {}
 								local toSell = {}
 								
-								-- Find target GUID in inventory
+								-- Find target GUID
 								local targetGuid = nil
 								for guid, item in pairs(inv) do
 									if item.itemId == targetItemId then
@@ -220,7 +168,7 @@ local function handleAuctionEnd()
 									end
 								end
 								
-								-- Sell everything except target
+								-- Sell everything else
 								for guid, item in pairs(inv) do
 									if guid ~= targetGuid then
 										toSell[guid] = item
@@ -228,10 +176,8 @@ local function handleAuctionEnd()
 								end
 								
 								if next(toSell) then
-									print("💰 Selling other items...")
-									pcall(function()
-										SellAllItemsRemote:FireServer(toSell)
-									end)
+									print("💰 Selling other items")
+									pcall(function() SellAllItemsRemote:FireServer(toSell) end)
 								end
 							end
 						end
@@ -258,12 +204,14 @@ local function scanCurrentGarageForTarget()
 		for _, itemInstance in pairs(itemsFolder:GetChildren()) do
 			local itemData = ItemsModule[itemInstance.Name]
 			if itemData and itemData.Name and string.find(string.lower(itemData.Name), TARGET_NAME) then
+				print("🎯 Target in garage:", currentGarage.Name)
 				return true
 			end
 		end
 		taskWait(0.2)
 	end
 	
+	print("❌ No target in:", currentGarage and currentGarage.Name)
 	return false
 end
 
@@ -279,12 +227,11 @@ while not halted do
 	pcall(function() EnterQueue:InvokeServer("1") end)
 	
 	local auctionStartTime = tick()
-	local AUCTION_START_TIMEOUT = 10
 	auctionEnded = false
 	
 	repeat 
 		taskWait(0.1)
-	until inAuction or tick() - auctionStartTime > AUCTION_START_TIMEOUT
+	until inAuction or tick() - auctionStartTime > 10
 	
 	if not inAuction then
 		continue
@@ -295,7 +242,7 @@ while not halted do
 	
 	while inAuction and not auctionEnded do
 		if scanCurrentGarageForTarget() then
-			print("💵 Target found! Bidding...")
+			print("💵 Bidding in target garage")
 			
 			local bidStartTime = tick()
 			while not obtainedTarget and inAuction and currentGarage and not auctionEnded do
