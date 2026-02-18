@@ -16,12 +16,8 @@ local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 
 local TARGET_NAME = "valentine"
-local BID_CHECK_INTERVAL = 0.15
-local AUCTION_START_TIMEOUT = 8
-local BID_TIMEOUT = 45
-local ITEMS_WON_TIMEOUT = 25
-local SKIP_COOLDOWN = 0.8
-local FALLBACK_TIMEOUT = 120
+local SCAN_DURATION = 3
+local BID_CHECK_INTERVAL = 0.2
 
 local inAuction = false
 local obtainedTarget = false
@@ -29,8 +25,10 @@ local halted = false
 local currentNextBid
 local currentBidder
 local currentGarage = nil
+
+-- Add a cooldown for skipping to prevent spam
 local lastSkipTime = 0
-local lastActionTime = tick()
+local SKIP_COOLDOWN = 1
 
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
 	if data then
@@ -42,191 +40,300 @@ end)
 AuctionsFolder.ChildAdded:Connect(function(garage)
 	inAuction = true
 	currentGarage = garage
-	lastActionTime = tick()
-	print("🏁 Entered auction:", garage.Name)
+	print("🏁 Entered auction for garage:", garage.Name)
 end)
 
-AuctionsFolder.ChildRemoved:Connect(function()
+AuctionsFolder.ChildRemoved:Connect(function(garage)
 	if #AuctionsFolder:GetChildren() == 0 then
 		inAuction = false
 		currentGarage = nil
-		lastActionTime = tick()
-		print("🏁 Auction ended")
+		print("🏁 Left auction")
 	end
 end)
 
-local function safeInvoke(remote, ...)
-	local ok, result = pcall(function()
-		return remote:InvokeServer(...)
-	end)
-	if ok then
-		lastActionTime = tick()
-	end
-	return ok, result
-end
-
-local function safeFire(remote, ...)
-	local ok = pcall(function()
-		remote:FireServer(...)
-	end)
-	if ok then
-		lastActionTime = tick()
-	end
-	return ok
+local function storageFull()
+	local success, data = pcall(function() return DataEvent:InvokeServer() end)
+	if not success or not data then return false end
+	local inv = data.Inventory or {}
+	local invLevel = data.InventoryLevel
+	local carryLevel = data.CarryLevel
+	local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
+	local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
+	local invCount = RepLibrary:GetLengthOfInventory(inv)
+	return invCount >= invSpace or carrySpace <= 0
 end
 
 local function clickButton(obj)
 	if obj and (obj:IsA("TextButton") or obj:IsA("ImageButton")) then
-		pcall(function() obj:Activate() end)
-		if getconnections then
-			for _, c in pairs(getconnections(obj.MouseButton1Click)) do
-				pcall(function() c:Fire() end)
+		-- Try both activation methods
+		pcall(function() 
+			obj:Activate() 
+			-- Fire all connections manually as backup
+			if getconnections then
+				for _, c in pairs(getconnections(obj.MouseButton1Click)) do
+					pcall(function() c:Function() end) -- Use :Function() instead of :Fire()
+				end
 			end
-		end
-		lastActionTime = tick()
+		end)
 	end
 end
 
-local function storageFull()
-	local ok, data = safeInvoke(DataEvent)
-	if not ok or not data then return false end
-	local inv = data.Inventory or {}
-	local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, data.InventoryLevel)
-	local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, data.CarryLevel)
-	local invCount = RepLibrary:GetLengthOfInventory(inv)
-	if invCount >= invSpace or carrySpace <= 0 then
-		print("❌ Storage full")
-		return true
-	end
-	return false
-end
-
-local function fastScanGarage()
-	if not currentGarage then return false end
-	local itemsFolder = currentGarage:FindFirstChild("Items")
-	if not itemsFolder then return false end
-	taskWait(0.4)
-	for _, itemInstance in pairs(itemsFolder:GetChildren()) do
-		local itemData = ItemsModule[itemInstance.Name]
-		if itemData and itemData.Name and string.find(string.lower(itemData.Name), TARGET_NAME) then
-			print("🎯 Target found in garage")
-			return true
-		end
-	end
-	print("⏭ No target in garage")
-	return false
-end
-
+-- FIXED: Properly detect and select Valentine item in ItemsWon GUI
 local function handleItemsWon()
-	local start = tick()
-	while tick() - start < ITEMS_WON_TIMEOUT do
-		local gui = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
-		if gui then
-			local itemsFrame = gui:FindFirstChild("ItemsFrame", true)
-			if itemsFrame then
-				local frame = itemsFrame:FindFirstChild("Frame")
-				if frame then
-					for _, child in pairs(frame:GetChildren()) do
-						if child:IsA("ImageButton") and child:FindFirstChild("ViewportFrame") then
-							local model = child.ViewportFrame:FindFirstChildOfClass("Model")
-							if model then
-								local itemData = ItemsModule[model.Name]
-								if itemData and itemData.Name and string.find(string.lower(itemData.Name), TARGET_NAME) then
-									print("✅ Selecting target won item")
+	coroutine.wrap(function()
+		local timeout = 30
+		local start = tick()
+		
+		while not obtainedTarget and tick() - start < timeout do
+			local gui = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
+			if gui then
+				local itemsFrame = gui:FindFirstChild("ItemsFrame", true)
+				if itemsFrame then
+					local frame = itemsFrame:FindFirstChild("Frame")
+					if frame then
+						-- Loop through all item buttons in the frame
+						for _, child in pairs(frame:GetChildren()) do
+							-- Check if it's an item button (has Price child)
+							if child:IsA("ImageButton") and child:FindFirstChild("Price") then
+								
+								-- We need to find the itemId - it's NOT in child.Name
+								-- We have to check the actual item data by looking at:
+								-- 1. The item's appearance/name in the ViewportFrame
+								-- 2. Or we can check the item's properties from the module by scanning
+								
+								-- Better approach: Check all items in module to find match
+								local foundTarget = false
+								local targetItemId = nil
+								
+								-- Look through all items in module to find Valentine
+								for itemId, itemData in pairs(ItemsModule) do
+									if itemData and itemData.Name and 
+									   string.find(string.lower(itemData.Name), TARGET_NAME) then
+										targetItemId = itemId
+										break
+									end
+								end
+								
+								if targetItemId then
+									-- Now we need to check if this button corresponds to that itemId
+									-- We can check by looking at the item in the ViewportFrame
+									local viewportFrame = child:FindFirstChild("ViewportFrame")
+									if viewportFrame then
+										-- Check what model is in the viewport
+										local model = viewportFrame:FindFirstChildWhichIsA("Model")
+										if model then
+											-- Compare model name with target item name
+											local targetItemData = ItemsModule[targetItemId]
+											if targetItemData and model.Name == targetItemData.Name then
+												print("✅ Found target item in GUI:", model.Name)
+												foundTarget = true
+											end
+										end
+									end
+									
+									-- Alternative: Check by looking at the item's rarity/price text
+									if not foundTarget then
+										local priceLabel = child:FindFirstChild("Price")
+										if priceLabel then
+											local priceText = priceLabel.Text or ""
+											-- Some items might have identifiable text
+											if string.find(string.lower(priceText), TARGET_NAME) then
+												print("✅ Found target by price text")
+												foundTarget = true
+											end
+										end
+									end
+								end
+								
+								-- If we found the target, click it
+								if foundTarget then
+									print("✅ Clicking target item button")
 									clickButton(child)
+									taskWait(0.2) -- Wait for selection to register
 									obtainedTarget = true
 									break
 								end
 							end
 						end
+						
+						-- After selecting items, click Confirm
+						local confirm = itemsFrame:FindFirstChild("ConfirmButton", true)
+						if confirm then
+							print("✅ Clicking Confirm button")
+							clickButton(confirm)
+						end
 					end
-					local confirm = itemsFrame:FindFirstChild("ConfirmButton", true)
-					if confirm then
-						clickButton(confirm)
+				end
+				
+				-- Handle NoItems case
+				local noItems = gui:FindFirstChild("NoItems", true)
+				if noItems and noItems.Visible then
+					local btn = noItems:FindFirstChild("Button", true)
+					if btn then
+						print("⚠️ No items to claim, closing")
+						clickButton(btn)
 					end
 				end
 			end
-			local sellUI = gui:FindFirstChild("SellItems", true)
-			if sellUI and sellUI.Visible then
-				local normal = sellUI:FindFirstChild("Normal", true)
-				if normal then
-					print("💰 Selling remaining items")
-					clickButton(normal)
-				end
-			end
-			local noItems = gui:FindFirstChild("NoItems", true)
-			if noItems and noItems.Visible then
-				local btn = noItems:FindFirstChild("Button", true)
-				clickButton(btn)
+			taskWait(0.5)
+		end
+	end)()
+end
+
+-- FIXED: Better sell function that waits for SellItems GUI
+local function sellOtherItems()
+	print("💰 Waiting for SellItems GUI...")
+	local timeout = 5
+	local start = tick()
+	
+	while tick() - start < timeout do
+		local sellGui = LocalPlayer:FindFirstChild("PlayerGui") and 
+					   LocalPlayer.PlayerGui:FindFirstChild("SellItems", true)
+		
+		if sellGui and sellGui.Visible then
+			print("💰 SellItems GUI found")
+			
+			-- Click the normal sell button (not gem sell)
+			local normalButton = sellGui:FindFirstChild("Frame") and 
+							   sellGui.Frame:FindFirstChild("Normal")
+			
+			if normalButton then
+				print("💰 Clicking sell button")
+				clickButton(normalButton)
+				taskWait(0.5)
+				break
 			end
 		end
-		taskWait(0.4)
+		taskWait(0.2)
+	end
+	
+	-- Also try to sell from inventory as backup
+	taskWait(1)
+	local success, data = pcall(function() return DataEvent:InvokeServer() end)
+	if success and data then
+		local inv = data.Inventory or {}
+		local tblToSell = {}
+		for guid, item in pairs(inv) do
+			local itemData = ItemsModule[item.itemId]
+			if itemData and not string.find(string.lower(itemData.Name), TARGET_NAME) then
+				tblToSell[guid] = item
+			end
+		end
+		if next(tblToSell) then
+			print("💰 Selling remaining other items:", #tblToSell)
+			pcall(function() ReplicatedStorage.Events.UI.SellItems:FireServer(tblToSell) end)
+		end
 	end
 end
 
+local function scanCurrentGarageForTarget()
+	if not currentGarage then return false end
+	
+	local itemsFolder = currentGarage:FindFirstChild("Items")
+	if not itemsFolder then return false end
+	
+	-- Wait a bit for items to load
+	taskWait(0.5)
+	
+	local startTime = tick()
+	while tick() - startTime < SCAN_DURATION do
+		for _, itemInstance in pairs(itemsFolder:GetChildren()) do
+			local itemData = ItemsModule[itemInstance.Name]
+			if itemData and itemData.Name and string.find(string.lower(itemData.Name), TARGET_NAME) then
+				print("🎯 Target found in current garage:", currentGarage.Name)
+				return true
+			end
+		end
+		taskWait(0.2)
+	end
+	
+	print("❌ Target NOT found in current garage:", currentGarage and currentGarage.Name)
+	return false
+end
+
+-- Main loop
 while not halted do
 	if storageFull() then
+		print("❌ Storage full. Script halted.")
 		halted = true
 		break
 	end
 
-	if tick() - lastActionTime > FALLBACK_TIMEOUT then
-		print("♻ Fallback triggered - resetting state")
-		inAuction = false
-		currentGarage = nil
-		obtainedTarget = false
-		lastActionTime = tick()
-	end
-
-	print("➡ Entering queue")
-	local ok = safeInvoke(EnterQueue, "1")
-	if not ok then
+	print("➡ Entering auction queue...")
+	local success = pcall(function() return EnterQueue:InvokeServer("1") end)
+	if not success then
+		print("❌ Failed to enter queue, retrying...")
 		taskWait(2)
 		continue
 	end
-
-	local startWait = tick()
-	repeat
+	
+	-- Wait for auction to start
+	local auctionStartTime = tick()
+	local AUCTION_START_TIMEOUT = 10
+	
+	repeat 
 		taskWait(0.1)
-		if tick() - startWait > AUCTION_START_TIMEOUT then
-			print("⚠ Auction start timeout")
+		if tick() - auctionStartTime > AUCTION_START_TIMEOUT then
+			print("⚠️ Auction start timeout, retrying...")
 			break
 		end
 	until inAuction
-
+	
 	if not inAuction then
 		continue
 	end
-
-	taskWait(0.8)
+	
+	-- Wait a bit for items to load
+	taskWait(1)
+	
 	obtainedTarget = false
-
-	local hasTarget = fastScanGarage()
-
-	if not hasTarget then
-		if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
-			safeInvoke(SkipCountdown)
-			taskWait(0.1)
-			safeInvoke(Skip)
-			lastSkipTime = tick()
-			print("⏭ Skipped garage")
-		end
-		taskWait(1)
-		continue
-	end
-
-	local bidStart = tick()
-	while inAuction and currentGarage and not obtainedTarget do
-		if currentNextBid and currentBidder ~= LocalPlayer then
-			safeInvoke(PlaceBid, currentNextBid)
-		end
-		if tick() - bidStart > BID_TIMEOUT then
-			print("⚠ Bid timeout fallback")
-			break
-		end
-		taskWait(BID_CHECK_INTERVAL)
-	end
-
 	handleItemsWon()
-	taskWait(1.5)
+
+	local currentGarageHasTarget = scanCurrentGarageForTarget()
+	
+	if currentGarageHasTarget then
+		print("💵 Target is in current garage! Bidding on:", currentGarage and currentGarage.Name)
+		
+		local bidStartTime = tick()
+		local BID_TIMEOUT = 60
+		
+		while not obtainedTarget and inAuction and currentGarage do
+			if currentNextBid and currentBidder ~= LocalPlayer then
+				local bidSuccess = pcall(function() 
+					return PlaceBid:InvokeServer(currentNextBid) 
+				end)
+				if bidSuccess then
+					print("✅ Placed bid:", currentNextBid)
+				end
+			end
+			
+			if tick() - bidStartTime > BID_TIMEOUT then
+				print("⚠️ Bid timeout reached, moving on")
+				break
+			end
+			
+			taskWait(BID_CHECK_INTERVAL)
+		end
+	else
+		print("⏭ Current garage does NOT have target - skipping it:", currentGarage and currentGarage.Name)
+		
+		if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
+			pcall(function() SkipCountdown:InvokeServer() end)
+			taskWait(0.1)
+			pcall(function() Skip:InvokeServer() end)
+			lastSkipTime = tick()
+			print("⏭ Skipped garage without target")
+		end
+	end
+
+	if obtainedTarget then
+		print("🎯 Target obtained! Now selling other items...")
+		sellOtherItems()
+		taskWait(2)
+	else
+		print("ℹ️ No target obtained, waiting before rejoining queue")
+		taskWait(3)
+	end
+	
+	taskWait(1)
 end
