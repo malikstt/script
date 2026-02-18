@@ -88,11 +88,24 @@ local function handleAuctionEnd()
 		local start = tick()
 		local handled = false
 		
+		-- First, find the target itemId from the module
+		local targetItemId = nil
+		local targetItemName = nil
+		for itemId, itemData in pairs(ItemsModule) do
+			if itemData and itemData.Name and 
+			   string.find(string.lower(itemData.Name), TARGET_NAME) then
+				targetItemId = itemId
+				targetItemName = itemData.Name
+				print("🔍 Target item found in module:", targetItemName, "ID:", targetItemId)
+				break
+			end
+		end
+		
 		while not handled and tick() - start < timeout do
 			local gui = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
 			
 			if gui then
-				-- Check for NoItems GUI first (when you win nothing)
+				-- Check for NoItems GUI first
 				local noItems = gui:FindFirstChild("NoItems", true)
 				if noItems and noItems.Visible then
 					print("📦 No items won - clicking Okay button")
@@ -111,35 +124,60 @@ local function handleAuctionEnd()
 				if itemsFrame and itemsFrame.Visible then
 					local frame = itemsFrame:FindFirstChild("Frame")
 					if frame then
-						-- First, find and select the Valentine item if it exists
-						local targetSelected = false
+						-- Loop through all item buttons
+						local targetFound = false
+						local targetButton = nil
 						
-						-- Find target itemId from module
-						local targetItemId = nil
-						for itemId, itemData in pairs(ItemsModule) do
-							if itemData and itemData.Name and 
-							   string.find(string.lower(itemData.Name), TARGET_NAME) then
-								targetItemId = itemId
-								break
-							end
-						end
-						
-						if targetItemId then
-							-- Loop through all item buttons
-							for _, child in pairs(frame:GetChildren()) do
-								if child:IsA("ImageButton") and child:FindFirstChild("Price") then
-									-- Check if this is the Valentine item by looking at ViewportFrame
+						for _, child in pairs(frame:GetChildren()) do
+							if child:IsA("ImageButton") and child:FindFirstChild("Price") then
+								
+								-- METHOD 1: Check the actual item data by looking at the button's properties
+								-- Sometimes the itemId is stored in the button's Name or as an attribute
+								if child.Name == targetItemId or child:GetAttribute("itemId") == targetItemId then
+									print("🎯 Found target by ID:", child.Name)
+									targetButton = child
+									targetFound = true
+									break
+								end
+								
+								-- METHOD 2: Look at the Price text - sometimes contains item name
+								local priceLabel = child:FindFirstChild("Price")
+								if priceLabel then
+									local priceText = priceLabel.Text or ""
+									if string.find(string.lower(priceText), TARGET_NAME) then
+										print("🎯 Found target by price text")
+										targetButton = child
+										targetFound = true
+										break
+									end
+								end
+								
+								-- METHOD 3: Look at any text labels that might contain the item name
+								for _, label in pairs(child:GetDescendants()) do
+									if label:IsA("TextLabel") or label:IsA("TextButton") then
+										local text = label.Text or ""
+										if string.find(string.lower(text), TARGET_NAME) then
+											print("🎯 Found target by text label:", text)
+											targetButton = child
+											targetFound = true
+											break
+										end
+									end
+								end
+								
+								-- METHOD 4: Check if there's a ViewportFrame with a model that matches
+								if not targetFound then
 									local viewportFrame = child:FindFirstChild("ViewportFrame")
 									if viewportFrame then
+										-- Wait a tiny bit for the model to load
+										task.wait(0.1)
 										local model = viewportFrame:FindFirstChildWhichIsA("Model")
-										if model then
-											local targetItemData = ItemsModule[targetItemId]
-											if targetItemData and model.Name == targetItemData.Name then
-												print("🎯 Found and selecting Valentine item:", model.Name)
-												clickButton(child)
-												taskWait(0.2) -- Wait for selection
-												targetSelected = true
-												obtainedTarget = true
+										if model and targetItemName then
+											if model.Name == targetItemName or 
+											   string.find(string.lower(model.Name), TARGET_NAME) then
+												print("🎯 Found target by model name:", model.Name)
+												targetButton = child
+												targetFound = true
 												break
 											end
 										end
@@ -148,21 +186,38 @@ local function handleAuctionEnd()
 							end
 						end
 						
-						-- If we didn't find target, just select nothing (or could select first item?)
-						if not targetSelected then
-							print("⚠️ Valentine item not found in won items")
+						-- If we found the target button, click it
+						if targetButton then
+							print("✅ Clicking Valentine item button")
+							clickButton(targetButton)
+							taskWait(0.3) -- Wait for selection
+							obtainedTarget = true
+						else
+							-- If we didn't find target, let's debug what items we DID win
+							print("⚠️ Valentine item not found in won items! Debugging...")
+							for _, child in pairs(frame:GetChildren()) do
+								if child:IsA("ImageButton") and child:FindFirstChild("Price") then
+									print("  - Button name:", child.Name)
+									-- Check for any identifying text
+									for _, label in pairs(child:GetDescendants()) do
+										if label:IsA("TextLabel") then
+											print("    Text:", label.Text)
+										end
+									end
+								end
+							end
 						end
 						
-						-- Click Confirm button to proceed to sell screen
-						taskWait(0.3) -- Wait a bit for selections to register
+						-- Click Confirm button to proceed
+						taskWait(0.3)
 						local confirm = itemsFrame:FindFirstChild("ConfirmButton", true)
 						if confirm then
 							print("✅ Clicking Confirm button")
 							clickButton(confirm)
 							handled = true
-							taskWait(1) -- Wait for SellItems GUI to appear
+							taskWait(1)
 							
-							-- Now handle the SellItems GUI
+							-- Handle SellItems GUI
 							local sellHandled = false
 							local sellTimeout = tick() + 5
 							
