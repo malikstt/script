@@ -17,8 +17,8 @@ local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):
 
 local SellAllItemsRemote = Auctions:WaitForChild("SellAllItems")
 
-local TARGET_ITEM_ID = "2740"  -- Direct ID, no need to search!
-local SCAN_DURATION = 3
+local TARGET_ITEM_ID = "2740"
+local SCAN_DURATION = 2
 local BID_CHECK_INTERVAL = 0.2
 
 local inAuction = false
@@ -70,7 +70,9 @@ local function storageFull()
 	local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
 	local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
 	local invCount = RepLibrary:GetLengthOfInventory(inv)
-	return invCount >= invSpace or carrySpace <= 0
+	
+	-- Only halt if we have NO space at all (inv full AND carry full)
+	return invCount >= invSpace and carrySpace <= 0
 end
 
 local function clickButton(btn)
@@ -116,28 +118,67 @@ local function handleAuctionEnd()
 				if itemsFrame and itemsFrame.Visible then
 					print("🎁 Items won GUI detected")
 					
-					-- Find and click Valentine item (ID 2740)
+					-- Get current inventory data for space checks
+					local data = DataEvent:InvokeServer()
+					local inventory = data.Inventory or {}
+					local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, data.CarryLevel)
+					local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, data.InventoryLevel)
+					local invCount = RepLibrary:GetLengthOfInventory(inventory)
+					
+					-- First, count how many target items we won
+					local targetItemsFound = 0
 					local frame = itemsFrame:FindFirstChild("Frame")
+					
 					if frame then
+						-- Count target items
 						for _, child in pairs(frame:GetChildren()) do
 							if child:IsA("ImageButton") then
-								-- Check if this is the Valentine item by looking at the model
 								local viewport = child:FindFirstChild("ViewportFrame")
 								if viewport then
 									local model = viewport:FindFirstChildWhichIsA("Model")
 									if model and model.Name == targetItemName then
-										print("🎯 Found and clicking Valentine item (ID:", TARGET_ITEM_ID, ")")
-										clickButton(child)
-										obtainedTarget = true
-										taskWait(0.3)
-										break
+										targetItemsFound = targetItemsFound + 1
 									end
 								end
 							end
 						end
+						
+						print("🎯 Found", targetItemsFound, "target item(s) in won screen")
+						
+						-- Calculate available space
+						local availableCarrySpace = carrySpace
+						local availableInvSpace = invSpace - invCount
+						local canTake = math.min(availableCarrySpace, availableInvSpace)
+						
+						print("📊 Carry space:", carrySpace, "| Available slots:", canTake)
+						
+						-- Select as many target items as we have space for
+						local selectedCount = 0
+						for _, child in pairs(frame:GetChildren()) do
+							if child:IsA("ImageButton") and selectedCount < canTake then
+								local viewport = child:FindFirstChild("ViewportFrame")
+								if viewport then
+									local model = viewport:FindFirstChildWhichIsA("Model")
+									if model and model.Name == targetItemName then
+										print("✅ Selecting target item", selectedCount + 1)
+										clickButton(child)
+										selectedCount = selectedCount + 1
+										obtainedTarget = true
+										taskWait(0.1)
+									end
+								end
+							end
+						end
+						
+						if selectedCount > 0 then
+							print("🎉 Selected", selectedCount, "out of", targetItemsFound, "target items")
+						else
+							print("⚠️ Could not select any target items (no space)")
+						end
 					end
 					
 					-- Click Confirm
+					taskWait(0.3)
 					local confirm = itemsFrame:FindFirstChild("ConfirmButton", true)
 					if confirm then
 						print("✅ Clicking Confirm")
@@ -145,7 +186,7 @@ local function handleAuctionEnd()
 						handled = true
 						taskWait(1)
 						
-						-- Now sell other items
+						-- Now sell other items (only if we have space and selected items)
 						if obtainedTarget then
 							taskWait(0.5)
 							local success, data = pcall(function() return DataEvent:InvokeServer() end)
@@ -153,25 +194,34 @@ local function handleAuctionEnd()
 								local inv = data.Inventory or {}
 								local toSell = {}
 								
-								-- Find target GUID
-								local targetGuid = nil
+								-- Find all target GUIDs (multiple possible)
+								local targetGuids = {}
 								for guid, item in pairs(inv) do
 									if item.itemId == TARGET_ITEM_ID then
-										targetGuid = guid
-										break
+										table.insert(targetGuids, guid)
 									end
 								end
 								
-								-- Sell everything else
+								-- Sell everything that's NOT a target
 								for guid, item in pairs(inv) do
-									if guid ~= targetGuid then
+									local isTarget = false
+									for _, targetGuid in ipairs(targetGuids) do
+										if guid == targetGuid then
+											isTarget = true
+											break
+										end
+									end
+									
+									if not isTarget then
 										toSell[guid] = item
 									end
 								end
 								
 								if next(toSell) then
-									print("💰 Selling other items")
+									print("💰 Selling", #toSell, "non-target items")
 									pcall(function() SellAllItemsRemote:FireServer(toSell) end)
+								else
+									print("✨ No non-target items to sell")
 								end
 							end
 						end
@@ -196,7 +246,6 @@ local function scanCurrentGarageForTarget()
 	local startTime = tick()
 	while tick() - startTime < SCAN_DURATION do
 		for _, itemInstance in pairs(itemsFolder:GetChildren()) do
-			-- Check by item ID directly
 			if itemInstance.Name == TARGET_ITEM_ID then
 				print("🎯 Target found in garage:", currentGarage.Name)
 				return true
@@ -212,7 +261,7 @@ end
 -- MAIN LOOP
 while not halted do
 	if storageFull() then
-		print("❌ Storage full. Script halted.")
+		print("❌ Storage completely full. Script halted.")
 		halted = true
 		break
 	end
