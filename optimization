@@ -11,6 +11,7 @@ LocalPlayer.Idled:Connect(function()
     task.wait(0.1)
     VirtualUser:ClickButton2(Vector2.new(0,0))
 end)
+print("Delta Anti-AFK Enabled")
 
 --// REMOTES
 local Events = ReplicatedStorage:WaitForChild("Events")
@@ -21,20 +22,19 @@ local Roll = RNG:WaitForChild("Roll")
 local ItemsModule = require(ReplicatedStorage.Modules.Items)
 
 --// WEBHOOKS
---// WEBHOOKS
 local LIVE_WEBHOOK = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
 local ACCOUNT_WEBHOOK = "https://discord.com/api/webhooks/1473934078087528509/V3Bm-RyTV4mlClC5TKQn9gH6BK-ooqsssPw9P13_egipjWwjGoEOAn_7pbfA3TdAIL75"
 local PING = "<@1135837863603351573>"
 
 --// STORAGE
 local rolledCache = {}
-local hourlyLimiteds = {}
+local accountLimiteds = {}
 
 --// COLORS
 local COLORS = {
     LIMITED_BASIC = 0xf1c40f,   -- yellow (normal limited)
-    LIMITED_HIGH  = 0xe74c3c,   -- red (1500+)
-    ACCOUNT_CHECK = 0x3498db    -- blue for account check
+    LIMITED_HIGH  = 0xe74c3c,   -- red (≥1500)
+    ACCOUNT_CHECK = 0x3498db    -- blue
 }
 
 --// SERIAL EXTRACTOR
@@ -49,15 +49,15 @@ local function getSerial(result)
     end
 end
 
---// CLEAN DATA
+--// CLEAN DATA (remove LayoutOrder)
 local function cleanData(data)
-    local new = {}
+    local copy = {}
     for k,v in pairs(data) do
         if k ~= "LayoutOrder" then
-            new[k] = v
+            copy[k] = v
         end
     end
-    return new
+    return copy
 end
 
 --// WEBHOOK SENDER
@@ -70,14 +70,14 @@ local function sendWebhook(url, payload)
     })
 end
 
---// LIVE LIMITED MESSAGE (SHORT)
-local function sendLimitedBasic(itemData, serial)
+--// LIVE LIMITED SHORT MESSAGE
+local function sendLimitedBasic(itemData)
     local name = itemData.Name or "Unknown"
     local price = itemData.Price or 0
     local payload = {
         username = "Limited Notifier",
         embeds = {{
-            title = LocalPlayer.Name .. " got a Limited!",
+            title = LocalPlayer.Name.." got a Limited!",
             description = "Item: **"..name.."**\nPrice: **"..price.."**",
             color = COLORS.LIMITED_BASIC
         }}
@@ -86,7 +86,7 @@ local function sendLimitedBasic(itemData, serial)
 end
 
 --// LIVE HIGH VALUE LIMITED FULL DUMP
-local function sendFullDump(itemID, itemData, serial, webhook)
+local function sendFullDump(itemID, itemData, serial)
     local dump = cleanData(itemData)
     local payload = {
         username = "High Value Limited",
@@ -97,7 +97,7 @@ local function sendFullDump(itemID, itemData, serial, webhook)
             color = COLORS.LIMITED_HIGH
         }}
     }
-    sendWebhook(webhook, payload)
+    sendWebhook(LIVE_WEBHOOK, payload)
 end
 
 --// MAIN ROLL LOOP
@@ -124,15 +124,13 @@ task.spawn(function()
         if rolledCache[key] then continue end
         rolledCache[key] = true
 
-        -- ALWAYS SEND BASIC LIMITED MESSAGE
-        sendLimitedBasic(itemData, serial)
+        -- Short message for all Limited
+        sendLimitedBasic(itemData)
 
-        -- HIGH VALUE LIMITED ≥1500
+        -- High value ≥1500 → full dump + store for account check
         if price >= 1500 then
-            -- LIVE FULL DUMP
-            sendFullDump(itemID, itemData, serial, LIVE_WEBHOOK)
-            -- STORE FOR HOURLY ACCOUNT CHECK
-            hourlyLimiteds[key] = {
+            sendFullDump(itemID, itemData, serial)
+            accountLimiteds[key] = {
                 ID = itemID,
                 Data = cleanData(itemData)
             }
@@ -140,32 +138,27 @@ task.spawn(function()
     end
 end)
 
---// HOURLY ACCOUNT CHECK
+--// SINGLE ACCOUNT CHECK (runs once)
 task.spawn(function()
-    while true do
-        task.wait(3600) -- 1 hour
+    task.wait(10) -- small delay to accumulate initial rolls
 
-        local count = 0
-        local descriptionLines = {}
+    local count = 0
+    local lines = {}
 
-        for _, item in pairs(hourlyLimiteds) do
-            count += 1
-            table.insert(descriptionLines, "Item "..count.." : "..HttpService:JSONEncode(item))
-        end
+    for _, item in pairs(accountLimiteds) do
+        count += 1
+        table.insert(lines, "Item "..count.." : "..HttpService:JSONEncode(item))
+    end
 
-        if count > 0 then
-            local payload = {
-                username = "Account Check",
-                embeds = {{
-                    title = "Account check: "..count.." Limited items ≥1500 found",
-                    description = table.concat(descriptionLines, "\n"),
-                    color = COLORS.ACCOUNT_CHECK
-                }}
-            }
-            sendWebhook(ACCOUNT_WEBHOOK, payload)
-        end
-
-        -- CLEAR hourly data
-        hourlyLimiteds = {}
+    if count > 0 then
+        local payload = {
+            username = "Account Check",
+            embeds = {{
+                title = "Account check: "..count.." Limited items ≥1500 found",
+                description = table.concat(lines, "\n"),
+                color = COLORS.ACCOUNT_CHECK
+            }}
+        }
+        sendWebhook(ACCOUNT_WEBHOOK, payload)
     end
 end)
