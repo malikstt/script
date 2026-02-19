@@ -1,34 +1,31 @@
---// SERVICES
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
 local HttpService = game:GetService("HttpService")
 local VirtualUser = game:GetService("VirtualUser")
 
---// DELTA ANTI-AFK
+local LocalPlayer = Players.LocalPlayer
+local ItemsModule = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Items"))
+
+local GetAssets = ReplicatedStorage:WaitForChild("Events")
+    :WaitForChild("Misc")
+    :WaitForChild("GetAssets")
+
+local HIGH_VALUE_THRESHOLD = 1500
+local HIGH_VALUE_WEBHOOK = "https://discord.com/api/webhooks/1473934078087528509/V3Bm-RyTV4mlClC5TKQn9gH6BK-ooqsssPw9P13_egipjWwjGoEOAn_7pbfA3TdAIL75"
+local NORMAL_WEBHOOK = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
+
 LocalPlayer.Idled:Connect(function()
     VirtualUser:CaptureController()
     task.wait(0.1)
     VirtualUser:ClickButton2(Vector2.new(0,0))
 end)
-print("Delta Anti-AFK Enabled")
 
---// REMOTES
 local Events = ReplicatedStorage:WaitForChild("Events")
 local RNG = Events:WaitForChild("RNG")
 local Roll = RNG:WaitForChild("Roll")
 
---// MODULE
-local ItemsModule = require(ReplicatedStorage.Modules.Items)
-
---// WEBHOOK
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
-local PING_TEXT = "<@1135837863603351573> <@1135837863603351573>"
-
---// STORAGE
 local rolledIDs = {}
 
---// COLORS
 local RARITY_COLORS = {
     ["Common"] = 0x95a5a6,
     ["Uncommon"] = 0x3498db,
@@ -41,40 +38,37 @@ local RARITY_COLORS = {
     ["Insane"] = 0x8b4513
 }
 
---// SERIAL EXTRACTOR
-local function getSerial(result)
-    if type(result) ~= "table" then return nil end
-    if result.Serial then return result.Serial end
-    if result.serial then return result.serial end
-    if result.Serials then return result.Serials end
-    if result.Data then
-        if result.Data.Serial then return result.Data.Serial end
-        if result.Data.Serials then return result.Data.Serials end
-    end
-    return nil
+local PING_TEXT = "<@1135837863603351573> <@1135837863603351573>"
+
+local function postWebhook(url, data)
+    request({
+        Url = url,
+        Method = "POST",
+        Headers = {["Content-Type"] = "application/json"},
+        Body = HttpService:JSONEncode(data)
+    })
 end
 
---// REMOVE LayoutOrder from data
-local function cleanData(data)
-    local copy = {}
-    for k,v in pairs(data) do
-        if k ~= "LayoutOrder" then
-            copy[k] = v
-        end
-    end
-    return copy
-end
-
---// WEBHOOK FUNCTION
-local function sendDiscordNotification(username, itemData, serial)
+local function sendNormal(username, itemData, serial)
     local rarity = itemData.Rarity or "Unknown"
     local price = itemData.Price or itemData.Cost or itemData.Value or 0
+    if rarity ~= "Limited" and not serial then
+        return
+    end
     local color = RARITY_COLORS[rarity] or 0xffffff
-
-    local title = username .. " GOT A LIMITED ITEM!"
-    local description = "Full Item Data:\n```json\n" .. HttpService:JSONEncode(cleanData(itemData)) .. "\n```"
-    local content = serial and PING_TEXT or nil
-
+    local title
+    local description =
+        "Item: " .. (itemData.Name or "Unknown") ..
+        "\nRarity: " .. rarity ..
+        "\nCost: $" .. tostring(price)
+    local content = nil
+    if serial then
+        title = username .. " GOT A SERIAL!"
+        description = description .. "\nSerials: #" .. tostring(serial)
+        content = PING_TEXT
+    else
+        title = username .. " Rolled a Limited Item!"
+    end
     local data = {
         username = "Item Notifier",
         content = content,
@@ -84,51 +78,69 @@ local function sendDiscordNotification(username, itemData, serial)
             color = color
         }}
     }
-
-    request({
-        Url = WEBHOOK_URL,
-        Method = "POST",
-        Headers = {["Content-Type"] = "application/json"},
-        Body = HttpService:JSONEncode(data)
-    })
+    postWebhook(NORMAL_WEBHOOK, data)
 end
 
---// MAIN LOOP
+local function sendHighValue(username, itemData, price)
+    local dump = HttpService:JSONEncode(itemData)
+    local data = {
+        username = "High Value Notifier",
+        embeds = {{
+            title = username .. " HIGH VALUE ITEM",
+            description = dump,
+            color = 0x000000
+        }}
+    }
+    postWebhook(HIGH_VALUE_WEBHOOK, data)
+end
+
+local success, assets = pcall(function()
+    return GetAssets:InvokeServer()
+end)
+
+if success and assets then
+    for _, itemInfo in pairs(assets) do
+        local itemID = tostring(itemInfo.ID or itemInfo.Id or itemInfo.id)
+        local serial = itemInfo.Serials or itemInfo.Serial or itemInfo.serial
+        local itemData = ItemsModule[itemID]
+        if itemData then
+            local price = itemData.Price or itemData.Cost or itemData.Value or 0
+            if price >= HIGH_VALUE_THRESHOLD then
+                sendHighValue(LocalPlayer.Name, itemData, price)
+            end
+        end
+    end
+end
+
 task.spawn(function()
     while true do
         task.wait(4)
-
-        local success, result = pcall(function()
+        local successRoll, result = pcall(function()
             return Roll:InvokeServer()
         end)
-
-        if success and result then
-
-            local itemID = tostring(result.ID or result.Id or result.id)
-            local serial = getSerial(result)
-
+        if successRoll and result then
+            local itemID
+            local serial
+            if type(result) == "table" then
+                itemID = tostring(result.ID or result.Id or result.id)
+                serial = result.Serials or result.Serial or result.serial
+            else
+                itemID = tostring(result)
+            end
             if itemID then
-
-                local itemData = ItemsModule[itemID] or result.Data
-                if not itemData then
-                    continue
+                local itemData = ItemsModule[itemID]
+                if itemData then
+                    local price = itemData.Price or itemData.Cost or itemData.Value or 0
+                    local uniqueKey = serial and (itemID .. "_" .. tostring(serial)) or itemID
+                    if not rolledIDs[uniqueKey] then
+                        rolledIDs[uniqueKey] = true
+                        if price >= HIGH_VALUE_THRESHOLD then
+                            sendHighValue(LocalPlayer.Name, itemData, price)
+                        else
+                            sendNormal(LocalPlayer.Name, itemData, serial)
+                        end
+                    end
                 end
-
-                -- Only Limited items costing 1500+
-                local price = itemData.Price or itemData.Cost or itemData.Value or 0
-                local rarity = itemData.Rarity or "Unknown"
-                if rarity ~= "Limited" or price < 1500 then
-                    continue
-                end
-
-                local uniqueKey = serial and (itemID .. "_" .. serial) or itemID
-                if rolledIDs[uniqueKey] then
-                    continue
-                end
-                rolledIDs[uniqueKey] = true
-
-                -- Send webhook
-                sendDiscordNotification(LocalPlayer.Name, itemData, serial)
             end
         end
     end
