@@ -1,84 +1,105 @@
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
-local PetsData = require(ReplicatedStorage.Shared.Data.Pets)
-
-local TradeConfig = require(script.Parent.config)
-
-local LocalPlayer = Players.LocalPlayer
-local ScreenGui = LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("ScreenGui")
-
-local function isTrading()
-    return ScreenGui:FindFirstChild("Trading") and ScreenGui.Trading.Visible or false
-end
-
-local function petMatchesCriteria(petName, petRarity)
-    for _, targetName in ipairs(TradeConfig.TargetPetNames) do
-        if petName == targetName then return true end
-    end
-    
-    for _, targetRarity in ipairs(TradeConfig.TargetRarities) do
-        if petRarity == targetRarity then return true end
-    end
-    
-    return false
-end
-
-local function getTradeData()
-    for _, mod in pairs(getgc(true)) do
-        if type(mod) == "table" and rawget(mod, "Party0") and rawget(mod, "Party1") then
-            return mod
-        end
-    end
-    return nil
-end
-
-local function checkOffer()
-    local tradeData = getTradeData()
-    if not tradeData then return false end
-    
-    local theirOffer = tradeData.Party1.Offer
-    if #theirOffer == 0 then return false end
-    
-    for _, pet in ipairs(theirOffer) do
-        if pet.Type == "Pet" then
-            local petName = pet.Name
-            local petRarity = PetsData[petName].Rarity
-            if petMatchesCriteria(petName, petRarity) then
-                return true
-            end
-        end
-    end
-    return false
-end
-
-while true do
-    while isTrading() do task.wait(1) end
-    
-    for _, targetUsername in ipairs(TradeConfig.TargetUsers) do
-        local targetPlayer = Players:FindFirstChild(targetUsername)
-        
-        if targetPlayer and targetPlayer ~= LocalPlayer then
-            Remote:FireServer("TradeRequest", targetPlayer)
-            
-            local startTime = tick()
-            while not isTrading() and tick() - startTime < 10 do
-                task.wait(0.5)
-            end
-            
-            if isTrading() then
-                task.wait(2)
-                
-                if checkOffer() then
-                    Remote:FireServer("TradeAccept")
-                else
-                    Remote:FireServer("TradeDecline")
-                end
-                
-                while isTrading() do task.wait(1) end
-            end
-            task.wait(3)
-        end
-    end
-    task.wait(5)
+local function handleAuctionEnd()
+	coroutine.wrap(function()
+		local timeout = 30
+		local start = tick()
+		local handled = false
+		
+		while not handled and tick() - start < timeout do
+			local gui = LocalPlayer:FindFirstChild("PlayerGui") and 
+					   LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
+			
+			if gui then
+				-- Check for NoItems GUI (won nothing)
+				local noItems = gui:FindFirstChild("NoItems", true)
+				if noItems and noItems.Visible then
+					print("📦 No items won - closing")
+					local okButton = noItems:FindFirstChild("Button", true)
+					if okButton then
+						clickButton(okButton)
+					else
+						gui:Destroy()
+					end
+					handled = true
+					auctionEnded = true
+					break
+				end
+				
+				-- Check for ItemsFrame (won items)
+				local itemsFrame = gui:FindFirstChild("ItemsFrame", true)
+				if itemsFrame and itemsFrame.Visible then
+					print("🎁 Items won GUI detected")
+					
+					-- Wait for items to load
+					taskWait(0.5)
+					
+					local frame = itemsFrame:FindFirstChild("Frame")
+					if frame then
+						local targetGuid = nil
+						local targetButton = nil
+						
+						-- First, get the GUID of our target item from the auction results
+						-- You need to capture this during the auction or from the GUI
+						-- The item buttons in ItemsWon have the GUID stored somewhere
+						
+						for _, child in pairs(frame:GetChildren()) do
+							if child:IsA("ImageButton") then
+								-- Check if this is our target by looking at the model
+								local viewport = child:FindFirstChild("ViewportFrame")
+								if viewport then
+									local model = viewport:FindFirstChildWhichIsA("Model")
+									if model and model.Name == targetItemName then
+										print("🎯 Found target item button")
+										targetButton = child
+										
+										-- Toggle the checkmark (select the item)
+										local check = child:FindFirstChild("Check")
+										if check then
+											print("✅ Selecting item")
+											check.Visible = true
+											-- The module also adds to a table, but we can't access that here
+											-- The check visibility is what matters for the UI
+										end
+										break
+									end
+								end
+							end
+						end
+						
+						-- Wait a moment for selection to register
+						taskWait(0.3)
+						
+						-- Click Confirm
+						local confirm = itemsFrame:FindFirstChild("ConfirmButton", true)
+						if confirm then
+							print("✅ Clicking Confirm")
+							clickButton(confirm)
+							obtainedTarget = true
+							handled = true
+							taskWait(1)
+							
+							-- Now handle selling other items if needed
+							if obtainedTarget then
+								taskWait(0.5)
+								-- Look for SellItems GUI that appears after confirming
+								local sellGui = LocalPlayer.PlayerGui:FindFirstChild("SellItems")
+								if sellGui and sellGui.Visible then
+									print("💰 Selling other items")
+									-- Click the sell button for remaining items
+									local sellButton = sellGui:FindFirstChild("Frame") and 
+													   sellGui.Frame:FindFirstChild("Normal") or
+													   sellGui:FindFirstChild("Normal", true)
+									if sellButton then
+										clickButton(sellButton)
+									end
+								end
+							end
+						end
+					end
+				end
+			end
+			taskWait(0.3)
+		end
+		
+		auctionEnded = true
+	end)()
 end
