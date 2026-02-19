@@ -2,78 +2,71 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
 local PetsData = require(ReplicatedStorage.Shared.Data.Pets)
-local IsTrading = require(script.Parent.IsTrading)
 
-local TradeConfig = require(script.Parent.TradeConfig)
+local TradeConfig = require(script.Parent.config)
 
 local LocalPlayer = Players.LocalPlayer
+local ScreenGui = LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("ScreenGui")
+
+local function isTrading()
+    return ScreenGui:FindFirstChild("Trading") and ScreenGui.Trading.Visible or false
+end
 
 local function petMatchesCriteria(petName, petRarity)
     for _, targetName in ipairs(TradeConfig.TargetPetNames) do
-        if petName == targetName then
-            return true
-        end
+        if petName == targetName then return true end
     end
     
     for _, targetRarity in ipairs(TradeConfig.TargetRarities) do
-        if petRarity == targetRarity then
-            return true
-        end
+        if petRarity == targetRarity then return true end
     end
     
     return false
 end
 
+local function getTradeData()
+    for _, mod in pairs(getgc(true)) do
+        if type(mod) == "table" and rawget(mod, "Party0") and rawget(mod, "Party1") then
+            return mod
+        end
+    end
+    return nil
+end
+
 local function checkOffer()
-    local tradeData = getfenv().var70_upvw
-    
+    local tradeData = getTradeData()
     if not tradeData then return false end
     
     local theirOffer = tradeData.Party1.Offer
-    
-    if #theirOffer == 0 then
-        return false
-    end
+    if #theirOffer == 0 then return false end
     
     for _, pet in ipairs(theirOffer) do
         if pet.Type == "Pet" then
             local petName = pet.Name
             local petRarity = PetsData[petName].Rarity
-            
             if petMatchesCriteria(petName, petRarity) then
                 return true
             end
         end
     end
-    
     return false
 end
 
 while true do
-    while IsTrading() do
-        task.wait(1)
-    end
-    
-    local allPlayers = Players:GetPlayers()
+    while isTrading() do task.wait(1) end
     
     for _, targetUsername in ipairs(TradeConfig.TargetUsers) do
-        local targetPlayer
-        for _, player in ipairs(allPlayers) do
-            if player.Name == targetUsername then
-                targetPlayer = player
-                break
-            end
-        end
+        local targetPlayer = Players:FindFirstChild(targetUsername)
         
         if targetPlayer and targetPlayer ~= LocalPlayer then
             Remote:FireServer("TradeRequest", targetPlayer)
             
             local startTime = tick()
-            while not IsTrading() and tick() - startTime < 10 do
+            while not isTrading() and tick() - startTime < 10 do
                 task.wait(0.5)
             end
             
-            if IsTrading() then
+            if isTrading() then
                 task.wait(2)
                 
                 if checkOffer() then
@@ -82,14 +75,10 @@ while true do
                     Remote:FireServer("TradeDecline")
                 end
                 
-                while IsTrading() do
-                    task.wait(1)
-                end
+                while isTrading() do task.wait(1) end
             end
-            
             task.wait(3)
         end
     end
-    
     task.wait(5)
 end
