@@ -18,8 +18,13 @@ local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):
 local SellAllItemsRemote = Auctions:WaitForChild("SellAllItems")
 
 local TARGET_ITEM_ID = "2740"
-local SCAN_DURATION = 2
+local SCAN_DURATION = 3
 local BID_CHECK_INTERVAL = 0.2
+
+-- TRACKING TARGETS ACROSS SESSION
+local totalTargetsFound = 0
+local totalTargetsObtained = 0
+local sessionStartTime = tick()
 
 local inAuction = false
 local obtainedTarget = false
@@ -37,6 +42,7 @@ local SKIP_COOLDOWN = 1
 -- Get target name for display
 local targetItemName = ItemsModule[TARGET_ITEM_ID] and ItemsModule[TARGET_ITEM_ID].Name or "Valentine"
 print("🔍 Targeting:", targetItemName, "ID:", TARGET_ITEM_ID)
+print("📊 Session started - tracking targets...")
 
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
 	if data then
@@ -71,7 +77,16 @@ local function storageFull()
 	local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
 	local invCount = RepLibrary:GetLengthOfInventory(inv)
 	
-	-- Only halt if we have NO space at all (inv full AND carry full)
+	-- Count how many targets we already have in inventory
+	local currentTargetsInInv = 0
+	for _, item in pairs(inv) do
+		if item.itemId == TARGET_ITEM_ID then
+			currentTargetsInInv = currentTargetsInInv + 1
+		end
+	end
+	
+	print("📊 Session stats - Found:", totalTargetsFound, "| Obtained:", totalTargetsObtained, "| In inventory:", currentTargetsInInv)
+	
 	return invCount >= invSpace and carrySpace <= 0
 end
 
@@ -125,25 +140,30 @@ local function handleAuctionEnd()
 					local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, data.InventoryLevel)
 					local invCount = RepLibrary:GetLengthOfInventory(inventory)
 					
-					-- First, count how many target items we won
-					local targetItemsFound = 0
+					-- First, count how many target items we won in THIS auction
+					local targetItemsInThisAuction = 0
 					local frame = itemsFrame:FindFirstChild("Frame")
 					
 					if frame then
-						-- Count target items
+						-- Count target items in this win screen
 						for _, child in pairs(frame:GetChildren()) do
 							if child:IsA("ImageButton") then
 								local viewport = child:FindFirstChild("ViewportFrame")
 								if viewport then
 									local model = viewport:FindFirstChildWhichIsA("Model")
 									if model and model.Name == targetItemName then
-										targetItemsFound = targetItemsFound + 1
+										targetItemsInThisAuction = targetItemsInThisAuction + 1
 									end
 								end
 							end
 						end
 						
-						print("🎯 Found", targetItemsFound, "target item(s) in won screen")
+						-- Update total targets found
+						if targetItemsInThisAuction > 0 then
+							totalTargetsFound = totalTargetsFound + targetItemsInThisAuction
+							print("🎯 Found", targetItemsInThisAuction, "target(s) in this auction")
+							print("📊 Total targets found so far:", totalTargetsFound)
+						end
 						
 						-- Calculate available space
 						local availableCarrySpace = carrySpace
@@ -151,6 +171,7 @@ local function handleAuctionEnd()
 						local canTake = math.min(availableCarrySpace, availableInvSpace)
 						
 						print("📊 Carry space:", carrySpace, "| Available slots:", canTake)
+						print("📊 Targets in this win:", targetItemsInThisAuction)
 						
 						-- Select as many target items as we have space for
 						local selectedCount = 0
@@ -171,7 +192,13 @@ local function handleAuctionEnd()
 						end
 						
 						if selectedCount > 0 then
-							print("🎉 Selected", selectedCount, "out of", targetItemsFound, "target items")
+							totalTargetsObtained = totalTargetsObtained + selectedCount
+							print("🎉 Selected", selectedCount, "out of", targetItemsInThisAuction, "target items")
+							print("📊 Total targets obtained so far:", totalTargetsObtained)
+							
+							-- Calculate success rate
+							local successRate = (totalTargetsObtained / totalTargetsFound) * 100
+							print("📊 Success rate: " .. string.format("%.1f", successRate) .. "%")
 						else
 							print("⚠️ Could not select any target items (no space)")
 						end
@@ -254,14 +281,33 @@ local function scanCurrentGarageForTarget()
 		taskWait(0.2)
 	end
 	
-	print("❌ No target in:", currentGarage and currentGarage.Name)
 	return false
 end
+
+-- Print session stats periodically
+spawn(function()
+	while not halted do
+		taskWait(60) -- Every minute
+		local runtime = math.floor((tick() - sessionStartTime) / 60)
+		print("⏱️ Runtime:", runtime, "minutes")
+		print("📊 Targets found:", totalTargetsFound, "| Obtained:", totalTargetsObtained)
+		if totalTargetsFound > 0 then
+			local successRate = (totalTargetsObtained / totalTargetsFound) * 100
+			print("📊 Success rate: " .. string.format("%.1f", successRate) .. "%")
+		end
+	end
+end)
 
 -- MAIN LOOP
 while not halted do
 	if storageFull() then
 		print("❌ Storage completely full. Script halted.")
+		print("📊 FINAL STATS - Runtime:", math.floor((tick() - sessionStartTime) / 60), "minutes")
+		print("📊 Targets found:", totalTargetsFound, "| Obtained:", totalTargetsObtained)
+		if totalTargetsFound > 0 then
+			local successRate = (totalTargetsObtained / totalTargetsFound) * 100
+			print("📊 Success rate: " .. string.format("%.1f", successRate) .. "%")
+		end
 		halted = true
 		break
 	end
