@@ -21,20 +21,25 @@ local Roll = RNG:WaitForChild("Roll")
 --// MODULE
 local ItemsModule = require(ReplicatedStorage.Modules.Items)
 
---// WEBHOOKS
-local ROLL_WEBHOOK = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
-local ACCOUNT_WEBHOOK = "https://discord.com/api/webhooks/1473934078087528509/V3Bm-RyTV4mlClC5TKQn9gH6BK-ooqsssPw9P13_egipjWwjGoEOAn_7pbfA3TdAIL75"
-
+--// WEBHOOK
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
 local PING_TEXT = "<@1135837863603351573> <@1135837863603351573>"
 
 --// STORAGE
 local rolledIDs = {}
-local accountCheckSent = false
 
 --// COLORS
-local BASIC_COLOR = 0x3498db
-local FULL_COLOR = 0xe74c3c
-local ACCOUNT_COLOR = 0x9b59b6
+local RARITY_COLORS = {
+    ["Common"] = 0x95a5a6,
+    ["Uncommon"] = 0x3498db,
+    ["Rare"] = 0x2ecc71,
+    ["Epic"] = 0xf1c40f,
+    ["Limited"] = 0xe74c3c,
+    ["Legendary"] = 0x9b59b6,
+    ["Godly"] = 0x8e44ad,
+    ["Mythical"] = 0xf39c12,
+    ["Insane"] = 0x8b4513
+}
 
 --// SERIAL EXTRACTOR
 local function getSerial(result)
@@ -49,7 +54,7 @@ local function getSerial(result)
     return nil
 end
 
---// REMOVE LayoutOrder
+--// REMOVE LayoutOrder from data
 local function cleanData(data)
     local copy = {}
     for k,v in pairs(data) do
@@ -60,149 +65,71 @@ local function cleanData(data)
     return copy
 end
 
---// BASIC LIMITED MESSAGE
-local function sendBasic(itemData)
+--// WEBHOOK FUNCTION
+local function sendDiscordNotification(username, itemData, serial)
+    local rarity = itemData.Rarity or "Unknown"
+    local price = itemData.Price or itemData.Cost or itemData.Value or 0
+    local color = RARITY_COLORS[rarity] or 0xffffff
+
+    local title = username .. " GOT A LIMITED ITEM!"
+    local description = "Full Item Data:\n```json\n" .. HttpService:JSONEncode(cleanData(itemData)) .. "\n```"
+    local content = serial and PING_TEXT or nil
 
     local data = {
         username = "Item Notifier",
+        content = content,
         embeds = {{
-            title = LocalPlayer.Name .. " rolled Limited",
-            description =
-                "Item: " .. tostring(itemData.Name) ..
-                "\nPrice: $" .. tostring(itemData.Price or 0),
-            color = BASIC_COLOR
+            title = title,
+            description = description,
+            color = color
         }}
     }
 
     request({
-        Url = ROLL_WEBHOOK,
+        Url = WEBHOOK_URL,
         Method = "POST",
-        Headers = {["Content-Type"]="application/json"},
+        Headers = {["Content-Type"] = "application/json"},
         Body = HttpService:JSONEncode(data)
     })
-
 end
 
---// FULL DUMP MESSAGE ≥1500
-local function sendFull(itemData, serial)
+--// MAIN LOOP
+task.spawn(function()
+    while true do
+        task.wait(4)
 
-    local data = {
-        username = "Item Notifier",
-        content = serial and PING_TEXT or nil,
-        embeds = {{
-            title = LocalPlayer.Name .. " HIGH VALUE LIMITED",
-            description =
-                "```json\n" ..
-                HttpService:JSONEncode(cleanData(itemData)) ..
-                "\n```",
-            color = FULL_COLOR
-        }}
-    }
+        local success, result = pcall(function()
+            return Roll:InvokeServer()
+        end)
 
-    request({
-        Url = ROLL_WEBHOOK,
-        Method = "POST",
-        Headers = {["Content-Type"]="application/json"},
-        Body = HttpService:JSONEncode(data)
-    })
+        if success and result then
 
-end
+            local itemID = tostring(result.ID or result.Id or result.id)
+            local serial = getSerial(result)
 
---// ACCOUNT CHECK (RUNS ONCE)
-local function sendAccountCheck()
+            if itemID then
 
-    if accountCheckSent then return end
-    accountCheckSent = true
+                local itemData = ItemsModule[itemID] or result.Data
+                if not itemData then
+                    continue
+                end
 
-    local found = {}
+                -- Only Limited items costing 1500+
+                local price = itemData.Price or itemData.Cost or itemData.Value or 0
+                local rarity = itemData.Rarity or "Unknown"
+                if rarity ~= "Limited" or price < 1500 then
+                    continue
+                end
 
-    for id,data in pairs(ItemsModule) do
+                local uniqueKey = serial and (itemID .. "_" .. serial) or itemID
+                if rolledIDs[uniqueKey] then
+                    continue
+                end
+                rolledIDs[uniqueKey] = true
 
-        local price = data.Price or 0
-        local rarity = data.Rarity
-
-        if rarity == "Limited" and price >= 1500 then
-            table.insert(found, cleanData(data))
+                -- Send webhook
+                sendDiscordNotification(LocalPlayer.Name, itemData, serial)
+            end
         end
-
     end
-
-    if #found == 0 then return end
-
-    local desc = "Account check: "..#found.." Limited items ≥1500 found\n\n"
-
-    for i,v in ipairs(found) do
-        desc = desc ..
-        "Item "..i..":\n```json\n"..
-        HttpService:JSONEncode(v)..
-        "\n```\n"
-    end
-
-    request({
-        Url = ACCOUNT_WEBHOOK,
-        Method = "POST",
-        Headers = {["Content-Type"]="application/json"},
-        Body = HttpService:JSONEncode({
-            username="Account Check",
-            embeds={{
-                title=LocalPlayer.Name.." Account Report",
-                description=desc,
-                color=ACCOUNT_COLOR
-            }}
-        })
-    })
-
-end
-
--- run account check once
-task.spawn(function()
-    task.wait(10)
-    sendAccountCheck()
-end)
-
---// MAIN LOOP (UNCHANGED STRUCTURE)
-task.spawn(function()
-while true do
-task.wait(4)
-
-local success, result = pcall(function()  
-        return Roll:InvokeServer()  
-    end)  
-
-    if success and result then  
-
-        local itemID = tostring(result.ID or result.Id or result.id)  
-        local serial = getSerial(result)  
-
-        if itemID then  
-
-            local itemData = ItemsModule[itemID] or result.Data  
-            if not itemData then  
-                continue  
-            end  
-
-            local price = itemData.Price or itemData.Cost or itemData.Value or 0  
-            local rarity = itemData.Rarity or "Unknown"  
-
-            if rarity ~= "Limited" then  
-                continue  
-            end  
-
-            local uniqueKey = serial and (itemID.."_"..serial) or itemID  
-
-            if rolledIDs[uniqueKey] then  
-                continue  
-            end  
-
-            rolledIDs[uniqueKey] = true  
-
-            sendBasic(itemData)  
-
-            if price >= 1500 then  
-                sendFull(itemData, serial)  
-            end  
-
-        end  
-    end  
-end
 end)
