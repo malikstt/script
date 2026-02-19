@@ -11,7 +11,6 @@ LocalPlayer.Idled:Connect(function()
     task.wait(0.1)
     VirtualUser:ClickButton2(Vector2.new(0,0))
 end)
-print("Delta Anti-AFK Enabled")
 
 --// REMOTES
 local Events = ReplicatedStorage:WaitForChild("Events")
@@ -21,24 +20,20 @@ local Roll = RNG:WaitForChild("Roll")
 --// MODULE
 local ItemsModule = require(ReplicatedStorage.Modules.Items)
 
---// WEBHOOK
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
-local PING_TEXT = "<@1135837863603351573> <@1135837863603351573>"
+--// WEBHOOKS
+local LIVE_WEBHOOK = "YOUR_LIVE_WEBHOOK"
+local ACCOUNT_WEBHOOK = "https://discord.com/api/webhooks/1473934078087528509/V3Bm-RyTV4mlClC5TKQn9gH6BK-ooqsssPw9P13_egipjWwjGoEOAn_7pbfA3TdAIL75"
+local PING = "<@1135837863603351573>"
 
 --// STORAGE
-local rolledIDs = {}
+local rolledCache = {}
+local hourlyLimiteds = {}
 
 --// COLORS
-local RARITY_COLORS = {
-    ["Common"] = 0x95a5a6,
-    ["Uncommon"] = 0x3498db,
-    ["Rare"] = 0x2ecc71,
-    ["Epic"] = 0xf1c40f,
-    ["Limited"] = 0xe74c3c,
-    ["Legendary"] = 0x9b59b6,
-    ["Godly"] = 0x8e44ad,
-    ["Mythical"] = 0xf39c12,
-    ["Insane"] = 0x8b4513
+local COLORS = {
+    LIMITED_BASIC = 0xf1c40f,   -- yellow (normal limited)
+    LIMITED_HIGH  = 0xe74c3c,   -- red (1500+)
+    ACCOUNT_CHECK = 0x3498db    -- blue for account check
 }
 
 --// SERIAL EXTRACTOR
@@ -51,49 +46,60 @@ local function getSerial(result)
         if result.Data.Serial then return result.Data.Serial end
         if result.Data.Serials then return result.Data.Serials end
     end
-    return nil
 end
 
---// REMOVE LayoutOrder from data
+--// CLEAN DATA
 local function cleanData(data)
-    local copy = {}
+    local new = {}
     for k,v in pairs(data) do
         if k ~= "LayoutOrder" then
-            copy[k] = v
+            new[k] = v
         end
     end
-    return copy
+    return new
 end
 
---// WEBHOOK FUNCTION
-local function sendDiscordNotification(username, itemData, serial)
-    local rarity = itemData.Rarity or "Unknown"
-    local price = itemData.Price or itemData.Cost or itemData.Value or 0
-    local color = RARITY_COLORS[rarity] or 0xffffff
-
-    local title = username .. " GOT A LIMITED ITEM!"
-    local description = "Full Item Data:\n```json\n" .. HttpService:JSONEncode(cleanData(itemData)) .. "\n```"
-    local content = serial and PING_TEXT or nil
-
-    local data = {
-        username = "Item Notifier",
-        content = content,
-        embeds = {{
-            title = title,
-            description = description,
-            color = color
-        }}
-    }
-
+--// WEBHOOK SENDER
+local function sendWebhook(url, payload)
     request({
-        Url = WEBHOOK_URL,
+        Url = url,
         Method = "POST",
         Headers = {["Content-Type"] = "application/json"},
-        Body = HttpService:JSONEncode(data)
+        Body = HttpService:JSONEncode(payload)
     })
 end
 
---// MAIN LOOP
+--// LIVE LIMITED MESSAGE (SHORT)
+local function sendLimitedBasic(itemData, serial)
+    local name = itemData.Name or "Unknown"
+    local price = itemData.Price or 0
+    local payload = {
+        username = "Limited Notifier",
+        embeds = {{
+            title = LocalPlayer.Name .. " got a Limited!",
+            description = "Item: **"..name.."**\nPrice: **"..price.."**",
+            color = COLORS.LIMITED_BASIC
+        }}
+    }
+    sendWebhook(LIVE_WEBHOOK, payload)
+end
+
+--// LIVE HIGH VALUE LIMITED FULL DUMP
+local function sendFullDump(itemID, itemData, serial, webhook)
+    local dump = cleanData(itemData)
+    local payload = {
+        username = "High Value Limited",
+        content = serial and PING or nil,
+        embeds = {{
+            title = LocalPlayer.Name.." got HIGH VALUE Limited",
+            description = "```json\n"..HttpService:JSONEncode(dump).."\n```",
+            color = COLORS.LIMITED_HIGH
+        }}
+    }
+    sendWebhook(webhook, payload)
+end
+
+--// MAIN ROLL LOOP
 task.spawn(function()
     while true do
         task.wait(4)
@@ -101,35 +107,64 @@ task.spawn(function()
         local success, result = pcall(function()
             return Roll:InvokeServer()
         end)
+        if not success or not result then continue end
 
-        if success and result then
+        local itemID = tostring(result.ID)
+        local serial = getSerial(result)
+        local itemData = ItemsModule[itemID] or result.Data
+        if not itemData then continue end
 
-            local itemID = tostring(result.ID or result.Id or result.id)
-            local serial = getSerial(result)
+        local rarity = itemData.Rarity
+        local price = itemData.Price or 0
 
-            if itemID then
+        if rarity ~= "Limited" then continue end
 
-                local itemData = ItemsModule[itemID] or result.Data
-                if not itemData then
-                    continue
-                end
+        local key = serial and itemID.."_"..serial or itemID
+        if rolledCache[key] then continue end
+        rolledCache[key] = true
 
-                -- Only Limited items costing 1500+
-                local price = itemData.Price or itemData.Cost or itemData.Value or 0
-                local rarity = itemData.Rarity or "Unknown"
-                if rarity ~= "Limited" or price < 1500 then
-                    continue
-                end
+        -- ALWAYS SEND BASIC LIMITED MESSAGE
+        sendLimitedBasic(itemData, serial)
 
-                local uniqueKey = serial and (itemID .. "_" .. serial) or itemID
-                if rolledIDs[uniqueKey] then
-                    continue
-                end
-                rolledIDs[uniqueKey] = true
-
-                -- Send webhook
-                sendDiscordNotification(LocalPlayer.Name, itemData, serial)
-            end
+        -- HIGH VALUE LIMITED ≥1500
+        if price >= 1500 then
+            -- LIVE FULL DUMP
+            sendFullDump(itemID, itemData, serial, LIVE_WEBHOOK)
+            -- STORE FOR HOURLY ACCOUNT CHECK
+            hourlyLimiteds[key] = {
+                ID = itemID,
+                Data = cleanData(itemData)
+            }
         end
+    end
+end)
+
+--// HOURLY ACCOUNT CHECK
+task.spawn(function()
+    while true do
+        task.wait(3600) -- 1 hour
+
+        local count = 0
+        local descriptionLines = {}
+
+        for _, item in pairs(hourlyLimiteds) do
+            count += 1
+            table.insert(descriptionLines, "Item "..count.." : "..HttpService:JSONEncode(item))
+        end
+
+        if count > 0 then
+            local payload = {
+                username = "Account Check",
+                embeds = {{
+                    title = "Account check: "..count.." Limited items ≥1500 found",
+                    description = table.concat(descriptionLines, "\n"),
+                    color = COLORS.ACCOUNT_CHECK
+                }}
+            }
+            sendWebhook(ACCOUNT_WEBHOOK, payload)
+        end
+
+        -- CLEAR hourly data
+        hourlyLimiteds = {}
     end
 end)
