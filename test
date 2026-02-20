@@ -1,105 +1,124 @@
-local function handleAuctionEnd()
-	coroutine.wrap(function()
-		local timeout = 30
-		local start = tick()
-		local handled = false
-		
-		while not handled and tick() - start < timeout do
-			local gui = LocalPlayer:FindFirstChild("PlayerGui") and 
-					   LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
-			
-			if gui then
-				-- Check for NoItems GUI (won nothing)
-				local noItems = gui:FindFirstChild("NoItems", true)
-				if noItems and noItems.Visible then
-					print("📦 No items won - closing")
-					local okButton = noItems:FindFirstChild("Button", true)
-					if okButton then
-						clickButton(okButton)
-					else
-						gui:Destroy()
-					end
-					handled = true
-					auctionEnded = true
-					break
-				end
-				
-				-- Check for ItemsFrame (won items)
-				local itemsFrame = gui:FindFirstChild("ItemsFrame", true)
-				if itemsFrame and itemsFrame.Visible then
-					print("🎁 Items won GUI detected")
-					
-					-- Wait for items to load
-					taskWait(0.5)
-					
-					local frame = itemsFrame:FindFirstChild("Frame")
-					if frame then
-						local targetGuid = nil
-						local targetButton = nil
-						
-						-- First, get the GUID of our target item from the auction results
-						-- You need to capture this during the auction or from the GUI
-						-- The item buttons in ItemsWon have the GUID stored somewhere
-						
-						for _, child in pairs(frame:GetChildren()) do
-							if child:IsA("ImageButton") then
-								-- Check if this is our target by looking at the model
-								local viewport = child:FindFirstChild("ViewportFrame")
-								if viewport then
-									local model = viewport:FindFirstChildWhichIsA("Model")
-									if model and model.Name == targetItemName then
-										print("🎯 Found target item button")
-										targetButton = child
-										
-										-- Toggle the checkmark (select the item)
-										local check = child:FindFirstChild("Check")
-										if check then
-											print("✅ Selecting item")
-											check.Visible = true
-											-- The module also adds to a table, but we can't access that here
-											-- The check visibility is what matters for the UI
-										end
-										break
-									end
-								end
-							end
-						end
-						
-						-- Wait a moment for selection to register
-						taskWait(0.3)
-						
-						-- Click Confirm
-						local confirm = itemsFrame:FindFirstChild("ConfirmButton", true)
-						if confirm then
-							print("✅ Clicking Confirm")
-							clickButton(confirm)
-							obtainedTarget = true
-							handled = true
-							taskWait(1)
-							
-							-- Now handle selling other items if needed
-							if obtainedTarget then
-								taskWait(0.5)
-								-- Look for SellItems GUI that appears after confirming
-								local sellGui = LocalPlayer.PlayerGui:FindFirstChild("SellItems")
-								if sellGui and sellGui.Visible then
-									print("💰 Selling other items")
-									-- Click the sell button for remaining items
-									local sellButton = sellGui:FindFirstChild("Frame") and 
-													   sellGui.Frame:FindFirstChild("Normal") or
-													   sellGui:FindFirstChild("Normal", true)
-									if sellButton then
-										clickButton(sellButton)
-									end
-								end
-							end
-						end
-					end
-				end
-			end
-			taskWait(0.3)
-		end
-		
-		auctionEnded = true
-	end)()
+local Player = game.Players.LocalPlayer
+local PlayerGui = Player:WaitForChild("PlayerGui")
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = PlayerGui
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 500, 0, 400)
+MainFrame.Position = UDim2.new(0.5, -250, 0.5, -200)
+MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+MainFrame.BorderSizePixel = 0
+MainFrame.Parent = ScreenGui
+
+local LoadingFrame = Instance.new("Frame")
+LoadingFrame.Size = UDim2.new(1, 0, 1, 0)
+LoadingFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+LoadingFrame.Parent = MainFrame
+
+local LoadingLabel = Instance.new("TextLabel")
+LoadingLabel.Size = UDim2.new(1, 0, 0, 50)
+LoadingLabel.Position = UDim2.new(0, 0, 0.5, -25)
+LoadingLabel.Text = "Loading..."
+LoadingLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+LoadingLabel.TextScaled = true
+LoadingLabel.BackgroundTransparency = 1
+LoadingLabel.Parent = LoadingFrame
+
+local AuctionFrame = Instance.new("Frame")
+AuctionFrame.Size = UDim2.new(1, 0, 1, 0)
+AuctionFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+AuctionFrame.Visible = false
+AuctionFrame.Parent = MainFrame
+
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Size = UDim2.new(1, -20, 0, 50)
+TitleLabel.Position = UDim2.new(0, 10, 0, 10)
+TitleLabel.Text = "Which Auction do you want to Choose?"
+TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+TitleLabel.TextScaled = true
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Parent = AuctionFrame
+
+local SearchBox = Instance.new("TextBox")
+SearchBox.Size = UDim2.new(1, -20, 0, 40)
+SearchBox.Position = UDim2.new(0, 10, 0, 70)
+SearchBox.PlaceholderText = "Search Auctions..."
+SearchBox.Text = ""
+SearchBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+SearchBox.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+SearchBox.Parent = AuctionFrame
+
+local ListFrame = Instance.new("ScrollingFrame")
+ListFrame.Size = UDim2.new(1, -20, 1, -150)
+ListFrame.Position = UDim2.new(0, 10, 0, 120)
+ListFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+ListFrame.ScrollBarThickness = 6
+ListFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+ListFrame.Parent = AuctionFrame
+
+local UIListLayout = Instance.new("UIListLayout")
+UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+UIListLayout.Parent = ListFrame
+
+local ConfirmButton = Instance.new("TextButton")
+ConfirmButton.Size = UDim2.new(0, 150, 0, 50)
+ConfirmButton.Position = UDim2.new(0.5, -75, 1, -60)
+ConfirmButton.Text = "Confirm"
+ConfirmButton.TextScaled = true
+ConfirmButton.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
+ConfirmButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+ConfirmButton.Parent = AuctionFrame
+
+local Modules = require(game:GetService("ReplicatedStorage"):WaitForChild("Modules"))
+local Garages = Modules.Garages
+
+local auctionButtons = {}
+
+for name, garage in pairs(Garages) do
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -10, 0, 40)
+    btn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.Text = name
+    btn.Parent = ListFrame
+    table.insert(auctionButtons, btn)
 end
+
+UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    ListFrame.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y)
+end)
+
+local function filterAuctions(text)
+    text = text:lower()
+    for _, btn in pairs(auctionButtons) do
+        btn.Visible = btn.Text:lower():find(text) ~= nil
+    end
+end
+
+SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+    filterAuctions(SearchBox.Text)
+end)
+
+local selectedAuction = nil
+for _, btn in pairs(auctionButtons) do
+    btn.MouseButton1Click:Connect(function()
+        selectedAuction = btn.Text
+        for _, b in pairs(auctionButtons) do
+            b.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        end
+        btn.BackgroundColor3 = Color3.fromRGB(100, 100, 200)
+    end)
+end
+
+ConfirmButton.MouseButton1Click:Connect(function()
+    if selectedAuction then
+        print("Selected Auction: "..selectedAuction)
+    end
+end)
+
+task.delay(2, function()
+    LoadingFrame.Visible = false
+    AuctionFrame.Visible = true
+end)
