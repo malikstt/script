@@ -4,9 +4,6 @@ local LocalPlayer = Players.LocalPlayer
 local taskWait = task.wait
 
 local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
-local ItemsModule = require(ReplicatedStorage.Modules.Items)
-local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
-
 local Auctions = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
 local EnterQueue = Auctions:WaitForChild("EnterQueue")
 local Skip = Auctions:WaitForChild("Skip")
@@ -15,16 +12,10 @@ local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
 local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 
-local TARGET_ITEM_ID = "6"
 local SCAN_DURATION = 2
 local BID_CHECK_INTERVAL = 0.2
 
-local totalTargetsFound = 0
-local totalTargetsObtained = 0
-local sessionStartTime = tick()
-
 local inAuction = false
-local obtainedTarget = false
 local auctionEnded = false
 local halted = false
 local currentNextBid
@@ -36,95 +27,49 @@ local MAX_GARAGES = 3
 local lastSkipTime = 0
 local SKIP_COOLDOWN = 1
 
-local targetItemName = ItemsModule[TARGET_ITEM_ID] and ItemsModule[TARGET_ITEM_ID].Name or "Valentine"
-print("🔍 Targeting:", targetItemName, "ID:", TARGET_ITEM_ID)
-print("📊 Session started - tracking targets...")
+print("🚀 Script started - Will bid on all garages and collect all items")
 
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
-if data then
-currentNextBid = data.nextBid
-currentBidder = data.player
-end
+    if data then
+        currentNextBid = data.nextBid
+        currentBidder = data.player
+    end
 end)
 
 AuctionsFolder.ChildAdded:Connect(function(garage)
-inAuction = true
-auctionEnded = false
-currentGarage = garage
-garagesSkipped = 0
-print("🏁 Entered garage:", garage.Name)
+    inAuction = true
+    auctionEnded = false
+    currentGarage = garage
+    garagesSkipped = 0
+    print("🏁 Entered garage:", garage.Name)
 end)
 
 AuctionsFolder.ChildRemoved:Connect(function(garage)
-if #AuctionsFolder:GetChildren() == 0 then
-inAuction = false
-currentGarage = nil
-print("🏁 Left auction")
-end
+    if #AuctionsFolder:GetChildren() == 0 then
+        inAuction = false
+        currentGarage = nil
+        print("🏁 Left auction")
+    end
 end)
 
 local function storageFull()
-local success, data = pcall(function() return DataEvent:InvokeServer() end)
-if not success or not data then return false end
-local inv = data.Inventory or {}
-local invLevel = data.InventoryLevel
-local carryLevel = data.CarryLevel
-local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
-local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
-local invCount = RepLibrary:GetLengthOfInventory(inv)
+    local success, data = pcall(function() return DataEvent:InvokeServer() end)
+    if not success or not data then return false end
+    local inv = data.Inventory or {}
+    local invLevel = data.InventoryLevel
+    local carryLevel = data.CarryLevel
+    
+    local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
+    local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
+    local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
+    local invCount = RepLibrary:GetLengthOfInventory(inv)
 
-local currentTargetsInInv = 0
-for _, item in pairs(inv) do
-if item.itemId == TARGET_ITEM_ID then
-currentTargetsInInv = currentTargetsInInv + 1
-end
-end
-
-print("📊 Session stats - Found:", totalTargetsFound, "| Obtained:", totalTargetsObtained, "| In inventory:", currentTargetsInInv)
-
-return invCount >= invSpace and carrySpace <= 0
-
-end
-
-local function clickButton(btn)
-if not btn then return end
-pcall(function()
-btn:Activate()
-if getconnections then
-for _, connection in pairs(getconnections(btn.MouseButton1Click)) do
-pcall(function() connection:Function() end)
-end
-end
-end)
-end
-
-local function scanCurrentGarageForTarget()
-if not currentGarage then return false end
-
-local itemsFolder = currentGarage:FindFirstChild("Items")
-if not itemsFolder then return false end
-
-taskWait(0.5)
-
-local startTime = tick()
-while tick() - startTime < SCAN_DURATION do
-for _, itemInstance in pairs(itemsFolder:GetChildren()) do
-if itemInstance.Name == TARGET_ITEM_ID then
-print("🎯 Target found in garage:", currentGarage.Name)
-return true
-end
-end
-taskWait(0.2)
-end
-
-return false
-
+    return invCount >= invSpace and carrySpace <= 0
 end
 
 local function tryClick(obj)
-    if obj:IsA("TextButton") or obj:IsA("ImageButton") then
-        print("Auto clicking:", obj:GetFullName())
-
+    if obj and (obj:IsA("TextButton") or obj:IsA("ImageButton")) then
+        print("Clicking:", obj.Name)
         pcall(function()
             obj:Activate()
         end)
@@ -132,7 +77,7 @@ local function tryClick(obj)
         if getconnections then
             for _, v in pairs(getconnections(obj.MouseButton1Click)) do
                 pcall(function()
-                    v:Fire()
+                    v:Function()
                 end)
             end
         end
@@ -149,182 +94,109 @@ local function checkForButton()
     end
 end
 
-spawn(function()
-while not halted do
-taskWait(60)
-local runtime = math.floor((tick() - sessionStartTime) / 60)
-print("⏱️ Runtime:", runtime, "minutes")
-print("📊 Targets found:", totalTargetsFound, "| Obtained:", totalTargetsObtained)
-if totalTargetsFound > 0 then
-local successRate = (totalTargetsObtained / totalTargetsFound) * 100
-print("📊 Success rate: " .. string.format("%.1f", successRate) .. "%")
-end
-end
-end)
-
-while not halted do
-if storageFull() then
-print("❌ Storage completely full. Script halted.")
-print("📊 FINAL STATS - Runtime:", math.floor((tick() - sessionStartTime) / 60), "minutes")
-print("📊 Targets found:", totalTargetsFound, "| Obtained:", totalTargetsObtained)
-if totalTargetsFound > 0 then
-local successRate = (totalTargetsObtained / totalTargetsFound) * 100
-print("📊 Success rate: " .. string.format("%.1f", successRate) .. "%")
-end
-halted = true
-break
-end
-
-print("➡ Entering auction...")
-pcall(function() EnterQueue:InvokeServer("51") end)
-
-local auctionStartTime = tick()
-auctionEnded = false
-
-repeat
-taskWait(0.1)
-until inAuction or tick() - auctionStartTime > 10
-
-if not inAuction then
-continue
-end
-
-obtainedTarget = false
-garagesSkipped = 0
-local targetFoundInThisAuction = false
-
-while inAuction and not auctionEnded do
-if scanCurrentGarageForTarget() then
-targetFoundInThisAuction = true
-print("💵 Bidding in target garage")
-
-local bidStartTime = tick()
-while not obtainedTarget and inAuction and currentGarage and not auctionEnded do
-if currentNextBid and currentBidder ~= LocalPlayer then
-pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
-end
-if tick() - bidStartTime > 60 then break end
-taskWait(BID_CHECK_INTERVAL)
-end
-else
-garagesSkipped = garagesSkipped + 1
-print("⏭ Skipping garage", garagesSkipped.."/"..MAX_GARAGES)
-
-if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
-pcall(function() SkipCountdown:InvokeServer() end)
-taskWait(0.1)
-pcall(function() Skip:InvokeServer() end)
-lastSkipTime = tick()
-end
-taskWait(1)
-
-end
-taskWait(0.5)
-
-end
-
-taskWait(3)
-
-if targetFoundInThisAuction then
-local player = Players.LocalPlayer
-local gui = player.PlayerGui:WaitForChild("ItemsWon")
-
-local Items = require(game.ReplicatedStorage.Modules.Items)
-
-local TARGET_ID = 6
-local targetData = Items[TARGET_ID] or Items[tostring(TARGET_ID)]
-
-if targetData then
-local clickedCount = 0
-
-local function scan()
-    local frame = gui:WaitForChild("ItemsFrame"):WaitForChild("Frame")
+local function clickConfirmAndSell()
+    task.wait(1)
     
-    for _, item in ipairs(frame:GetChildren()) do
-        if item:IsA("ImageButton") and item:FindFirstChild("Price") and item:FindFirstChild("Rarity") then
-            
-            local price = tonumber(item.Price.Text:match("%d+"))
-            local rarity = item.Rarity.TextLabel.Text
-            
-            if price == targetData.Price
-            and rarity == targetData.Rarity
-            and targetData.SafeId then
-                
-                tryClick(item)
-                clickedCount = clickedCount + 1
-                totalTargetsObtained = totalTargetsObtained + 1
-                task.wait(0.15)
-            end
-        end
+    -- Find ItemsWon GUI
+    local itemsWon = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon")
+    if not itemsWon then return end
+    
+    -- Click Confirm Button
+    local confirmButton = itemsWon:FindFirstChild("ItemsFrame"):FindFirstChild("ConfirmButton", true)
+    if confirmButton and confirmButton.Visible then
+        tryClick(confirmButton)
+        print("✅ Clicked Confirm")
+    end
+    
+    task.wait(0.5)
+    
+    -- Click Sell All Button
+    local sellButton = itemsWon:FindFirstChild("SellItems"):FindFirstChild("Frame"):FindFirstChild("Normal"):FindFirstChild("Button", true)
+    if sellButton and sellButton.Visible then
+        tryClick(sellButton)
+        print("✅ Clicked Sell All")
     end
 end
 
-task.wait(0.5)
-scan()
+-- Main loop
+while not halted do
+    if storageFull() then
+        print("❌ Storage completely full. Script halted.")
+        halted = true
+        break
+    end
 
-if clickedCount <= 0 then
-    local done = false
-    local conn
-    conn = gui.DescendantAdded:Connect(function()
-        task.wait(0.2)
-        scan()
-        if clickedCount > 0 then
-            done = true
-            conn:Disconnect()
+    print("➡ Entering auction queue...")
+    pcall(function() EnterQueue:InvokeServer("51") end)
+
+    local auctionStartTime = tick()
+    auctionEnded = false
+
+    repeat
+        taskWait(0.1)
+    until inAuction or tick() - auctionStartTime > 10
+
+    if not inAuction then
+        continue
+    end
+
+    garagesSkipped = 0
+
+    -- Bid on all garages
+    while inAuction and not auctionEnded do
+        print("💰 Bidding in garage:", currentGarage and currentGarage.Name or "Unknown")
+        
+        -- Bid on current garage
+        local bidStartTime = tick()
+        while inAuction and currentGarage and not auctionEnded do
+            if currentNextBid and currentBidder ~= LocalPlayer then
+                pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
+                print("💵 Placed bid:", currentNextBid)
+            end
+            if tick() - bidStartTime > 60 then break end
+            taskWait(BID_CHECK_INTERVAL)
+        end
+        
+        -- Skip to next garage
+        garagesSkipped = garagesSkipped + 1
+        print("⏭ Moving to next garage", garagesSkipped.."/"..MAX_GARAGES)
+
+        if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
+            pcall(function() SkipCountdown:InvokeServer() end)
+            taskWait(0.1)
+            pcall(function() Skip:InvokeServer() end)
+            lastSkipTime = tick()
+        end
+        
+        taskWait(1)
+    end
+
+    -- Handle ItemsWon screen - NO ITEM SELECTION
+    print("📦 Processing ItemsWon screen (skipping item selection)")
+    
+    -- Setup automatic button clicking for any popup buttons
+    checkForButton()
+    
+    -- Monitor for new buttons
+    LocalPlayer.PlayerGui.DescendantAdded:Connect(function(obj)
+        if obj.Name == "Button" then
+            task.wait(0.2)
+            tryClick(obj)
         end
     end)
     
-    repeat task.wait() until done
-end
+    -- Click confirm and sell all
+    clickConfirmAndSell()
+    
+    -- Backup button checker
+    task.spawn(function()
+        local timeout = tick() + 8
+        while tick() < timeout do
+            task.wait(0.5)
+            checkForButton()
+            clickConfirmAndSell()
+        end
+    end)
 
-repeat task.wait() until clickedCount > 0
-
-print("Selected", clickedCount, targetData.Name)
-
-task.wait(0.5)
-
-local confirmButton = gui
-    :WaitForChild("ItemsFrame")
-    :WaitForChild("ConfirmButton")
-
-repeat task.wait() until confirmButton.Visible
-
-tryClick(confirmButton)
-
-print("Confirmed")
-
-task.wait(0.5)
-
-local sellButton = gui
-    :WaitForChild("SellItems")
-    :WaitForChild("Frame")
-    :WaitForChild("Normal")
-    :WaitForChild("Button")
-
-repeat task.wait() until sellButton.Visible
-
-tryClick(sellButton)
-
-print("Sold rest")
-end
-else
-checkForButton()
-LocalPlayer.PlayerGui.DescendantAdded:Connect(function(obj)
-    if obj.Name == "Button" then
-        task.wait()
-        tryClick(obj)
-    end
-end)
-
-task.spawn(function()
-    local timeout = tick() + 5
-    while tick() < timeout do
-        task.wait(0.5)
-        checkForButton()
-    end
-end)
-end
-
-task.wait(1)
-
+    task.wait(2)
 end
