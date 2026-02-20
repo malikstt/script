@@ -8,7 +8,7 @@ local ItemsModule = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChi
 
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 
--- YOUR ORIGINAL WEBHOOKS (UNCHANGED)
+-- YOUR ORIGINAL WEBHOOKS
 local NORMAL_WEBHOOK = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
 local SERIAL_WEBHOOK = "https://discord.com/api/webhooks/1473934078087528509/V3Bm-RyTV4mlClC5TKQn9gH6BK-ooqsssPw9P13_egipjWwjGoEOAn_7pbfA3TdAIL75"
 
@@ -23,11 +23,9 @@ local Events = ReplicatedStorage:WaitForChild("Events")
 local RNG = Events:WaitForChild("RNG")
 local Roll = RNG:WaitForChild("Roll")
 
--- Prevent duplicates
 local rolledIDs = {}
 local sentSerials = {}
 
--- Colors
 local RARITY_COLORS = {
     ["Common"] = 0x95a5a6,
     ["Uncommon"] = 0x3498db,
@@ -40,9 +38,7 @@ local RARITY_COLORS = {
     ["Insane"] = 0x8b4513
 }
 
--- Webhook sender
 local function postWebhook(url, data)
-
     request({
         Url = url,
         Method = "POST",
@@ -51,68 +47,80 @@ local function postWebhook(url, data)
         },
         Body = HttpService:JSONEncode(data)
     })
-
 end
 
--- GET SERIAL FROM INVENTORY (CORRECT SOURCE)
-local function getSerial(itemID)
-
+-- GET SERIAL FROM INVENTORY
+local function getInventory()
     local success, data = pcall(function()
         return DataEvent:InvokeServer()
     end)
 
-    if not success or not data then
-        return nil
+    if success and data then
+        return data.ValentinesInventory2026
     end
 
-    local inventory = data.ValentinesInventory2026
+    return nil
+end
 
-    if not inventory then
-        return nil
-    end
+-- SEND ALL EXISTING SERIALS AT START
+local function sendExistingSerials()
+
+    local inventory = getInventory()
+    if not inventory then return end
 
     for _, item in pairs(inventory) do
 
-        if tostring(item.Id) == tostring(itemID) then
+        if item.SerialId and type(item.SerialId) == "number" then
 
-            if item.SerialId and type(item.SerialId) == "number" then
-                return item.SerialId
+            local itemData = ItemsModule[tostring(item.Id)]
+            if itemData then
+
+                local key = LocalPlayer.Name .. "_" .. itemData.Name .. "_" .. item.SerialId
+
+                if not sentSerials[key] then
+
+                    sentSerials[key] = true
+
+                    postWebhook(SERIAL_WEBHOOK, {
+                        username = "Serial Logger",
+                        content =
+                            LocalPlayer.Name ..
+                            ":" ..
+                            itemData.Name ..
+                            ":" ..
+                            item.SerialId
+                    })
+
+                end
+
             end
 
         end
 
     end
 
-    return nil
-
 end
 
--- SEND NORMAL WEBHOOK
+-- SEND LIMITED ROLL
 local function sendNormal(playerName, itemData, serial)
 
-    local rarity = itemData.Rarity or "Unknown"
-
-    if rarity ~= "Limited" then
-        return
-    end
+    if itemData.Rarity ~= "Limited" then return end
 
     local itemName = itemData.Name or "Unknown"
     local price = itemData.Price or 0
 
     local hasSerial = serial and type(serial) == "number"
 
-    -- COLOR FIX
     local color
-
     if hasSerial then
-        color = 0xf1c40f -- yellow
+        color = 0xf1c40f -- YELLOW
     else
-        color = RARITY_COLORS[rarity] or 0xffffff -- red
+        color = RARITY_COLORS["Limited"] -- RED
     end
 
     local description =
         "Item: " .. itemName ..
-        "\nRarity: " .. rarity ..
+        "\nRarity: Limited" ..
         "\nCost: $" .. price
 
     if hasSerial then
@@ -120,24 +128,17 @@ local function sendNormal(playerName, itemData, serial)
         "\nSerial: #" .. serial
     end
 
-    -- NORMAL WEBHOOK
+    -- FIRST WEBHOOK (embed)
     postWebhook(NORMAL_WEBHOOK, {
-
         username = "Item Notifier",
-
         embeds = {{
-
             title = playerName .. " Rolled Limited",
-
             description = description,
-
             color = color
-
         }}
-
     })
 
-    -- SERIAL WEBHOOK (CLEAN FORMAT)
+    -- SECOND WEBHOOK (serial only)
     if hasSerial then
 
         local key = playerName .. "_" .. itemName .. "_" .. serial
@@ -147,16 +148,13 @@ local function sendNormal(playerName, itemData, serial)
             sentSerials[key] = true
 
             postWebhook(SERIAL_WEBHOOK, {
-
                 username = "Serial Logger",
-
                 content =
                     playerName ..
                     ":" ..
                     itemName ..
                     ":" ..
                     serial
-
             })
 
         end
@@ -164,6 +162,9 @@ local function sendNormal(playerName, itemData, serial)
     end
 
 end
+
+-- SEND OWNED SERIALS IMMEDIATELY
+sendExistingSerials()
 
 -- ROLL LOOP
 task.spawn(function()
@@ -175,8 +176,6 @@ task.spawn(function()
         task.wait(4)
 
         rollCount += 1
-
-        print("[Roll #" .. rollCount .. "] Rolling...")
 
         local success, result = pcall(function()
             return Roll:InvokeServer()
@@ -195,41 +194,33 @@ task.spawn(function()
             if itemID then
 
                 local itemData = ItemsModule[itemID]
+                if not itemData then continue end
 
-                if itemData then
+                local inventory = getInventory()
+                local serial = nil
 
-                    -- GET SERIAL FROM INVENTORY
-                    local serial = getSerial(itemID)
-
-                    local uniqueKey
-
-                    if serial then
-                        uniqueKey = itemID .. "_" .. serial
-                    else
-                        uniqueKey = itemID
+                if inventory then
+                    for _, invItem in pairs(inventory) do
+                        if tostring(invItem.Id) == itemID then
+                            if invItem.SerialId and type(invItem.SerialId) == "number" then
+                                serial = invItem.SerialId
+                                break
+                            end
+                        end
                     end
+                end
 
-                    if not rolledIDs[uniqueKey] then
+                local uniqueKey = serial and (itemID .. "_" .. serial) or itemID
 
-                        rolledIDs[uniqueKey] = true
+                if not rolledIDs[uniqueKey] then
 
-                        print(
-                            "[Roll #" .. rollCount .. "] Got:",
-                            itemData.Name,
-                            serial and ("Serial #" .. serial) or "(No Serial)"
-                        )
+                    rolledIDs[uniqueKey] = true
 
-                        sendNormal(LocalPlayer.Name, itemData, serial)
-
-                    end
+                    sendNormal(LocalPlayer.Name, itemData, serial)
 
                 end
 
             end
-
-        else
-
-            print("[Roll #" .. rollCount .. "] Roll failed")
 
         end
 
