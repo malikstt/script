@@ -15,347 +15,231 @@ local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
 local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 
-local SellAllItemsRemote = Auctions:WaitForChild("SellAllItems")
-
 local TARGET_ITEM_ID = "2740"
-local SCAN_DURATION = 2
-local BID_CHECK_INTERVAL = 0.2
+local SKIP_COOLDOWN = 0.5
+local BID_CHECK_INTERVAL = 0.1
 
--- TRACKING TARGETS ACROSS SESSION
-local totalTargetsFound = 0
-local totalTargetsObtained = 0
-local sessionStartTime = tick()
-
-local inAuction = false
-local obtainedTarget = false
-local auctionEnded = false
-local halted = false
-local currentNextBid
-local currentBidder
 local currentGarage = nil
-local garagesSkipped = 0
-local MAX_GARAGES = 3
-
+local currentGarageId = nil
+local garageHasTarget = false
+local inAuction = false
+local auctionEnded = false
+local currentNextBid = nil
+local currentBidder = nil
 local lastSkipTime = 0
-local SKIP_COOLDOWN = 1
 
--- Get target name for display
 local targetItemName = ItemsModule[TARGET_ITEM_ID] and ItemsModule[TARGET_ITEM_ID].Name or "Valentine"
-print("🔍 Targeting:", targetItemName, "ID:", TARGET_ITEM_ID)
-print("📊 Session started - tracking targets...")
 
-UpdateCurrentBid.OnClientEvent:Connect(function(data)
-	if data then
-		currentNextBid = data.nextBid
-		currentBidder = data.player
+print("🔍 Targeting:", targetItemName)
+
+--------------------------------------------------
+-- STORAGE CHECK
+--------------------------------------------------
+
+local function storageFull()
+
+	local success, data = pcall(function()
+		return DataEvent:InvokeServer()
+	end)
+
+	if not success or not data then
+		return false
 	end
-end)
+
+	local inv = data.Inventory or {}
+
+	local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, data.CarryLevel)
+	local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, data.InventoryLevel)
+	local invCount = RepLibrary:GetLengthOfInventory(inv)
+
+	return invCount >= invSpace and carrySpace <= 0
+
+end
+
+--------------------------------------------------
+-- GARAGE SCAN (INSTANT)
+--------------------------------------------------
+
+local function checkGarageForTarget(garage)
+
+	if not garage then return false end
+
+	local itemsFolder = garage:FindFirstChild("Items")
+
+	if not itemsFolder then return false end
+
+	for _, item in pairs(itemsFolder:GetChildren()) do
+
+		if item.Name == TARGET_ITEM_ID then
+			return true
+		end
+
+	end
+
+	return false
+
+end
+
+--------------------------------------------------
+-- GARAGE CHANGE DETECTION
+--------------------------------------------------
+
+local function onGarageEntered(garage)
+
+	currentGarage = garage
+	currentGarageId = garage:GetDebugId()
+
+	garageHasTarget = checkGarageForTarget(garage)
+
+	if garageHasTarget then
+		print("🎯 Target garage:", garage.Name)
+	else
+		print("❌ No target garage:", garage.Name)
+	end
+
+end
+
+--------------------------------------------------
+-- AUCTION STATE TRACKING
+--------------------------------------------------
 
 AuctionsFolder.ChildAdded:Connect(function(garage)
+
 	inAuction = true
 	auctionEnded = false
-	currentGarage = garage
-	garagesSkipped = 0
-	print("🏁 Entered garage:", garage.Name)
+
+	onGarageEntered(garage)
+
 end)
 
 AuctionsFolder.ChildRemoved:Connect(function(garage)
-	if #AuctionsFolder:GetChildren() == 0 then
-		inAuction = false
+
+	if garage == currentGarage then
+
 		currentGarage = nil
-		print("🏁 Left auction")
+		currentGarageId = nil
+		garageHasTarget = false
+
 	end
-end)
 
-local function storageFull()
-	local success, data = pcall(function() return DataEvent:InvokeServer() end)
-	if not success or not data then return false end
-	local inv = data.Inventory or {}
-	local invLevel = data.InventoryLevel
-	local carryLevel = data.CarryLevel
-	local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
-	local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
-	local invCount = RepLibrary:GetLengthOfInventory(inv)
-	
-	-- Count how many targets we already have in inventory
-	local currentTargetsInInv = 0
-	for _, item in pairs(inv) do
-		if item.itemId == TARGET_ITEM_ID then
-			currentTargetsInInv = currentTargetsInInv + 1
-		end
-	end
-	
-	print("📊 Session stats - Found:", totalTargetsFound, "| Obtained:", totalTargetsObtained, "| In inventory:", currentTargetsInInv)
-	
-	return invCount >= invSpace and carrySpace <= 0
-end
+	if #AuctionsFolder:GetChildren() == 0 then
 
-local function clickButton(btn)
-	if not btn then return end
-	pcall(function()
-		btn:Activate()
-		if getconnections then
-			for _, connection in pairs(getconnections(btn.MouseButton1Click)) do
-				pcall(function() connection:Function() end)
-			end
-		end
-	end)
-end
-
-local function handleAuctionEnd()
-	coroutine.wrap(function()
-		local timeout = 30
-		local start = tick()
-		local handled = false
-		
-		while not handled and tick() - start < timeout do
-			local gui = LocalPlayer:FindFirstChild("PlayerGui") and 
-					   LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
-			
-			if gui then
-				-- Check for NoItems GUI (won nothing)
-				local noItems = gui:FindFirstChild("NoItems", true)
-				if noItems and noItems.Visible then
-					print("📦 No items won - closing")
-					local okButton = noItems:FindFirstChild("Button", true)
-					if okButton then
-						clickButton(okButton)
-					else
-						gui:Destroy()
-					end
-					handled = true
-					auctionEnded = true
-					break
-				end
-				
-				-- Check for ItemsFrame (won items)
-				local itemsFrame = gui:FindFirstChild("ItemsFrame", true)
-				if itemsFrame and itemsFrame.Visible then
-					print("🎁 Items won GUI detected")
-					
-					-- Get current inventory data for space checks
-					local data = DataEvent:InvokeServer()
-					local inventory = data.Inventory or {}
-					local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, data.CarryLevel)
-					local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, data.InventoryLevel)
-					local invCount = RepLibrary:GetLengthOfInventory(inventory)
-					
-					-- First, count how many target items we won in THIS auction
-					local targetItemsInThisAuction = 0
-					local frame = itemsFrame:FindFirstChild("Frame")
-					
-					if frame then
-						-- Count target items in this win screen
-						for _, child in pairs(frame:GetChildren()) do
-							if child:IsA("ImageButton") then
-								local viewport = child:FindFirstChild("ViewportFrame")
-								if viewport then
-									local model = viewport:FindFirstChildWhichIsA("Model")
-									if model and model.Name == targetItemName then
-										targetItemsInThisAuction = targetItemsInThisAuction + 1
-									end
-								end
-							end
-						end
-						
-						-- Update total targets found
-						if targetItemsInThisAuction > 0 then
-							totalTargetsFound = totalTargetsFound + targetItemsInThisAuction
-							print("🎯 Found", targetItemsInThisAuction, "target(s) in this auction")
-							print("📊 Total targets found so far:", totalTargetsFound)
-						end
-						
-						-- Calculate available space
-						local availableCarrySpace = carrySpace
-						local availableInvSpace = invSpace - invCount
-						local canTake = math.min(availableCarrySpace, availableInvSpace)
-						
-						print("📊 Carry space:", carrySpace, "| Available slots:", canTake)
-						print("📊 Targets in this win:", targetItemsInThisAuction)
-						
-						-- Select as many target items as we have space for
-						local selectedCount = 0
-						for _, child in pairs(frame:GetChildren()) do
-							if child:IsA("ImageButton") and selectedCount < canTake then
-								local viewport = child:FindFirstChild("ViewportFrame")
-								if viewport then
-									local model = viewport:FindFirstChildWhichIsA("Model")
-									if model and model.Name == targetItemName then
-										print("✅ Selecting target item", selectedCount + 1)
-										clickButton(child)
-										selectedCount = selectedCount + 1
-										obtainedTarget = true
-										taskWait(0.1)
-									end
-								end
-							end
-						end
-						
-						if selectedCount > 0 then
-							totalTargetsObtained = totalTargetsObtained + selectedCount
-							print("🎉 Selected", selectedCount, "out of", targetItemsInThisAuction, "target items")
-							print("📊 Total targets obtained so far:", totalTargetsObtained)
-							
-							-- Calculate success rate
-							local successRate = (totalTargetsObtained / totalTargetsFound) * 100
-							print("📊 Success rate: " .. string.format("%.1f", successRate) .. "%")
-						else
-							print("⚠️ Could not select any target items (no space)")
-						end
-					end
-					
-					-- Click Confirm
-					taskWait(0.3)
-					local confirm = itemsFrame:FindFirstChild("ConfirmButton", true)
-					if confirm then
-						print("✅ Clicking Confirm")
-						clickButton(confirm)
-						handled = true
-						taskWait(1)
-						
-						-- Now sell other items (only if we have space and selected items)
-						if obtainedTarget then
-							taskWait(0.5)
-							local success, data = pcall(function() return DataEvent:InvokeServer() end)
-							if success and data then
-								local inv = data.Inventory or {}
-								local toSell = {}
-								
-								-- Find all target GUIDs (multiple possible)
-								local targetGuids = {}
-								for guid, item in pairs(inv) do
-									if item.itemId == TARGET_ITEM_ID then
-										table.insert(targetGuids, guid)
-									end
-								end
-								
-								-- Sell everything that's NOT a target
-								for guid, item in pairs(inv) do
-									local isTarget = false
-									for _, targetGuid in ipairs(targetGuids) do
-										if guid == targetGuid then
-											isTarget = true
-											break
-										end
-									end
-									
-									if not isTarget then
-										toSell[guid] = item
-									end
-								end
-								
-								if next(toSell) then
-									print("💰 Selling", #toSell, "non-target items")
-									pcall(function() SellAllItemsRemote:FireServer(toSell) end)
-								else
-									print("✨ No non-target items to sell")
-								end
-							end
-						end
-					end
-				end
-			end
-			taskWait(0.3)
-		end
-		
+		inAuction = false
 		auctionEnded = true
-	end)()
-end
 
-local function scanCurrentGarageForTarget()
-	if not currentGarage then return false end
-	
-	local itemsFolder = currentGarage:FindFirstChild("Items")
-	if not itemsFolder then return false end
-	
-	taskWait(0.5)
-	
-	local startTime = tick()
-	while tick() - startTime < SCAN_DURATION do
-		for _, itemInstance in pairs(itemsFolder:GetChildren()) do
-			if itemInstance.Name == TARGET_ITEM_ID then
-				print("🎯 Target found in garage:", currentGarage.Name)
-				return true
-			end
-		end
-		taskWait(0.2)
 	end
-	
-	return false
-end
 
--- Print session stats periodically
-spawn(function()
-	while not halted do
-		taskWait(60) -- Every minute
-		local runtime = math.floor((tick() - sessionStartTime) / 60)
-		print("⏱️ Runtime:", runtime, "minutes")
-		print("📊 Targets found:", totalTargetsFound, "| Obtained:", totalTargetsObtained)
-		if totalTargetsFound > 0 then
-			local successRate = (totalTargetsObtained / totalTargetsFound) * 100
-			print("📊 Success rate: " .. string.format("%.1f", successRate) .. "%")
-		end
-	end
 end)
 
--- MAIN LOOP
-while not halted do
+--------------------------------------------------
+-- BID UPDATE
+--------------------------------------------------
+
+UpdateCurrentBid.OnClientEvent:Connect(function(data)
+
+	if not data then return end
+
+	currentNextBid = data.nextBid
+	currentBidder = data.player
+
+end)
+
+--------------------------------------------------
+-- MAIN AUCTION LOGIC
+--------------------------------------------------
+
+local function runAuction()
+
 	if storageFull() then
-		print("❌ Storage completely full. Script halted.")
-		print("📊 FINAL STATS - Runtime:", math.floor((tick() - sessionStartTime) / 60), "minutes")
-		print("📊 Targets found:", totalTargetsFound, "| Obtained:", totalTargetsObtained)
-		if totalTargetsFound > 0 then
-			local successRate = (totalTargetsObtained / totalTargetsFound) * 100
-			print("📊 Success rate: " .. string.format("%.1f", successRate) .. "%")
-		end
-		halted = true
-		break
+		print("❌ Storage full")
+		return
 	end
 
-	print("➡ Entering auction...")
-	pcall(function() EnterQueue:InvokeServer("1") end)
-	
-	local auctionStartTime = tick()
-	auctionEnded = false
-	
-	repeat 
-		taskWait(0.1)
-	until inAuction or tick() - auctionStartTime > 10
-	
+	-- Only enter queue if NOT already in auction
 	if not inAuction then
-		continue
+
+		print("➡ Entering auction queue")
+
+		pcall(function()
+			EnterQueue:InvokeServer("1")
+		end)
+
 	end
-	
-	obtainedTarget = false
-	garagesSkipped = 0
-	
+
+	local timeout = tick()
+
+	while not inAuction and tick() - timeout < 10 do
+		taskWait(0.05)
+	end
+
+	if not inAuction then
+		print("❌ Failed to enter auction")
+		return
+	end
+
+	print("✅ Auction active")
+
+	local lastGarageId = nil
+
 	while inAuction and not auctionEnded do
-		if scanCurrentGarageForTarget() then
-			print("💵 Bidding in target garage")
-			
-			local bidStartTime = tick()
-			while not obtainedTarget and inAuction and currentGarage and not auctionEnded do
-				if currentNextBid and currentBidder ~= LocalPlayer then
-					pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
+
+		-- Detect garage change instantly
+		if currentGarageId ~= lastGarageId then
+
+			lastGarageId = currentGarageId
+
+			if not garageHasTarget then
+
+				if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
+
+					print("⏭ Instant skip")
+
+					pcall(function()
+						SkipCountdown:InvokeServer()
+					end)
+
+					taskWait(0.05)
+
+					pcall(function()
+						Skip:InvokeServer()
+					end)
+
+					lastSkipTime = tick()
+
 				end
-				if tick() - bidStartTime > 60 then break end
-				taskWait(BID_CHECK_INTERVAL)
+
 			end
-		else
-			garagesSkipped = garagesSkipped + 1
-			print("⏭ Skipping garage", garagesSkipped.."/"..MAX_GARAGES)
-			
-			if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
-				pcall(function() SkipCountdown:InvokeServer() end)
-				taskWait(0.1)
-				pcall(function() Skip:InvokeServer() end)
-				lastSkipTime = tick()
-			end
-			taskWait(1)
+
 		end
-		taskWait(0.5)
+
+		-- Only bid if CURRENT garage has target
+		if garageHasTarget and currentGarage then
+
+			if currentNextBid and currentBidder ~= LocalPlayer then
+
+				pcall(function()
+
+					-- Double check garage didn't change
+					if currentGarageId == lastGarageId then
+						PlaceBid:InvokeServer(currentNextBid)
+					end
+
+				end)
+
+			end
+
+		end
+
+		taskWait(BID_CHECK_INTERVAL)
+
 	end
-	
-	handleAuctionEnd()
-	taskWait(3)
+
+	print("✅ Auction ended")
+
 end
+
+--------------------------------------------------
+-- RUN ONCE
+--------------------------------------------------
+
+runAuction()
