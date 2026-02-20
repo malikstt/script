@@ -6,13 +6,11 @@ local VirtualUser = game:GetService("VirtualUser")
 local LocalPlayer = Players.LocalPlayer
 local ItemsModule = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Items"))
 
-local GetAssets = ReplicatedStorage:WaitForChild("Events")
-:WaitForChild("Misc")
-:WaitForChild("GetAssets")
+local GetAssets = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Misc"):WaitForChild("GetAssets")
+local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 
-local HIGH_VALUE_THRESHOLD = 1500
-local HIGH_VALUE_WEBHOOK = "https://discord.com/api/webhooks/1473934078087528509/V3Bm-RyTV4mlClC5TKQn9gH6BK-ooqsssPw9P13_egipjWwjGoEOAn_7pbfA3TdAIL75"
 local NORMAL_WEBHOOK = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
+local SERIAL_WEBHOOK = "https://discord.com/api/webhooks/1473934078087528509/V3Bm-RyTV4mlClC5TKQn9gH6BK-ooqsssPw9P13_egipjWwjGoEOAn_7pbfA3TdAIL75"
 
 LocalPlayer.Idled:Connect(function()
     VirtualUser:CaptureController()
@@ -25,7 +23,6 @@ local RNG = Events:WaitForChild("RNG")
 local Roll = RNG:WaitForChild("Roll")
 
 local rolledIDs = {}
-local highValueItems = {} -- Store high value LIMITED items for summary
 
 local RARITY_COLORS = {
     ["Common"] = 0x95a5a6,
@@ -48,6 +45,65 @@ local function postWebhook(url, data)
     })
 end
 
+-- Check existing Valentine's inventory for serial items (runs once at start)
+local function checkExistingSerials()
+    local success, data = pcall(function() 
+        return DataEvent:InvokeServer() 
+    end)
+    
+    if not success or not data then
+        print("Failed to get data for serial check")
+        return
+    end
+    
+    local inventory = data.ValentinesInventory2026
+    if not inventory then
+        print("No Valentine's inventory found")
+        return
+    end
+    
+    local serialItems = {}
+    
+    for slot, itemData in pairs(inventory) do
+        local itemId = itemData.Id
+        local itemInfo = ItemsModule[itemId]
+        local serial = itemData.SerialId or itemData.Serials
+        
+        if itemInfo and serial and type(serial) == "number" then
+            table.insert(serialItems, {
+                name = itemInfo.Name or "Unknown",
+                serial = serial,
+                rarity = itemInfo.Rarity or "Unknown"
+            })
+        end
+    end
+    
+    if #serialItems > 0 then
+        local message = {
+            "**Serial Items Found in " .. LocalPlayer.Name .. "'s Valentine's Inventory**",
+            ""
+        }
+        
+        for _, item in ipairs(serialItems) do
+            table.insert(message, "• **" .. item.name .. "** - Serial #" .. item.serial .. " (" .. item.rarity .. ")")
+        end
+        
+        table.insert(message, "")
+        table.insert(message, "Total: " .. #serialItems .. " items with serials")
+        
+        postWebhook(SERIAL_WEBHOOK, {
+            content = table.concat(message, "\n"),
+            username = "Serial Items Finder"
+        })
+        print("Found " .. #serialItems .. " existing serial items!")
+    else
+        print("No existing serial items found")
+    end
+end
+
+-- Run existing serial check
+checkExistingSerials()
+
 local function sendNormal(username, itemData, serial)
     local rarity = itemData.Rarity or "Unknown"
     local price = itemData.Price or itemData.Cost or itemData.Value or 0
@@ -57,14 +113,7 @@ local function sendNormal(username, itemData, serial)
         return
     end
     
-    -- Use bright gold color for 1500+ items, otherwise use rarity color
-    local color
-    if price >= HIGH_VALUE_THRESHOLD then
-        color = 0xFFD700 -- Bright gold for high value
-    else
-        color = RARITY_COLORS[rarity] or 0xffffff
-    end
-    
+    local color = RARITY_COLORS[rarity] or 0xffffff
     local title = username .. " Rolled a Limited Item!"
     local description =
         "Item: " .. (itemData.Name or "Unknown") ..
@@ -72,14 +121,9 @@ local function sendNormal(username, itemData, serial)
         "\nCost: $" .. tostring(price)
     
     -- Add serial to description if it exists
-    local hasSerial = serial and serial ~= "None" and serial ~= ""
+    local hasSerial = serial and type(serial) == "number"
     if hasSerial then
         description = description .. "\nSerial: #" .. tostring(serial)
-    end
-    
-    -- Add HIGH VALUE tag to title for 1500+ items
-    if price >= HIGH_VALUE_THRESHOLD then
-        title = "💰 " .. title .. " 💰"
     end
     
     local data = {
@@ -92,75 +136,18 @@ local function sendNormal(username, itemData, serial)
     }
     postWebhook(NORMAL_WEBHOOK, data)
     
-    -- If it has a serial, also send to high value webhook
+    -- If it has a serial, also send to serial webhook
     if hasSerial then
         local serialData = {
             username = "Serial Alert",
-            content = "**🔴 SERIAL LIMITED DETECTED!**\n" ..
+            content = "**🔴 NEW SERIAL LIMITED DETECTED!**\n" ..
                      "Player: " .. username .. "\n" ..
                      "Item: " .. (itemData.Name or "Unknown") .. "\n" ..
                      "Serial: #" .. tostring(serial) .. "\n" ..
                      "Value: $" .. price
         }
-        postWebhook(HIGH_VALUE_WEBHOOK, serialData)
+        postWebhook(SERIAL_WEBHOOK, serialData)
     end
-end
-
-local function sendHighValueSummary()
-    if #highValueItems == 0 then return end
-    
-    -- Build summary message (only LIMITED items that are 1500+)
-    local summary = "**HIGH VALUE LIMITED ITEMS SUMMARY (1500+)**\n\n"
-    for _, item in ipairs(highValueItems) do
-        summary = summary .. 
-            "• " .. item.name .. 
-            " ($" .. item.price .. ")" ..
-            (item.serial and " - Serial #" .. item.serial or "") ..
-            "\n"
-    end
-    
-    local data = {
-        username = "High Value Limited Summary",
-        embeds = {{
-            title = LocalPlayer.Name .. " - High Value Limited Items Collected",
-            description = summary,
-            color = 0xFFD700,
-            footer = {
-                text = "Total Limited: " .. #highValueItems .. " items"
-            }
-        }}
-    }
-    
-    postWebhook(HIGH_VALUE_WEBHOOK, data)
-    highValueItems = {}
-end
-
--- Check existing assets for high value LIMITED items
-local success, assets = pcall(function()
-    return GetAssets:InvokeServer()
-end)
-
-if success and assets then
-    for _, itemInfo in pairs(assets) do
-        local itemID = tostring(itemInfo.ID or itemInfo.Id or itemInfo.id)
-        local serial = itemInfo.SerialId or itemInfo.Serials or itemInfo.Serial or itemInfo.serial
-        local itemData = ItemsModule[itemID]
-        
-        if itemData then
-            local price = itemData.Price or itemData.Cost or itemData.Value or 0
-            local rarity = itemData.Rarity or "Unknown"
-            
-            if rarity == "Limited" and price >= HIGH_VALUE_THRESHOLD then
-                table.insert(highValueItems, {
-                    name = itemData.Name or "Unknown",
-                    price = price,
-                    serial = serial
-                })
-            end
-        end
-    end
-    
-    sendHighValueSummary()
 end
 
 -- Rolling loop
@@ -203,32 +190,12 @@ task.spawn(function()
                     
                     if not rolledIDs[uniqueKey] then
                         rolledIDs[uniqueKey] = true
-                        
-                        if rarity == "Limited" and price >= HIGH_VALUE_THRESHOLD then
-                            table.insert(highValueItems, {
-                                name = itemName,
-                                price = price,
-                                serial = serial
-                            })
-                            print("[HIGH VALUE LIMITED] Added to summary: " .. itemName)
-                        end
-                        
-                        -- Send to normal webhook for ALL Limited items
                         sendNormal(LocalPlayer.Name, itemData, serial)
                     end
                 end
             end
         else
             print("[Roll #" .. rollCount .. "] Failed to roll")
-        end
-    end
-end)
-
--- Send summary when player leaves
-LocalPlayer.AncestryChanged:Connect(function()
-    if not LocalPlayer.Parent then
-        if #highValueItems > 0 then
-            sendHighValueSummary()
         end
     end
 end)
