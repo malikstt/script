@@ -16,21 +16,13 @@ local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 
 local TARGET_ITEM_ID = "2740"
-local SKIP_COOLDOWN = 0.5
-local BID_CHECK_INTERVAL = 0.1
+local SKIP_COOLDOWN = 0.3
 
 local currentGarage = nil
-local currentGarageId = nil
 local garageHasTarget = false
 local inAuction = false
 local auctionEnded = false
-local currentNextBid = nil
-local currentBidder = nil
 local lastSkipTime = 0
-
-local targetItemName = ItemsModule[TARGET_ITEM_ID] and ItemsModule[TARGET_ITEM_ID].Name or "Valentine"
-
-print("🔍 Targeting:", targetItemName)
 
 --------------------------------------------------
 -- STORAGE CHECK
@@ -57,23 +49,18 @@ local function storageFull()
 end
 
 --------------------------------------------------
--- GARAGE SCAN (INSTANT)
+-- INSTANT GARAGE CHECK
 --------------------------------------------------
 
-local function checkGarageForTarget(garage)
-
-	if not garage then return false end
+local function garageContainsTarget(garage)
 
 	local itemsFolder = garage:FindFirstChild("Items")
-
 	if not itemsFolder then return false end
 
-	for _, item in pairs(itemsFolder:GetChildren()) do
-
+	for _, item in ipairs(itemsFolder:GetChildren()) do
 		if item.Name == TARGET_ITEM_ID then
 			return true
 		end
-
 	end
 
 	return false
@@ -81,165 +68,91 @@ local function checkGarageForTarget(garage)
 end
 
 --------------------------------------------------
--- GARAGE CHANGE DETECTION
---------------------------------------------------
-
-local function onGarageEntered(garage)
-
-	currentGarage = garage
-	currentGarageId = garage:GetDebugId()
-
-	garageHasTarget = checkGarageForTarget(garage)
-
-	if garageHasTarget then
-		print("🎯 Target garage:", garage.Name)
-	else
-		print("❌ No target garage:", garage.Name)
-	end
-
-end
-
---------------------------------------------------
--- AUCTION STATE TRACKING
+-- GARAGE ENTER
 --------------------------------------------------
 
 AuctionsFolder.ChildAdded:Connect(function(garage)
 
 	inAuction = true
 	auctionEnded = false
+	currentGarage = garage
+	garageHasTarget = garageContainsTarget(garage)
 
-	onGarageEntered(garage)
+	if not garageHasTarget then
 
-end)
+		if tick() - lastSkipTime > SKIP_COOLDOWN then
 
-AuctionsFolder.ChildRemoved:Connect(function(garage)
+			pcall(function()
+				SkipCountdown:InvokeServer()
+			end)
 
-	if garage == currentGarage then
+			taskWait(0.03)
 
-		currentGarage = nil
-		currentGarageId = nil
-		garageHasTarget = false
+			pcall(function()
+				Skip:InvokeServer()
+			end)
 
-	end
-
-	if #AuctionsFolder:GetChildren() == 0 then
-
-		inAuction = false
-		auctionEnded = true
+			lastSkipTime = tick()
+		end
 
 	end
 
 end)
 
 --------------------------------------------------
--- BID UPDATE
+-- GARAGE EXIT
+--------------------------------------------------
+
+AuctionsFolder.ChildRemoved:Connect(function()
+
+	if #AuctionsFolder:GetChildren() == 0 then
+		inAuction = false
+		auctionEnded = true
+	end
+
+	currentGarage = nil
+	garageHasTarget = false
+
+end)
+
+--------------------------------------------------
+-- INSTANT BID ON UPDATE
 --------------------------------------------------
 
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
 
 	if not data then return end
+	if not inAuction then return end
+	if not garageHasTarget then return end
+	if data.player == LocalPlayer then return end
 
-	currentNextBid = data.nextBid
-	currentBidder = data.player
+	pcall(function()
+		PlaceBid:InvokeServer(data.nextBid)
+	end)
 
 end)
 
 --------------------------------------------------
--- MAIN AUCTION LOGIC
+-- RUN ONCE
 --------------------------------------------------
 
 local function runAuction()
 
 	if storageFull() then
-		print("❌ Storage full")
 		return
 	end
 
-	-- Only enter queue if NOT already in auction
 	if not inAuction then
-
-		print("➡ Entering auction queue")
-
 		pcall(function()
 			EnterQueue:InvokeServer("1")
 		end)
-
 	end
 
-	local timeout = tick()
-
-	while not inAuction and tick() - timeout < 10 do
+	local start = tick()
+	while not inAuction and tick() - start < 8 do
 		taskWait(0.05)
 	end
 
-	if not inAuction then
-		print("❌ Failed to enter auction")
-		return
-	end
-
-	print("✅ Auction active")
-
-	local lastGarageId = nil
-
-	while inAuction and not auctionEnded do
-
-		-- Detect garage change instantly
-		if currentGarageId ~= lastGarageId then
-
-			lastGarageId = currentGarageId
-
-			if not garageHasTarget then
-
-				if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
-
-					print("⏭ Instant skip")
-
-					pcall(function()
-						SkipCountdown:InvokeServer()
-					end)
-
-					taskWait(0.05)
-
-					pcall(function()
-						Skip:InvokeServer()
-					end)
-
-					lastSkipTime = tick()
-
-				end
-
-			end
-
-		end
-
-		-- Only bid if CURRENT garage has target
-		if garageHasTarget and currentGarage then
-
-			if currentNextBid and currentBidder ~= LocalPlayer then
-
-				pcall(function()
-
-					-- Double check garage didn't change
-					if currentGarageId == lastGarageId then
-						PlaceBid:InvokeServer(currentNextBid)
-					end
-
-				end)
-
-			end
-
-		end
-
-		taskWait(BID_CHECK_INTERVAL)
-
-	end
-
-	print("✅ Auction ended")
-
 end
-
---------------------------------------------------
--- RUN ONCE
---------------------------------------------------
 
 runAuction()
