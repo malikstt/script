@@ -5,7 +5,6 @@ local taskWait = task.wait
 
 local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
 local ItemsModule = require(ReplicatedStorage.Modules.Items)
-local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
 
 local Auctions = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
 local EnterQueue = Auctions:WaitForChild("EnterQueue")
@@ -13,46 +12,60 @@ local Skip = Auctions:WaitForChild("Skip")
 local SkipCountdown = Auctions:WaitForChild("SkipCountdown")
 local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
 local PlaceBid = Auctions:WaitForChild("PlaceBid")
-local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 
 local TARGET_ITEM_ID = "2740"
-local SKIP_COOLDOWN = 0.3
 
-local currentGarage = nil
-local garageHasTarget = false
+local currentNextBid
+local currentBidder
+local currentGarage
+
 local inAuction = false
-local auctionEnded = false
+local garagesCompleted = 0
+local MAX_GARAGES = 3
+
 local lastSkipTime = 0
+local SKIP_COOLDOWN = 0.5
 
---------------------------------------------------
--- STORAGE CHECK
---------------------------------------------------
+local targetItemName = ItemsModule[TARGET_ITEM_ID] and ItemsModule[TARGET_ITEM_ID].Name or "Unknown"
 
-local function storageFull()
+print("🔍 Targeting:", targetItemName)
 
-	local success, data = pcall(function()
-		return DataEvent:InvokeServer()
-	end)
+----------------------------------------------------
+-- UPDATE BID INFO
+----------------------------------------------------
 
-	if not success or not data then
-		return false
+UpdateCurrentBid.OnClientEvent:Connect(function(data)
+	if data then
+		currentNextBid = data.nextBid
+		currentBidder = data.player
 	end
+end)
 
-	local inv = data.Inventory or {}
+----------------------------------------------------
+-- GARAGE EVENTS
+----------------------------------------------------
 
-	local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, data.CarryLevel)
-	local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, data.InventoryLevel)
-	local invCount = RepLibrary:GetLengthOfInventory(inv)
+AuctionsFolder.ChildAdded:Connect(function(garage)
+	currentGarage = garage
+	inAuction = true
+	print("🏁 Entered garage:", garage.Name)
+end)
 
-	return invCount >= invSpace and carrySpace <= 0
+AuctionsFolder.ChildRemoved:Connect(function()
+	if #AuctionsFolder:GetChildren() == 0 then
+		inAuction = false
+		currentGarage = nil
+	end
+end)
 
-end
+----------------------------------------------------
+-- CHECK TARGET
+----------------------------------------------------
 
---------------------------------------------------
--- INSTANT GARAGE CHECK
---------------------------------------------------
+local function garageHasTarget()
 
-local function garageContainsTarget(garage)
+	local garage = currentGarage
+	if not garage then return false end
 
 	local itemsFolder = garage:FindFirstChild("Items")
 	if not itemsFolder then return false end
@@ -64,95 +77,205 @@ local function garageContainsTarget(garage)
 	end
 
 	return false
-
 end
 
---------------------------------------------------
--- GARAGE ENTER
---------------------------------------------------
+----------------------------------------------------
+-- ITEMS WON HANDLER (YOUR SCRIPT)
+----------------------------------------------------
 
-AuctionsFolder.ChildAdded:Connect(function(garage)
+local function handleItemsWon()
 
-	inAuction = true
-	auctionEnded = false
-	currentGarage = garage
-	garageHasTarget = garageContainsTarget(garage)
+	local player = Players.LocalPlayer
+	local gui = player.PlayerGui:WaitForChild("ItemsWon")
 
-	if not garageHasTarget then
+	local Items = require(game.ReplicatedStorage.Modules.Items)
 
-		if tick() - lastSkipTime > SKIP_COOLDOWN then
+	local TARGET_ID = 2740
+	local targetData = Items[TARGET_ID] or Items[tostring(TARGET_ID)]
 
-			pcall(function()
-				SkipCountdown:InvokeServer()
-			end)
+	if not targetData then return end
 
-			taskWait(0.03)
+	local function click(btn)
 
-			pcall(function()
-				Skip:InvokeServer()
-			end)
-
-			lastSkipTime = tick()
+		if getconnections then
+			for _, c in ipairs(getconnections(btn.MouseButton1Click)) do
+				pcall(function()
+					c:Fire()
+				end)
+			end
+		else
+			btn:Activate()
 		end
 
 	end
 
-end)
+	local clickedCount = 0
 
---------------------------------------------------
--- GARAGE EXIT
---------------------------------------------------
+	local function scan()
 
-AuctionsFolder.ChildRemoved:Connect(function()
+		local frame = gui:WaitForChild("ItemsFrame"):WaitForChild("Frame")
 
-	if #AuctionsFolder:GetChildren() == 0 then
-		inAuction = false
-		auctionEnded = true
+		for _, item in ipairs(frame:GetChildren()) do
+
+			if item:IsA("ImageButton")
+			and item:FindFirstChild("Price")
+			and item:FindFirstChild("Rarity") then
+
+				local price = tonumber(item.Price.Text:match("%d+"))
+				local rarity = item.Rarity.TextLabel.Text
+
+				if price == targetData.Price
+				and rarity == targetData.Rarity
+				and targetData.SafeId then
+
+					click(item)
+					clickedCount += 1
+					taskWait(0.15)
+
+				end
+			end
+		end
 	end
 
-	currentGarage = nil
-	garageHasTarget = false
+	taskWait(0.5)
+	scan()
 
-end)
+	if clickedCount <= 0 then
 
---------------------------------------------------
--- INSTANT BID ON UPDATE
---------------------------------------------------
+		local done = false
+		local conn
 
-UpdateCurrentBid.OnClientEvent:Connect(function(data)
+		conn = gui.DescendantAdded:Connect(function()
 
-	if not data then return end
-	if not inAuction then return end
-	if not garageHasTarget then return end
-	if data.player == LocalPlayer then return end
+			taskWait(0.2)
+			scan()
 
-	pcall(function()
-		PlaceBid:InvokeServer(data.nextBid)
-	end)
+			if clickedCount > 0 then
+				done = true
+				conn:Disconnect()
+			end
 
-end)
+		end)
 
---------------------------------------------------
--- RUN ONCE
---------------------------------------------------
+		repeat taskWait() until done
+
+	end
+
+	repeat taskWait() until clickedCount > 0
+
+	print("Selected", clickedCount, targetData.Name)
+
+	taskWait(0.5)
+
+	local confirmButton =
+		gui.ItemsFrame.ConfirmButton
+
+	repeat taskWait() until confirmButton.Visible
+
+	click(confirmButton)
+
+	print("Confirmed")
+
+	taskWait(0.5)
+
+	local sellButton =
+		gui.SellItems.Frame.Normal.Button
+
+	repeat taskWait() until sellButton.Visible
+
+	click(sellButton)
+
+	print("Sold rest")
+
+end
+
+----------------------------------------------------
+-- RUN AUCTION
+----------------------------------------------------
 
 local function runAuction()
 
-	if storageFull() then
-		return
+	print("➡ Entering auction")
+
+	pcall(function()
+		EnterQueue:InvokeServer("1")
+	end)
+
+	local timeout = tick() + 10
+
+	while not inAuction and tick() < timeout do
+		taskWait(0.1)
 	end
 
 	if not inAuction then
-		pcall(function()
-			EnterQueue:InvokeServer("1")
-		end)
+		print("Failed to enter auction")
+		return
 	end
 
-	local start = tick()
-	while not inAuction and tick() - start < 8 do
-		taskWait(0.05)
+	garagesCompleted = 0
+
+	while inAuction and garagesCompleted < MAX_GARAGES do
+
+		if garageHasTarget() then
+
+			print("🎯 Target found → bidding")
+
+			local bidding = true
+
+			while bidding and inAuction do
+
+				if not garageHasTarget() then
+					break
+				end
+
+				if currentNextBid and currentBidder ~= LocalPlayer then
+					pcall(function()
+						PlaceBid:InvokeServer(currentNextBid)
+					end)
+				end
+
+				taskWait(0.15)
+
+			end
+
+		else
+
+			print("⏭ Skipping garage")
+
+			if tick() - lastSkipTime > SKIP_COOLDOWN then
+
+				pcall(function()
+					SkipCountdown:InvokeServer()
+				end)
+
+				taskWait(0.05)
+
+				pcall(function()
+					Skip:InvokeServer()
+				end)
+
+				lastSkipTime = tick()
+
+			end
+
+		end
+
+		garagesCompleted += 1
+
+		taskWait(0.3)
+
 	end
+
+	print("🏁 All garages done → waiting for ItemsWon")
+
+	handleItemsWon()
+
+	print("✅ Auction complete")
 
 end
+
+----------------------------------------------------
+-- START
+----------------------------------------------------
 
 runAuction()
