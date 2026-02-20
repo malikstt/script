@@ -6,12 +6,13 @@ local VirtualUser = game:GetService("VirtualUser")
 local LocalPlayer = Players.LocalPlayer
 local ItemsModule = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Items"))
 
-local GetAssets = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Misc"):WaitForChild("GetAssets")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 
+-- YOUR ORIGINAL WEBHOOKS (UNCHANGED)
 local NORMAL_WEBHOOK = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
 local SERIAL_WEBHOOK = "https://discord.com/api/webhooks/1473934078087528509/V3Bm-RyTV4mlClC5TKQn9gH6BK-ooqsssPw9P13_egipjWwjGoEOAn_7pbfA3TdAIL75"
 
+-- Anti idle
 LocalPlayer.Idled:Connect(function()
     VirtualUser:CaptureController()
     task.wait(0.1)
@@ -22,8 +23,11 @@ local Events = ReplicatedStorage:WaitForChild("Events")
 local RNG = Events:WaitForChild("RNG")
 local Roll = RNG:WaitForChild("Roll")
 
+-- Prevent duplicates
 local rolledIDs = {}
+local sentSerials = {}
 
+-- Colors
 local RARITY_COLORS = {
     ["Common"] = 0x95a5a6,
     ["Uncommon"] = 0x3498db,
@@ -36,166 +40,199 @@ local RARITY_COLORS = {
     ["Insane"] = 0x8b4513
 }
 
+-- Webhook sender
 local function postWebhook(url, data)
+
     request({
         Url = url,
         Method = "POST",
-        Headers = {["Content-Type"] = "application/json"},
+        Headers = {
+            ["Content-Type"] = "application/json"
+        },
         Body = HttpService:JSONEncode(data)
     })
+
 end
 
--- Check existing Valentine's inventory for serial items (runs once at start)
-local function checkExistingSerials()
-    local success, data = pcall(function() 
-        return DataEvent:InvokeServer() 
+-- GET SERIAL FROM INVENTORY (CORRECT SOURCE)
+local function getSerial(itemID)
+
+    local success, data = pcall(function()
+        return DataEvent:InvokeServer()
     end)
-    
+
     if not success or not data then
-        print("Failed to get data for serial check")
-        return
+        return nil
     end
-    
+
     local inventory = data.ValentinesInventory2026
+
     if not inventory then
-        print("No Valentine's inventory found")
-        return
+        return nil
     end
-    
-    local serialItems = {}
-    
-    for slot, itemData in pairs(inventory) do
-        local itemId = itemData.Id
-        local itemInfo = ItemsModule[itemId]
-        local serial = itemData.SerialId or itemData.Serials
-        
-        if itemInfo and serial and type(serial) == "number" then
-            table.insert(serialItems, {
-                name = itemInfo.Name or "Unknown",
-                serial = serial,
-                rarity = itemInfo.Rarity or "Unknown"
-            })
+
+    for _, item in pairs(inventory) do
+
+        if tostring(item.Id) == tostring(itemID) then
+
+            if item.SerialId and type(item.SerialId) == "number" then
+                return item.SerialId
+            end
+
         end
+
     end
-    
-    if #serialItems > 0 then
-        local message = {
-            "**Serial Items Found in " .. LocalPlayer.Name .. "'s Valentine's Inventory**",
-            ""
-        }
-        
-        for _, item in ipairs(serialItems) do
-            table.insert(message, "• **" .. item.name .. "** - Serial #" .. item.serial .. " (" .. item.rarity .. ")")
-        end
-        
-        table.insert(message, "")
-        table.insert(message, "Total: " .. #serialItems .. " items with serials")
-        
-        postWebhook(SERIAL_WEBHOOK, {
-            content = table.concat(message, "\n"),
-            username = "Serial Items Finder"
-        })
-        print("Found " .. #serialItems .. " existing serial items!")
-    else
-        print("No existing serial items found")
-    end
+
+    return nil
+
 end
 
--- Run existing serial check
-checkExistingSerials()
+-- SEND NORMAL WEBHOOK
+local function sendNormal(playerName, itemData, serial)
 
-local function sendNormal(username, itemData, serial)
     local rarity = itemData.Rarity or "Unknown"
-    local price = itemData.Price or itemData.Cost or itemData.Value or 0
-    
-    -- Only send notifications for Limited items
+
     if rarity ~= "Limited" then
         return
     end
-    
-    local color = RARITY_COLORS[rarity] or 0xffffff
-    local title = username .. " Rolled a Limited Item!"
-    local description =
-        "Item: " .. (itemData.Name or "Unknown") ..
-        "\nRarity: " .. rarity ..
-        "\nCost: $" .. tostring(price)
-    
-    -- Add serial to description if it exists
+
+    local itemName = itemData.Name or "Unknown"
+    local price = itemData.Price or 0
+
     local hasSerial = serial and type(serial) == "number"
+
+    -- COLOR FIX
+    local color
+
     if hasSerial then
-        description = description .. "\nSerial: #" .. tostring(serial)
+        color = 0xf1c40f -- yellow
+    else
+        color = RARITY_COLORS[rarity] or 0xffffff -- red
     end
-    
-    local data = {
+
+    local description =
+        "Item: " .. itemName ..
+        "\nRarity: " .. rarity ..
+        "\nCost: $" .. price
+
+    if hasSerial then
+        description = description ..
+        "\nSerial: #" .. serial
+    end
+
+    -- NORMAL WEBHOOK
+    postWebhook(NORMAL_WEBHOOK, {
+
         username = "Item Notifier",
+
         embeds = {{
-            title = title,
+
+            title = playerName .. " Rolled Limited",
+
             description = description,
+
             color = color
+
         }}
-    }
-    postWebhook(NORMAL_WEBHOOK, data)
-    
-    -- If it has a serial, also send to serial webhook
+
+    })
+
+    -- SERIAL WEBHOOK (CLEAN FORMAT)
     if hasSerial then
-        local serialData = {
-            username = "Serial Alert",
-            content = "**🔴 NEW SERIAL LIMITED DETECTED!**\n" ..
-                     "Player: " .. username .. "\n" ..
-                     "Item: " .. (itemData.Name or "Unknown") .. "\n" ..
-                     "Serial: #" .. tostring(serial) .. "\n" ..
-                     "Value: $" .. price
-        }
-        postWebhook(SERIAL_WEBHOOK, serialData)
+
+        local key = playerName .. "_" .. itemName .. "_" .. serial
+
+        if not sentSerials[key] then
+
+            sentSerials[key] = true
+
+            postWebhook(SERIAL_WEBHOOK, {
+
+                username = "Serial Logger",
+
+                content =
+                    playerName ..
+                    ":" ..
+                    itemName ..
+                    ":" ..
+                    serial
+
+            })
+
+        end
+
     end
+
 end
 
--- Rolling loop
+-- ROLL LOOP
 task.spawn(function()
+
     local rollCount = 0
+
     while true do
+
         task.wait(4)
-        
-        rollCount = rollCount + 1
-        print("[Roll #" .. rollCount .. "] Attempting to roll...")
-        
-        local successRoll, result = pcall(function()
+
+        rollCount += 1
+
+        print("[Roll #" .. rollCount .. "] Rolling...")
+
+        local success, result = pcall(function()
             return Roll:InvokeServer()
         end)
-        
-        if successRoll and result then
+
+        if success and result then
+
             local itemID
-            local serial
-            
+
             if type(result) == "table" then
                 itemID = tostring(result.ID or result.Id or result.id)
-                serial = result.SerialId or result.Serials or result.Serial or result.serial
             else
                 itemID = tostring(result)
             end
-            
+
             if itemID then
+
                 local itemData = ItemsModule[itemID]
+
                 if itemData then
-                    local price = itemData.Price or itemData.Cost or itemData.Value or 0
-                    local rarity = itemData.Rarity or "Unknown"
-                    local itemName = itemData.Name or "Unknown"
-                    
-                    print(string.format("[Roll #%d] Result: %s | Rarity: %s | Value: $%d %s", 
-                        rollCount, itemName, rarity, price,
-                        serial and "(Serial #" .. serial .. ")" or ""
-                    ))
-                    
-                    local uniqueKey = serial and (itemID .. "_" .. tostring(serial)) or itemID
-                    
-                    if not rolledIDs[uniqueKey] then
-                        rolledIDs[uniqueKey] = true
-                        sendNormal(LocalPlayer.Name, itemData, serial)
+
+                    -- GET SERIAL FROM INVENTORY
+                    local serial = getSerial(itemID)
+
+                    local uniqueKey
+
+                    if serial then
+                        uniqueKey = itemID .. "_" .. serial
+                    else
+                        uniqueKey = itemID
                     end
+
+                    if not rolledIDs[uniqueKey] then
+
+                        rolledIDs[uniqueKey] = true
+
+                        print(
+                            "[Roll #" .. rollCount .. "] Got:",
+                            itemData.Name,
+                            serial and ("Serial #" .. serial) or "(No Serial)"
+                        )
+
+                        sendNormal(LocalPlayer.Name, itemData, serial)
+
+                    end
+
                 end
+
             end
+
         else
-            print("[Roll #" .. rollCount .. "] Failed to roll")
+
+            print("[Roll #" .. rollCount .. "] Roll failed")
+
         end
+
     end
+
 end)
