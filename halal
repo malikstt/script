@@ -19,7 +19,6 @@ local TARGET_ITEM_ID = "2740"
 local SCAN_DURATION = 2
 local BID_CHECK_INTERVAL = 0.2
 
--- TRACKING TARGETS ACROSS SESSION
 local totalTargetsFound = 0
 local totalTargetsObtained = 0
 local sessionStartTime = tick()
@@ -37,7 +36,6 @@ local MAX_GARAGES = 3
 local lastSkipTime = 0
 local SKIP_COOLDOWN = 1
 
--- Get target name for display
 local targetItemName = ItemsModule[TARGET_ITEM_ID] and ItemsModule[TARGET_ITEM_ID].Name or "Valentine"
 print("🔍 Targeting:", targetItemName, "ID:", TARGET_ITEM_ID)
 print("📊 Session started - tracking targets...")
@@ -75,7 +73,6 @@ local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
 local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
 local invCount = RepLibrary:GetLengthOfInventory(inv)
 
--- Count how many targets we already have in inventory
 local currentTargetsInInv = 0
 for _, item in pairs(inv) do
 if item.itemId == TARGET_ITEM_ID then
@@ -124,10 +121,37 @@ return false
 
 end
 
--- Print session stats periodically
+local function tryClick(obj)
+    if obj:IsA("TextButton") or obj:IsA("ImageButton") then
+        print("Auto clicking:", obj:GetFullName())
+
+        pcall(function()
+            obj:Activate()
+        end)
+
+        if getconnections then
+            for _, v in pairs(getconnections(obj.MouseButton1Click)) do
+                pcall(function()
+                    v:Fire()
+                end)
+            end
+        end
+    end
+end
+
+local function checkForButton()
+    local itemsWon = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
+    if itemsWon then
+        local button = itemsWon:FindFirstChild("Button", true)
+        if button then
+            tryClick(button)
+        end
+    end
+end
+
 spawn(function()
 while not halted do
-taskWait(60) -- Every minute
+taskWait(60)
 local runtime = math.floor((tick() - sessionStartTime) / 60)
 print("⏱️ Runtime:", runtime, "minutes")
 print("📊 Targets found:", totalTargetsFound, "| Obtained:", totalTargetsObtained)
@@ -138,7 +162,6 @@ end
 end
 end)
 
--- MAIN LOOP
 while not halted do
 if storageFull() then
 print("❌ Storage completely full. Script halted.")
@@ -168,9 +191,11 @@ end
 
 obtainedTarget = false
 garagesSkipped = 0
+local targetFoundInThisAuction = false
 
 while inAuction and not auctionEnded do
 if scanCurrentGarageForTarget() then
+targetFoundInThisAuction = true
 print("💵 Bidding in target garage")
 
 local bidStartTime = tick()
@@ -198,11 +223,9 @@ taskWait(0.5)
 
 end
 
--- Wait for auction to end
 taskWait(3)
 
--- Handle ItemsWon GUI and selling
-local Players = game:GetService("Players")
+if targetFoundInThisAuction then
 local player = Players.LocalPlayer
 local gui = player.PlayerGui:WaitForChild("ItemsWon")
 
@@ -211,22 +234,7 @@ local Items = require(game.ReplicatedStorage.Modules.Items)
 local TARGET_ID = 2740
 local targetData = Items[TARGET_ID] or Items[tostring(TARGET_ID)]
 
-if not targetData then
-    -- If no target data, just continue to next auction
-    taskWait(1)
-    continue
-end
-
-local function click(btn)
-    if getconnections then
-        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do
-            pcall(function() c:Fire() end)
-        end
-    else
-        btn:Activate()
-    end
-end
-
+if targetData then
 local clickedCount = 0
 
 local function scan()
@@ -242,7 +250,7 @@ local function scan()
             and rarity == targetData.Rarity
             and targetData.SafeId then
                 
-                click(item)
+                tryClick(item)
                 clickedCount = clickedCount + 1
                 totalTargetsObtained = totalTargetsObtained + 1
                 task.wait(0.15)
@@ -281,7 +289,7 @@ local confirmButton = gui
 
 repeat task.wait() until confirmButton.Visible
 
-click(confirmButton)
+tryClick(confirmButton)
 
 print("Confirmed")
 
@@ -295,11 +303,28 @@ local sellButton = gui
 
 repeat task.wait() until sellButton.Visible
 
-click(sellButton)
+tryClick(sellButton)
 
 print("Sold rest")
+end
+else
+checkForButton()
+LocalPlayer.PlayerGui.DescendantAdded:Connect(function(obj)
+    if obj.Name == "Button" then
+        task.wait()
+        tryClick(obj)
+    end
+end)
 
--- Wait 1 second before next auction
+task.spawn(function()
+    local timeout = tick() + 5
+    while tick() < timeout do
+        task.wait(0.5)
+        checkForButton()
+    end
+end)
+end
+
 task.wait(1)
 
 end
