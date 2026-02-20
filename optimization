@@ -39,8 +39,6 @@ local RARITY_COLORS = {
     ["Insane"] = 0x8b4513
 }
 
-local PING_TEXT = "<@1135837863603351573> <@1135837863603351573>"
-
 local function postWebhook(url, data)
     request({
         Url = url,
@@ -54,7 +52,7 @@ local function sendNormal(username, itemData, serial)
     local rarity = itemData.Rarity or "Unknown"
     local price = itemData.Price or itemData.Cost or itemData.Value or 0
     
-    -- Only send notifications for Limited items (with or without serials)
+    -- Only send notifications for Limited items
     if rarity ~= "Limited" then
         return
     end
@@ -67,19 +65,16 @@ local function sendNormal(username, itemData, serial)
         color = RARITY_COLORS[rarity] or 0xffffff
     end
     
-    local title
+    local title = username .. " Rolled a Limited Item!"
     local description =
         "Item: " .. (itemData.Name or "Unknown") ..
         "\nRarity: " .. rarity ..
         "\nCost: $" .. tostring(price)
-    local content = nil
     
-    if serial then
-        title = username .. " GOT A SERIAL LIMITED!"
-        description = description .. "\nSerials: #" .. tostring(serial)
-        content = PING_TEXT
-    else
-        title = username .. " Rolled a Limited Item!"
+    -- Add serial to description if it exists
+    local hasSerial = serial and serial ~= "None" and serial ~= ""
+    if hasSerial then
+        description = description .. "\nSerial: #" .. tostring(serial)
     end
     
     -- Add HIGH VALUE tag to title for 1500+ items
@@ -89,7 +84,6 @@ local function sendNormal(username, itemData, serial)
     
     local data = {
         username = "Item Notifier",
-        content = content,
         embeds = {{
             title = title,
             description = description,
@@ -97,6 +91,19 @@ local function sendNormal(username, itemData, serial)
         }}
     }
     postWebhook(NORMAL_WEBHOOK, data)
+    
+    -- If it has a serial, also send to high value webhook
+    if hasSerial then
+        local serialData = {
+            username = "Serial Alert",
+            content = "**🔴 SERIAL LIMITED DETECTED!**\n" ..
+                     "Player: " .. username .. "\n" ..
+                     "Item: " .. (itemData.Name or "Unknown") .. "\n" ..
+                     "Serial: #" .. tostring(serial) .. "\n" ..
+                     "Value: $" .. price
+        }
+        postWebhook(HIGH_VALUE_WEBHOOK, serialData)
+    end
 end
 
 local function sendHighValueSummary()
@@ -117,7 +124,7 @@ local function sendHighValueSummary()
         embeds = {{
             title = LocalPlayer.Name .. " - High Value Limited Items Collected",
             description = summary,
-            color = 0xFFD700, -- Bright gold for high value summary
+            color = 0xFFD700,
             footer = {
                 text = "Total Limited: " .. #highValueItems .. " items"
             }
@@ -125,8 +132,6 @@ local function sendHighValueSummary()
     }
     
     postWebhook(HIGH_VALUE_WEBHOOK, data)
-    
-    -- Clear the list after sending
     highValueItems = {}
 end
 
@@ -138,14 +143,13 @@ end)
 if success and assets then
     for _, itemInfo in pairs(assets) do
         local itemID = tostring(itemInfo.ID or itemInfo.Id or itemInfo.id)
-        local serial = itemInfo.Serials or itemInfo.Serial or itemInfo.serial
+        local serial = itemInfo.SerialId or itemInfo.Serials or itemInfo.Serial or itemInfo.serial
         local itemData = ItemsModule[itemID]
         
         if itemData then
             local price = itemData.Price or itemData.Cost or itemData.Value or 0
             local rarity = itemData.Rarity or "Unknown"
             
-            -- Only add LIMITED items that are high value to summary
             if rarity == "Limited" and price >= HIGH_VALUE_THRESHOLD then
                 table.insert(highValueItems, {
                     name = itemData.Name or "Unknown",
@@ -156,11 +160,10 @@ if success and assets then
         end
     end
     
-    -- Send summary of existing high value LIMITED items
     sendHighValueSummary()
 end
 
--- Rolling loop with print statements
+-- Rolling loop
 task.spawn(function()
     local rollCount = 0
     while true do
@@ -179,7 +182,7 @@ task.spawn(function()
             
             if type(result) == "table" then
                 itemID = tostring(result.ID or result.Id or result.id)
-                serial = result.Serials or result.Serial or result.serial
+                serial = result.SerialId or result.Serials or result.Serial or result.serial
             else
                 itemID = tostring(result)
             end
@@ -191,12 +194,8 @@ task.spawn(function()
                     local rarity = itemData.Rarity or "Unknown"
                     local itemName = itemData.Name or "Unknown"
                     
-                    -- Print roll result
                     print(string.format("[Roll #%d] Result: %s | Rarity: %s | Value: $%d %s", 
-                        rollCount, 
-                        itemName, 
-                        rarity, 
-                        price,
+                        rollCount, itemName, rarity, price,
                         serial and "(Serial #" .. serial .. ")" or ""
                     ))
                     
@@ -205,7 +204,6 @@ task.spawn(function()
                     if not rolledIDs[uniqueKey] then
                         rolledIDs[uniqueKey] = true
                         
-                        -- Only add LIMITED items that are high value to summary
                         if rarity == "Limited" and price >= HIGH_VALUE_THRESHOLD then
                             table.insert(highValueItems, {
                                 name = itemName,
@@ -215,7 +213,7 @@ task.spawn(function()
                             print("[HIGH VALUE LIMITED] Added to summary: " .. itemName)
                         end
                         
-                        -- Send normal notification for ALL Limited items (with color change for 1500+)
+                        -- Send to normal webhook for ALL Limited items
                         sendNormal(LocalPlayer.Name, itemData, serial)
                     end
                 end
@@ -226,17 +224,11 @@ task.spawn(function()
     end
 end)
 
--- Send summary once at the end when script stops
-local function onScriptEnd()
-    if #highValueItems > 0 then
-        print("[Summary] Sending final high value LIMITED items summary")
-        sendHighValueSummary()
-    end
-end
-
--- Try to send summary when player leaves
+-- Send summary when player leaves
 LocalPlayer.AncestryChanged:Connect(function()
     if not LocalPlayer.Parent then
-        onScriptEnd()
+        if #highValueItems > 0 then
+            sendHighValueSummary()
+        end
     end
 end)
