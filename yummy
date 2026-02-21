@@ -1,15 +1,12 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 local taskWait = task.wait
 
 local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
 local ItemsModule = require(ReplicatedStorage.Modules.Items)
+local GaragesModule = require(ReplicatedStorage.Modules.Garages)
 local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
-
--- WEBHOOK for auction items
-local AUCTION_WEBHOOK = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
 
 local Auctions = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
 local EnterQueue = Auctions:WaitForChild("EnterQueue")
@@ -19,12 +16,11 @@ local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
 local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 
-local TARGET_ITEM_ID = "681"
 local SCAN_DURATION = 2
 local BID_CHECK_INTERVAL = 0.2
+local MIN_PROFIT_PERCENT = 10
 
 local inAuction = false
-local obtainedTarget = false
 local auctionEnded = false
 local halted = false
 local currentNextBid
@@ -36,35 +32,19 @@ local MAX_GARAGES = 3
 local lastSkipTime = 0
 local SKIP_COOLDOWN = 1
 
-local targetItemName = ItemsModule[TARGET_ITEM_ID] and ItemsModule[TARGET_ITEM_ID].Name or "Unknown"
-local targetItemPrice = ItemsModule[TARGET_ITEM_ID] and ItemsModule[TARGET_ITEM_ID].Price or 0
-print("🔍 Targeting:", targetItemName, "($" .. targetItemPrice .. ") ID:", TARGET_ITEM_ID)
-
-local function postWebhook(url, data)
-    request({
-        Url = url,
-        Method = "POST",
-        Headers = {
-            ["Content-Type"] = "application/json"
-        },
-        Body = HttpService:JSONEncode(data)
-    })
-end
-
--- Send auction item notification
-local function sendAuctionNotification(playerName, itemName, itemPrice)
-    postWebhook(AUCTION_WEBHOOK, {
-        username = "Auction Item",
-        embeds = {{
-            title = "🎉 Auction Item Obtained!",
-            description = playerName .. " just got a **" .. itemName .. "** from the auction house for **$" .. itemPrice .. "**!",
-            color = 0x9b59b6, -- Purple
-            footer = {
-                text = "Auction Success"
-            }
-        }}
-    })
-    print("✨ Auction notification sent to Discord for:", itemName)
+local function calculateGarageValue(items)
+    local totalValue = 0
+    for _, itemData in pairs(items) do
+        if itemData and itemData.Name then
+            for _, itemInfo in pairs(ItemsModule) do
+                if itemInfo.Name == itemData.Name and itemInfo.Price then
+                    totalValue = totalValue + itemInfo.Price
+                    break
+                end
+            end
+        end
+    end
+    return totalValue
 end
 
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
@@ -79,14 +59,14 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     auctionEnded = false
     currentGarage = garage
     garagesSkipped = 0
-    print("🏁 Entered garage:", garage.Name)
+    print("Entered garage:", garage.Name)
 end)
 
 AuctionsFolder.ChildRemoved:Connect(function(garage)
     if #AuctionsFolder:GetChildren() == 0 then
         inAuction = false
         currentGarage = nil
-        print("🏁 Left auction")
+        print("Left auction")
     end
 end)
 
@@ -103,44 +83,8 @@ local function storageFull()
     return invCount >= invSpace and carrySpace <= 0
 end
 
-local function clickButton(btn)
-    if not btn then return end
-    pcall(function()
-        btn:Activate()
-        if getconnections then
-            for _, connection in pairs(getconnections(btn.MouseButton1Click)) do
-                pcall(function() connection:Function() end)
-            end
-        end
-    end)
-end
-
-local function scanCurrentGarageForTarget()
-    if not currentGarage then return false end
-
-    local itemsFolder = currentGarage:FindFirstChild("Items")
-    if not itemsFolder then return false end
-
-    taskWait(0.5)
-
-    local startTime = tick()
-    while tick() - startTime < SCAN_DURATION do
-        for _, itemInstance in pairs(itemsFolder:GetChildren()) do
-            if itemInstance.Name == TARGET_ITEM_ID then
-                print("🎯 Target found in garage:", currentGarage.Name)
-                return true
-            end
-        end
-        taskWait(0.2)
-    end
-
-    return false
-end
-
 local function tryClick(obj)
     if obj:IsA("TextButton") or obj:IsA("ImageButton") then
-        print("Auto clicking:", obj:GetFullName())
-
         pcall(function()
             obj:Activate()
         end)
@@ -155,6 +99,29 @@ local function tryClick(obj)
     end
 end
 
+local function scanCurrentGarageItems()
+    if not currentGarage then return {} end
+
+    local itemsFolder = currentGarage:FindFirstChild("Items")
+    if not itemsFolder then return {} end
+
+    taskWait(0.5)
+
+    local items = {}
+    local startTime = tick()
+    while tick() - startTime < SCAN_DURATION do
+        for _, itemInstance in pairs(itemsFolder:GetChildren()) do
+            local itemData = ItemsModule[itemInstance.Name]
+            if itemData and itemData.Name then
+                items[itemData.Name] = itemData
+            end
+        end
+        taskWait(0.2)
+    end
+
+    return items
+end
+
 local function checkForButton()
     local itemsWon = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
     if itemsWon then
@@ -167,12 +134,12 @@ end
 
 while not halted do
     if storageFull() then
-        print("❌ Storage completely full. Script halted.")
+        print("Storage completely full. Script halted.")
         halted = true
         break
     end
 
-    print("➡ Entering auction...")
+    print("Entering auction...")
     pcall(function() EnterQueue:InvokeServer("51") end)
 
     local auctionStartTime = tick()
@@ -186,26 +153,45 @@ while not halted do
         continue
     end
 
-    obtainedTarget = false
     garagesSkipped = 0
-    local targetFoundInThisAuction = false
 
     while inAuction and not auctionEnded do
-        if scanCurrentGarageForTarget() then
-            targetFoundInThisAuction = true
-            print("💵 Bidding in target garage")
-
-            local bidStartTime = tick()
-            while not obtainedTarget and inAuction and currentGarage and not auctionEnded do
-                if currentNextBid and currentBidder ~= LocalPlayer then
+        local garageItems = scanCurrentGarageItems()
+        local garageValue = calculateGarageValue(garageItems)
+        
+        if garageValue > 0 then
+            print(string.format("Garage value: $%d", garageValue))
+            
+            local currentGarageName = currentGarage and currentGarage.Name or "Unknown"
+            local garageData = nil
+            
+            for _, data in pairs(GaragesModule) do
+                if data.Name == currentGarageName then
+                    garageData = data
+                    break
+                end
+            end
+            
+            if garageData and currentNextBid then
+                local maxBid = garageValue * (1 - MIN_PROFIT_PERCENT / 100)
+                local isProfitable = currentNextBid <= maxBid
+                
+                print(string.format("Next bid: $%d, Max profitable bid: $%d, Profitable: %s", 
+                    currentNextBid, maxBid, tostring(isProfitable)))
+                
+                if isProfitable and currentBidder ~= LocalPlayer then
                     pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
                 end
-                if tick() - bidStartTime > 60 then break end
+            end
+            
+            local bidStartTime = tick()
+            while inAuction and currentGarage and not auctionEnded do
+                if tick() - bidStartTime > 30 then break end
                 taskWait(BID_CHECK_INTERVAL)
             end
         else
             garagesSkipped = garagesSkipped + 1
-            print("⏭ Skipping garage", garagesSkipped.."/"..MAX_GARAGES)
+            print(string.format("Skipping garage %d/%d", garagesSkipped, MAX_GARAGES))
 
             if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
                 pcall(function() SkipCountdown:InvokeServer() end)
@@ -220,90 +206,71 @@ while not halted do
 
     taskWait(3)
 
-    if targetFoundInThisAuction then
-        local player = Players.LocalPlayer
-        local gui = player.PlayerGui:WaitForChild("ItemsWon")
+    local gui = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon")
+    if gui then
+        local clickedCount = 0
 
-        local Items = require(game.ReplicatedStorage.Modules.Items)
+        local function scan()
+            local frame = gui:FindFirstChild("ItemsFrame")
+            if not frame then return end
+            frame = frame:FindFirstChild("Frame")
+            if not frame then return end
+            
+            for _, item in ipairs(frame:GetChildren()) do
+                if item:IsA("ImageButton") then
+                    tryClick(item)
+                    clickedCount = clickedCount + 1
+                    task.wait(0.15)
+                end
+            end
+        end
 
-        local TARGET_ID = 681
-        local targetData = Items[TARGET_ID] or Items[tostring(TARGET_ID)]
+        task.wait(0.5)
+        scan()
 
-        if targetData then
-            local clickedCount = 0
+        if clickedCount <= 0 then
+            local conn
+            conn = gui.DescendantAdded:Connect(function()
+                task.wait(0.2)
+                scan()
+                if clickedCount > 0 then
+                    conn:Disconnect()
+                end
+            end)
+            
+            repeat task.wait() until clickedCount > 0
+        end
 
-            local function scan()
-                local frame = gui:WaitForChild("ItemsFrame"):WaitForChild("Frame")
-                
-                for _, item in ipairs(frame:GetChildren()) do
-                    if item:IsA("ImageButton") and item:FindFirstChild("Price") and item:FindFirstChild("Rarity") then
-                        
-                        local price = tonumber(item.Price.Text:match("%d+"))
-                        local rarity = item.Rarity.TextLabel.Text
-                        
-                        if price == targetData.Price
-                        and rarity == targetData.Rarity
-                        and targetData.SafeId then
-                            
-                            tryClick(item)
-                            clickedCount = clickedCount + 1
-                            
-                            -- Send webhook notification for auction item
-                            sendAuctionNotification(LocalPlayer.Name, targetData.Name, targetData.Price)
-                            
-                            task.wait(0.15)
-                        end
+        print("Selected items for selling")
+
+        task.wait(0.5)
+
+        local confirmButton = gui:FindFirstChild("ItemsFrame")
+        if confirmButton then
+            confirmButton = confirmButton:FindFirstChild("ConfirmButton")
+            if confirmButton then
+                repeat task.wait() until confirmButton.Visible
+                tryClick(confirmButton)
+                print("Confirmed items")
+            end
+        end
+
+        task.wait(0.5)
+
+        local sellItems = gui:FindFirstChild("SellItems")
+        if sellItems then
+            local frame = sellItems:FindFirstChild("Frame")
+            if frame then
+                local normal = frame:FindFirstChild("Normal")
+                if normal then
+                    local button = normal:FindFirstChild("Button")
+                    if button then
+                        repeat task.wait() until button.Visible
+                        tryClick(button)
+                        print("Sold all items")
                     end
                 end
             end
-
-            task.wait(0.5)
-            scan()
-
-            if clickedCount <= 0 then
-                local done = false
-                local conn
-                conn = gui.DescendantAdded:Connect(function()
-                    task.wait(0.2)
-                    scan()
-                    if clickedCount > 0 then
-                        done = true
-                        conn:Disconnect()
-                    end
-                end)
-                
-                repeat task.wait() until done
-            end
-
-            repeat task.wait() until clickedCount > 0
-
-            print("Selected", clickedCount, targetData.Name)
-
-            task.wait(0.5)
-
-            local confirmButton = gui
-                :WaitForChild("ItemsFrame")
-                :WaitForChild("ConfirmButton")
-
-            repeat task.wait() until confirmButton.Visible
-
-            tryClick(confirmButton)
-
-            print("Confirmed")
-
-            task.wait(0.5)
-
-            local sellButton = gui
-                :WaitForChild("SellItems")
-                :WaitForChild("Frame")
-                :WaitForChild("Normal")
-                :WaitForChild("Button")
-
-            repeat task.wait() until sellButton.Visible
-
-            tryClick(sellButton)
-
-            print("Sold rest")
         end
     else
         checkForButton()
