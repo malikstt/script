@@ -1,7 +1,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
+
 local LocalPlayer = Players.LocalPlayer
-local taskWait = task.wait
 
 local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
 local ItemsModule = require(ReplicatedStorage.Modules.Items)
@@ -16,279 +16,174 @@ local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
 local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 
+--------------------------------------------------
+-- SETTINGS
+--------------------------------------------------
+
 local SCAN_DURATION = 2
 local BID_CHECK_INTERVAL = 0.2
 local MIN_PROFIT_PERCENT = 10
+local SKIP_COOLDOWN = 1
+
+--------------------------------------------------
+-- STATE
+--------------------------------------------------
 
 local inAuction = false
 local auctionEnded = false
 local halted = false
-local currentNextBid
-local currentBidder
+
 local currentGarage = nil
-local garagesSkipped = 0
-local MAX_GARAGES = 3
+local currentNextBid = nil
+local currentBidder = nil
 
 local lastSkipTime = 0
-local SKIP_COOLDOWN = 1
 
-local function calculateGarageValue(items)
-    local totalValue = 0
-    for _, itemData in pairs(items) do
-        if itemData and itemData.Name then
-            for _, itemInfo in pairs(ItemsModule) do
-                if itemInfo.Name == itemData.Name and itemInfo.Price then
-                    totalValue = totalValue + itemInfo.Price
-                    break
-                end
-            end
-        end
-    end
-    return totalValue
+--------------------------------------------------
+-- BUILD NAME → ITEM MAP (FAST LOOKUP)
+--------------------------------------------------
+
+local ItemsByName = {}
+
+for _, item in pairs(ItemsModule) do
+	if type(item) == "table" and item.Name and item.Price then
+		ItemsByName[item.Name] = item
+	end
 end
 
-UpdateCurrentBid.OnClientEvent:Connect(function(data)
-    if data then
-        currentNextBid = data.nextBid
-        currentBidder = data.player
-    end
-end)
+--------------------------------------------------
+-- VALUE CALCULATION (FIXED)
+--------------------------------------------------
 
-AuctionsFolder.ChildAdded:Connect(function(garage)
-    inAuction = true
-    auctionEnded = false
-    currentGarage = garage
-    garagesSkipped = 0
-    print("Entered garage:", garage.Name)
-end)
+local function calculateGarageValue(itemsFolder)
+	if not itemsFolder then return 0 end
+	
+	local totalValue = 0
+	
+	for _, itemInstance in ipairs(itemsFolder:GetChildren()) do
+		local itemData = ItemsByName[itemInstance.Name]
+		if itemData then
+			totalValue += itemData.Price
+		end
+	end
+	
+	return totalValue
+end
 
-AuctionsFolder.ChildRemoved:Connect(function(garage)
-    if #AuctionsFolder:GetChildren() == 0 then
-        inAuction = false
-        currentGarage = nil
-        print("Left auction")
-    end
-end)
+--------------------------------------------------
+-- STORAGE CHECK
+--------------------------------------------------
 
 local function storageFull()
-    local success, data = pcall(function() return DataEvent:InvokeServer() end)
-    if not success or not data then return false end
-    local inv = data.Inventory or {}
-    local invLevel = data.InventoryLevel
-    local carryLevel = data.CarryLevel
-    local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
-    local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
-    local invCount = RepLibrary:GetLengthOfInventory(inv)
+	local success, data = pcall(function()
+		return DataEvent:InvokeServer()
+	end)
 
-    return invCount >= invSpace and carrySpace <= 0
+	if not success or not data then
+		return false
+	end
+
+	local inv = data.Inventory or {}
+	local invLevel = data.InventoryLevel
+	local carryLevel = data.CarryLevel
+
+	local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
+	local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
+	local invCount = RepLibrary:GetLengthOfInventory(inv)
+
+	return invCount >= invSpace and carrySpace <= 0
 end
 
-local function tryClick(obj)
-    if obj:IsA("TextButton") or obj:IsA("ImageButton") then
-        pcall(function()
-            obj:Activate()
-        end)
+--------------------------------------------------
+-- BID UPDATES
+--------------------------------------------------
 
-        if getconnections then
-            for _, v in pairs(getconnections(obj.MouseButton1Click)) do
-                pcall(function()
-                    v:Fire()
-                end)
-            end
-        end
-    end
-end
+UpdateCurrentBid.OnClientEvent:Connect(function(data)
+	if data then
+		currentNextBid = data.nextBid
+		currentBidder = data.player
+	end
+end)
 
-local function scanCurrentGarageItems()
-    if not currentGarage then return {} end
+--------------------------------------------------
+-- GARAGE DETECTION
+--------------------------------------------------
 
-    local itemsFolder = currentGarage:FindFirstChild("Items")
-    if not itemsFolder then return {} end
+AuctionsFolder.ChildAdded:Connect(function(garage)
+	currentGarage = garage
+	inAuction = true
+	auctionEnded = false
+end)
 
-    taskWait(0.5)
+AuctionsFolder.ChildRemoved:Connect(function()
+	if #AuctionsFolder:GetChildren() == 0 then
+		inAuction = false
+		currentGarage = nil
+	end
+end)
 
-    local items = {}
-    local startTime = tick()
-    while tick() - startTime < SCAN_DURATION do
-        for _, itemInstance in pairs(itemsFolder:GetChildren()) do
-            local itemData = ItemsModule[itemInstance.Name]
-            if itemData and itemData.Name then
-                items[itemData.Name] = itemData
-            end
-        end
-        taskWait(0.2)
-    end
-
-    return items
-end
-
-local function checkForButton()
-    local itemsWon = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
-    if itemsWon then
-        local button = itemsWon:FindFirstChild("Button", true)
-        if button then
-            tryClick(button)
-        end
-    end
-end
+--------------------------------------------------
+-- MAIN LOOP
+--------------------------------------------------
 
 while not halted do
-    if storageFull() then
-        print("Storage completely full. Script halted.")
-        halted = true
-        break
-    end
-
-    print("Entering auction...")
-    pcall(function() EnterQueue:InvokeServer("51") end)
-
-    local auctionStartTime = tick()
-    auctionEnded = false
-
-    repeat
-        taskWait(0.1)
-    until inAuction or tick() - auctionStartTime > 10
-
-    if not inAuction then
-        continue
-    end
-
-    garagesSkipped = 0
-
-    while inAuction and not auctionEnded do
-        local garageItems = scanCurrentGarageItems()
-        local garageValue = calculateGarageValue(garageItems)
-        
-        if garageValue > 0 then
-            print(string.format("Garage value: $%d", garageValue))
-            
-            local currentGarageName = currentGarage and currentGarage.Name or "Unknown"
-            local garageData = nil
-            
-            for _, data in pairs(GaragesModule) do
-                if data.Name == currentGarageName then
-                    garageData = data
-                    break
-                end
-            end
-            
-            if garageData and currentNextBid then
-                local maxBid = garageValue * (1 - MIN_PROFIT_PERCENT / 100)
-                local isProfitable = currentNextBid <= maxBid
-                
-                print(string.format("Next bid: $%d, Max profitable bid: $%d, Profitable: %s", 
-                    currentNextBid, maxBid, tostring(isProfitable)))
-                
-                if isProfitable and currentBidder ~= LocalPlayer then
-                    pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
-                end
-            end
-            
-            local bidStartTime = tick()
-            while inAuction and currentGarage and not auctionEnded do
-                if tick() - bidStartTime > 30 then break end
-                taskWait(BID_CHECK_INTERVAL)
-            end
-        else
-            garagesSkipped = garagesSkipped + 1
-            print(string.format("Skipping garage %d/%d", garagesSkipped, MAX_GARAGES))
-
-            if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
-                pcall(function() SkipCountdown:InvokeServer() end)
-                taskWait(0.1)
-                pcall(function() Skip:InvokeServer() end)
-                lastSkipTime = tick()
-            end
-            taskWait(1)
-        end
-        taskWait(0.5)
-    end
-
-    taskWait(3)
-
-    local gui = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon")
-    if gui then
-        local clickedCount = 0
-
-        local function scan()
-            local frame = gui:FindFirstChild("ItemsFrame")
-            if not frame then return end
-            frame = frame:FindFirstChild("Frame")
-            if not frame then return end
-            
-            for _, item in ipairs(frame:GetChildren()) do
-                if item:IsA("ImageButton") then
-                    tryClick(item)
-                    clickedCount = clickedCount + 1
-                    task.wait(0.15)
-                end
-            end
-        end
-
-        task.wait(0.5)
-        scan()
-
-        if clickedCount <= 0 then
-            local conn
-            conn = gui.DescendantAdded:Connect(function()
-                task.wait(0.2)
-                scan()
-                if clickedCount > 0 then
-                    conn:Disconnect()
-                end
-            end)
-            
-            repeat task.wait() until clickedCount > 0
-        end
-
-        print("Selected items for selling")
-
-        task.wait(0.5)
-
-        local confirmButton = gui:FindFirstChild("ItemsFrame")
-        if confirmButton then
-            confirmButton = confirmButton:FindFirstChild("ConfirmButton")
-            if confirmButton then
-                repeat task.wait() until confirmButton.Visible
-                tryClick(confirmButton)
-                print("Confirmed items")
-            end
-        end
-
-        task.wait(0.5)
-
-        local sellItems = gui:FindFirstChild("SellItems")
-        if sellItems then
-            local frame = sellItems:FindFirstChild("Frame")
-            if frame then
-                local normal = frame:FindFirstChild("Normal")
-                if normal then
-                    local button = normal:FindFirstChild("Button")
-                    if button then
-                        repeat task.wait() until button.Visible
-                        tryClick(button)
-                        print("Sold all items")
-                    end
-                end
-            end
-        end
-    else
-        checkForButton()
-        LocalPlayer.PlayerGui.DescendantAdded:Connect(function(obj)
-            if obj.Name == "Button" then
-                task.wait()
-                tryClick(obj)
-            end
-        end)
-
-        task.spawn(function()
-            local timeout = tick() + 5
-            while tick() < timeout do
-                task.wait(0.5)
-                checkForButton()
-            end
-        end)
-    end
-
-    task.wait(1)
+	
+	if storageFull() then
+		warn("Storage full. Stopping script.")
+		break
+	end
+	
+	pcall(function()
+		EnterQueue:InvokeServer("51")
+	end)
+	
+	local timeout = tick() + 10
+	while not inAuction and tick() < timeout do
+		task.wait(0.1)
+	end
+	
+	if not inAuction then
+		task.wait(2)
+		continue
+	end
+	
+	while inAuction and currentGarage do
+		
+		local itemsFolder = currentGarage:FindFirstChild("Items")
+		local garageValue = calculateGarageValue(itemsFolder)
+		
+		if garageValue > 0 and currentNextBid then
+			
+			local maxBid = garageValue * (1 - MIN_PROFIT_PERCENT / 100)
+			
+			if currentNextBid <= maxBid and currentBidder ~= LocalPlayer then
+				pcall(function()
+					PlaceBid:InvokeServer(currentNextBid)
+				end)
+			end
+			
+			local bidTimeout = tick() + 30
+			while inAuction and currentGarage and tick() < bidTimeout do
+				task.wait(BID_CHECK_INTERVAL)
+			end
+			
+		else
+			if tick() - lastSkipTime > SKIP_COOLDOWN then
+				pcall(function()
+					SkipCountdown:InvokeServer()
+				end)
+				task.wait(0.1)
+				pcall(function()
+					Skip:InvokeServer()
+				end)
+				lastSkipTime = tick()
+			end
+			
+			task.wait(1)
+		end
+		
+		task.wait(0.3)
+	end
+	
+	task.wait(2)
 end
