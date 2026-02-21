@@ -1,177 +1,161 @@
---!strict
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
-local LocalPlayer = Players.LocalPlayer
-local taskWait = task.wait
+local UserInputService = game:GetService("UserInputService")
 
--- Modules
-local ItemsModule = require(ReplicatedStorage.Modules.Items)
-local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
 
--- Events
-local AuctionsEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
-local EnterQueue = AuctionsEvent:WaitForChild("EnterQueue")
-local Skip = AuctionsEvent:WaitForChild("Skip")
-local SkipCountdown = AuctionsEvent:WaitForChild("SkipCountdown")
-local UpdateCurrentBid = AuctionsEvent:WaitForChild("UpdateCurrentBid")
-local PlaceBid = AuctionsEvent:WaitForChild("PlaceBid")
+-- Create main GUI
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "FarmingToggle"
+screenGui.Parent = playerGui
 
--- Config
-local SCAN_DURATION = 2
-local SKIP_COOLDOWN = 1
-local SALE_PENALTY = 0.05
+-- Create main frame (small, centered at top left)
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 200, 0, 80)
+mainFrame.Position = UDim2.new(0, 20, 0, 20) -- Top left with 20px margin
+mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+mainFrame.BackgroundTransparency = 0.2
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true -- Make it draggable
+mainFrame.Parent = screenGui
 
--- State
-local inAuction = false
-local auctionEnded = false
-local currentGarage: Instance? = nil
-local currentNextBid = 0
-local currentBidder: Player? = nil
-local lastSkipTime = 0
+-- Add corner rounding
+local uiCorner = Instance.new("UICorner")
+uiCorner.CornerRadius = UDim.new(0, 8)
+uiCorner.Parent = mainFrame
 
--- Helpers
-local function calculateGarageValue(itemsFolder: Instance?): number
-	if not itemsFolder then return 0 end
-	local total = 0
-	for _, inst in pairs(itemsFolder:GetChildren()) do
-		local data = ItemsModule[inst.Name]
-		if type(data) == "table" and data.Price then
-			total += data.Price
-		end
-	end
-	return total
+-- Add stroke/border
+local uiStroke = Instance.new("UIStroke")
+uiStroke.Thickness = 2
+uiStroke.Color = Color3.fromRGB(255, 255, 255)
+uiStroke.Transparency = 0.8
+uiStroke.Parent = mainFrame
+
+-- Title text
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Name = "Title"
+titleLabel.Size = UDim2.new(1, 0, 0, 25)
+titleLabel.Position = UDim2.new(0, 0, 0, 5)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "Farming Controls"
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.TextScaled = true
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.Parent = mainFrame
+
+-- Status text
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Name = "Status"
+statusLabel.Size = UDim2.new(1, -20, 0, 20)
+statusLabel.Position = UDim2.new(0, 10, 0, 30)
+statusLabel.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+statusLabel.BackgroundTransparency = 0.3
+statusLabel.Text = "Farming: OFF"
+statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+statusLabel.TextScaled = true
+statusLabel.Font = Enum.Font.GothamSemibold
+statusLabel.Parent = mainFrame
+
+-- Add corner to status
+local statusCorner = Instance.new("UICorner")
+statusCorner.CornerRadius = UDim.new(0, 4)
+statusCorner.Parent = statusLabel
+
+-- Toggle button
+local toggleButton = Instance.new("TextButton")
+toggleButton.Name = "ToggleButton"
+toggleButton.Size = UDim2.new(1, -20, 0, 25)
+toggleButton.Position = UDim2.new(0, 10, 0, 55)
+toggleButton.BackgroundColor3 = Color3.fromRGB(70, 130, 200)
+toggleButton.Text = "Start Farming"
+toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleButton.TextScaled = true
+toggleButton.Font = Enum.Font.GothamBold
+toggleButton.AutoButtonColor = false
+toggleButton.Parent = mainFrame
+
+-- Add corner to button
+local buttonCorner = Instance.new("UICorner")
+buttonCorner.CornerRadius = UDim.new(0, 4)
+buttonCorner.Parent = toggleButton
+
+-- Variables
+local farmingActive = false
+local heartbeatConnection = nil
+local EndTutorialEvent = nil
+
+-- Get the remote event
+local function setupRemoteEvent()
+    local success, result = pcall(function()
+        return ReplicatedStorage
+            :WaitForChild("Events")
+            :WaitForChild("Tutorial")
+            :WaitForChild("EndTutorial")
+    end)
+    
+    if success then
+        EndTutorialEvent = result
+        statusLabel.Text = "Connected"
+        statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+    else
+        statusLabel.Text = "Event not found!"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        toggleButton.Text = "Error"
+        toggleButton.BackgroundColor3 = Color3.fromRGB(150, 150, 150)
+    end
 end
 
-local function tryClick(button)
-	if not button then return end
-	if button:IsA("TextButton") or button:IsA("ImageButton") then
-		pcall(function() button:Activate() end)
-		if getconnections then
-			for _, conn in pairs(getconnections(button.MouseButton1Click)) do
-				pcall(function() conn:Fire() end)
-			end
-		end
-	end
+-- Toggle farming on/off
+local function toggleFarming()
+    farmingActive = not farmingActive
+    
+    if farmingActive and EndTutorialEvent then
+        -- Start farming
+        toggleButton.Text = "Stop Farming"
+        toggleButton.BackgroundColor3 = Color3.fromRGB(200, 70, 70)
+        statusLabel.Text = "Farming: ON"
+        statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+        
+        -- Connect to Heartbeat
+        heartbeatConnection = RunService.Heartbeat:Connect(function()
+            EndTutorialEvent:FireServer()
+        end)
+        
+    else
+        -- Stop farming
+        toggleButton.Text = "Start Farming"
+        toggleButton.BackgroundColor3 = Color3.fromRGB(70, 130, 200)
+        statusLabel.Text = "Farming: OFF"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        
+        -- Disconnect Heartbeat
+        if heartbeatConnection then
+            heartbeatConnection:Disconnect()
+            heartbeatConnection = nil
+        end
+    end
 end
 
-local function scanGarageItems(): Instance?
-	if not currentGarage then return nil end
-	local itemsFolder = currentGarage:FindFirstChild("Items")
-	if not itemsFolder then return nil end
-	taskWait(0.5)
-	local start = tick()
-	while tick() - start < SCAN_DURATION do
-		taskWait(0.2)
-	end
-	return itemsFolder
-end
+-- Button click handler
+toggleButton.MouseButton1Click:Connect(toggleFarming)
 
-local function handleItemsWon()
-	local gui = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon")
-	if not gui then return end
-
-	-- Confirm items
-	local confirmButton = gui:FindFirstChild("ItemsFrame")?.FindFirstChild("ConfirmButton")
-	if confirmButton then
-		repeat task.wait() until confirmButton.Visible
-		tryClick(confirmButton)
-		print("Confirmed items")
-	end
-
-	-- Sell items
-	local sellButton = gui:FindFirstChild("SellItems")?.FindFirstChild("Frame")?.FindFirstChild("Normal")?.FindFirstChild("Button")
-	if sellButton then
-		repeat task.wait() until sellButton.Visible
-		tryClick(sellButton)
-		print("Sold all items")
-	end
-end
-
-local function checkItemsWonOkay()
-	local button = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)?.FindFirstChild("Button", true)
-	if button then
-		tryClick(button)
-		print("Clicked Okay on ItemsWon GUI")
-	end
-end
-
--- Event connections
-UpdateCurrentBid.OnClientEvent:Connect(function(data)
-	if data then
-		currentNextBid = data.nextBid
-		currentBidder = data.player
-	end
+-- Optional: Add keyboard toggle (F key)
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not gameProcessed and input.KeyCode == Enum.KeyCode.F then
+        toggleFarming()
+    end
 end)
 
-local AuctionsFolder = Workspace:WaitForChild("Debris"):WaitForChild("Auctions")
-AuctionsFolder.ChildAdded:Connect(function(garage)
-	inAuction = true
-	auctionEnded = false
-	currentGarage = garage
-	print("Entered garage:", garage.Name)
+-- Initialize
+setupRemoteEvent()
+
+-- Cleanup when GUI is removed
+screenGui.AncestryChanged:Connect(function()
+    if heartbeatConnection then
+        heartbeatConnection:Disconnect()
+    end
 end)
-
-AuctionsFolder.ChildRemoved:Connect(function()
-	if #AuctionsFolder:GetChildren() == 0 then
-		inAuction = false
-		currentGarage = nil
-		print("Left auction")
-	end
-end)
-
--- Main loop
-while true do
-	print("Attempting to enter auction...")
-	pcall(function() EnterQueue:InvokeServer("51") end)
-
-	local start = tick()
-	repeat taskWait(0.1) until inAuction or tick() - start > 10
-	if not inAuction then continue end
-
-	while inAuction and not auctionEnded do
-		local itemsFolder = scanGarageItems()
-		local garageValue = calculateGarageValue(itemsFolder)
-		print("Garage value:", garageValue)
-
-		if garageValue > 0 and currentNextBid then
-			local maxBid = garageValue * (1 - SALE_PENALTY)
-
-			if currentNextBid > maxBid then
-				if tick() - lastSkipTime > SKIP_COOLDOWN then
-					pcall(function() SkipCountdown:InvokeServer() end)
-					taskWait(0.1)
-					pcall(function() Skip:InvokeServer() end)
-					lastSkipTime = tick()
-					print("Skipped garage: bid too high")
-				end
-			elseif currentBidder ~= LocalPlayer then
-				local bidAmount = math.min(currentNextBid + 1, maxBid)
-				pcall(function() PlaceBid:InvokeServer(bidAmount) end)
-				print("Placed bid:", bidAmount)
-			end
-		else
-			if tick() - lastSkipTime > SKIP_COOLDOWN then
-				pcall(function() SkipCountdown:InvokeServer() end)
-				taskWait(0.1)
-				pcall(function() Skip:InvokeServer() end)
-				lastSkipTime = tick()
-				print("Skipped garage: no value or bid info")
-			end
-		end
-		taskWait(0.5)
-	end
-
-	taskWait(3)
-	handleItemsWon()
-
-	task.spawn(function()
-		local timeout = tick() + 5
-		while tick() < timeout do
-			task.wait(0.5)
-			checkItemsWonOkay()
-		end
-	end)
-
-	taskWait(1)
-end
