@@ -1,46 +1,102 @@
-repeat task.wait() until game:IsLoaded()
-
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
 
-local WORLD_NAME = "Seven Seas"
-local MAX_ATTEMPTS = 5
-local RETRY_DELAY = 2
+local BoardUtil = require(ReplicatedStorage.Shared.Utils.BoardUtil)
+local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
+local ItemUtil = require(ReplicatedStorage.Shared.Utils.Stats.ItemUtil)
+local Remote = require(ReplicatedStorage.Shared.Framework.Network.Remote)
+local Board = require(ReplicatedStorage.Client.Gui.Frames.Board)
 
-local LocalData = require(
+if not Board or not Board.Pieces or type(BoardUtil.Nodes) ~= "table" then
+    return
+end
+
+local TARGET_TILE_TYPES
+if FOCUS_CHANCE_TILE then
+    TARGET_TILE_TYPES = { "chance" }
+else
+    TARGET_TILE_TYPES = { "infinity", "infinity_elixir" }
+end
+
+if FOCUS_DICE then
+    task.wait(1)
     ReplicatedStorage
-        :WaitForChild("Client")
+        :WaitForChild("Shared")
         :WaitForChild("Framework")
-        :WaitForChild("Services")
-        :WaitForChild("LocalData")
-)
+        :WaitForChild("Network")
+        :WaitForChild("Remote")
+        :WaitForChild("RemoteEvent")
+        :FireServer("WorldTeleport", "Minigame Paradise")
+end
 
-local RemoteEvent = ReplicatedStorage
-    :WaitForChild("Shared")
-    :WaitForChild("Framework")
-    :WaitForChild("Network")
-    :WaitForChild("Remote")
-    :WaitForChild("RemoteEvent")
-
-local function isWorldUnlocked()
-    local data = LocalData:Get()
-    return data and data.WorldsUnlocked and data.WorldsUnlocked[WORLD_NAME] == true
+local function hasDice(data, name)
+    return ItemUtil:GetOwnedAmount(data, { Type = "Powerup", Name = name }) > 0
 end
 
 task.spawn(function()
-    if isWorldUnlocked() then
-        print("SUCCESS")
-        return
-    end
+    while true do
+        task.wait(1)
 
-    for _ = 1, MAX_ATTEMPTS do
-        RemoteEvent:FireServer("UnlockWorld", WORLD_NAME)
-        task.wait(RETRY_DELAY)
+        local piece = Board.Pieces[LocalPlayer.Name]
+        local data = LocalData:Get()
 
-        if isWorldUnlocked() then
-            print("SUCCESS")
-            return
+        if not piece or not data then
+            print("Not rolling | board or data not ready")
+            continue
         end
-    end
 
-    print("FAIL")
+        local startIndex = piece.Index
+        local totalNodes = #BoardUtil.Nodes
+        local stepsNeeded
+
+        for i = 1, totalNodes do
+            local idx = startIndex + i
+            if idx > totalNodes then
+                idx = idx - totalNodes
+            end
+
+            local node = BoardUtil.Nodes[idx]
+            if node and table.find(TARGET_TILE_TYPES, node.Type) then
+                stepsNeeded = i
+                break
+            end
+        end
+
+        if not stepsNeeded then
+            print("Not rolling | no target tile ahead")
+            task.wait(5)
+            continue
+        end
+
+        print("Next target in " .. stepsNeeded .. " tiles")
+
+        local dice
+
+        if stepsNeeded <= GOLDEN_DICE_DISTANCE and USE_GOLDEN_DICE and hasDice(data, "Golden Dice") then
+            dice = "Golden Dice"
+        elseif stepsNeeded <= DICE_DISTANCE and hasDice(data, "Dice") then
+            dice = "Dice"
+        elseif stepsNeeded <= GIANT_DICE_DISTANCE and hasDice(data, "Giant Dice") then
+            dice = "Giant Dice"
+        end
+
+        if not dice then
+            print("Not rolling | no valid dice")
+            task.wait(3)
+            continue
+        end
+
+        print("Rolling " .. dice)
+
+        local result = Remote:InvokeServer("RollDice", dice)
+
+        if result and result.Tile and result.Tile.Index then
+            piece.Index = result.Tile.Index
+        end
+
+        Remote:FireServer("ClaimTile")
+
+        task.wait(1.5)
+    end
 end)
