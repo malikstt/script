@@ -3,14 +3,16 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local player = Players.LocalPlayer
 
-local DataGetAllEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 local UpgradeRemote = ReplicatedStorage:WaitForChild("Events"):WaitForChild("UI"):WaitForChild("UpgradeClicked")
-
+local DataGetAllEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 local Workers = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Workers")
 local BuyAuctionWorker = Workers:WaitForChild("BuyAuctionWorker")
 local BuyStockerWorker = Workers:WaitForChild("BuyStockerWorker")
 local BuySellerWorker = Workers:WaitForChild("BuySellerWorker")
 local GetWorkersData = Workers:WaitForChild("GetWorkersData")
+local UpgradeAuctionWorker = Workers:WaitForChild("UpgradeAuctionWorker")
+local UpgradeStockerWorker = Workers:WaitForChild("UpgradeStockerWorker")
+local UpgradeSellerWorker = Workers:WaitForChild("UpgradeSellerWorker")
 local UpgradeOfflineEarnings = Workers:WaitForChild("UpgradeOfflineEarnings")
 
 local upgrades = {
@@ -24,68 +26,92 @@ local upgrades = {
 }
 
 local targetPerType = 3
+local maxLevel = 100
 local maxOfflineLevel = 50
-
-local function getGems()
-    local success, data = pcall(function()
-        return DataGetAllEvent:InvokeServer()
-    end)
-    if success and data then
-        return data.Gems or 0
-    end
-    return 0
-end
-
-local function getWorkerData()
-    return GetWorkersData:InvokeServer()
-end
 
 task.spawn(function()
     while true do
-        local gems = getGems()
-
-        for _, upgrade in ipairs(upgrades) do
-            pcall(function()
-                UpgradeRemote:InvokeServer(upgrade)
-            end)
-            task.wait(0.1)
-        end
-
-        local data = getWorkerData()
-        local auctionWorkers = data.AuctionWorkers
-        local stockerWorkers = data.StockerWorkers
-        local sellerWorkers = data.SellerWorkers
-        local offlineLevel = data.OfflineEarningsLevel or 0
-
-        if #auctionWorkers < targetPerType then
-            if gems >= 100 then
-                BuyAuctionWorker:InvokeServer()
-                gems -= 100
+        local success, data = pcall(function()
+            return DataGetAllEvent:InvokeServer()
+        end)
+        
+        if success and data and data.Gems then
+            local workerData = GetWorkersData:InvokeServer()
+            local gems = data.Gems
+            
+            for _, upgrade in ipairs(upgrades) do
+                pcall(function()
+                    UpgradeRemote:InvokeServer(upgrade)
+                end)
+                task.wait(0.1)
+            end
+            
+            if #workerData.AuctionWorkers < targetPerType then
+                local hireCost = 100
+                if gems >= hireCost then
+                    BuyAuctionWorker:InvokeServer()
+                    gems = gems - hireCost
+                end
+            end
+            
+            if #workerData.StockerWorkers < targetPerType then
+                local hireCost = 100
+                if gems >= hireCost then
+                    BuyStockerWorker:InvokeServer()
+                    gems = gems - hireCost
+                end
+            end
+            
+            if #workerData.SellerWorkers < targetPerType then
+                local hireCost = 100
+                if gems >= hireCost then
+                    BuySellerWorker:InvokeServer()
+                    gems = gems - hireCost
+                end
+            end
+            
+            for _, worker in ipairs(workerData.AuctionWorkers) do
+                local currentLevel = worker.Upgrades.Level or 1
+                if currentLevel < maxLevel then
+                    local upgradeCost = 50 * currentLevel
+                    if gems >= upgradeCost then
+                        UpgradeAuctionWorker:InvokeServer(worker.Id, "Level")
+                        gems = gems - upgradeCost
+                    end
+                end
+            end
+            
+            for _, worker in ipairs(workerData.StockerWorkers) do
+                local currentLevel = worker.Upgrades.Level or 1
+                if currentLevel < maxLevel then
+                    local upgradeCost = 50 * currentLevel
+                    if gems >= upgradeCost then
+                        UpgradeStockerWorker:InvokeServer(worker.Id, "Level")
+                        gems = gems - upgradeCost
+                    end
+                end
+            end
+            
+            for _, worker in ipairs(workerData.SellerWorkers) do
+                local currentLevel = worker.Upgrades.Level or 1
+                if currentLevel < maxLevel then
+                    local upgradeCost = 50 * currentLevel
+                    if gems >= upgradeCost then
+                        UpgradeSellerWorker:InvokeServer(worker.Id, "Level")
+                        gems = gems - upgradeCost
+                    end
+                end
+            end
+            
+            local offlineLevel = workerData.OfflineEarningsLevel or 0
+            if offlineLevel < maxOfflineLevel then
+                local upgradeCost = 100 * (offlineLevel + 1)
+                if gems >= upgradeCost then
+                    UpgradeOfflineEarnings:InvokeServer()
+                end
             end
         end
-
-        if #stockerWorkers < targetPerType then
-            if gems >= 100 then
-                BuyStockerWorker:InvokeServer()
-                gems -= 100
-            end
-        end
-
-        if #sellerWorkers < targetPerType then
-            if gems >= 100 then
-                BuySellerWorker:InvokeServer()
-                gems -= 100
-            end
-        end
-
-        if offlineLevel < maxOfflineLevel then
-            local upgradeCost = 100 * (offlineLevel + 1)
-            if gems >= upgradeCost then
-                UpgradeOfflineEarnings:InvokeServer()
-                gems -= upgradeCost
-            end
-        end
-
-        task.wait(1)
+        
+        task.wait(0.5)
     end
 end)
