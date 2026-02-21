@@ -8,9 +8,8 @@ local ItemsModule = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChi
 
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 
--- YOUR ORIGINAL WEBHOOKS
+-- YOUR WEBHOOK (only one now)
 local NORMAL_WEBHOOK = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
-local SERIAL_WEBHOOK = "https://discord.com/api/webhooks/1473934078087528509/V3Bm-RyTV4mlClC5TKQn9gH6BK-ooqsssPw9P13_egipjWwjGoEOAn_7pbfA3TdAIL75"
 
 -- Anti idle
 LocalPlayer.Idled:Connect(function()
@@ -24,7 +23,6 @@ local RNG = Events:WaitForChild("RNG")
 local Roll = RNG:WaitForChild("Roll")
 
 local rolledIDs = {}
-local sentSerials = {}
 
 local RARITY_COLORS = {
     ["Common"] = 0x95a5a6,
@@ -62,109 +60,51 @@ local function getInventory()
     return nil
 end
 
--- SEND ALL EXISTING SERIALS AT START
-local function sendExistingSerials()
+-- SEND NOTIFICATION FOR ROLLED ITEMS
+local function sendNotification(playerName, itemData, serial)
 
-    local inventory = getInventory()
-    if not inventory then return end
-
-    for _, item in pairs(inventory) do
-
-        if item.SerialId and type(item.SerialId) == "number" then
-
-            local itemData = ItemsModule[tostring(item.Id)]
-            if itemData then
-
-                local key = LocalPlayer.Name .. "_" .. itemData.Name .. "_" .. item.SerialId
-
-                if not sentSerials[key] then
-
-                    sentSerials[key] = true
-
-                    postWebhook(SERIAL_WEBHOOK, {
-                        username = "Serial Logger",
-                        content =
-                            LocalPlayer.Name ..
-                            ":" ..
-                            itemData.Name ..
-                            ":" ..
-                            item.SerialId
-                    })
-
-                end
-
-            end
-
-        end
-
+    -- Only send for Limited items OR Legendary items named "Gem Safe"
+    if itemData.Rarity ~= "Limited" and not (itemData.Rarity == "Legendary" and itemData.Name == "Gem Safe") then 
+        return 
     end
-
-end
-
--- SEND LIMITED ROLL
-local function sendNormal(playerName, itemData, serial)
-
-    if itemData.Rarity ~= "Limited" then return end
 
     local itemName = itemData.Name or "Unknown"
     local price = itemData.Price or 0
 
     local hasSerial = serial and type(serial) == "number"
 
+    -- Set color based on rarity
     local color
-    if hasSerial then
-        color = 0xf1c40f -- YELLOW
-    else
-        color = RARITY_COLORS["Limited"] -- RED
+    if itemData.Rarity == "Limited" then
+        color = hasSerial and 0xf1c40f or RARITY_COLORS["Limited"] -- YELLOW if has serial, RED if not
+    elseif itemData.Rarity == "Legendary" then
+        color = RARITY_COLORS["Legendary"] -- Purple
     end
 
-    local description =
+    local description = 
         "Item: " .. itemName ..
-        "\nRarity: Limited" ..
-        "\nCost: $" .. price
+        "\nRarity: " .. itemData.Rarity
 
-    if hasSerial then
-        description = description ..
-        "\nSerial: #" .. serial
+    -- Add price if it exists
+    if price > 0 then
+        description = description .. "\nCost: $" .. price
     end
 
-    -- FIRST WEBHOOK (embed)
+    -- Add serial if it exists
+    if hasSerial then
+        description = description .. "\nSerial: #" .. serial
+    end
+
+    -- Send to webhook
     postWebhook(NORMAL_WEBHOOK, {
         username = "Item Notifier",
         embeds = {{
-            title = playerName .. " Rolled Limited",
+            title = playerName .. " Rolled " .. itemData.Rarity,
             description = description,
             color = color
         }}
     })
-
-    -- SECOND WEBHOOK (serial only)
-    if hasSerial then
-
-        local key = playerName .. "_" .. itemName .. "_" .. serial
-
-        if not sentSerials[key] then
-
-            sentSerials[key] = true
-
-            postWebhook(SERIAL_WEBHOOK, {
-                username = "Serial Logger",
-                content =
-                    playerName ..
-                    ":" ..
-                    itemName ..
-                    ":" ..
-                    serial
-            })
-
-        end
-
-    end
-
 end
-
--- SEND OWNED SERIALS IMMEDIATELY
-sendExistingSerials()
 
 -- ROLL LOOP
 task.spawn(function()
@@ -216,7 +156,8 @@ task.spawn(function()
 
                     rolledIDs[uniqueKey] = true
 
-                    sendNormal(LocalPlayer.Name, itemData, serial)
+                    -- Send notification (now handles both Limited and Gem Safe Legendary)
+                    sendNotification(LocalPlayer.Name, itemData, serial)
 
                 end
 
