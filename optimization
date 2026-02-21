@@ -8,7 +8,7 @@ local ItemsModule = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChi
 
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 
--- YOUR WEBHOOK (only one now)
+-- WEBHOOK (only for Gem Safe Legendary)
 local NORMAL_WEBHOOK = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
 
 -- Anti idle
@@ -60,69 +60,47 @@ local function getInventory()
     return nil
 end
 
--- SEND NOTIFICATION FOR ROLLED ITEMS
-local function sendNotification(playerName, itemData, serial)
-
-    -- Only send for Limited items OR Legendary items named "Gem Safe"
-    if itemData.Rarity ~= "Limited" and not (itemData.Rarity == "Legendary" and itemData.Name == "Gem Safe") then 
-        return 
-    end
-
+-- SEND NOTIFICATION FOR GEM SAFE ONLY
+local function sendGemSafeNotification(playerName, itemData, serial)
     local itemName = itemData.Name or "Unknown"
     local price = itemData.Price or 0
-
     local hasSerial = serial and type(serial) == "number"
-
-    -- Set color based on rarity
-    local color
-    if itemData.Rarity == "Limited" then
-        color = hasSerial and 0xf1c40f or RARITY_COLORS["Limited"] -- YELLOW if has serial, RED if not
-    elseif itemData.Rarity == "Legendary" then
-        color = RARITY_COLORS["Legendary"] -- Purple
-    end
 
     local description = 
         "Item: " .. itemName ..
         "\nRarity: " .. itemData.Rarity
 
-    -- Add price if it exists
     if price > 0 then
         description = description .. "\nCost: $" .. price
     end
 
-    -- Add serial if it exists
     if hasSerial then
         description = description .. "\nSerial: #" .. serial
     end
 
     -- Send to webhook
     postWebhook(NORMAL_WEBHOOK, {
-        username = "Item Notifier",
+        username = "Gem Safe Notifier",
         embeds = {{
-            title = playerName .. " Rolled " .. itemData.Rarity,
+            title = playerName .. " Rolled Gem Safe!",
             description = description,
-            color = color
+            color = RARITY_COLORS["Legendary"] -- Purple
         }}
     })
 end
 
 -- ROLL LOOP
 task.spawn(function()
-
-    local rollCount = 0
-
+    print("🎲 Roller started - Waiting for rolls...")
+    
     while true do
-
         task.wait(4)
-
-        rollCount += 1
 
         local success, result = pcall(function()
             return Roll:InvokeServer()
         end)
 
         if success and result then
-
             local itemID
 
             if type(result) == "table" then
@@ -132,10 +110,10 @@ task.spawn(function()
             end
 
             if itemID then
-
                 local itemData = ItemsModule[itemID]
                 if not itemData then continue end
 
+                -- Get serial if it exists
                 local inventory = getInventory()
                 local serial = nil
 
@@ -152,19 +130,20 @@ task.spawn(function()
 
                 local uniqueKey = serial and (itemID .. "_" .. serial) or itemID
 
-                if not rolledIDs[uniqueKey] then
-
-                    rolledIDs[uniqueKey] = true
-
-                    -- Send notification (now handles both Limited and Gem Safe Legendary)
-                    sendNotification(LocalPlayer.Name, itemData, serial)
-
+                -- Always print what we rolled to console
+                if serial then
+                    print(string.format("🎲 Rolled: %s (%s) #%d", itemData.Name, itemData.Rarity, serial))
+                else
+                    print(string.format("🎲 Rolled: %s (%s)", itemData.Name, itemData.Rarity))
                 end
 
+                -- Only send webhook if it's a Gem Safe Legendary AND we haven't sent it before
+                if itemData.Rarity == "Legendary" and itemData.Name == "Gem Safe" and not rolledIDs[uniqueKey] then
+                    rolledIDs[uniqueKey] = true
+                    print("✨ GEM SAFE DETECTED! Sending to Discord...")
+                    sendGemSafeNotification(LocalPlayer.Name, itemData, serial)
+                end
             end
-
         end
-
     end
-
 end)
