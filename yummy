@@ -92,9 +92,7 @@ local function scanCurrentGarageItems()
 	if not itemsFolder then return nil end
 	taskWait(0.5)
 	local start=tick()
-	while tick()-start<SCAN_DURATION do
-		taskWait(0.2)
-	end
+	while tick()-start<SCAN_DURATION do taskWait(0.2) end
 	return itemsFolder
 end
 
@@ -110,7 +108,6 @@ local function handleItemsWon()
 				print("Confirmed items")
 			end
 		end
-
 		local sellItems=gui:FindFirstChild("SellItems")
 		if sellItems then
 			local frame=sellItems:FindFirstChild("Frame")
@@ -129,33 +126,48 @@ local function handleItemsWon()
 	end
 end
 
+local function checkItemsWonOkay()
+	local gui=LocalPlayer.PlayerGui:FindFirstChild("ItemsWon",true)
+	if gui then
+		local button=gui:FindFirstChild("Button",true)
+		if button then
+			tryClick(button)
+			print("Clicked Okay on ItemsWon GUI")
+		end
+	end
+end
+
 while not halted do
 	if storageFull() then
 		print("Storage full. Stopping.")
 		break
 	end
-
 	print("Entering auction...")
 	pcall(function()EnterQueue:InvokeServer("51")end)
-
 	local start=tick()
 	repeat taskWait(0.1) until inAuction or tick()-start>10
 	if not inAuction then continue end
-
 	while inAuction and not auctionEnded do
 		local itemsFolder=scanCurrentGarageItems()
 		local garageValue=calculateGarageValue(itemsFolder)
 		print("Total garage value:",garageValue)
-
 		if garageValue>0 then
 			local maxSafeBid=garageValue*(1-SALE_PENALTY)
-			if currentNextBid and currentNextBid<maxSafeBid and currentBidder~=LocalPlayer then
+			task.wait(1)
+			if currentNextBid and currentNextBid>=maxSafeBid then
+				if currentGarage and tick()-lastSkipTime>SKIP_COOLDOWN then
+					pcall(function()SkipCountdown:InvokeServer()end)
+					taskWait(0.1)
+					pcall(function()Skip:InvokeServer()end)
+					lastSkipTime=tick()
+					print("Skipped garage due to NPC max bid")
+				end
+			elseif currentNextBid and currentNextBid<maxSafeBid and currentBidder~=LocalPlayer then
 				local bidAmount=currentNextBid+1
 				if bidAmount>maxSafeBid then bidAmount=maxSafeBid end
 				pcall(function()PlaceBid:InvokeServer(bidAmount)end)
 				print("Bidding:",bidAmount)
 			end
-
 			local bidStart=tick()
 			while inAuction and currentGarage and not auctionEnded do
 				if tick()-bidStart>30 then break end
@@ -173,8 +185,14 @@ while not halted do
 		end
 		taskWait(0.5)
 	end
-
 	taskWait(3)
 	handleItemsWon()
+	task.spawn(function()
+		local timeout=tick()+5
+		while tick()<timeout do
+			task.wait(0.5)
+			checkItemsWonOkay()
+		end
+	end)
 	taskWait(1)
 end
