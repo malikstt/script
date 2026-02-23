@@ -18,6 +18,8 @@ local myCash = 0
 local currentGarageValue = 0
 local bidPlaced = false
 local processingItemsWon = false
+local failedAttempts = {}
+local currentGarageBudget = 0
 
 local function updateCash()
     local success, data = pcall(function() return DataEvent:InvokeServer() end)
@@ -115,39 +117,63 @@ UpdateCurrentBid.OnClientEvent:Connect(function(data)
     end
 end)
 
-local function getBestGarage()
+local function getGarageEstimatedValue(garageData)
+    local estimatedValue = 0
+    if garageData.Cutoffs and garageData.Cutoffs.High then
+        for _, v in pairs(garageData.Cutoffs.High) do
+            if v ~= math.huge and v > estimatedValue then
+                estimatedValue = v
+            end
+        end
+    end
+    return estimatedValue
+end
+
+local function getBestAffordableGarage()
     updateCash()
-    local bestId = "51"
-    local bestValue = 0
+    local candidates = {}
     
     for id, data in pairs(GaragesModule) do
         if data.Type == "Cash" and data.AuctionBudget and myCash >= data.AuctionBudget then
-            local estimatedValue = 0
-            if data.Cutoffs and data.Cutoffs.High then
-                for _, v in pairs(data.Cutoffs.High) do
-                    if v ~= math.huge and v > estimatedValue then
-                        estimatedValue = v
-                    end
-                end
-            end
-            if estimatedValue > bestValue then
-                bestValue = estimatedValue
-                bestId = id
+            local attempts = failedAttempts[id] or 0
+            if attempts < 10 then
+                local estimatedValue = getGarageEstimatedValue(data)
+                table.insert(candidates, {
+                    id = id,
+                    name = data.Name,
+                    budget = data.AuctionBudget,
+                    value = estimatedValue,
+                    attempts = attempts
+                })
             end
         end
     end
     
-    return bestId
+    table.sort(candidates, function(a, b)
+        if a.value ~= b.value then
+            return a.value > b.value
+        end
+        return a.attempts < b.attempts
+    end)
+    
+    return candidates[1]
 end
 
 local function joinAuction()
     while true do
         if not processingItemsWon then
-            local garageId = getBestGarage()
-            local garageData = GaragesModule[garageId]
-            if garageData then
-                print("🎯 Entering: " .. garageData.Name .. " (Need: $" .. (garageData.AuctionBudget or 0) .. ")")
-                pcall(function() EnterQueue:InvokeServer(garageId) end)
+            local best = getBestAffordableGarage()
+            if best then
+                print("🎯 Entering: " .. best.name .. " (Need: $" .. best.budget .. ", Est: $" .. best.value .. ")")
+                local success = pcall(function() EnterQueue:InvokeServer(best.id) end)
+                if not success then
+                    failedAttempts[best.id] = (failedAttempts[best.id] or 0) + 1
+                    print("⚠️ Join failed for " .. best.name .. " (Attempt " .. failedAttempts[best.id] .. ")")
+                end
+            else
+                print("⚠️ No affordable garages found")
+                task.wait(5)
+                updateCash()
             end
         end
         task.wait(1)
@@ -164,9 +190,11 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     bidPlaced = false
     currentGarageBudget = 0
     local garageName = garage.Name
+    local garageId = nil
     
     for id, data in pairs(GaragesModule) do
         if data.Name == garageName then
+            garageId = id
             currentGarageBudget = data.AuctionBudget or 0
             break
         end
@@ -237,6 +265,9 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
         if success then
             print("✅ Bid placed")
             bidPlaced = true
+            if garageId then
+                failedAttempts[garageId] = 0
+            end
         else
             print("❌ Bid failed")
         end
@@ -256,4 +287,4 @@ AuctionsFolder.ChildRemoved:Connect(function()
 end)
 
 print("🚀 Started - " .. MIN_PROFIT .. "% profit")
-print("💵 Entering best value garage where myCash >= AuctionBudget")
+print("💵 Smart garage selection with fallback")
