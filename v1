@@ -4,7 +4,7 @@ local LocalPlayer = Players.LocalPlayer
 
 local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
 local ItemsModule = require(ReplicatedStorage.Modules.Items)
-local GaragesModule = require(ReplicatedStorage.Modules.Garages)
+local GaragesModule = require(ReplicatedStorage.Modules["Garages-experiment1"])
 local Auctions = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
 local EnterQueue = Auctions:WaitForChild("EnterQueue")
 local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
@@ -18,9 +18,6 @@ local myCash = 0
 local currentGarageValue = 0
 local bidPlaced = false
 local processingItemsWon = false
-local failedAttempts = {}
-local joiningGarageId = nil
-local joinStartTime = 0
 local currentGarageBudget = 0
 
 local function updateCash()
@@ -84,7 +81,7 @@ local function handleItemsWon()
         repeat task.wait() until sellButton.Visible
         print("💰 Selling all")
         tryClick(sellButton)
-        task.wait(1)
+        task.wait(0.5)
         checkForButton()
     end
     
@@ -133,103 +130,40 @@ end
 
 local function getBestAffordableGarage()
     updateCash()
-    local candidates = {}
+    local bestId = "51"
+    local bestValue = 0
     
     for id, data in pairs(GaragesModule) do
-        if data.Type == "Cash" and data.AuctionBudget and myCash >= data.AuctionBudget then
-            local attempts = failedAttempts[id] or 0
-            if attempts < 10 then
-                local estimatedValue = getGarageEstimatedValue(data)
-                table.insert(candidates, {
-                    id = id,
-                    name = data.Name,
-                    budget = data.AuctionBudget,
-                    value = estimatedValue,
-                    attempts = attempts
-                })
+        if data.Type == "Cash" and data.CashNeededToEnter and myCash >= data.CashNeededToEnter then
+            local estimatedValue = getGarageEstimatedValue(data)
+            if estimatedValue > bestValue then
+                bestValue = estimatedValue
+                bestId = id
             end
         end
     end
     
-    table.sort(candidates, function(a, b)
-        if a.value ~= b.value then
-            return a.value > b.value
-        end
-        return a.attempts < b.attempts
-    end)
-    
-    return candidates[1]
+    return bestId
 end
 
-local function attemptJoin()
-    if processingItemsWon or inAuction then return end
-    
-    local best = getBestAffordableGarage()
-    if not best then
-        print("⚠️ No affordable garages found")
-        task.wait(5)
-        updateCash()
-        return
-    end
-    
-    joiningGarageId = best.id
-    joinStartTime = tick()
-    print("🎯 Attempting: " .. best.name .. " (Need: $" .. best.budget .. ", Est: $" .. best.value .. ", Attempts: " .. best.attempts .. ")")
-    pcall(function() EnterQueue:InvokeServer(best.id) end)
-end
-
-local function checkJoinFailed()
-    if not joiningGarageId then return false end
-    
-    local garageExists = false
-    for _, garage in pairs(AuctionsFolder:GetChildren()) do
-        local garageData = GaragesModule[joiningGarageId]
-        if garageData and garage.Name == garageData.Name then
-            garageExists = true
-            break
-        end
-    end
-    
-    if not garageExists and tick() - joinStartTime > 5 then
-        failedAttempts[joiningGarageId] = (failedAttempts[joiningGarageId] or 0) + 1
-        local garageName = GaragesModule[joiningGarageId] and GaragesModule[joiningGarageId].Name or "Unknown"
-        print("⚠️ Join failed for " .. garageName .. " (Attempt " .. failedAttempts[joiningGarageId] .. ")")
-        joiningGarageId = nil
-        return true
-    end
-    
-    return false
-end
-
-local function joinLoop()
+local function joinAuction()
     while true do
         if not processingItemsWon and not inAuction then
-            if joiningGarageId then
-                if checkJoinFailed() then
-                    task.wait(0.5)
-                    attemptJoin()
-                end
-            else
-                attemptJoin()
+            local garageId = getBestAffordableGarage()
+            local garageData = GaragesModule[garageId]
+            if garageData then
+                print("🎯 Entering: " .. garageData.Name .. " (Need: $" .. (garageData.CashNeededToEnter or 0) .. ", Est: $" .. getGarageEstimatedValue(garageData) .. ")")
+                pcall(function() EnterQueue:InvokeServer(garageId) end)
             end
         end
         task.wait(1)
     end
 end
 
-coroutine.wrap(joinLoop)()
+coroutine.wrap(joinAuction)()
 
 AuctionsFolder.ChildAdded:Connect(function(garage)
     if processingItemsWon then return end
-    
-    if joiningGarageId then
-        local garageData = GaragesModule[joiningGarageId]
-        if garageData and garage.Name == garageData.Name then
-            print("✅ Join success for " .. garageData.Name)
-            failedAttempts[joiningGarageId] = 0
-            joiningGarageId = nil
-        end
-    end
     
     inAuction = true
     currentBidData = nil
@@ -241,7 +175,7 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     for id, data in pairs(GaragesModule) do
         if data.Name == garageName then
             garageId = id
-            currentGarageBudget = data.AuctionBudget or 0
+            currentGarageBudget = data.CashNeededToEnter or 0
             break
         end
     end
@@ -330,4 +264,4 @@ AuctionsFolder.ChildRemoved:Connect(function()
 end)
 
 print("🚀 Started - " .. MIN_PROFIT .. "% profit")
-print("💵 Smart garage selection with 5s join detection, immediate fallback, and retry logic")
+print("💵 Using Garages-experiment1 with CashNeededToEnter")
