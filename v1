@@ -17,7 +17,7 @@ local inAuction = false
 local myCash = 0
 local currentGarageValue = 0
 local bidPlaced = false
-local currentGarageBudget = 0
+local waitingForItemsWon = false
 
 local function updateCash()
     local success, data = pcall(function() return DataEvent:InvokeServer() end)
@@ -50,16 +50,17 @@ local function handleItemsWon()
     local gui = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon")
     if not gui then return end
     
+    waitingForItemsWon = true
     print("📦 ItemsWon detected")
     
     local frame = gui:FindFirstChild("ItemsFrame") and gui.ItemsFrame:FindFirstChild("Frame")
-    if not frame then return end
-    
-    local confirmButton = gui:FindFirstChild("ItemsFrame") and gui.ItemsFrame:FindFirstChild("ConfirmButton")
-    if confirmButton then
-        repeat task.wait() until confirmButton.Visible
-        print("✅ Clicking Confirm")
-        tryClick(confirmButton)
+    if frame then
+        local confirmButton = gui:FindFirstChild("ItemsFrame") and gui.ItemsFrame:FindFirstChild("ConfirmButton")
+        if confirmButton then
+            repeat task.wait() until confirmButton.Visible
+            print("✅ Clicking Confirm")
+            tryClick(confirmButton)
+        end
     end
     
     task.wait(1)
@@ -76,6 +77,8 @@ local function handleItemsWon()
         task.wait(1)
         checkForButton()
     end
+    
+    waitingForItemsWon = false
 end
 
 LocalPlayer.PlayerGui.DescendantAdded:Connect(function(obj)
@@ -88,7 +91,7 @@ end)
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
     if data then
         currentBidData = data
-        if inAuction and currentGarageValue > 0 and currentGarageBudget > 0 then
+        if inAuction and currentGarageValue > 0 then
             print("💰 Bid Update: $" .. tostring(data.nextBid) .. " | " .. tostring(data.player and (data.player.Name or "NPC") or "None"))
             
             if data.player ~= LocalPlayer and bidPlaced then
@@ -96,7 +99,7 @@ UpdateCurrentBid.OnClientEvent:Connect(function(data)
                 local profit = currentGarageValue - nextBid
                 local profitPercent = (profit / currentGarageValue) * 100
                 
-                if profitPercent >= MIN_PROFIT and nextBid <= currentGarageBudget and nextBid <= myCash then
+                if profitPercent >= MIN_PROFIT and nextBid <= myCash then
                     print("⚡ Counter-bidding: $" .. nextBid)
                     pcall(function() PlaceBid:InvokeServer(nextBid) end)
                 end
@@ -112,8 +115,8 @@ local function getBestGarage()
     
     for id, data in pairs(GaragesModule) do
         if data.Type == "Cash" then
-            local cost = data.CostToEnter or 0
-            if myCash >= cost then
+            local entryCost = data.CostToEnter or 0
+            if myCash >= entryCost then
                 if data.AuctionBudget and data.AuctionBudget > highestBudget then
                     highestBudget = data.AuctionBudget
                     bestId = id
@@ -127,10 +130,11 @@ end
 
 local function joinAuction()
     while true do
-        local garageId = getBestGarage()
-        local garageData = GaragesModule[garageId]
-        print("🎯 Entering: " .. (garageData and garageData.Name or "Unknown") .. " (Entry: $" .. (garageData and garageData.CostToEnter or 0) .. ")")
-        pcall(function() EnterQueue:InvokeServer(garageId) end)
+        if not waitingForItemsWon then
+            local garageId = getBestGarage()
+            print("🎯 Entering: " .. (GaragesModule[garageId] and GaragesModule[garageId].Name or "Unknown") .. " ($" .. myCash .. ")")
+            pcall(function() EnterQueue:InvokeServer(garageId) end)
+        end
         task.wait(0.5)
     end
 end
@@ -141,15 +145,7 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     inAuction = true
     currentBidData = nil
     bidPlaced = false
-    
-    for id, data in pairs(GaragesModule) do
-        if data.Name == garage.Name then
-            currentGarageBudget = data.AuctionBudget or 0
-            break
-        end
-    end
-    
-    print("\n=== " .. garage.Name .. " (Budget: $" .. currentGarageBudget .. ") ===")
+    print("\n=== " .. garage.Name .. " ===")
     
     local itemsFolder = garage:WaitForChild("Items", 5)
     if not itemsFolder then
@@ -165,7 +161,6 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     for _, itemInstance in ipairs(items) do
         local itemId = itemInstance.Name
         local itemData = ItemsModule[itemId] or ItemsModule[tonumber(itemId)]
-        
         if itemData and type(itemData) == "table" and itemData.Price then
             currentGarageValue = currentGarageValue + (tonumber(itemData.Price) or 0)
         end
@@ -193,12 +188,10 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     local profit = currentGarageValue - nextBid
     local profitPercent = (profit / currentGarageValue) * 100
     local worth = profitPercent >= MIN_PROFIT
-    local canAfford = nextBid <= currentGarageBudget and nextBid <= myCash
     
     print("💰 Next: $" .. nextBid)
     print("📊 Profit: $" .. profit .. " (" .. string.format("%.2f", profitPercent) .. "%)")
     print(worth and "✅ WORTH" or "❌ NOT WORTH")
-    print(canAfford and "✅ Can afford" or "❌ Can't afford")
     
     if currentBidData.player == LocalPlayer then
         print("👑 Highest bidder")
@@ -206,7 +199,7 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
         return
     end
     
-    if worth and canAfford then
+    if worth and nextBid <= myCash then
         print("⚡ Bidding...")
         local success = pcall(function()
             return PlaceBid:InvokeServer(nextBid)
@@ -226,12 +219,11 @@ AuctionsFolder.ChildRemoved:Connect(function()
         inAuction = false
         currentBidData = nil
         currentGarageValue = 0
-        currentGarageBudget = 0
         bidPlaced = false
-        task.wait(2)
+        task.wait(1)
         handleItemsWon()
     end
 end)
 
-print("🚀 Started - " .. MIN_PROFIT .. "% profit, using AuctionBudget as spending limit")
-print("💵 Finding best garage by budget")
+print("🚀 Started - " .. MIN_PROFIT .. "% profit, will counter-bid to stay highest")
+print("💵 Finding best affordable garage")
