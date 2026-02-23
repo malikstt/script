@@ -1,500 +1,209 @@
--- Rayfield Auction Automation Script
--- Made for automating auctions in Roblox games
-
--- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-
--- Variables
 local LocalPlayer = Players.LocalPlayer
-local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
-local Window = nil
 
--- Configuration
-local Config = {
-    AutoJoinAuctions = false,
-    MaxBidPercentage = 50, -- Max bid percentage of current cash
-    AutoScrollAuctions = false,
-    ScrollDelay = 5, -- seconds
-    SkipTutorials = true,
-    AutoCollectRefunds = true,
-    AuctionTypes = {
-        "Cash",
-        "Limited",
-        "Season2" -- if available
-    },
-    SelectedAuctionType = "Cash",
-    SmartBidding = true,
-    BidAggressiveness = 1, -- 1-10 scale
-    StopIfLowFunds = true,
-    LowFundsThreshold = 1000,
-    NotificationSound = true
-}
+local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
+local ItemsModule = require(ReplicatedStorage.Modules.Items)
+local GaragesModule = require(ReplicatedStorage.Modules.Garages)
+local Auctions = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
+local EnterQueue = Auctions:WaitForChild("EnterQueue")
+local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
+local PlaceBid = Auctions:WaitForChild("PlaceBid")
+local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 
--- Remote detection (you might need to adjust these based on your game)
-local AuctionsModule = nil
-local AuctionRemotes = {
-    EnterQueue = nil,
-    GetQueue = nil,
-    GetTimeRemaining = nil,
-    PlaceBid = nil,
-    LeaveQueue = nil
-}
+local currentBidData = nil
+local MIN_PROFIT = 6
+local inAuction = false
+local myCash = 0
 
--- Auto find remotes (you'll need to provide the actual paths)
-local function FindAuctionRemotes()
-    -- Try to find auction-related remotes
-    for _, child in pairs(ReplicatedStorage:GetDescendants()) do
-        if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
-            local name = child.Name:lower()
+local function updateCash()
+    local success, data = pcall(function() return DataEvent:InvokeServer() end)
+    if success and data and data.Cash then
+        myCash = tonumber(data.Cash) or 0
+    end
+end
+
+local function tryClick(obj)
+    if not obj then return end
+    pcall(function() obj:Activate() end)
+    if getconnections then
+        for _, v in pairs(getconnections(obj.MouseButton1Click)) do
+            pcall(function() v:Fire() end)
+        end
+    end
+end
+
+local function checkForButton()
+    local itemsWon = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
+    if itemsWon then
+        local button = itemsWon:FindFirstChild("Button", true)
+        if button then
+            tryClick(button)
+        end
+    end
+end
+
+local function handleItemsWon()
+    local gui = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon")
+    if not gui then return end
+    
+    print("📦 ItemsWon detected")
+    
+    local frame = gui:FindFirstChild("ItemsFrame") and gui.ItemsFrame:FindFirstChild("Frame")
+    if not frame then return end
+    
+    local confirmButton = gui:FindFirstChild("ItemsFrame") and gui.ItemsFrame:FindFirstChild("ConfirmButton")
+    if confirmButton then
+        repeat task.wait() until confirmButton.Visible
+        print("✅ Clicking Confirm")
+        tryClick(confirmButton)
+    end
+    
+    task.wait(1)
+    
+    local sellButton = gui:FindFirstChild("SellItems") and 
+                      gui.SellItems:FindFirstChild("Frame") and 
+                      gui.SellItems.Frame:FindFirstChild("Normal") and 
+                      gui.SellItems.Frame.Normal:FindFirstChild("Button")
+    
+    if sellButton then
+        repeat task.wait() until sellButton.Visible
+        print("💰 Selling all")
+        tryClick(sellButton)
+        task.wait(1)
+        checkForButton()
+    end
+end
+
+LocalPlayer.PlayerGui.DescendantAdded:Connect(function(obj)
+    if obj.Name == "Button" then
+        task.wait()
+        tryClick(obj)
+    end
+end)
+
+UpdateCurrentBid.OnClientEvent:Connect(function(data)
+    if data then
+        currentBidData = data
+        if inAuction then
+            print("💰 Bid: $" .. tostring(data.nextBid) .. " | " .. tostring(data.player and (data.player.Name or "NPC") or "None"))
+        end
+    end
+end)
+
+local function getBestGarage()
+    updateCash()
+    local bestId = nil
+    local highestBudget = 0
+    
+    for id, data in pairs(GaragesModule) do
+        if data.Type == "Cash" then
+            local cost = data.CostToEnter or 0
+            local cashNeeded = data.CashNeededToEnter or 0
+            local totalNeeded = cost + cashNeeded
             
-            if name:find("auction") or name:find("bid") or name:find("queue") then
-                if name:find("enter") or name:find("join") then
-                    AuctionRemotes.EnterQueue = child
-                elseif name:find("getqueue") or name:find("queueget") then
-                    AuctionRemotes.GetQueue = child
-                elseif name:find("time") or name:find("remaining") then
-                    AuctionRemotes.GetTimeRemaining = child
-                elseif name:find("bid") or name:find("place") then
-                    AuctionRemotes.PlaceBid = child
-                elseif name:find("leave") or name:find("exit") then
-                    AuctionRemotes.LeaveQueue = child
+            if myCash >= totalNeeded then
+                if data.AuctionBudget and data.AuctionBudget > highestBudget then
+                    highestBudget = data.AuctionBudget
+                    bestId = id
                 end
             end
         end
     end
     
-    -- Try to find the auctions module
-    for _, module in pairs(getloadedmodules()) do
-        if module.Name:lower():find("auction") then
-            AuctionsModule = module
-            break
-        end
+    return bestId or "51"
+end
+
+local function joinAuction()
+    while true do
+        local garageId = getBestGarage()
+        print("🎯 Entering: " .. (GaragesModule[garageId] and GaragesModule[garageId].Name or "Unknown") .. " ($" .. myCash .. ")")
+        pcall(function() EnterQueue:InvokeServer(garageId) end)
+        task.wait(0.5)
     end
 end
 
--- Main auction automation function
-local AuctionBot = {
-    Active = false,
-    CurrentAuction = nil,
-    IsBidding = false,
-    LastBidTime = 0
-}
+coroutine.wrap(joinAuction)()
 
-function AuctionBot:Start()
-    if self.Active then return end
-    self.Active = true
+AuctionsFolder.ChildAdded:Connect(function(garage)
+    inAuction = true
+    currentBidData = nil
+    print("\n=== " .. garage.Name .. " ===")
     
-    -- Find remotes if not already found
-    if not AuctionRemotes.EnterQueue then
-        FindAuctionRemotes()
-    end
-    
-    coroutine.wrap(function()
-        while self.Active do
-            if Config.AutoJoinAuctions then
-                self:ProcessAuction()
-            end
-            
-            if Config.AutoScrollAuctions then
-                self:AutoScroll()
-            end
-            
-            wait(1)
-        end
-    end)()
-end
-
-function AuctionBot:Stop()
-    self.Active = false
-    self.CurrentAuction = nil
-    self.IsBidding = false
-end
-
-function AuctionBot:ProcessAuction()
-    -- Check if we should skip due to low funds
-    if Config.StopIfLowFunds then
-        local cash = LocalPlayer:GetAttribute("Cash") or LocalPlayer:WaitForChild("leaderstats", 5) and LocalPlayer.leaderstats:FindFirstChild("Cash")
-        if cash and tonumber(cash.Value) < Config.LowFundsThreshold then
-            if Config.NotificationSound then
-                Rayfield:Notify({
-                    Title = "Auction Bot",
-                    Content = "Stopped due to low funds!",
-                    Duration = 3,
-                    Image = 4483362458
-                })
-            end
-            self:Stop()
-            return
-        end
-    end
-    
-    -- Enter auction queue based on selected type
-    if not self.CurrentAuction then
-        local success, result = pcall(function()
-            if AuctionRemotes.EnterQueue then
-                if AuctionRemotes.EnterQueue:IsA("RemoteFunction") then
-                    return AuctionRemotes.EnterQueue:InvokeServer(Config.SelectedAuctionType)
-                else
-                    AuctionRemotes.EnterQueue:FireServer(Config.SelectedAuctionType)
-                    return true
-                end
-            end
-            return false
-        end)
-        
-        if success and result then
-            if Config.NotificationSound then
-                Rayfield:Notify({
-                    Title = "Auction Bot",
-                    Content = "Joined " .. Config.SelectedAuctionType .. " auction queue",
-                    Duration = 3,
-                    Image = 4483362458
-                })
-            end
-            self.CurrentAuction = Config.SelectedAuctionType
-        end
-    else
-        -- Monitor and bid in current auction
-        self:MonitorAndBid()
-    end
-end
-
-function AuctionBot:MonitorAndBid()
-    if not AuctionRemotes.GetQueue or not AuctionRemotes.GetTimeRemaining then
+    local itemsFolder = garage:WaitForChild("Items", 5)
+    if not itemsFolder then
+        print("❌ No items")
         return
     end
     
-    local success, queueData = pcall(function()
-        if AuctionRemotes.GetQueue:IsA("RemoteFunction") then
-            return AuctionRemotes.GetQueue:InvokeServer()
-        end
-        return {}
-    end)
+    task.wait(3)
     
-    if success and queueData then
-        -- Check if we're in a queue
-        for _, auction in pairs(queueData) do
-            if auction.Players and table.find(auction.Players, LocalPlayer) then
-                local timeRemaining = 0
-                local timeSuccess, timeResult = pcall(function()
-                    if AuctionRemotes.GetTimeRemaining:IsA("RemoteFunction") then
-                        return AuctionRemotes.GetTimeRemaining:InvokeServer(auction.ID or "1")
-                    end
-                    return 0
-                end)
-                
-                if timeSuccess then
-                    timeRemaining = timeResult or 0
-                end
-                
-                -- Logic for when to bid
-                if Config.SmartBidding and timeRemaining < 5 and not self.IsBidding and tick() - self.LastBidTime > 3 then
-                    self:PlaceSmartBid(auction)
-                end
-                
-                break
-            end
-        end
-    end
-end
-
-function AuctionBot:PlaceSmartBid(auctionData)
-    self.IsBidding = true
+    local totalValue = 0
+    local items = itemsFolder:GetChildren()
     
-    -- Calculate bid amount based on strategy
-    local cash = LocalPlayer:GetAttribute("Cash") or 0
-    if LocalPlayer:WaitForChild("leaderstats", 1) and LocalPlayer.leaderstats:FindFirstChild("Cash") then
-        cash = LocalPlayer.leaderstats.Cash.Value
-    end
-    
-    local maxBid = math.floor(cash * (Config.MaxBidPercentage / 100))
-    local bidAmount = math.floor(maxBid * (Config.BidAggressiveness / 10))
-    
-    if bidAmount > 0 and AuctionRemotes.PlaceBid then
-        pcall(function()
-            if AuctionRemotes.PlaceBid:IsA("RemoteFunction") then
-                AuctionRemotes.PlaceBid:InvokeServer(bidAmount, auctionData.ID or "1")
-            else
-                AuctionRemotes.PlaceBid:FireServer(bidAmount, auctionData.ID or "1")
-            end
-            
-            self.LastBidTime = tick()
-            
-            if Config.NotificationSound then
-                Rayfield:Notify({
-                    Title = "Auction Bot",
-                    Content = "Placed bid: $" .. bidAmount,
-                    Duration = 2,
-                    Image = 4483362458
-                })
-            end
-        end)
-    end
-    
-    self.IsBidding = false
-end
-
-function AuctionBot:AutoScroll()
-    -- This would need to interact with the UI to scroll through auctions
-    -- Implementation depends on the specific UI structure
-    -- You might need to provide more details about the UI
-end
-
-function AuctionBot:CollectRefunds()
-    if Config.AutoCollectRefunds then
-        -- Look for refund collection remote
-        for _, child in pairs(ReplicatedStorage:GetDescendants()) do
-            if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
-                local name = child.Name:lower()
-                if name:find("refund") or name:find("gem") or name:find("pot") then
-                    pcall(function()
-                        if child:IsA("RemoteFunction") then
-                            child:InvokeServer("RefundGemPot")
-                        else
-                            child:FireServer("RefundGemPot")
-                        end
-                    end)
-                end
-            end
-        end
-    end
-end
-
--- Initialize Rayfield UI
-Window = Rayfield:CreateWindow({
-    Name = "Auction Automation",
-    LoadingTitle = "Auction Bot",
-    LoadingSubtitle = "by Sirius",
-    ConfigurationSaving = {
-        Enabled = true,
-        FolderName = "AuctionBot",
-        FileName = "Config"
-    },
-    Discord = {
-        Enabled = false,
-        Invite = "noinvitelink",
-        RememberJoins = true
-    },
-    KeySystem = false,
-})
-
--- Main Tab
-local MainTab = Window:CreateTab("Main", 4483362458)
-
--- Toggle
-MainTab:CreateToggle({
-    Name = "Enable Auction Bot",
-    CurrentValue = false,
-    Flag = "AutoAuctionToggle",
-    Callback = function(Value)
-        Config.AutoJoinAuctions = Value
-        if Value then
-            AuctionBot:Start()
-            if Config.NotificationSound then
-                Rayfield:Notify({
-                    Title = "Auction Bot",
-                    Content = "Auction bot started!",
-                    Duration = 3,
-                    Image = 4483362458
-                })
-            end
-        else
-            AuctionBot:Stop()
-        end
-    end,
-})
-
--- Dropdown for auction type
-MainTab:CreateDropdown({
-    Name = "Auction Type",
-    Options = Config.AuctionTypes,
-    CurrentOption = Config.SelectedAuctionType,
-    Flag = "AuctionTypeDropdown",
-    Callback = function(Option)
-        Config.SelectedAuctionType = Option
-    end,
-})
-
--- Slider for max bid percentage
-MainTab:CreateSlider({
-    Name = "Max Bid Percentage",
-    Range = {1, 100},
-    Increment = 1,
-    Suffix = "%",
-    CurrentValue = Config.MaxBidPercentage,
-    Flag = "MaxBidSlider",
-    Callback = function(Value)
-        Config.MaxBidPercentage = Value
-    end,
-})
-
--- Slider for bid aggressiveness
-MainTab:CreateSlider({
-    Name = "Bid Aggressiveness",
-    Range = {1, 10},
-    Increment = 1,
-    CurrentValue = Config.BidAggressiveness,
-    Flag = "AggressivenessSlider",
-    Callback = function(Value)
-        Config.BidAggressiveness = Value
-    end,
-})
-
--- Toggle for smart bidding
-MainTab:CreateToggle({
-    Name = "Smart Bidding",
-    CurrentValue = Config.SmartBidding,
-    Flag = "SmartBiddingToggle",
-    Callback = function(Value)
-        Config.SmartBidding = Value
-    end,
-})
-
--- Settings Tab
-local SettingsTab = Window:CreateTab("Settings", 4483362458)
-
-SettingsTab:CreateToggle({
-    Name = "Auto Collect Refunds",
-    CurrentValue = Config.AutoCollectRefunds,
-    Flag = "AutoRefundToggle",
-    Callback = function(Value)
-        Config.AutoCollectRefunds = Value
-    end,
-})
-
-SettingsTab:CreateToggle({
-    Name = "Stop If Low Funds",
-    CurrentValue = Config.StopIfLowFunds,
-    Flag = "LowFundsToggle",
-    Callback = function(Value)
-        Config.StopIfLowFunds = Value
-    end,
-})
-
-SettingsTab:CreateInput({
-    Name = "Low Funds Threshold",
-    PlaceholderText = "Minimum cash to continue",
-    RemoveTextAfterFocusLost = false,
-    CurrentValue = tostring(Config.LowFundsThreshold),
-    Flag = "LowFundsInput",
-    Callback = function(Value)
-        Config.LowFundsThreshold = tonumber(Value) or 1000
-    end,
-})
-
-SettingsTab:CreateToggle({
-    Name = "Notification Sounds",
-    CurrentValue = Config.NotificationSound,
-    Flag = "NotificationToggle",
-    Callback = function(Value)
-        Config.NotificationSound = Value
-    end,
-})
-
--- Auto Scroll Tab
-local ScrollTab = Window:CreateTab("Auto Scroll", 4483362458)
-
-ScrollTab:CreateToggle({
-    Name = "Auto Scroll Auctions",
-    CurrentValue = Config.AutoScrollAuctions,
-    Flag = "AutoScrollToggle",
-    Callback = function(Value)
-        Config.AutoScrollAuctions = Value
-    end,
-})
-
-ScrollTab:CreateSlider({
-    Name = "Scroll Delay",
-    Range = {1, 30},
-    Increment = 1,
-    Suffix = "s",
-    CurrentValue = Config.ScrollDelay,
-    Flag = "ScrollDelaySlider",
-    Callback = function(Value)
-        Config.ScrollDelay = Value
-    end,
-})
-
--- Buttons Tab
-local ButtonsTab = Window:CreateTab("Quick Actions", 4483362458)
-
-ButtonsTab:CreateButton({
-    Name = "Find Auction Remotes",
-    Callback = function()
-        FindAuctionRemotes()
-        Rayfield:Notify({
-            Title = "Remote Finder",
-            Content = "Attempted to find auction remotes",
-            Duration = 3,
-            Image = 4483362458
-        })
-    end,
-})
-
-ButtonsTab:CreateButton({
-    Name = "Collect Refunds Now",
-    Callback = function()
-        AuctionBot:CollectRefunds()
-        Rayfield:Notify({
-            Title = "Refund Collector",
-            Content = "Attempted to collect refunds",
-            Duration = 3,
-            Image = 4483362458
-        })
-    end,
-})
-
-ButtonsTab:CreateButton({
-    Name = "Leave Current Auction",
-    Callback = function()
-        if AuctionRemotes.LeaveQueue then
-            pcall(function()
-                if AuctionRemotes.LeaveQueue:IsA("RemoteFunction") then
-                    AuctionRemotes.LeaveQueue:InvokeServer()
-                else
-                    AuctionRemotes.LeaveQueue:FireServer()
-                end
-                AuctionBot.CurrentAuction = nil
-            end)
-        end
-    end,
-})
-
--- Debug/Info Tab
-local DebugTab = Window:CreateTab("Debug", 4483362458)
-
-DebugTab:CreateParagraph({
-    Title = "Bot Status",
-    Content = "Waiting for activation..."
-})
-
-DebugTab:CreateButton({
-    Name = "Refresh Status",
-    Callback = function()
-        local status = AuctionBot.Active and "Active" or "Inactive"
-        local currentAuction = AuctionBot.CurrentAuction or "None"
+    for _, itemInstance in ipairs(items) do
+        local itemId = itemInstance.Name
+        local itemData = ItemsModule[itemId] or ItemsModule[tonumber(itemId)]
         
-        DebugTab:CreateParagraph({
-            Title = "Bot Status",
-            Content = string.format("Status: %s\nCurrent Auction: %s\nIs Bidding: %s",
-                status, currentAuction, tostring(AuctionBot.IsBidding))
-        })
-    end,
-})
+        if itemData and type(itemData) == "table" and itemData.Price then
+            totalValue = totalValue + (tonumber(itemData.Price) or 0)
+        end
+    end
+    
+    if totalValue == 0 then
+        print("❌ Value: $0")
+        return
+    end
+    
+    print("💰 Value: $" .. totalValue)
+    
+    local timeout = 0
+    while not currentBidData and timeout < 8 do
+        task.wait(0.5)
+        timeout = timeout + 0.5
+    end
+    
+    if not currentBidData then
+        print("❌ No bid data")
+        return
+    end
+    
+    local nextBid = currentBidData.nextBid
+    local profit = totalValue - nextBid
+    local profitPercent = (profit / totalValue) * 100
+    local worth = profitPercent >= MIN_PROFIT
+    
+    print("💰 Next: $" .. nextBid)
+    print("📊 Profit: $" .. profit .. " (" .. string.format("%.2f", profitPercent) .. "%)")
+    print(worth and "✅ WORTH" or "❌ NOT WORTH")
+    
+    if currentBidData.player == LocalPlayer then
+        print("👑 Highest bidder")
+        return
+    end
+    
+    if worth then
+        print("⚡ Bidding...")
+        local success = pcall(function()
+            return PlaceBid:InvokeServer(nextBid)
+        end)
+        if success then
+            print("✅ Bid placed")
+        else
+            print("❌ Bid failed")
+        end
+    end
+end)
 
--- Initialize
-Rayfield:LoadConfiguration()
-FindAuctionRemotes()
+AuctionsFolder.ChildRemoved:Connect(function()
+    if #AuctionsFolder:GetChildren() == 0 then
+        print("\n=== Left ===\n")
+        inAuction = false
+        currentBidData = nil
+        task.wait(2)
+        handleItemsWon()
+    end
+end)
 
-if Config.NotificationSound then
-    Rayfield:Notify({
-        Title = "Auction Bot",
-        Content = "Script loaded successfully!",
-        Duration = 5,
-        Image = 4483362458
-    })
-end
-
-print("Auction Automation Script Loaded!")
+print("🚀 Started - " .. MIN_PROFIT .. "% profit")
+print("💵 Finding best affordable garage")
