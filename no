@@ -4,6 +4,11 @@ local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 local taskWait = task.wait
 
+local nonSaveVars = LocalPlayer:FindFirstChild("NonSaveVars")
+local ownsPlot = nonSaveVars and nonSaveVars:FindFirstChild("OwnsPlot")
+local currentPlot = ownsPlot and ownsPlot:IsA("ValueBase") and ownsPlot.Value or "7"
+local canvas = workspace.Plots[tostring(currentPlot)].Interior.Shop1.Canvas
+
 local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
 local ItemsModule = require(ReplicatedStorage.Modules.Items)
 local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
@@ -16,9 +21,14 @@ local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
 local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 
+local Events = ReplicatedStorage:WaitForChild("Events")
+local Shop = Events:WaitForChild("Shop")
+local Data = Events:WaitForChild("Data")
+
 local SCAN_DURATION = 2
 local BID_CHECK_INTERVAL = 0.2
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
+local targetItemId = "681"
 
 local totalTargetsFound = 0
 local totalTargetsObtained = 0
@@ -37,6 +47,13 @@ local currentTargetData = nil
 
 local lastSkipTime = 0
 local SKIP_COOLDOWN = 1
+
+local GRID_CONFIG = {
+    startPos = canvas.Position + Vector3.new(-canvas.Size.X/2 + 4, canvas.Size.Y/2 + 1, -canvas.Size.Z/2 + 4),
+    spacing = 6,
+    itemsPerRow = math.floor(canvas.Size.X / 6) - 1,
+    rowsPerFloor = math.floor(canvas.Size.Z / 6) - 1,
+}
 
 local function isTargetItem(itemId)
     local itemData = ItemsModule[itemId]
@@ -120,8 +137,110 @@ local function tryClick(obj)
     end
 end
 
+local function generatePosition(index)
+    local row = math.floor((index - 1) / GRID_CONFIG.itemsPerRow)
+    local col = (index - 1) % GRID_CONFIG.itemsPerRow
+    
+    local xOffset = col * GRID_CONFIG.spacing
+    local zOffset = row * GRID_CONFIG.spacing
+    
+    if row >= GRID_CONFIG.rowsPerFloor then
+        return nil
+    end
+    
+    return GRID_CONFIG.startPos + Vector3.new(xOffset, 0, zOffset)
+end
+
+local function getFurnitureCount(playerData)
+    local count = 0
+    if playerData and playerData.Furniture then
+        for _ in pairs(playerData.Furniture) do
+            count = count + 1
+        end
+    end
+    return count
+end
+
+local function findItemsInInventory(playerData)
+    local items = {}
+    if playerData and playerData.Inventory then
+        for guid, itemData in pairs(playerData.Inventory) do
+            if itemData.Id == targetItemId then
+                table.insert(items, {
+                    GUID = guid,
+                    Id = itemData.Id,
+                    Data = itemData
+                })
+            end
+        end
+    end
+    return items
+end
+
+local function placeFurniture()
+    local playerData = Data:WaitForChild("GetAll"):InvokeServer()
+    local currentFurniture = getFurnitureCount(playerData)
+    local maxShopSpace = playerData.ShopSpace or 100
+    local availableSpace = maxShopSpace - currentFurniture
+    
+    local maxPositions = GRID_CONFIG.itemsPerRow * GRID_CONFIG.rowsPerFloor
+    local canPlaceCount = math.min(availableSpace, maxPositions)
+    
+    print(string.format("Current furniture: %d, Max space: %d, Available: %d", currentFurniture, maxShopSpace, availableSpace))
+    print(string.format("Canvas can hold: %d items (%dx%d grid)", maxPositions, GRID_CONFIG.itemsPerRow, GRID_CONFIG.rowsPerFloor))
+    print(string.format("Can place up to: %d items", canPlaceCount))
+    
+    local itemsToInsert = findItemsInInventory(playerData)
+    print(string.format("Found %d items with ID %s in inventory", #itemsToInsert, targetItemId))
+    
+    local insertedCount = 0
+    local failedCount = 0
+    
+    for i, item in ipairs(itemsToInsert) do
+        if insertedCount >= canPlaceCount then
+            print("No more space available. Stopping.")
+            break
+        end
+        
+        local positionIndex = insertedCount + 1
+        local itemCFrame = generatePosition(positionIndex)
+        
+        if not itemCFrame then
+            print("Ran out of grid positions on canvas")
+            break
+        end
+        
+        local args = {
+            [1] = {
+                GUID = item.GUID,
+                Type = "Decor",
+                Floor = 1,
+                Id = item.Id,
+                CFrame = CFrame.new(itemCFrame)
+            }
+        }
+        
+        local success, result = pcall(function()
+            return Shop:WaitForChild("InsertFurniture"):InvokeServer(unpack(args))
+        end)
+        
+        if success then
+            insertedCount = insertedCount + 1
+            print(string.format("Inserted %d/%d: %s at position %d", insertedCount, canPlaceCount, item.GUID, positionIndex))
+        else
+            failedCount = failedCount + 1
+            print(string.format("Failed to insert %s: %s", item.GUID, tostring(result)))
+        end
+        
+        task.wait(0.1)
+    end
+    
+    print(string.format("Finished! Inserted: %d, Failed: %d, Total items: %d", insertedCount, failedCount, #itemsToInsert))
+end
+
 print("🔍 Targeting any Safe with Legendary or Insane rarity")
 print("📊 Session started - tracking targets...")
+print("🏠 Detected plot:", currentPlot)
 
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
 if data then
@@ -359,6 +478,7 @@ taskWait(3)
 
 if targetFoundInThisAuction then
 handleItemsWon()
+placeFurniture()
 else
 checkForButton()
 LocalPlayer.PlayerGui.DescendantAdded:Connect(function(obj)
