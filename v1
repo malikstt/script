@@ -15,6 +15,8 @@ local currentBidData = nil
 local MIN_PROFIT = 6
 local inAuction = false
 local myCash = 0
+local currentGarageValue = 0
+local bidPlaced = false
 
 local function updateCash()
     local success, data = pcall(function() return DataEvent:InvokeServer() end)
@@ -85,8 +87,19 @@ end)
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
     if data then
         currentBidData = data
-        if inAuction then
-            print("💰 Bid: $" .. tostring(data.nextBid) .. " | " .. tostring(data.player and (data.player.Name or "NPC") or "None"))
+        if inAuction and currentGarageValue > 0 then
+            print("💰 Bid Update: $" .. tostring(data.nextBid) .. " | " .. tostring(data.player and (data.player.Name or "NPC") or "None"))
+            
+            if data.player ~= LocalPlayer and bidPlaced then
+                local nextBid = data.nextBid
+                local profit = currentGarageValue - nextBid
+                local profitPercent = (profit / currentGarageValue) * 100
+                
+                if profitPercent >= MIN_PROFIT and nextBid <= myCash then
+                    print("⚡ Counter-bidding: $" .. nextBid)
+                    pcall(function() PlaceBid:InvokeServer(nextBid) end)
+                end
+            end
         end
     end
 end)
@@ -128,6 +141,7 @@ coroutine.wrap(joinAuction)()
 AuctionsFolder.ChildAdded:Connect(function(garage)
     inAuction = true
     currentBidData = nil
+    bidPlaced = false
     print("\n=== " .. garage.Name .. " ===")
     
     local itemsFolder = garage:WaitForChild("Items", 5)
@@ -138,7 +152,7 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     
     task.wait(3)
     
-    local totalValue = 0
+    currentGarageValue = 0
     local items = itemsFolder:GetChildren()
     
     for _, itemInstance in ipairs(items) do
@@ -146,16 +160,16 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
         local itemData = ItemsModule[itemId] or ItemsModule[tonumber(itemId)]
         
         if itemData and type(itemData) == "table" and itemData.Price then
-            totalValue = totalValue + (tonumber(itemData.Price) or 0)
+            currentGarageValue = currentGarageValue + (tonumber(itemData.Price) or 0)
         end
     end
     
-    if totalValue == 0 then
+    if currentGarageValue == 0 then
         print("❌ Value: $0")
         return
     end
     
-    print("💰 Value: $" .. totalValue)
+    print("💰 Value: $" .. currentGarageValue)
     
     local timeout = 0
     while not currentBidData and timeout < 8 do
@@ -169,8 +183,8 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     end
     
     local nextBid = currentBidData.nextBid
-    local profit = totalValue - nextBid
-    local profitPercent = (profit / totalValue) * 100
+    local profit = currentGarageValue - nextBid
+    local profitPercent = (profit / currentGarageValue) * 100
     local worth = profitPercent >= MIN_PROFIT
     
     print("💰 Next: $" .. nextBid)
@@ -179,16 +193,18 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     
     if currentBidData.player == LocalPlayer then
         print("👑 Highest bidder")
+        bidPlaced = true
         return
     end
     
-    if worth then
+    if worth and nextBid <= myCash then
         print("⚡ Bidding...")
         local success = pcall(function()
             return PlaceBid:InvokeServer(nextBid)
         end)
         if success then
             print("✅ Bid placed")
+            bidPlaced = true
         else
             print("❌ Bid failed")
         end
@@ -200,10 +216,12 @@ AuctionsFolder.ChildRemoved:Connect(function()
         print("\n=== Left ===\n")
         inAuction = false
         currentBidData = nil
+        currentGarageValue = 0
+        bidPlaced = false
         task.wait(2)
         handleItemsWon()
     end
 end)
 
-print("🚀 Started - " .. MIN_PROFIT .. "% profit")
+print("🚀 Started - " .. MIN_PROFIT .. "% profit, will counter-bid to stay highest")
 print("💵 Finding best affordable garage")
