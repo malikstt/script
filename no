@@ -110,6 +110,16 @@ local function sendWebhook(itemId, itemData, playerName)
     end
 end
 
+local function tryClick(obj)
+    if not obj then return end
+    pcall(function() obj:Activate() end)
+    if getconnections then
+        for _, v in pairs(getconnections(obj.MouseButton1Click)) do
+            pcall(function() v:Fire() end)
+        end
+    end
+end
+
 print("🔍 Targeting any Safe with Legendary or Insane rarity")
 print("📊 Session started - tracking targets...")
 
@@ -195,24 +205,6 @@ return false
 
 end
 
-local function tryClick(obj)
-    if obj:IsA("TextButton") or obj:IsA("ImageButton") then
-        print("Auto clicking:", obj:GetFullName())
-
-        pcall(function()
-            obj:Activate()
-        end)
-
-        if getconnections then
-            for _, v in pairs(getconnections(obj.MouseButton1Click)) do
-                pcall(function()
-                    v:Fire()
-                end)
-            end
-        end
-    end
-end
-
 local function checkForButton()
     local itemsWon = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
     if itemsWon then
@@ -221,6 +213,67 @@ local function checkForButton()
             tryClick(button)
         end
     end
+end
+
+local function handleItemsWon()
+    local success, result = pcall(function()
+        return DataEvent:InvokeServer()
+    end)
+
+    if not success or not result or not result.ItemsWon then
+        print("❌ Failed to fetch ItemsWon data")
+        return false
+    end
+
+    local itemsWon = result.ItemsWon
+    local gui = LocalPlayer.PlayerGui:WaitForChild("ItemsWon")
+    local frame = gui:WaitForChild("ItemsFrame"):WaitForChild("Frame")
+
+    local selectedCount = 0
+
+    for key, itemData in pairs(itemsWon) do
+        local itemId = itemData.itemId
+        local data = ItemsModule[itemId] or ItemsModule[tostring(itemId)]
+        
+        if data and data.SafeId then
+            local nameLower = data.Name:lower()
+            local rarity = data.Rarity
+
+            if string.find(nameLower, "safe") and (rarity == "Legendary" or rarity == "Insane") then
+                for _, btn in ipairs(frame:GetChildren()) do
+                    if btn:IsA("ImageButton") and btn:FindFirstChild("Price") and btn:FindFirstChild("Rarity") then
+                        local btnRarity = btn.Rarity.TextLabel.Text
+                        if btnRarity == rarity then
+                            print("🎯 Selecting Safe:", data.Name, "| ID:", itemId, "| Rarity:", rarity)
+                            tryClick(btn)
+                            selectedCount = selectedCount + 1
+                            totalTargetsObtained = totalTargetsObtained + 1
+                            task.wait(1)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if selectedCount == 0 then
+        print("ℹ No matching Safe found in ItemsWon with required rarity")
+        return false
+    end
+
+    local confirmButton = gui:WaitForChild("ItemsFrame"):WaitForChild("ConfirmButton")
+    repeat taskWait() until confirmButton.Visible
+    print("✅ Clicking Confirm")
+    tryClick(confirmButton)
+    task.wait(1)
+
+    local sellButton = gui:WaitForChild("SellItems"):WaitForChild("Frame"):WaitForChild("Normal"):WaitForChild("Button")
+    repeat taskWait() until sellButton.Visible
+    print("💰 Selling all remaining items")
+    tryClick(sellButton)
+
+    print("🎉 Done - Safe selected, confirmed, and rest sold")
+    return true
 end
 
 spawn(function()
@@ -304,82 +357,8 @@ end
 
 taskWait(3)
 
-if targetFoundInThisAuction and targetItemData then
-local player = Players.LocalPlayer
-local gui = player.PlayerGui:WaitForChild("ItemsWon")
-
-local Items = require(game.ReplicatedStorage.Modules.Items)
-
-if targetItemData then
-local clickedCount = 0
-
-local function scan()
-    local frame = gui:WaitForChild("ItemsFrame"):WaitForChild("Frame")
-    
-    for _, item in ipairs(frame:GetChildren()) do
-        if item:IsA("ImageButton") and item:FindFirstChild("Price") and item:FindFirstChild("Rarity") then
-            
-            local price = tonumber(item.Price.Text:match("%d+"))
-            local rarity = item.Rarity.TextLabel.Text
-            
-            if price == targetItemData.Price and rarity == targetItemData.Rarity and targetItemData.SafeId then
-                tryClick(item)
-                clickedCount = clickedCount + 1
-                totalTargetsObtained = totalTargetsObtained + 1
-                task.wait(0.15)
-            end
-        end
-    end
-end
-
-task.wait(0.5)
-scan()
-
-if clickedCount <= 0 then
-    local done = false
-    local conn
-    conn = gui.DescendantAdded:Connect(function()
-        task.wait(0.2)
-        scan()
-        if clickedCount > 0 then
-            done = true
-            conn:Disconnect()
-        end
-    end)
-    
-    repeat task.wait() until done
-end
-
-repeat task.wait() until clickedCount > 0
-
-print("Selected", clickedCount, targetItemData.Name)
-
-task.wait(0.5)
-
-local confirmButton = gui
-    :WaitForChild("ItemsFrame")
-    :WaitForChild("ConfirmButton")
-
-repeat task.wait() until confirmButton.Visible
-
-tryClick(confirmButton)
-
-print("Confirmed")
-
-task.wait(0.5)
-
-local sellButton = gui
-    :WaitForChild("SellItems")
-    :WaitForChild("Frame")
-    :WaitForChild("Normal")
-    :WaitForChild("Button")
-
-repeat task.wait() until sellButton.Visible
-
-tryClick(sellButton)
-
-print("Sold rest")
-end
+if targetFoundInThisAuction then
+handleItemsWon()
 else
 checkForButton()
 LocalPlayer.PlayerGui.DescendantAdded:Connect(function(obj)
