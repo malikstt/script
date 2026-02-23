@@ -19,9 +19,9 @@ local currentGarageValue = 0
 local bidPlaced = false
 local processingItemsWon = false
 local failedAttempts = {}
-local currentGarageBudget = 0
 local joiningGarageId = nil
 local joinStartTime = 0
+local currentGarageBudget = 0
 
 local function updateCash()
     local success, data = pcall(function() return DataEvent:InvokeServer() end)
@@ -162,7 +162,7 @@ local function getBestAffordableGarage()
 end
 
 local function attemptJoin()
-    if processingItemsWon then return end
+    if processingItemsWon or inAuction then return end
     
     local best = getBestAffordableGarage()
     if not best then
@@ -174,7 +174,7 @@ local function attemptJoin()
     
     joiningGarageId = best.id
     joinStartTime = tick()
-    print("🎯 Attempting: " .. best.name .. " (Need: $" .. best.budget .. ", Est: $" .. best.value .. ")")
+    print("🎯 Attempting: " .. best.name .. " (Need: $" .. best.budget .. ", Est: $" .. best.value .. ", Attempts: " .. best.attempts .. ")")
     pcall(function() EnterQueue:InvokeServer(best.id) end)
 end
 
@@ -192,7 +192,8 @@ local function checkJoinFailed()
     
     if not garageExists and tick() - joinStartTime > 5 then
         failedAttempts[joiningGarageId] = (failedAttempts[joiningGarageId] or 0) + 1
-        print("⚠️ Join failed for " .. (GaragesModule[joiningGarageId] and GaragesModule[joiningGarageId].Name or "Unknown") .. " (Attempt " .. failedAttempts[joiningGarageId] .. ")")
+        local garageName = GaragesModule[joiningGarageId] and GaragesModule[joiningGarageId].Name or "Unknown"
+        print("⚠️ Join failed for " .. garageName .. " (Attempt " .. failedAttempts[joiningGarageId] .. ")")
         joiningGarageId = nil
         return true
     end
@@ -202,17 +203,16 @@ end
 
 local function joinLoop()
     while true do
-        if not processingItemsWon and not inAuction and not joiningGarageId then
-            attemptJoin()
-        end
-        
-        if joiningGarageId and checkJoinFailed() then
-            task.wait(0.5)
-            if not processingItemsWon and not inAuction then
+        if not processingItemsWon and not inAuction then
+            if joiningGarageId then
+                if checkJoinFailed() then
+                    task.wait(0.5)
+                    attemptJoin()
+                end
+            else
                 attemptJoin()
             end
         end
-        
         task.wait(1)
     end
 end
@@ -221,9 +221,12 @@ coroutine.wrap(joinLoop)()
 
 AuctionsFolder.ChildAdded:Connect(function(garage)
     if processingItemsWon then return end
+    
     if joiningGarageId then
         local garageData = GaragesModule[joiningGarageId]
         if garageData and garage.Name == garageData.Name then
+            print("✅ Join success for " .. garageData.Name)
+            failedAttempts[joiningGarageId] = 0
             joiningGarageId = nil
         end
     end
@@ -308,9 +311,6 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
         if success then
             print("✅ Bid placed")
             bidPlaced = true
-            if garageId then
-                failedAttempts[garageId] = 0
-            end
         else
             print("❌ Bid failed")
         end
@@ -330,4 +330,4 @@ AuctionsFolder.ChildRemoved:Connect(function()
 end)
 
 print("🚀 Started - " .. MIN_PROFIT .. "% profit")
-print("💵 Smart garage selection with 5s join detection and fallback")
+print("💵 Smart garage selection with 5s join detection, immediate fallback, and retry logic")
