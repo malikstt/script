@@ -1,3 +1,6 @@
+Here's the fixed version with error handling that continues on errors and includes errors in the dump:
+
+```lua
 --[[
     Roblox Hookable Functions Finder & Dumper
     Finds ALL functions that can potentially be hooked and dumps to Discord
@@ -16,7 +19,8 @@ HookFinder.Discovered = {
     Metamethods = {},
     ModuleFunctions = {},
     GlobalFunctions = {},
-    InstanceMethods = {}
+    InstanceMethods = {},
+    Errors = {} -- Store errors that occurred
 }
 
 -- ===========================================
@@ -25,30 +29,36 @@ HookFinder.Discovered = {
 
 function HookFinder:ScanRemotes()
     local function ScanFolder(folder)
-        for _, obj in pairs(folder:GetDescendants()) do
-            if obj:IsA("RemoteEvent") then
-                table.insert(HookFinder.Discovered.Remotes, {
-                    Name = obj.Name,
-                    Path = obj:GetFullName(),
-                    Type = "RemoteEvent",
-                    Hookable = {"FireServer", "OnClientEvent"}
-                })
-                
-            elseif obj:IsA("RemoteFunction") then
-                table.insert(HookFinder.Discovered.Remotes, {
-                    Name = obj.Name,
-                    Path = obj:GetFullName(),
-                    Type = "RemoteFunction",
-                    Hookable = {"InvokeServer", "OnClientInvoke"}
-                })
+        if not folder then return end
+        local success, err = pcall(function()
+            for _, obj in pairs(folder:GetDescendants()) do
+                if obj:IsA("RemoteEvent") then
+                    table.insert(HookFinder.Discovered.Remotes, {
+                        Name = obj.Name,
+                        Path = obj:GetFullName(),
+                        Type = "RemoteEvent",
+                        Hookable = {"FireServer", "OnClientEvent"}
+                    })
+                    
+                elseif obj:IsA("RemoteFunction") then
+                    table.insert(HookFinder.Discovered.Remotes, {
+                        Name = obj.Name,
+                        Path = obj:GetFullName(),
+                        Type = "RemoteFunction",
+                        Hookable = {"InvokeServer", "OnClientInvoke"}
+                    })
+                end
             end
+        end)
+        if not success then
+            table.insert(HookFinder.Discovered.Errors, "ScanRemotes - " .. folder.Name .. ": " .. tostring(err))
         end
     end
     
     ScanFolder(game.ReplicatedStorage)
-    ScanFolder(game.ServerScriptService)
+    pcall(function() ScanFolder(game:FindFirstChild("ServerScriptService")) end)
     if LocalPlayer then
-        pcall(function() ScanFolder(LocalPlayer:WaitForChild("PlayerGui")) end)
+        pcall(function() ScanFolder(LocalPlayer:FindFirstChild("PlayerGui")) end)
     end
 end
 
@@ -57,63 +67,58 @@ end
 -- ===========================================
 
 function HookFinder:ScanGlobalFunctions()
-    local globals = {
-        -- Time functions
-        wait = "function",
-        delay = "function",
-        spawn = "function",
-        task = {
+    local success, err = pcall(function()
+        local globals = {
             wait = "function",
+            delay = "function",
             spawn = "function",
-            delay = "function"
-        },
-        
-        -- Math functions
-        math = {
-            random = "function",
-            floor = "function",
-            ceil = "function"
-        },
-        
-        -- OS functions
-        os = {
-            time = "function",
-            clock = "function",
-            date = "function"
-        },
-        
-        -- String functions
-        string = {
-            sub = "function",
-            gsub = "function",
-            match = "function"
-        },
-        
-        -- Table functions
-        table = {
-            insert = "function",
-            remove = "function",
-            find = "function"
+            task = {
+                wait = "function",
+                spawn = "function",
+                delay = "function"
+            },
+            math = {
+                random = "function",
+                floor = "function",
+                ceil = "function"
+            },
+            os = {
+                time = "function",
+                clock = "function",
+                date = "function"
+            },
+            string = {
+                sub = "function",
+                gsub = "function",
+                match = "function"
+            },
+            table = {
+                insert = "function",
+                remove = "function",
+                find = "function"
+            }
         }
-    }
-    
-    -- Check each global
-    for name, func in pairs(globals) do
-        if type(func) == "table" then
-            for subname, _ in pairs(func) do
+        
+        for name, func in pairs(globals) do
+            if type(func) == "table" then
+                for subname, _ in pairs(func) do
+                    table.insert(HookFinder.Discovered.GlobalFunctions, {
+                        Name = name .. "." .. subname,
+                        Type = "GlobalFunction",
+                        HookMethod = "Direct override"
+                    })
+                end
+            else
                 table.insert(HookFinder.Discovered.GlobalFunctions, {
-                    Name = name .. "." .. subname,
+                    Name = name,
                     Type = "GlobalFunction",
                     HookMethod = "Direct override"
                 })
             end
-        else
-            table.insert(HookFinder.Discovered.GlobalFunctions, {
-                Name = name,
-                Type = "GlobalFunction",
-                HookMethod = "Direct override"
-            })
         end
+    end)
+    if not success then
+        table.insert(HookFinder.Discovered.Errors, "ScanGlobalFunctions: " .. tostring(err))
     end
 end
 
@@ -138,27 +143,29 @@ function HookFinder:ScanModules()
         end
     end
     
-    -- Scan common module locations
     local moduleLocations = {
-        game.ReplicatedStorage:FindFirstChild("Modules"),
-        game.ReplicatedStorage:FindFirstChild("ModuleScripts"),
-        game.ServerScriptService:FindFirstChild("Modules")
+        pcall(function() return game.ReplicatedStorage:FindFirstChild("Modules") end),
+        pcall(function() return game.ReplicatedStorage:FindFirstChild("ModuleScripts") end),
+        pcall(function() return game:FindFirstChild("ServerScriptService"):FindFirstChild("Modules") end)
     }
     
     if LocalPlayer and LocalPlayer:FindFirstChild("PlayerScripts") then
         table.insert(moduleLocations, LocalPlayer.PlayerScripts)
     end
     
-    for _, location in pairs(moduleLocations) do
-        if location then
-            for _, module in pairs(location:GetDescendants()) do
-                if module:IsA("ModuleScript") then
-                    local success, result = pcall(require, module)
-                    if success and type(result) == "table" then
-                        ScanModule(result, module:GetFullName())
+    for _, locationResult in ipairs(moduleLocations) do
+        local success, location = locationResult[1], locationResult[2]
+        if success and location then
+            pcall(function()
+                for _, module in pairs(location:GetDescendants()) do
+                    if module:IsA("ModuleScript") then
+                        local reqSuccess, result = pcall(require, module)
+                        if reqSuccess and type(result) == "table" then
+                            pcall(function() ScanModule(result, module:GetFullName()) end)
+                        end
                     end
                 end
-            end
+            end)
         end
     end
 end
@@ -168,19 +175,24 @@ end
 -- ===========================================
 
 function HookFinder:ScanMetamethods()
-    local metamethods = {
-        "__index", "__newindex", "__call", "__tostring",
-        "__add", "__sub", "__mul", "__div", "__mod",
-        "__pow", "__unm", "__concat", "__len", "__eq",
-        "__lt", "__le", "__mode", "__gc", "__namecall"
-    }
-    
-    for _, method in pairs(metamethods) do
-        table.insert(HookFinder.Discovered.Metamethods, {
-            Name = method,
-            Type = "Metamethod",
-            HookMethod = "hookmetamethod()"
-        })
+    local success, err = pcall(function()
+        local metamethods = {
+            "__index", "__newindex", "__call", "__tostring",
+            "__add", "__sub", "__mul", "__div", "__mod",
+            "__pow", "__unm", "__concat", "__len", "__eq",
+            "__lt", "__le", "__mode", "__gc", "__namecall"
+        }
+        
+        for _, method in pairs(metamethods) do
+            table.insert(HookFinder.Discovered.Metamethods, {
+                Name = method,
+                Type = "Metamethod",
+                HookMethod = "hookmetamethod()"
+            })
+        end
+    end)
+    if not success then
+        table.insert(HookFinder.Discovered.Errors, "ScanMetamethods: " .. tostring(err))
     end
 end
 
@@ -189,27 +201,32 @@ end
 -- ===========================================
 
 function HookFinder:ScanInstanceMethods()
-    local commonMethods = {
-        {Class = "TextButton", Methods = {"MouseButton1Click", "MouseButton2Click", "Activated"}},
-        {Class = "ImageButton", Methods = {"MouseButton1Click", "MouseButton2Click", "Activated"}},
-        {Class = "TextBox", Methods = {"FocusLost", "Changed"}},
-        {Class = "Instance", Methods = {
-            "Destroy", "Clone", "GetAttribute", "SetAttribute",
-            "FindFirstChild", "WaitForChild", "GetPropertyChangedSignal"
-        }},
-        {Class = "Player", Methods = {
-            "LoadCharacter", "Kick", "GetJoinData"
-        }}
-    }
-    
-    for _, classInfo in pairs(commonMethods) do
-        for _, method in pairs(classInfo.Methods) do
-            table.insert(HookFinder.Discovered.InstanceMethods, {
-                Class = classInfo.Class,
-                Method = method,
-                Type = "InstanceMethod"
-            })
+    local success, err = pcall(function()
+        local commonMethods = {
+            {Class = "TextButton", Methods = {"MouseButton1Click", "MouseButton2Click", "Activated"}},
+            {Class = "ImageButton", Methods = {"MouseButton1Click", "MouseButton2Click", "Activated"}},
+            {Class = "TextBox", Methods = {"FocusLost", "Changed"}},
+            {Class = "Instance", Methods = {
+                "Destroy", "Clone", "GetAttribute", "SetAttribute",
+                "FindFirstChild", "WaitForChild", "GetPropertyChangedSignal"
+            }},
+            {Class = "Player", Methods = {
+                "LoadCharacter", "Kick", "GetJoinData"
+            }}
+        }
+        
+        for _, classInfo in pairs(commonMethods) do
+            for _, method in pairs(classInfo.Methods) do
+                table.insert(HookFinder.Discovered.InstanceMethods, {
+                    Class = classInfo.Class,
+                    Method = method,
+                    Type = "InstanceMethod"
+                })
+            end
         end
+    end)
+    if not success then
+        table.insert(HookFinder.Discovered.Errors, "ScanInstanceMethods: " .. tostring(err))
     end
 end
 
@@ -218,12 +235,12 @@ end
 -- ===========================================
 
 function HookFinder:GenerateDump()
-    -- Run all scans
-    self:ScanRemotes()
-    self:ScanGlobalFunctions()
-    self:ScanModules()
-    self:ScanMetamethods()
-    self:ScanInstanceMethods()
+    -- Run all scans with error handling
+    pcall(function() self:ScanRemotes() end)
+    pcall(function() self:ScanGlobalFunctions() end)
+    pcall(function() self:ScanModules() end)
+    pcall(function() self:ScanMetamethods() end)
+    pcall(function() self:ScanInstanceMethods() end)
     
     local dumpLines = {
         "HOOKABLE FUNCTIONS DETECTOR - FULL DUMP",
@@ -233,6 +250,17 @@ function HookFinder:GenerateDump()
         string.rep("=", 60),
         ""
     }
+    
+    -- ERRORS SECTION (if any)
+    if #self.Discovered.Errors > 0 then
+        table.insert(dumpLines, "⚠️ ERRORS ENCOUNTERED (" .. #self.Discovered.Errors .. ")")
+        table.insert(dumpLines, string.rep("-", 40))
+        for i, err in ipairs(self.Discovered.Errors) do
+            table.insert(dumpLines, string.format("%d. %s", i, err))
+        end
+        table.insert(dumpLines, "")
+        table.insert(dumpLines, "")
+    end
     
     -- REMOTES
     table.insert(dumpLines, "📡 REMOTES FOUND (" .. #self.Discovered.Remotes .. ")")
@@ -260,11 +288,11 @@ function HookFinder:GenerateDump()
     end
     table.insert(dumpLines, "")
     
-    -- MODULE FUNCTIONS
+    -- MODULE FUNCTIONS (limited to 50)
     table.insert(dumpLines, "📦 MODULE FUNCTIONS (" .. #self.Discovered.ModuleFunctions .. ")")
     table.insert(dumpLines, string.rep("-", 40))
     for i, module in ipairs(self.Discovered.ModuleFunctions) do
-        if i <= 50 then -- Limit to first 50 to avoid huge dumps
+        if i <= 50 then
             table.insert(dumpLines, string.format("%d. %s", i, module.Path))
         elseif i == 51 then
             table.insert(dumpLines, "... and " .. (#self.Discovered.ModuleFunctions - 50) .. " more")
@@ -339,3 +367,4 @@ sendToDiscord(dump)
 print(dump)
 
 return HookFinder
+```
