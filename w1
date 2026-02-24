@@ -11,10 +11,17 @@ local RemoteAnalyzer = {
     IgnoresFake = {},
     Responded = {},
     Blocked = {},
-    TimedOut = {} -- New category for remotes that took too long
+    TimedOut = {},
+    ChangedValues = {} -- New: remotes that changed cash/gems
 }
 
-local TIMEOUT = 5 -- Max seconds per remote
+local TIMEOUT = 5
+
+-- Track initial values
+local initialCash = 0
+local initialGems = 0
+local cashChanges = {}
+local gemsChanges = {}
 
 local function isRemote(obj)
     return obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")
@@ -29,6 +36,35 @@ local function scanRemotes()
     end
     return remotes
 end
+
+-- Get current cash value
+local function getCash()
+    local saveVars = LocalPlayer:FindFirstChild("SaveVars")
+    if saveVars and saveVars:FindFirstChild("Cash") then
+        return saveVars.Cash.Value
+    end
+    return 0
+end
+
+-- Get current gems value
+local function getGems()
+    local success, result = pcall(function()
+        return ReplicatedStorage:WaitForChild("Events")
+            :WaitForChild("Data")
+            :WaitForChild("GetAll")
+            :InvokeServer()
+    end)
+
+    if success and result then
+        return result.Gems or 0
+    end
+    return 0
+end
+
+-- Update initial values
+initialCash = getCash()
+initialGems = getGems()
+print(string.format("Initial values - Cash: %d, Gems: %d", initialCash, initialGems))
 
 local function callWithTimeout(remote, timeout)
     local co = coroutine.create(function()
@@ -58,7 +94,7 @@ local function callWithTimeout(remote, timeout)
         task.wait(0.1)
     end
     
-    return coroutine.yield() -- Get the values from the coroutine
+    return coroutine.yield()
 end
 
 local function safeCallRemote(remote)
@@ -70,6 +106,10 @@ local function safeCallRemote(remote)
 end
 
 local function analyzeRemote(remote)
+    -- Get values before calling
+    local cashBefore = getCash()
+    local gemsBefore = getGems()
+    
     local results = {
         Name = remote.Name,
         Path = remote:GetFullName(),
@@ -80,6 +120,8 @@ local function analyzeRemote(remote)
         Vulnerability = "Unknown",
         ResponseTime = 0,
         Status = "Unknown",
+        CashChange = 0,
+        GemsChange = 0,
         Reasons = {}
     }
     
@@ -117,6 +159,14 @@ local function analyzeRemote(remote)
     local success, result, elapsed = safeCallRemote(remote)
     results.ResponseTime = elapsed
     
+    -- Check for value changes (wait a bit for updates)
+    task.wait(0.5)
+    local cashAfter = getCash()
+    local gemsAfter = getGems()
+    
+    results.CashChange = cashAfter - cashBefore
+    results.GemsChange = gemsAfter - gemsBefore
+    
     if elapsed >= TIMEOUT then
         results.Status = "TIMEOUT"
         table.insert(RemoteAnalyzer.TimedOut, {
@@ -136,8 +186,20 @@ local function analyzeRemote(remote)
         
         if result ~= nil then
             table.insert(results.Reasons, "RETURNS DATA: " .. tostring(result))
-            results.GivesRewards = true
         end
+        
+        -- Check if values changed
+        if results.CashChange ~= 0 or results.GemsChange ~= 0 then
+            results.GivesRewards = true
+            table.insert(RemoteAnalyzer.ChangedValues, {
+                Path = remote:GetFullName(),
+                CashChange = results.CashChange,
+                GemsChange = results.GemsChange,
+                Time = elapsed
+            })
+            table.insert(results.Reasons, string.format("VALUE CHANGE - Cash: %+d, Gems: %+d", results.CashChange, results.GemsChange))
+        end
+        
         table.insert(results.Reasons, string.format("Response time: %.2fs", elapsed))
     else
         results.Status = "BLOCKED"
@@ -155,18 +217,23 @@ end
 
 -- MAIN EXECUTION
 print("=== STARTING REMOTE SECURITY AUDIT (5s timeout per remote) ===")
+print(string.format("Initial Cash: %d, Initial Gems: %d", initialCash, initialGems))
 
 local remotes = scanRemotes()
 print("Found " .. #remotes .. " remotes to analyze\n")
 
 local dumpLines = {
-    "REMOTE VULNERABILITY ANALYSIS + ACTIVE TESTING",
+    "REMOTE VULNERABILITY ANALYSIS + VALUE TRACKING",
     string.rep("=", 70),
     "Generated: " .. os.date("%Y-%m-%d %H:%M:%S"),
     "Player: " .. (LocalPlayer and LocalPlayer.Name or "Unknown"),
+    string.rep("-", 70),
+    string.format("Initial Cash: %d", initialCash),
+    string.format("Initial Gems: %d", initialGems),
+    string.rep("-", 70),
     "Total Remotes Found: " .. #remotes,
     "Timeout per remote: " .. TIMEOUT .. " seconds",
-    string.rep("="", 70),
+    string.rep("=", 70),
     ""
 }
 
@@ -181,22 +248,32 @@ for i, remote in ipairs(remotes) do
     if analysis.Vulnerability ~= "Unknown" then table.insert(RemoteAnalyzer.Vulnerable, analysis) end
 end
 
+-- REMOTES THAT CHANGED VALUES
+table.insert(dumpLines, "💰 REMOTES THAT CHANGED CASH/GEMS (" .. #RemoteAnalyzer.ChangedValues .. ")")
+table.insert(dumpLines, string.rep("-", 70))
+if #RemoteAnalyzer.ChangedValues > 0 then
+    for i, r in ipairs(RemoteAnalyzer.ChangedValues) do
+        table.insert(dumpLines, string.format("%d. %s", i, r.Path))
+        table.insert(dumpLines, string.format("   Cash: %+d | Gems: %+d (%.2fs)", r.CashChange, r.GemsChange, r.Time))
+    end
+else
+    table.insert(dumpLines, "None changed values")
+end
+table.insert(dumpLines, "")
+
 -- REMOTES THAT RESPONDED
 table.insert(dumpLines, "✅ REMOTES THAT RESPONDED (" .. #RemoteAnalyzer.Responded .. ")")
 table.insert(dumpLines, string.rep("-", 70))
 if #RemoteAnalyzer.Responded > 0 then
     for i, r in ipairs(RemoteAnalyzer.Responded) do
         table.insert(dumpLines, string.format("%d. %s (%s) - %.2fs", i, r.Path, r.Type, r.Time))
-        if r.Result ~= nil then
-            table.insert(dumpLines, "   Returns: " .. tostring(r.Result))
-        end
     end
 else
     table.insert(dumpLines, "None responded")
 end
 table.insert(dumpLines, "")
 
--- REMOTES THAT TIMED OUT (5s+)
+-- REMOTES THAT TIMED OUT
 table.insert(dumpLines, "⏰ REMOTES THAT TIMED OUT (5s+) (" .. #RemoteAnalyzer.TimedOut .. ")")
 table.insert(dumpLines, string.rep("-", 70))
 if #RemoteAnalyzer.TimedOut > 0 then
@@ -220,52 +297,44 @@ else
 end
 table.insert(dumpLines, "")
 
--- REMOTES THAT ACCEPT CLIENT INPUT
+-- REST OF THE CATEGORIES...
 table.insert(dumpLines, "📥 REMOTES THAT ACCEPT CLIENT INPUT (" .. #RemoteAnalyzer.AcceptsInput .. ")")
 table.insert(dumpLines, string.rep("-", 70))
 if #RemoteAnalyzer.AcceptsInput > 0 then
     for i, r in ipairs(RemoteAnalyzer.AcceptsInput) do
-        table.insert(dumpLines, string.format("%d. %s - %s", i, r.Path, r.Status))
+        table.insert(dumpLines, string.format("%d. %s", i, r.Path))
     end
 end
 table.insert(dumpLines, "")
 
--- REMOTES THAT GIVE REWARDS
 table.insert(dumpLines, "🎁 REMOTES THAT GIVE REWARDS (" .. #RemoteAnalyzer.Rewards .. ")")
 table.insert(dumpLines, string.rep("-", 70))
 if #RemoteAnalyzer.Rewards > 0 then
     for i, r in ipairs(RemoteAnalyzer.Rewards) do
-        table.insert(dumpLines, string.format("%d. %s - %s", i, r.Path, r.Status))
+        table.insert(dumpLines, string.format("%d. %s", i, r.Path))
     end
 end
 table.insert(dumpLines, "")
 
--- POTENTIALLY VULNERABLE REMOTES
 table.insert(dumpLines, "⚠️ POTENTIALLY VULNERABLE REMOTES (" .. #RemoteAnalyzer.Vulnerable .. ")")
 table.insert(dumpLines, string.rep("-", 70))
 if #RemoteAnalyzer.Vulnerable > 0 then
     for i, r in ipairs(RemoteAnalyzer.Vulnerable) do
         table.insert(dumpLines, string.format("%d. %s", i, r.Path))
         table.insert(dumpLines, "   Risk: " .. r.Vulnerability)
-        table.insert(dumpLines, "   Status: " .. r.Status)
         table.insert(dumpLines, "")
     end
 end
 table.insert(dumpLines, "")
 
--- SUMMARY STATS
+-- FINAL VALUES
+local finalCash = getCash()
+local finalGems = getGems()
 table.insert(dumpLines, string.rep("=", 70))
-table.insert(dumpLines, "SUMMARY STATISTICS")
+table.insert(dumpLines, "FINAL VALUES")
 table.insert(dumpLines, string.rep("-", 70))
-table.insert(dumpLines, string.format("Total Remotes: %d", #remotes))
-table.insert(dumpLines, string.format("Responded: %d", #RemoteAnalyzer.Responded))
-table.insert(dumpLines, string.format("Blocked: %d", #RemoteAnalyzer.Blocked))
-table.insert(dumpLines, string.format("Timed Out (5s+): %d", #RemoteAnalyzer.TimedOut))
-table.insert(dumpLines, string.format("Accept Input: %d", #RemoteAnalyzer.AcceptsInput))
-table.insert(dumpLines, string.format("Give Rewards: %d", #RemoteAnalyzer.Rewards))
-table.insert(dumpLines, string.format("Vulnerable: %d", #RemoteAnalyzer.Vulnerable))
-table.insert(dumpLines, string.rep("=", 70))
-table.insert(dumpLines, "AUDIT COMPLETE")
+table.insert(dumpLines, string.format("Cash: %d (%+d total)", finalCash, finalCash - initialCash))
+table.insert(dumpLines, string.format("Gems: %d (%+d total)", finalGems, finalGems - initialGems))
 table.insert(dumpLines, string.rep("=", 70))
 
 -- Send to Discord
