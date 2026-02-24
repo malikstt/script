@@ -20,6 +20,10 @@ local bidPlaced = false
 local processingItemsWon = false
 local currentGarageBudget = 0
 
+local function getEntryCost(garageData)
+    return garageData.CostToEnter or garageData.CashNeededToEnter or 0
+end
+
 local function updateCash()
     local success, data = pcall(function() return DataEvent:InvokeServer() end)
     if success and data and data.Cash then
@@ -117,15 +121,7 @@ UpdateCurrentBid.OnClientEvent:Connect(function(data)
 end)
 
 local function getGarageEstimatedValue(garageData)
-    local estimatedValue = 0
-    if garageData.Cutoffs and garageData.Cutoffs.High then
-        for _, v in pairs(garageData.Cutoffs.High) do
-            if v ~= math.huge and v > estimatedValue then
-                estimatedValue = v
-            end
-        end
-    end
-    return estimatedValue
+    return garageData.AuctionBudget or 0
 end
 
 local function getBestAffordableGarage()
@@ -134,11 +130,14 @@ local function getBestAffordableGarage()
     local bestValue = 0
     
     for id, data in pairs(GaragesModule) do
-        if data.Type == "Cash" and data.CashNeededToEnter and myCash >= data.CashNeededToEnter then
-            local estimatedValue = getGarageEstimatedValue(data)
-            if estimatedValue > bestValue then
-                bestValue = estimatedValue
-                bestId = id
+        if data.Type == "Cash" then
+            local entryCost = getEntryCost(data)
+            if entryCost > 0 and myCash >= entryCost then
+                local estimatedValue = getGarageEstimatedValue(data)
+                if estimatedValue > bestValue then
+                    bestValue = estimatedValue
+                    bestId = id
+                end
             end
         end
     end
@@ -152,7 +151,7 @@ local function joinAuction()
             local garageId = getBestAffordableGarage()
             local garageData = GaragesModule[garageId]
             if garageData then
-                print("🎯 Entering: " .. garageData.Name .. " (Need: $" .. (garageData.CashNeededToEnter or 0) .. ", Est: $" .. getGarageEstimatedValue(garageData) .. ")")
+                print("🎯 Entering: " .. garageData.Name .. " (Need: $" .. getEntryCost(garageData) .. ", Est: $" .. getGarageEstimatedValue(garageData) .. ")")
                 pcall(function() EnterQueue:InvokeServer(garageId) end)
             end
         end
@@ -175,7 +174,7 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     for id, data in pairs(GaragesModule) do
         if data.Name == garageName then
             garageId = id
-            currentGarageBudget = data.CashNeededToEnter or 0
+            currentGarageBudget = getEntryCost(data)
             break
         end
     end
@@ -264,4 +263,3 @@ AuctionsFolder.ChildRemoved:Connect(function()
 end)
 
 print("🚀 Started - " .. MIN_PROFIT .. "% profit")
-print("💵 Using Garages-experiment1 with CashNeededToEnter")
