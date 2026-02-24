@@ -29,7 +29,8 @@ local Data = Events:WaitForChild("Data")
 local SCAN_DURATION = 2
 local BID_CHECK_INTERVAL = 0.2
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
-local targetItemId = "681"
+local targetItemId = "681"  -- Keep original target ID
+local targetItemIds = {"681", "2294"}  -- Add both IDs to check
 
 local totalTargetsFound = 0
 local totalTargetsObtained = 0
@@ -175,83 +176,176 @@ local function getFurnitureCount(playerData)
     return count
 end
 
-local function findItemsInInventory(playerData)
+-- MODIFIED: Find items with either ID 681 OR 2294
+local function findTargetItemsInInventory(playerData)
     local items = {}
     if playerData and playerData.Inventory then
         for guid, itemData in pairs(playerData.Inventory) do
-            if itemData.Id == targetItemId then
-                table.insert(items, {
-                    GUID = guid,
-                    Id = itemData.Id,
-                    Data = itemData
-                })
+            -- Check if item ID matches either target ID
+            for _, targetId in ipairs(targetItemIds) do
+                if itemData.Id == targetId then
+                    table.insert(items, {
+                        GUID = guid,
+                        Id = itemData.Id,
+                        Data = itemData
+                    })
+                    break
+                end
             end
         end
     end
     return items
 end
 
-local function placeFurniture()
-    local playerData = Data:WaitForChild("GetAll"):InvokeServer()
+-- NEW FUNCTION: Verify item is removed from inventory
+local function verifyItemRemoved(guid)
+    task.wait(0.5)  -- Small delay for server to update
+    local playerData = DataEvent:InvokeServer()
+    if playerData and playerData.Inventory then
+        return playerData.Inventory[guid] == nil
+    end
+    return false
+end
+
+-- NEW FUNCTION: Place target inventory items with retry logic
+local function PlaceTargetInventoryItems()
+    print("🔍 STEP 1: Checking inventory for target items (IDs: 681, 2294)...")
+    
+    -- Get initial player data
+    local playerData = DataEvent:InvokeServer()
+    if not playerData then
+        print("❌ Failed to get player data")
+        return false
+    end
+    
+    -- Find all target items in inventory
+    local itemsToPlace = findTargetItemsInInventory(playerData)
+    if #itemsToPlace == 0 then
+        print("✅ No target items found in inventory. Proceeding to auctions.")
+        return true
+    end
+    
+    print(string.format("📦 Found %d target items in inventory:", #itemsToPlace))
+    for _, item in ipairs(itemsToPlace) do
+        print(string.format("   - GUID: %s (ID: %s)", item.GUID, item.Id))
+    end
+    
+    -- Check available space
     local currentFurniture = getFurnitureCount(playerData)
     local maxShopSpace = playerData.ShopSpace or 100
     local availableSpace = maxShopSpace - currentFurniture
     
     local maxPositions = GRID_CONFIG.itemsPerRow * GRID_CONFIG.rowsPerFloor
-    local canPlaceCount = math.min(availableSpace, maxPositions)
+    local canPlaceCount = math.min(availableSpace, maxPositions, #itemsToPlace)
     
-    print(string.format("Current furniture: %d, Max space: %d, Available: %d", currentFurniture, maxShopSpace, availableSpace))
-    print(string.format("Canvas can hold: %d items (%dx%d grid)", maxPositions, GRID_CONFIG.itemsPerRow, GRID_CONFIG.rowsPerFloor))
-    print(string.format("Can place up to: %d items", canPlaceCount))
+    print(string.format("📊 Space check: %d/%d furniture used, %d space available", 
+        currentFurniture, maxShopSpace, availableSpace))
+    print(string.format("📊 Canvas capacity: %d positions, can place %d items", maxPositions, canPlaceCount))
     
-    local itemsToInsert = findItemsInInventory(playerData)
-    print(string.format("Found %d items with ID %s in inventory", #itemsToInsert, targetItemId))
-    
-    local insertedCount = 0
-    local failedCount = 0
-    
-    for i, item in ipairs(itemsToInsert) do
-        if insertedCount >= canPlaceCount then
-            print("No more space available. Stopping.")
-            break
-        end
-        
-        local positionIndex = insertedCount + 1
-        local itemCFrame = generatePosition(positionIndex)
-        
-        if not itemCFrame then
-            print("Ran out of grid positions on canvas")
-            break
-        end
-        
-        local args = {
-            [1] = {
-                GUID = item.GUID,
-                Type = "Decor",
-                Floor = 1,
-                Id = item.Id,
-                CFrame = CFrame.new(itemCFrame)
-            }
-        }
-        
-        local success, result = pcall(function()
-            return Shop:WaitForChild("InsertFurniture"):InvokeServer(unpack(args))
-        end)
-        
-        if success then
-            insertedCount = insertedCount + 1
-            print(string.format("Inserted %d/%d: %s at position %d", insertedCount, canPlaceCount, item.GUID, positionIndex))
-        else
-            failedCount = failedCount + 1
-            print(string.format("Failed to insert %s: %s", item.GUID, tostring(result)))
-        end
-        
-        task.wait(0.1)
+    if canPlaceCount == 0 then
+        print("❌ No space available to place items!")
+        return false
     end
     
-    print(string.format("Finished! Inserted: %d, Failed: %d, Total items: %d", insertedCount, failedCount, #itemsToInsert))
+    -- Place each item with retry logic
+    local placedCount = 0
+    local failedItems = {}
+    
+    for i, item in ipairs(itemsToPlace) do
+        if placedCount >= canPlaceCount then
+            print("⚠️ No more space available. Stopping placement.")
+            break
+        end
+        
+        print(string.format("\n🔄 Attempting to place item %d/%d", i, #itemsToPlace))
+        print(string.format("   GUID: %s", item.GUID))
+        
+        local positionIndex = placedCount + 1
+        local placed = false
+        local retryCount = 0
+        local maxRetries = maxPositions - positionIndex + 1  -- Maximum possible retries
+        
+        -- Try different positions until success or out of positions
+        while not placed and retryCount < maxRetries do
+            local itemCFrame = generatePosition(positionIndex + retryCount)
+            
+            if not itemCFrame then
+                print("   ❌ No more valid grid positions available")
+                break
+            end
+            
+            local args = {
+                [1] = {
+                    GUID = item.GUID,
+                    Type = "Decor",
+                    Floor = 1,
+                    Id = item.Id,
+                    CFrame = CFrame.new(itemCFrame)
+                }
+            }
+            
+            print(string.format("   Attempting position %d...", positionIndex + retryCount))
+            
+            local success, result = pcall(function()
+                return Shop.InsertFurniture:InvokeServer(unpack(args))
+            end)
+            
+            if success then
+                -- Verify item was actually removed from inventory
+                task.wait(0.5)  -- Wait for server update
+                if verifyItemRemoved(item.GUID) then
+                    print(string.format("   ✅ Successfully placed GUID %s", item.GUID))
+                    print(string.format("   ✅ Confirmed GUID %s removed from inventory", item.GUID))
+                    placed = true
+                    placedCount = placedCount + 1
+                else
+                    print(string.format("   ⚠️ Placement reported success but item still in inventory. Retrying..."))
+                    retryCount = retryCount + 1
+                end
+            else
+                print(string.format("   ❌ Failed to place GUID %s — retrying position", item.GUID))
+                retryCount = retryCount + 1
+            end
+            
+            task.wait(0.2)  -- Small delay between retries
+        end
+        
+        if not placed then
+            print(string.format("   ❌ Failed to place GUID %s after all retries", item.GUID))
+            table.insert(failedItems, item)
+        end
+        
+        task.wait(0.1)  -- Delay between different items
+    end
+    
+    -- Final report
+    print("\n📊 Placement Summary:")
+    print(string.format("   Successfully placed: %d/%d items", placedCount, #itemsToPlace))
+    if #failedItems > 0 then
+        print(string.format("   Failed to place: %d items", #failedItems))
+        for _, item in ipairs(failedItems) do
+            print(string.format("      - GUID: %s (ID: %s)", item.GUID, item.Id))
+        end
+    end
+    
+    -- Verify no target items remain in inventory
+    task.wait(1)
+    local finalData = DataEvent:InvokeServer()
+    local remainingItems = findTargetItemsInInventory(finalData)
+    
+    if #remainingItems == 0 then
+        print("✅ All target items successfully placed or no space remaining!")
+        return true
+    else
+        print(string.format("⚠️ %d target items still in inventory:", #remainingItems))
+        for _, item in ipairs(remainingItems) do
+            print(string.format("   - GUID: %s (ID: %s)", item.GUID, item.Id))
+        end
+        return false
+    end
 end
 
+-- Original functions preserved below...
 print("🔍 Targeting any Safe with Legendary or Insane rarity")
 print("📊 Session started - tracking targets...")
 print("🏠 Detected plot:", currentPlot)
@@ -422,6 +516,20 @@ end
 end
 end)
 
+-- MODIFIED: Run placement check BEFORE starting auction loop
+print("\n🔧 PHASE 1: Pre-Auction Furniture Placement Check")
+print("==================================================")
+local placementComplete = PlaceTargetInventoryItems()
+
+if placementComplete then
+    print("\n✅ Placement phase complete. Starting auction loop...")
+    print("==================================================\n")
+else
+    print("\n⚠️ Placement phase completed with some issues. Still proceeding to auctions...")
+    print("==================================================\n")
+end
+
+-- Original auction loop starts here
 while not halted do
 if storageFull() then
 print("❌ Storage completely full. Script halted.")
@@ -492,7 +600,6 @@ taskWait(3)
 
 if targetFoundInThisAuction then
 handleItemsWon()
-placeFurniture()
 else
 checkForButton()
 LocalPlayer.PlayerGui.DescendantAdded:Connect(function(obj)
