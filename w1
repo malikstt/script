@@ -1,337 +1,212 @@
---[[
-    Roblox Hookable Functions Finder & Dumper
-    Finds ALL functions that can potentially be hooked and dumps to Discord
-]]
-
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
-local HookFinder = {}
-
--- Store all discovered hookable functions
-HookFinder.Discovered = {
+local RemoteAnalyzer = {
     Remotes = {},
-    Metamethods = {},
-    ModuleFunctions = {},
-    GlobalFunctions = {},
-    InstanceMethods = {},
-    Errors = {} -- Store errors that occurred
+    Vulnerable = {},
+    Rewards = {},
+    AcceptsInput = {},
+    IgnoresFake = {},
+    Responded = {}, -- Remotes that responded to calls
+    Blocked = {}    -- Remotes that blocked/errored
 }
 
--- ===========================================
--- PART 1: FIND ALL REMOTE EVENTS/FUNCTIONS
--- ===========================================
+local function isRemote(obj)
+    return obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")
+end
 
-function HookFinder:ScanRemotes()
-    local function ScanFolder(folder)
-        if not folder then return end
-        local success, err = pcall(function()
-            for _, obj in pairs(folder:GetDescendants()) do
-                if obj:IsA("RemoteEvent") then
-                    table.insert(HookFinder.Discovered.Remotes, {
-                        Name = obj.Name,
-                        Path = obj:GetFullName(),
-                        Type = "RemoteEvent",
-                        Hookable = {"FireServer", "OnClientEvent"}
-                    })
-                    
-                elseif obj:IsA("RemoteFunction") then
-                    table.insert(HookFinder.Discovered.Remotes, {
-                        Name = obj.Name,
-                        Path = obj:GetFullName(),
-                        Type = "RemoteFunction",
-                        Hookable = {"InvokeServer", "OnClientInvoke"}
-                    })
-                end
-            end
+local function scanRemotes()
+    local remotes = {}
+    for _, obj in pairs(ReplicatedStorage:GetDescendants()) do
+        if isRemote(obj) then
+            table.insert(remotes, obj)
+        end
+    end
+    return remotes
+end
+
+local function safeCallRemote(remote)
+    local success, result
+
+    if remote:IsA("RemoteFunction") then
+        success, result = pcall(function()
+            return remote:InvokeServer()
         end)
-        if not success then
-            table.insert(HookFinder.Discovered.Errors, "ScanRemotes - " .. folder.Name .. ": " .. tostring(err))
-        end
+    elseif remote:IsA("RemoteEvent") then
+        success, result = pcall(function()
+            remote:FireServer()
+        end)
     end
-    
-    ScanFolder(game.ReplicatedStorage)
-    pcall(function() ScanFolder(game:FindFirstChild("ServerScriptService")) end)
-    if LocalPlayer then
-        pcall(function() ScanFolder(LocalPlayer:FindFirstChild("PlayerGui")) end)
-    end
+
+    return success, result
 end
 
--- ===========================================
--- PART 2: FIND GLOBAL FUNCTION HOOKS
--- ===========================================
-
-function HookFinder:ScanGlobalFunctions()
-    local success, err = pcall(function()
-        local globals = {
-            wait = "function",
-            delay = "function",
-            spawn = "function",
-            task = {
-                wait = "function",
-                spawn = "function",
-                delay = "function"
-            },
-            math = {
-                random = "function",
-                floor = "function",
-                ceil = "function"
-            },
-            os = {
-                time = "function",
-                clock = "function",
-                date = "function"
-            },
-            string = {
-                sub = "function",
-                gsub = "function",
-                match = "function"
-            },
-            table = {
-                insert = "function",
-                remove = "function",
-                find = "function"
-            }
-        }
-        
-        for name, func in pairs(globals) do
-            if type(func) == "table" then
-                for subname, _ in pairs(func) do
-                    table.insert(HookFinder.Discovered.GlobalFunctions, {
-                        Name = name .. "." .. subname,
-                        Type = "GlobalFunction",
-                        HookMethod = "Direct override"
-                    })
-                end
-            else
-                table.insert(HookFinder.Discovered.GlobalFunctions, {
-                    Name = name,
-                    Type = "GlobalFunction",
-                    HookMethod = "Direct override"
-                })
-            end
-        end
-    end)
-    if not success then
-        table.insert(HookFinder.Discovered.Errors, "ScanGlobalFunctions: " .. tostring(err))
-    end
-end
-
--- ===========================================
--- PART 3: FIND MODULE FUNCTIONS
--- ===========================================
-
-function HookFinder:ScanModules()
-    local function ScanModule(module, path)
-        if type(module) == "table" then
-            for key, value in pairs(module) do
-                if type(value) == "function" then
-                    table.insert(HookFinder.Discovered.ModuleFunctions, {
-                        Path = path .. "." .. tostring(key),
-                        Type = "ModuleFunction",
-                        HookMethod = "Table override"
-                    })
-                elseif type(value) == "table" then
-                    ScanModule(value, path .. "." .. tostring(key))
-                end
-            end
-        end
-    end
-    
-    local moduleLocations = {
-        pcall(function() return game.ReplicatedStorage:FindFirstChild("Modules") end),
-        pcall(function() return game.ReplicatedStorage:FindFirstChild("ModuleScripts") end),
-        pcall(function() return game:FindFirstChild("ServerScriptService"):FindFirstChild("Modules") end)
+local function analyzeRemote(remote)
+    local results = {
+        Name = remote.Name,
+        Path = remote:GetFullName(),
+        Type = remote.ClassName,
+        AcceptsInput = false,
+        GivesRewards = false,
+        IgnoresFake = false,
+        Vulnerability = "Unknown",
+        Reasons = {}
     }
     
-    if LocalPlayer and LocalPlayer:FindFirstChild("PlayerScripts") then
-        table.insert(moduleLocations, LocalPlayer.PlayerScripts)
-    end
-    
-    for _, locationResult in ipairs(moduleLocations) do
-        local success, location = locationResult[1], locationResult[2]
-        if success and location then
-            pcall(function()
-                for _, module in pairs(location:GetDescendants()) do
-                    if module:IsA("ModuleScript") then
-                        local reqSuccess, result = pcall(require, module)
-                        if reqSuccess and type(result) == "table" then
-                            pcall(function() ScanModule(result, module:GetFullName()) end)
-                        end
-                    end
-                end
-            end)
-        end
-    end
-end
-
--- ===========================================
--- PART 4: FIND METAMETHOD HOOKS
--- ===========================================
-
-function HookFinder:ScanMetamethods()
-    local success, err = pcall(function()
-        local metamethods = {
-            "__index", "__newindex", "__call", "__tostring",
-            "__add", "__sub", "__mul", "__div", "__mod",
-            "__pow", "__unm", "__concat", "__len", "__eq",
-            "__lt", "__le", "__mode", "__gc", "__namecall"
-        }
-        
-        for _, method in pairs(metamethods) do
-            table.insert(HookFinder.Discovered.Metamethods, {
-                Name = method,
-                Type = "Metamethod",
-                HookMethod = "hookmetamethod()"
-            })
-        end
-    end)
-    if not success then
-        table.insert(HookFinder.Discovered.Errors, "ScanMetamethods: " .. tostring(err))
-    end
-end
-
--- ===========================================
--- PART 5: FIND INSTANCE METHOD HOOKS
--- ===========================================
-
-function HookFinder:ScanInstanceMethods()
-    local success, err = pcall(function()
-        local commonMethods = {
-            {Class = "TextButton", Methods = {"MouseButton1Click", "MouseButton2Click", "Activated"}},
-            {Class = "ImageButton", Methods = {"MouseButton1Click", "MouseButton2Click", "Activated"}},
-            {Class = "TextBox", Methods = {"FocusLost", "Changed"}},
-            {Class = "Instance", Methods = {
-                "Destroy", "Clone", "GetAttribute", "SetAttribute",
-                "FindFirstChild", "WaitForChild", "GetPropertyChangedSignal"
-            }},
-            {Class = "Player", Methods = {
-                "LoadCharacter", "Kick", "GetJoinData"
-            }}
-        }
-        
-        for _, classInfo in pairs(commonMethods) do
-            for _, method in pairs(classInfo.Methods) do
-                table.insert(HookFinder.Discovered.InstanceMethods, {
-                    Class = classInfo.Class,
-                    Method = method,
-                    Type = "InstanceMethod"
-                })
-            end
-        end
-    end)
-    if not success then
-        table.insert(HookFinder.Discovered.Errors, "ScanInstanceMethods: " .. tostring(err))
-    end
-end
-
--- ===========================================
--- PART 6: GENERATE DUMP AND SEND TO DISCORD
--- ===========================================
-
-function HookFinder:GenerateDump()
-    -- Run all scans with error handling
-    pcall(function() self:ScanRemotes() end)
-    pcall(function() self:ScanGlobalFunctions() end)
-    pcall(function() self:ScanModules() end)
-    pcall(function() self:ScanMetamethods() end)
-    pcall(function() self:ScanInstanceMethods() end)
-    
-    local dumpLines = {
-        "HOOKABLE FUNCTIONS DETECTOR - FULL DUMP",
-        string.rep("=", 60),
-        "Generated: " .. os.date("%Y-%m-%d %H:%M:%S"),
-        "Player: " .. (LocalPlayer and LocalPlayer.Name or "Unknown"),
-        string.rep("=", 60),
-        ""
-    }
-    
-    -- ERRORS SECTION (if any)
-    if #self.Discovered.Errors > 0 then
-        table.insert(dumpLines, "⚠️ ERRORS ENCOUNTERED (" .. #self.Discovered.Errors .. ")")
-        table.insert(dumpLines, string.rep("-", 40))
-        for i, err in ipairs(self.Discovered.Errors) do
-            table.insert(dumpLines, string.format("%d. %s", i, err))
-        end
-        table.insert(dumpLines, "")
-        table.insert(dumpLines, "")
-    end
-    
-    -- REMOTES
-    table.insert(dumpLines, "📡 REMOTES FOUND (" .. #self.Discovered.Remotes .. ")")
-    table.insert(dumpLines, string.rep("-", 40))
-    for i, remote in ipairs(self.Discovered.Remotes) do
-        table.insert(dumpLines, string.format("%d. [%s] %s", i, remote.Type, remote.Path))
-        table.insert(dumpLines, "   Hookable: " .. table.concat(remote.Hookable, ", "))
-        table.insert(dumpLines, "")
-    end
-    table.insert(dumpLines, "")
-    
-    -- METAMETHODS
-    table.insert(dumpLines, "🔧 METAMETHODS (" .. #self.Discovered.Metamethods .. ")")
-    table.insert(dumpLines, string.rep("-", 40))
-    for i, meta in ipairs(self.Discovered.Metamethods) do
-        table.insert(dumpLines, string.format("%d. %s - %s", i, meta.Name, meta.HookMethod))
-    end
-    table.insert(dumpLines, "")
-    
-    -- GLOBAL FUNCTIONS
-    table.insert(dumpLines, "🌍 GLOBAL FUNCTIONS (" .. #self.Discovered.GlobalFunctions .. ")")
-    table.insert(dumpLines, string.rep("-", 40))
-    for i, global in ipairs(self.Discovered.GlobalFunctions) do
-        table.insert(dumpLines, string.format("%d. %s", i, global.Name))
-    end
-    table.insert(dumpLines, "")
-    
-    -- MODULE FUNCTIONS (limited to 50)
-    table.insert(dumpLines, "📦 MODULE FUNCTIONS (" .. #self.Discovered.ModuleFunctions .. ")")
-    table.insert(dumpLines, string.rep("-", 40))
-    for i, module in ipairs(self.Discovered.ModuleFunctions) do
-        if i <= 50 then
-            table.insert(dumpLines, string.format("%d. %s", i, module.Path))
-        elseif i == 51 then
-            table.insert(dumpLines, "... and " .. (#self.Discovered.ModuleFunctions - 50) .. " more")
+    -- Passive name analysis
+    local inputKeywords = {"Click", "Buy", "Sell", "Purchase", "Upgrade", "Open", "Claim", "Collect", "Roll", "Spin"}
+    for _, keyword in ipairs(inputKeywords) do
+        if remote.Name:find(keyword) then
+            results.AcceptsInput = true
+            table.insert(results.Reasons, "Name suggests client input: " .. keyword)
             break
         end
     end
-    table.insert(dumpLines, "")
     
-    -- INSTANCE METHODS
-    table.insert(dumpLines, "🎯 INSTANCE METHODS (" .. #self.Discovered.InstanceMethods .. ")")
-    table.insert(dumpLines, string.rep("-", 40))
-    local grouped = {}
-    for _, method in ipairs(self.Discovered.InstanceMethods) do
-        if not grouped[method.Class] then grouped[method.Class] = {} end
-        table.insert(grouped[method.Class], method.Method)
+    local rewardKeywords = {"Reward", "Win", "Get", "Receive", "Payout", "Drop", "Loot", "Chest"}
+    for _, keyword in ipairs(rewardKeywords) do
+        if remote.Name:find(keyword) then
+            results.GivesRewards = true
+            table.insert(results.Reasons, "Name suggests rewards: " .. keyword)
+            break
+        end
     end
-    for class, methods in pairs(grouped) do
-        table.insert(dumpLines, class .. ": " .. table.concat(methods, ", "))
+    
+    -- Vulnerability assessment based on name
+    if remote.Name:find("Claim") or remote.Name:find("Collect") then
+        results.Vulnerability = "HIGH - Speed run vulnerability possible"
+    elseif remote.Name:find("Buy") or remote.Name:find("Purchase") then
+        results.Vulnerability = "MEDIUM - Check price validation"
+    elseif remote.Name:find("Roll") or remote.Name:find("Spin") then
+        results.Vulnerability = "MEDIUM - RNG manipulation if client-side"
+    elseif remote.Name:find("Upgrade") then
+        results.Vulnerability = "HIGH - Level/stat manipulation possible"
     end
-    table.insert(dumpLines, "")
     
-    -- SUMMARY
-    table.insert(dumpLines, string.rep("=", 60))
-    table.insert(dumpLines, "TOTAL HOOKABLE FUNCTIONS FOUND: " .. (
-        #self.Discovered.Remotes +
-        #self.Discovered.Metamethods +
-        #self.Discovered.GlobalFunctions +
-        #self.Discovered.ModuleFunctions +
-        #self.Discovered.InstanceMethods
-    ))
-    table.insert(dumpLines, string.rep("=", 60))
+    -- Active testing (call the remote)
+    local success, result = safeCallRemote(remote)
     
-    return table.concat(dumpLines, "\n")
+    if success then
+        table.insert(RemoteAnalyzer.Responded, {
+            Path = remote:GetFullName(),
+            Type = remote.ClassName,
+            Result = result
+        })
+        
+        if result ~= nil then
+            table.insert(results.Reasons, "RETURNS DATA: " .. tostring(result))
+            -- If it returns data, it might give rewards
+            results.GivesRewards = true
+        end
+    else
+        table.insert(RemoteAnalyzer.Blocked, {
+            Path = remote:GetFullName(),
+            Type = remote.ClassName
+        })
+        table.insert(results.Reasons, "BLOCKS/ERRORS on call")
+    end
+    
+    return results
 end
 
--- ===========================================
--- SEND TO DISCORD
--- ===========================================
+-- MAIN EXECUTION
+print("=== STARTING REMOTE SECURITY AUDIT ===")
 
+local remotes = scanRemotes()
+print("Found " .. #remotes .. " remotes to analyze\n")
+
+local dumpLines = {
+    "REMOTE VULNERABILITY ANALYSIS + ACTIVE TESTING",
+    string.rep("=", 70),
+    "Generated: " .. os.date("%Y-%m-%d %H:%M:%S"),
+    "Player: " .. (LocalPlayer and LocalPlayer.Name or "Unknown"),
+    "Total Remotes Found: " .. #remotes,
+    string.rep("=", 70),
+    ""
+}
+
+-- Analyze each remote
+for i, remote in ipairs(remotes) do
+    print(string.format("[%d/%d] Testing: %s", i, #remotes, remote:GetFullName()))
+    local analysis = analyzeRemote(remote)
+    
+    -- Categorize
+    if analysis.AcceptsInput then table.insert(RemoteAnalyzer.AcceptsInput, analysis) end
+    if analysis.GivesRewards then table.insert(RemoteAnalyzer.Rewards, analysis) end
+    if analysis.Vulnerability ~= "Unknown" then table.insert(RemoteAnalyzer.Vulnerable, analysis) end
+    
+    task.wait(0.1) -- Rate limiting
+end
+
+-- REMOTES THAT RESPONDED
+table.insert(dumpLines, "✅ REMOTES THAT RESPONDED (" .. #RemoteAnalyzer.Responded .. ")")
+table.insert(dumpLines, string.rep("-", 70))
+if #RemoteAnalyzer.Responded > 0 then
+    for i, r in ipairs(RemoteAnalyzer.Responded) do
+        table.insert(dumpLines, string.format("%d. %s (%s)", i, r.Path, r.Type))
+        if r.Result ~= nil then
+            table.insert(dumpLines, "   Returns: " .. tostring(r.Result))
+        end
+    end
+else
+    table.insert(dumpLines, "None responded")
+end
+table.insert(dumpLines, "")
+
+-- REMOTES THAT BLOCKED
+table.insert(dumpLines, "❌ REMOTES THAT BLOCKED/ERRORED (" .. #RemoteAnalyzer.Blocked .. ")")
+table.insert(dumpLines, string.rep("-", 70))
+if #RemoteAnalyzer.Blocked > 0 then
+    for i, r in ipairs(RemoteAnalyzer.Blocked) do
+        table.insert(dumpLines, string.format("%d. %s (%s)", i, r.Path, r.Type))
+    end
+else
+    table.insert(dumpLines, "None blocked")
+end
+table.insert(dumpLines, "")
+
+-- REMOTES THAT ACCEPT CLIENT INPUT
+table.insert(dumpLines, "📥 REMOTES THAT ACCEPT CLIENT INPUT (" .. #RemoteAnalyzer.AcceptsInput .. ")")
+table.insert(dumpLines, string.rep("-", 70))
+if #RemoteAnalyzer.AcceptsInput > 0 then
+    for i, r in ipairs(RemoteAnalyzer.AcceptsInput) do
+        table.insert(dumpLines, string.format("%d. %s", i, r.Path))
+    end
+end
+table.insert(dumpLines, "")
+
+-- REMOTES THAT GIVE REWARDS
+table.insert(dumpLines, "🎁 REMOTES THAT GIVE REWARDS (" .. #RemoteAnalyzer.Rewards .. ")")
+table.insert(dumpLines, string.rep("-", 70))
+if #RemoteAnalyzer.Rewards > 0 then
+    for i, r in ipairs(RemoteAnalyzer.Rewards) do
+        table.insert(dumpLines, string.format("%d. %s", i, r.Path))
+    end
+end
+table.insert(dumpLines, "")
+
+-- POTENTIALLY VULNERABLE REMOTES
+table.insert(dumpLines, "⚠️ POTENTIALLY VULNERABLE REMOTES (" .. #RemoteAnalyzer.Vulnerable .. ")")
+table.insert(dumpLines, string.rep("-", 70))
+if #RemoteAnalyzer.Vulnerable > 0 then
+    for i, r in ipairs(RemoteAnalyzer.Vulnerable) do
+        table.insert(dumpLines, string.format("%d. %s", i, r.Path))
+        table.insert(dumpLines, "   Risk: " .. r.Vulnerability)
+        table.insert(dumpLines, "")
+    end
+end
+table.insert(dumpLines, "")
+
+table.insert(dumpLines, string.rep("=", 70))
+table.insert(dumpLines, "AUDIT COMPLETE")
+table.insert(dumpLines, string.rep("=", 70))
+
+-- Send to Discord
 local function sendToDiscord(content)
     local webhookUrl = "https://discord.com/api/webhooks/1473934078087528509/V3Bm-RyTV4mlClC5TKQn9gH6BK-ooqsssPw9P13_egipjWwjGoEOAn_7pbfA3TdAIL75"
-    local filename = "hookable_functions_" .. os.time() .. ".txt"
+    local filename = "remote_audit_" .. os.time() .. ".txt"
     
     local boundary = "boundary" .. HttpService:GenerateGUID(false)
     local body = "--" .. boundary .. "\r\n"
@@ -350,17 +225,9 @@ local function sendToDiscord(content)
     end)
     
     if success then
-        print("✅ Sent hookable functions dump to Discord! Filename: " .. filename)
-    else
-        warn("❌ Failed to send")
+        print("✅ Sent remote audit to Discord! Filename: " .. filename)
     end
 end
 
--- Run and send
-local dump = HookFinder:GenerateDump()
-sendToDiscord(dump)
-
--- Also print to console
-print(dump)
-
-return HookFinder
+sendToDiscord(table.concat(dumpLines, "\n"))
+print("\n=== AUDIT COMPLETE - Check Discord for results ===")
