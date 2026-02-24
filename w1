@@ -1,1 +1,412 @@
+--[[
+    Roblox Hookable Functions Finder & Tester
+    Finds ALL functions that can potentially be hooked in your game
+]]
 
+local HookFinder = {}
+
+-- Store all discovered hookable functions
+HookFinder.Discovered = {
+    Remotes = {},
+    Metamethods = {},
+    ModuleFunctions = {},
+    GlobalFunctions = {},
+    InstanceMethods = {}
+}
+
+-- ===========================================
+-- PART 1: FIND ALL REMOTE EVENTS/FUNCTIONS
+-- ===========================================
+
+function HookFinder:ScanRemotes()
+    print("\n=== SCANNING FOR REMOTES (HIGHLY HOOKABLE) ===\n")
+    
+    local function ScanFolder(folder)
+        for _, obj in pairs(folder:GetDescendants()) do
+            if obj:IsA("RemoteEvent") then
+                print(string.format("[HOOKABLE] RemoteEvent: %s", obj:GetFullName()))
+                print("  - Can hook: FireServer, OnClientEvent, WaitForEvent")
+                print("  - Test with: obj.FireServer = function() ... end\n")
+                
+                table.insert(HookFinder.Discovered.Remotes, {
+                    Name = obj.Name,
+                    Path = obj:GetFullName(),
+                    Type = "RemoteEvent",
+                    Hookable = {"FireServer", "OnClientEvent"}
+                })
+                
+            elseif obj:IsA("RemoteFunction") then
+                print(string.format("[HOOKABLE] RemoteFunction: %s", obj:GetFullName()))
+                print("  - Can hook: InvokeServer, OnClientInvoke")
+                print("  - Test with: obj.InvokeServer = function() ... end\n")
+                
+                table.insert(HookFinder.Discovered.Remotes, {
+                    Name = obj.Name,
+                    Path = obj:GetFullName(),
+                    Type = "RemoteFunction",
+                    Hookable = {"InvokeServer", "OnClientInvoke"}
+                })
+            end
+        end
+    end
+    
+    ScanFolder(game.ReplicatedStorage)
+    ScanFolder(game.ServerScriptService)
+    ScanFolder(game.Players.LocalPlayer:WaitForChild("PlayerGui"))
+end
+
+-- ===========================================
+-- PART 2: FIND GLOBAL FUNCTION HOOKS
+-- ===========================================
+
+function HookFinder:ScanGlobalFunctions()
+    print("\n=== SCANNING GLOBAL FUNCTIONS (HOOKABLE) ===\n")
+    
+    local globals = {
+        -- Time functions
+        wait = wait,
+        delay = delay,
+        spawn = spawn,
+        task = {
+            wait = task.wait,
+            spawn = task.spawn,
+            delay = task.delay
+        },
+        
+        -- Math functions
+        math = {
+            random = math.random,
+            floor = math.floor,
+            ceil = math.ceil
+        },
+        
+        -- OS functions
+        os = {
+            time = os.time,
+            clock = os.clock,
+            date = os.date
+        },
+        
+        -- String functions
+        string = {
+            sub = string.sub,
+            gsub = string.gsub,
+            match = string.match
+        },
+        
+        -- Table functions
+        table = {
+            insert = table.insert,
+            remove = table.remove,
+            find = table.find
+        },
+        
+        -- Debug functions (if available)
+        debug = debug and {
+            getupvalue = debug.getupvalue,
+            setupvalue = debug.setupvalue,
+            getinfo = debug.getinfo
+        }
+    }
+    
+    -- Check each global
+    for name, func in pairs(globals) do
+        if type(func) == "function" then
+            print(string.format("[HOOKABLE] Global function: %s", name))
+            print("  - Can hook directly: " .. name .. " = function() ... end")
+            print("  - Test: Override to monitor/modify calls\n")
+            
+            table.insert(HookFinder.Discovered.GlobalFunctions, {
+                Name = name,
+                Type = "GlobalFunction",
+                HookMethod = "Direct override"
+            })
+            
+        elseif type(func) == "table" then
+            for subname, subfunc in pairs(func) do
+                if type(subfunc) == "function" then
+                    print(string.format("[HOOKABLE] Global function: %s.%s", name, subname))
+                    print("  - Can hook: " .. name .. "." .. subname .. " = function() ... end\n")
+                    
+                    table.insert(HookFinder.Discovered.GlobalFunctions, {
+                        Name = name .. "." .. subname,
+                        Type = "GlobalFunction",
+                        HookMethod = "Direct override"
+                    })
+                end
+            end
+        end
+    end
+end
+
+-- ===========================================
+-- PART 3: FIND MODULE FUNCTIONS
+-- ===========================================
+
+function HookFinder:ScanModules()
+    print("\n=== SCANNING MODULE FUNCTIONS (HOOKABLE) ===\n")
+    
+    local function ScanModule(module, path)
+        if type(module) == "table" then
+            for key, value in pairs(module) do
+                if type(value) == "function" then
+                    print(string.format("[HOOKABLE] Module function: %s.%s", path, tostring(key)))
+                    print("  - Can hook by replacing function")
+                    print("  - Test: module." .. tostring(key) .. " = function() ... end\n")
+                    
+                    table.insert(HookFinder.Discovered.ModuleFunctions, {
+                        Path = path .. "." .. tostring(key),
+                        Type = "ModuleFunction",
+                        HookMethod = "Table override"
+                    })
+                    
+                elseif type(value) == "table" then
+                    ScanModule(value, path .. "." .. tostring(key))
+                end
+            end
+        end
+    end
+    
+    -- Scan common module locations
+    local moduleLocations = {
+        game.ReplicatedStorage:FindFirstChild("Modules"),
+        game.ReplicatedStorage:FindFirstChild("ModuleScripts"),
+        game.ServerScriptService:FindFirstChild("Modules"),
+        game.Players.LocalPlayer.PlayerScripts
+    }
+    
+    for _, location in pairs(moduleLocations) do
+        if location then
+            for _, module in pairs(location:GetDescendants()) do
+                if module:IsA("ModuleScript") then
+                    local success, result = pcall(require, module)
+                    if success and type(result) == "table" then
+                        ScanModule(result, module:GetFullName())
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- ===========================================
+-- PART 4: FIND METAMETHOD HOOKS
+-- ===========================================
+
+function HookFinder:ScanMetamethods()
+    print("\n=== SCANNING METAMETHODS (HOOKABLE) ===\n")
+    
+    local metamethods = {
+        "__index", "__newindex", "__call", "__tostring",
+        "__add", "__sub", "__mul", "__div", "__mod",
+        "__pow", "__unm", "__concat", "__len", "__eq",
+        "__lt", "__le", "__mode", "__gc", "__namecall"
+    }
+    
+    print("Metamethods can be hooked on ANY instance:\n")
+    
+    for _, method in pairs(metamethods) do
+        print(string.format("[HOOKABLE] Metamethod: %s", method))
+        print("  - Can hook on: game, workspace, players, etc.")
+        print("  - Test with: hookmetamethod(game, '" .. method .. "', function() ... end)\n")
+        
+        table.insert(HookFinder.Discovered.Metamethods, {
+            Name = method,
+            Type = "Metamethod",
+            HookMethod = "hookmetamethod()"
+        })
+    end
+    
+    -- Special focus on namecall (most useful for remote interception)
+    print("\n[CRITICAL] __namecall metamethod - Intercepts ALL method calls")
+    print("  Use to catch: InvokeServer, FireServer, GetAttribute, etc.")
+    print("  Test: hookmetamethod(game, '__namecall', function(self, ...)")
+    print("           local method = getnamecallmethod()")
+    print("           print('Called:', method)")
+    print("           return oldNamecall(self, ...)")
+    print("        end)\n")
+end
+
+-- ===========================================
+-- PART 5: FIND INSTANCE METHOD HOOKS
+-- ===========================================
+
+function HookFinder:ScanInstanceMethods()
+    print("\n=== SCANNING INSTANCE METHODS (HOOKABLE) ===\n")
+    
+    local commonMethods = {
+        -- GUI methods
+        {Class = "TextButton", Methods = {"MouseButton1Click", "MouseButton2Click", "Activated"}},
+        {Class = "ImageButton", Methods = {"MouseButton1Click", "MouseButton2Click", "Activated"}},
+        {Class = "TextBox", Methods = {"FocusLost", "Changed"}},
+        
+        -- Core methods
+        {Class = "Instance", Methods = {
+            "Destroy", "Clone", "GetAttribute", "SetAttribute",
+            "FindFirstChild", "WaitForChild", "GetPropertyChangedSignal"
+        }},
+        
+        -- Player methods
+        {Class = "Player", Methods = {
+            "LoadCharacter", "Kick", "GetJoinData"
+        }}
+    }
+    
+    for _, classInfo in pairs(commonMethods) do
+        print(string.format("[HOOKABLE] %s methods:", classInfo.Class))
+        for _, method in pairs(classInfo.Methods) do
+            print(string.format("  - %s", method))
+            print("    Can hook by overriding the method table\n")
+            
+            table.insert(HookFinder.Discovered.InstanceMethods, {
+                Class = classInfo.Class,
+                Method = method,
+                Type = "InstanceMethod"
+            })
+        end
+    end
+end
+
+-- ===========================================
+-- PART 6: TEST ACTUAL HOOKS (SAFE VERSION)
+-- ===========================================
+
+function HookFinder:TestHooks()
+    print("\n=== TESTING HOOKS (MONITORING MODE) ===\n")
+    
+    -- Test 1: Hook __namecall to monitor all function calls
+    local oldNamecall = nil
+    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+        local method = getnamecallmethod()
+        local args = {...}
+        
+        -- Only log, don't modify
+        if method == "InvokeServer" or method == "FireServer" then
+            print(string.format("[MONITOR] %s called on %s", method, tostring(self)))
+        end
+        
+        return oldNamecall(self, ...)
+    end)
+    print("[TEST] __namecall hook installed - monitoring remote calls\n")
+    
+    -- Test 2: Hook a specific remote if found
+    for _, remote in pairs(HookFinder.Discovered.Remotes) do
+        if remote.Type == "RemoteFunction" then
+            local obj = game:GetService(remote.Path:split(".")[1]):FindFirstChild(remote.Name)
+            if obj and obj.InvokeServer then
+                local oldInvoke = obj.InvokeServer
+                obj.InvokeServer = function(self, ...)
+                    print(string.format("[TEST] Intercepted %s.InvokeServer", remote.Name))
+                    print("  Args:", ...)
+                    local result = oldInvoke(self, ...)
+                    print("  Returns:", result)
+                    return result
+                end
+                print(string.format("[TEST] Hooked remote: %s", remote.Name))
+                break
+            end
+        end
+    end
+    
+    -- Test 3: Hook wait() to monitor timing
+    local oldWait = wait
+    wait = function(n)
+        if n == 1 then
+            print("[MONITOR] wait(1) called - potential timer")
+        end
+        return oldWait(n)
+    end
+    print("[TEST] wait() hook installed\n")
+end
+
+-- ===========================================
+-- PART 7: VULNERABILITY CHECKER
+-- ===========================================
+
+function HookFinder:CheckVulnerabilities()
+    print("\n=== CHECKING FOR COMMON VULNERABILITIES ===\n")
+    
+    local checks = {
+        -- Check for client-side timers
+        ClientTimers = function()
+            print("[CHECK] Looking for client-side timers...")
+            -- Search scripts for wait() loops
+            for _, script in pairs(game.Players.LocalPlayer.PlayerScripts:GetDescendants()) do
+                if script:IsA("LocalScript") and script.Source then
+                    if script.Source:find("wait%(1%)") and script.Source:find("for") then
+                        print("  [VULNERABLE] Timer loop found in: " .. script:GetFullName())
+                        print("    - Can be sped up by hooking wait()")
+                    end
+                end
+            end
+        end,
+        
+        -- Check for client-side validation
+        ClientValidation = function()
+            print("\n[CHECK] Looking for client-side validation...")
+            for _, remote in pairs(HookFinder.Discovered.Remotes) do
+                if remote.Type == "RemoteFunction" then
+                    print("  [POTENTIAL] " .. remote.Name .. " - check if server validates")
+                end
+            end
+        end,
+        
+        -- Check for flag variables
+        FlagVariables = function()
+            print("\n[CHECK] Looking for flag variables...")
+            -- Common patterns
+            local patterns = {
+                "local.-=.-false",
+                "local.-=.-true",
+                "if.-then.-return",
+                "not.-then"
+            }
+            -- This would need to scan actual scripts
+        end
+    }
+    
+    for name, check in pairs(checks) do
+        pcall(check)
+    end
+end
+
+-- ===========================================
+-- MAIN EXECUTION
+-- ===========================================
+
+function HookFinder:Run()
+    print("\n" .. string.rep("=", 60))
+    print("ROBLOX HOOKABLE FUNCTIONS FINDER")
+    print("Use this to test your OWN game security")
+    print(string.rep("=", 60) .. "\n")
+    
+    -- Scan everything
+    self:ScanRemotes()
+    self:ScanGlobalFunctions()
+    self:ScanModules()
+    self:ScanMetamethods()
+    self:ScanInstanceMethods()
+    
+    -- Show summary
+    print("\n=== SUMMARY ===")
+    print(string.format("Remotes found: %d", #self.Discovered.Remotes))
+    print(string.format("Global functions: %d", #self.Discovered.GlobalFunctions))
+    print(string.format("Module functions: %d", #self.Discovered.ModuleFunctions))
+    print(string.format("Metamethods: %d", #self.Discovered.Metamethods))
+    print(string.format("Instance methods: %d", #self.Discovered.InstanceMethods))
+    
+    -- Ask if user wants to test hooks
+    print("\nDo you want to test these hooks? (This will modify game behavior)")
+    print("Type 'yes' to run tests, 'no' to exit")
+    
+    -- Note: In actual execution, you'd need a way to get user input
+    -- For now, we'll just show the option
+    print("\nTo test hooks, call: HookFinder:TestHooks()")
+    print("To check vulnerabilities: HookFinder:CheckVulnerabilities()")
+end
+
+-- Run the finder
+HookFinder:Run()
+
+-- Return for use in command line
+return HookFinder
