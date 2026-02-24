@@ -9,9 +9,12 @@ local RemoteAnalyzer = {
     Rewards = {},
     AcceptsInput = {},
     IgnoresFake = {},
-    Responded = {}, -- Remotes that responded to calls
-    Blocked = {}    -- Remotes that blocked/errored
+    Responded = {},
+    Blocked = {},
+    TimedOut = {} -- New category for remotes that took too long
 }
+
+local TIMEOUT = 5 -- Max seconds per remote
 
 local function isRemote(obj)
     return obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")
@@ -27,20 +30,43 @@ local function scanRemotes()
     return remotes
 end
 
-local function safeCallRemote(remote)
-    local success, result
-
-    if remote:IsA("RemoteFunction") then
-        success, result = pcall(function()
-            return remote:InvokeServer()
-        end)
-    elseif remote:IsA("RemoteEvent") then
-        success, result = pcall(function()
-            remote:FireServer()
-        end)
+local function callWithTimeout(remote, timeout)
+    local co = coroutine.create(function()
+        local success, result
+        if remote:IsA("RemoteFunction") then
+            success, result = pcall(function()
+                return remote:InvokeServer()
+            end)
+        else
+            success, result = pcall(function()
+                remote:FireServer()
+            end)
+        end
+        coroutine.yield(success, result)
+    end)
+    
+    local success, result = coroutine.resume(co)
+    if not success then
+        return false, "coroutine error"
     end
+    
+    local start = os.clock()
+    while coroutine.status(co) ~= "dead" do
+        if os.clock() - start > timeout then
+            return false, "timeout"
+        end
+        task.wait(0.1)
+    end
+    
+    return coroutine.yield() -- Get the values from the coroutine
+end
 
-    return success, result
+local function safeCallRemote(remote)
+    local startTime = os.clock()
+    local success, result = callWithTimeout(remote, TIMEOUT)
+    local elapsed = os.clock() - startTime
+    
+    return success, result, elapsed
 end
 
 local function analyzeRemote(remote)
@@ -52,6 +78,8 @@ local function analyzeRemote(remote)
         GivesRewards = false,
         IgnoresFake = false,
         Vulnerability = "Unknown",
+        ResponseTime = 0,
+        Status = "Unknown",
         Reasons = {}
     }
     
@@ -85,34 +113,48 @@ local function analyzeRemote(remote)
         results.Vulnerability = "HIGH - Level/stat manipulation possible"
     end
     
-    -- Active testing (call the remote)
-    local success, result = safeCallRemote(remote)
+    -- Active testing with timeout
+    local success, result, elapsed = safeCallRemote(remote)
+    results.ResponseTime = elapsed
     
-    if success then
+    if elapsed >= TIMEOUT then
+        results.Status = "TIMEOUT"
+        table.insert(RemoteAnalyzer.TimedOut, {
+            Path = remote:GetFullName(),
+            Type = remote.ClassName,
+            Time = elapsed
+        })
+        table.insert(results.Reasons, string.format("TIMEOUT after %.2f seconds", elapsed))
+    elseif success then
+        results.Status = "RESPONDED"
         table.insert(RemoteAnalyzer.Responded, {
             Path = remote:GetFullName(),
             Type = remote.ClassName,
-            Result = result
+            Result = result,
+            Time = elapsed
         })
         
         if result ~= nil then
             table.insert(results.Reasons, "RETURNS DATA: " .. tostring(result))
-            -- If it returns data, it might give rewards
             results.GivesRewards = true
         end
+        table.insert(results.Reasons, string.format("Response time: %.2fs", elapsed))
     else
+        results.Status = "BLOCKED"
         table.insert(RemoteAnalyzer.Blocked, {
             Path = remote:GetFullName(),
-            Type = remote.ClassName
+            Type = remote.ClassName,
+            Time = elapsed
         })
         table.insert(results.Reasons, "BLOCKS/ERRORS on call")
+        table.insert(results.Reasons, string.format("Failed after %.2fs", elapsed))
     end
     
     return results
 end
 
 -- MAIN EXECUTION
-print("=== STARTING REMOTE SECURITY AUDIT ===")
+print("=== STARTING REMOTE SECURITY AUDIT (5s timeout per remote) ===")
 
 local remotes = scanRemotes()
 print("Found " .. #remotes .. " remotes to analyze\n")
@@ -123,7 +165,8 @@ local dumpLines = {
     "Generated: " .. os.date("%Y-%m-%d %H:%M:%S"),
     "Player: " .. (LocalPlayer and LocalPlayer.Name or "Unknown"),
     "Total Remotes Found: " .. #remotes,
-    string.rep("=", 70),
+    "Timeout per remote: " .. TIMEOUT .. " seconds",
+    string.rep("="", 70),
     ""
 }
 
@@ -136,8 +179,6 @@ for i, remote in ipairs(remotes) do
     if analysis.AcceptsInput then table.insert(RemoteAnalyzer.AcceptsInput, analysis) end
     if analysis.GivesRewards then table.insert(RemoteAnalyzer.Rewards, analysis) end
     if analysis.Vulnerability ~= "Unknown" then table.insert(RemoteAnalyzer.Vulnerable, analysis) end
-    
-    task.wait(0.1) -- Rate limiting
 end
 
 -- REMOTES THAT RESPONDED
@@ -145,7 +186,7 @@ table.insert(dumpLines, "✅ REMOTES THAT RESPONDED (" .. #RemoteAnalyzer.Respon
 table.insert(dumpLines, string.rep("-", 70))
 if #RemoteAnalyzer.Responded > 0 then
     for i, r in ipairs(RemoteAnalyzer.Responded) do
-        table.insert(dumpLines, string.format("%d. %s (%s)", i, r.Path, r.Type))
+        table.insert(dumpLines, string.format("%d. %s (%s) - %.2fs", i, r.Path, r.Type, r.Time))
         if r.Result ~= nil then
             table.insert(dumpLines, "   Returns: " .. tostring(r.Result))
         end
@@ -155,12 +196,24 @@ else
 end
 table.insert(dumpLines, "")
 
+-- REMOTES THAT TIMED OUT (5s+)
+table.insert(dumpLines, "⏰ REMOTES THAT TIMED OUT (5s+) (" .. #RemoteAnalyzer.TimedOut .. ")")
+table.insert(dumpLines, string.rep("-", 70))
+if #RemoteAnalyzer.TimedOut > 0 then
+    for i, r in ipairs(RemoteAnalyzer.TimedOut) do
+        table.insert(dumpLines, string.format("%d. %s (%s) - %.2fs", i, r.Path, r.Type, r.Time))
+    end
+else
+    table.insert(dumpLines, "None timed out")
+end
+table.insert(dumpLines, "")
+
 -- REMOTES THAT BLOCKED
 table.insert(dumpLines, "❌ REMOTES THAT BLOCKED/ERRORED (" .. #RemoteAnalyzer.Blocked .. ")")
 table.insert(dumpLines, string.rep("-", 70))
 if #RemoteAnalyzer.Blocked > 0 then
     for i, r in ipairs(RemoteAnalyzer.Blocked) do
-        table.insert(dumpLines, string.format("%d. %s (%s)", i, r.Path, r.Type))
+        table.insert(dumpLines, string.format("%d. %s (%s) - %.2fs", i, r.Path, r.Type, r.Time))
     end
 else
     table.insert(dumpLines, "None blocked")
@@ -172,7 +225,7 @@ table.insert(dumpLines, "📥 REMOTES THAT ACCEPT CLIENT INPUT (" .. #RemoteAnal
 table.insert(dumpLines, string.rep("-", 70))
 if #RemoteAnalyzer.AcceptsInput > 0 then
     for i, r in ipairs(RemoteAnalyzer.AcceptsInput) do
-        table.insert(dumpLines, string.format("%d. %s", i, r.Path))
+        table.insert(dumpLines, string.format("%d. %s - %s", i, r.Path, r.Status))
     end
 end
 table.insert(dumpLines, "")
@@ -182,7 +235,7 @@ table.insert(dumpLines, "🎁 REMOTES THAT GIVE REWARDS (" .. #RemoteAnalyzer.Re
 table.insert(dumpLines, string.rep("-", 70))
 if #RemoteAnalyzer.Rewards > 0 then
     for i, r in ipairs(RemoteAnalyzer.Rewards) do
-        table.insert(dumpLines, string.format("%d. %s", i, r.Path))
+        table.insert(dumpLines, string.format("%d. %s - %s", i, r.Path, r.Status))
     end
 end
 table.insert(dumpLines, "")
@@ -194,11 +247,23 @@ if #RemoteAnalyzer.Vulnerable > 0 then
     for i, r in ipairs(RemoteAnalyzer.Vulnerable) do
         table.insert(dumpLines, string.format("%d. %s", i, r.Path))
         table.insert(dumpLines, "   Risk: " .. r.Vulnerability)
+        table.insert(dumpLines, "   Status: " .. r.Status)
         table.insert(dumpLines, "")
     end
 end
 table.insert(dumpLines, "")
 
+-- SUMMARY STATS
+table.insert(dumpLines, string.rep("=", 70))
+table.insert(dumpLines, "SUMMARY STATISTICS")
+table.insert(dumpLines, string.rep("-", 70))
+table.insert(dumpLines, string.format("Total Remotes: %d", #remotes))
+table.insert(dumpLines, string.format("Responded: %d", #RemoteAnalyzer.Responded))
+table.insert(dumpLines, string.format("Blocked: %d", #RemoteAnalyzer.Blocked))
+table.insert(dumpLines, string.format("Timed Out (5s+): %d", #RemoteAnalyzer.TimedOut))
+table.insert(dumpLines, string.format("Accept Input: %d", #RemoteAnalyzer.AcceptsInput))
+table.insert(dumpLines, string.format("Give Rewards: %d", #RemoteAnalyzer.Rewards))
+table.insert(dumpLines, string.format("Vulnerable: %d", #RemoteAnalyzer.Vulnerable))
 table.insert(dumpLines, string.rep("=", 70))
 table.insert(dumpLines, "AUDIT COMPLETE")
 table.insert(dumpLines, string.rep("=", 70))
