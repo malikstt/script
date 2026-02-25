@@ -29,8 +29,7 @@ local Data = Events:WaitForChild("Data")
 local SCAN_DURATION = 2
 local BID_CHECK_INTERVAL = 0.2
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
-local targetItemId = "681"  -- Keep original target ID
-local targetItemIds = {"681", "2294"}  -- Add both IDs to check
+local targetItemIds = {"681","2294"}
 
 local totalTargetsFound = 0
 local totalTargetsObtained = 0
@@ -73,13 +72,10 @@ end)
 local function isTargetItem(itemId)
     local itemData = ItemsModule[itemId]
     if not itemData then return false end
-    
     local name = itemData.Name or ""
     local rarity = itemData.Rarity or ""
-    
     local hasSafeInName = string.find(name:lower(), "safe") ~= nil
     local isValidRarity = rarity == "Legendary" or rarity == "Insane"
-    
     return hasSafeInName and isValidRarity, itemData
 end
 
@@ -87,59 +83,25 @@ local function sendWebhook(itemId, itemData, playerName)
     local webhookData = {
         content = "",
         embeds = {{
-            title = "🎯 **Target Safe Found!**",
-            color = 0x00ff00,
+            title = "Target Safe Found",
+            color = 65280,
             fields = {
-                {
-                    name = "Rare Safe Found",
-                    value = "``````",
-                    inline = false
-                },
-                {
-                    name = "Item ID",
-                    value = "`" .. itemId .. "`",
-                    inline = true
-                },
-                {
-                    name = "Name",
-                    value = "**" .. itemData.Name .. "**",
-                    inline = true
-                },
-                {
-                    name = "Rarity",
-                    value = "`" .. itemData.Rarity .. "`",
-                    inline = true
-                },
-                {
-                    name = "Found By",
-                    value = playerName,
-                    inline = false
-                }
+                {name="Item ID",value=itemId,inline=true},
+                {name="Name",value=itemData.Name,inline=true},
+                {name="Rarity",value=itemData.Rarity,inline=true},
+                {name="Found By",value=playerName,inline=false}
             },
-            footer = {
-                text = "Auction Scanner • " .. os.date("%Y-%m-%d %H:%M:%S")
-            }
+            footer = {text=os.date("%Y-%m-%d %H:%M:%S")}
         }}
     }
-    
-    local success, response = pcall(function()
-        local jsonData = HttpService:JSONEncode(webhookData)
-        local request = {
+    pcall(function()
+        HttpService:RequestAsync({
             Url = WEBHOOK_URL,
             Method = "POST",
-            Headers = {
-                ["Content-Type"] = "application/json"
-            },
-            Body = jsonData
-        }
-        return HttpService:RequestAsync(request)
+            Headers = {["Content-Type"] = "application/json"},
+            Body = HttpService:JSONEncode(webhookData)
+        })
     end)
-    
-    if success then
-        print("✅ Webhook sent successfully for", itemData.Name)
-    else
-        print("❌ Failed to send webhook:", response)
-    end
 end
 
 local function tryClick(obj)
@@ -155,14 +117,11 @@ end
 local function generatePosition(index)
     local row = math.floor((index - 1) / GRID_CONFIG.itemsPerRow)
     local col = (index - 1) % GRID_CONFIG.itemsPerRow
-    
     local xOffset = col * GRID_CONFIG.spacing
     local zOffset = row * GRID_CONFIG.spacing
-    
     if row >= GRID_CONFIG.rowsPerFloor then
         return nil
     end
-    
     return GRID_CONFIG.startPos + Vector3.new(xOffset, 0, zOffset)
 end
 
@@ -176,19 +135,13 @@ local function getFurnitureCount(playerData)
     return count
 end
 
--- MODIFIED: Find items with either ID 681 OR 2294
 local function findTargetItemsInInventory(playerData)
     local items = {}
     if playerData and playerData.Inventory then
         for guid, itemData in pairs(playerData.Inventory) do
-            -- Check if item ID matches either target ID
             for _, targetId in ipairs(targetItemIds) do
-                if itemData.Id == targetId then
-                    table.insert(items, {
-                        GUID = guid,
-                        Id = itemData.Id,
-                        Data = itemData
-                    })
+                if tostring(itemData.Id) == tostring(targetId) then
+                    table.insert(items,{GUID=guid,Id=itemData.Id,Data=itemData})
                     break
                 end
             end
@@ -197,9 +150,8 @@ local function findTargetItemsInInventory(playerData)
     return items
 end
 
--- NEW FUNCTION: Verify item is removed from inventory
 local function verifyItemRemoved(guid)
-    task.wait(0.5)  -- Small delay for server to update
+    task.wait(0.5)
     local playerData = DataEvent:InvokeServer()
     if playerData and playerData.Inventory then
         return playerData.Inventory[guid] == nil
@@ -207,238 +159,113 @@ local function verifyItemRemoved(guid)
     return false
 end
 
--- NEW FUNCTION: Place target inventory items with retry logic
 local function PlaceTargetInventoryItems()
-    print("🔍 STEP 1: Checking inventory for target items (IDs: 681, 2294)...")
-    
-    -- Get initial player data
     local playerData = DataEvent:InvokeServer()
-    if not playerData then
-        print("❌ Failed to get player data")
-        return false
-    end
-    
-    -- Find all target items in inventory
+    if not playerData then return false end
     local itemsToPlace = findTargetItemsInInventory(playerData)
-    if #itemsToPlace == 0 then
-        print("✅ No target items found in inventory. Proceeding to auctions.")
-        return true
-    end
-    
-    print(string.format("📦 Found %d target items in inventory:", #itemsToPlace))
-    for _, item in ipairs(itemsToPlace) do
-        print(string.format("   - GUID: %s (ID: %s)", item.GUID, item.Id))
-    end
-    
-    -- Check available space
+    if #itemsToPlace == 0 then return true end
     local currentFurniture = getFurnitureCount(playerData)
     local maxShopSpace = playerData.ShopSpace or 100
     local availableSpace = maxShopSpace - currentFurniture
-    
     local maxPositions = GRID_CONFIG.itemsPerRow * GRID_CONFIG.rowsPerFloor
     local canPlaceCount = math.min(availableSpace, maxPositions, #itemsToPlace)
-    
-    print(string.format("📊 Space check: %d/%d furniture used, %d space available", 
-        currentFurniture, maxShopSpace, availableSpace))
-    print(string.format("📊 Canvas capacity: %d positions, can place %d items", maxPositions, canPlaceCount))
-    
-    if canPlaceCount == 0 then
-        print("❌ No space available to place items!")
-        return false
-    end
-    
-    -- Place each item with retry logic
+    if canPlaceCount == 0 then return false end
     local placedCount = 0
-    local failedItems = {}
-    
     for i, item in ipairs(itemsToPlace) do
-        if placedCount >= canPlaceCount then
-            print("⚠️ No more space available. Stopping placement.")
-            break
-        end
-        
-        print(string.format("\n🔄 Attempting to place item %d/%d", i, #itemsToPlace))
-        print(string.format("   GUID: %s", item.GUID))
-        
+        if placedCount >= canPlaceCount then break end
         local positionIndex = placedCount + 1
         local placed = false
         local retryCount = 0
-        local maxRetries = maxPositions - positionIndex + 1  -- Maximum possible retries
-        
-        -- Try different positions until success or out of positions
+        local maxRetries = maxPositions - positionIndex + 1
         while not placed and retryCount < maxRetries do
-            local itemCFrame = generatePosition(positionIndex + retryCount)
-            
-            if not itemCFrame then
-                print("   ❌ No more valid grid positions available")
-                break
-            end
-            
+            local itemPos = generatePosition(positionIndex + retryCount)
+            if not itemPos then break end
             local args = {
-                [1] = {
+                {
                     GUID = item.GUID,
                     Type = "Decor",
                     Floor = 1,
                     Id = item.Id,
-                    CFrame = CFrame.new(itemCFrame)
+                    CFrame = CFrame.new(itemPos)
                 }
             }
-            
-            print(string.format("   Attempting position %d...", positionIndex + retryCount))
-            
-            local success, result = pcall(function()
+            local success = pcall(function()
                 return Shop.InsertFurniture:InvokeServer(unpack(args))
             end)
-            
-            if success then
-                -- Verify item was actually removed from inventory
-                task.wait(0.5)  -- Wait for server update
-                if verifyItemRemoved(item.GUID) then
-                    print(string.format("   ✅ Successfully placed GUID %s", item.GUID))
-                    print(string.format("   ✅ Confirmed GUID %s removed from inventory", item.GUID))
-                    placed = true
-                    placedCount = placedCount + 1
-                else
-                    print(string.format("   ⚠️ Placement reported success but item still in inventory. Retrying..."))
-                    retryCount = retryCount + 1
-                end
+            if success and verifyItemRemoved(item.GUID) then
+                placed = true
+                placedCount = placedCount + 1
             else
-                print(string.format("   ❌ Failed to place GUID %s — retrying position", item.GUID))
                 retryCount = retryCount + 1
             end
-            
-            task.wait(0.2)  -- Small delay between retries
+            task.wait(0.2)
         end
-        
-        if not placed then
-            print(string.format("   ❌ Failed to place GUID %s after all retries", item.GUID))
-            table.insert(failedItems, item)
-        end
-        
-        task.wait(0.1)  -- Delay between different items
+        task.wait(0.1)
     end
-    
-    -- Final report
-    print("\n📊 Placement Summary:")
-    print(string.format("   Successfully placed: %d/%d items", placedCount, #itemsToPlace))
-    if #failedItems > 0 then
-        print(string.format("   Failed to place: %d items", #failedItems))
-        for _, item in ipairs(failedItems) do
-            print(string.format("      - GUID: %s (ID: %s)", item.GUID, item.Id))
-        end
-    end
-    
-    -- Verify no target items remain in inventory
-    task.wait(1)
-    local finalData = DataEvent:InvokeServer()
-    local remainingItems = findTargetItemsInInventory(finalData)
-    
-    if #remainingItems == 0 then
-        print("✅ All target items successfully placed or no space remaining!")
-        return true
-    else
-        print(string.format("⚠️ %d target items still in inventory:", #remainingItems))
-        for _, item in ipairs(remainingItems) do
-            print(string.format("   - GUID: %s (ID: %s)", item.GUID, item.Id))
-        end
-        return false
-    end
+    return true
 end
-
--- Original functions preserved below...
-print("🔍 Targeting any Safe with Legendary or Insane rarity")
-print("📊 Session started - tracking targets...")
-print("🏠 Detected plot:", currentPlot)
 
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
-if data then
-currentNextBid = data.nextBid
-currentBidder = data.player
-end
+    if data then
+        currentNextBid = data.nextBid
+        currentBidder = data.player
+    end
 end)
 
 AuctionsFolder.ChildAdded:Connect(function(garage)
-inAuction = true
-auctionEnded = false
-currentGarage = garage
-garagesSkipped = 0
-currentTargetData = nil
-print("🏁 Entered garage:", garage.Name)
+    inAuction = true
+    auctionEnded = false
+    currentGarage = garage
+    garagesSkipped = 0
 end)
 
-AuctionsFolder.ChildRemoved:Connect(function(garage)
-if #AuctionsFolder:GetChildren() == 0 then
-inAuction = false
-currentGarage = nil
-currentTargetData = nil
-print("🏁 Left auction")
-end
+AuctionsFolder.ChildRemoved:Connect(function()
+    if #AuctionsFolder:GetChildren() == 0 then
+        inAuction = false
+        currentGarage = nil
+        currentTargetData = nil
+    end
 end)
 
 local function storageFull()
-local success, data = pcall(function() return DataEvent:InvokeServer() end)
-if not success or not data then return false end
-local inv = data.Inventory or {}
-local invLevel = data.InventoryLevel
-local carryLevel = data.CarryLevel
-local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
-local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
-local invCount = RepLibrary:GetLengthOfInventory(inv)
-
-print("📊 Session stats - Targets found:", totalTargetsFound, "| Obtained:", totalTargetsObtained)
-
-return invCount >= invSpace and carrySpace <= 0
-
-end
-
-local function clickButton(btn)
-if not btn then return end
-pcall(function()
-btn:Activate()
-if getconnections then
-for _, connection in pairs(getconnections(btn.MouseButton1Click)) do
-pcall(function() connection:Function() end)
-end
-end
-end)
+    local success, data = pcall(function() return DataEvent:InvokeServer() end)
+    if not success or not data then return false end
+    local inv = data.Inventory or {}
+    local invLevel = data.InventoryLevel
+    local carryLevel = data.CarryLevel
+    local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
+    local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
+    local invCount = RepLibrary:GetLengthOfInventory(inv)
+    return invCount >= invSpace and carrySpace <= 0
 end
 
 local function scanCurrentGarageForTarget()
-if not currentGarage then return false end
-
-local itemsFolder = currentGarage:FindFirstChild("Items")
-if not itemsFolder then return false end
-
-taskWait(0.5)
-
-local startTime = tick()
-while tick() - startTime < SCAN_DURATION do
-for _, itemInstance in pairs(itemsFolder:GetChildren()) do
-local itemId = itemInstance.Name
-local isTarget, itemData = isTargetItem(itemId)
-if isTarget then
-print("🎯 Target Safe found in garage:", currentGarage.Name)
-print("   📦 Item:", itemData.Name, "| Rarity:", itemData.Rarity)
-currentTargetData = itemData
-sendWebhook(itemId, itemData, LocalPlayer.Name)
-totalTargetsFound = totalTargetsFound + 1
-return true, itemId, itemData
-end
-end
-taskWait(0.2)
-end
-
-return false
-
+    if not currentGarage then return false end
+    local itemsFolder = currentGarage:FindFirstChild("Items")
+    if not itemsFolder then return false end
+    taskWait(0.5)
+    local startTime = tick()
+    while tick() - startTime < SCAN_DURATION do
+        for _, itemInstance in pairs(itemsFolder:GetChildren()) do
+            local itemId = itemInstance.Name
+            local isTarget, itemData = isTargetItem(itemId)
+            if isTarget then
+                currentTargetData = itemData
+                sendWebhook(itemId,itemData,LocalPlayer.Name)
+                totalTargetsFound = totalTargetsFound + 1
+                return true, itemId, itemData
+            end
+        end
+        taskWait(0.2)
+    end
+    return false
 end
 
 local function checkForButton()
     local itemsWon = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
     if itemsWon then
         local button = itemsWon:FindFirstChild("Button", true)
-        if button then
-            tryClick(button)
-        end
+        if button then tryClick(button) end
     end
 end
 
@@ -446,32 +273,21 @@ local function handleItemsWon()
     local success, result = pcall(function()
         return DataEvent:InvokeServer()
     end)
-
-    if not success or not result or not result.ItemsWon then
-        print("❌ Failed to fetch ItemsWon data")
-        return false
-    end
-
+    if not success or not result or not result.ItemsWon then return false end
     local itemsWon = result.ItemsWon
     local gui = LocalPlayer.PlayerGui:WaitForChild("ItemsWon")
     local frame = gui:WaitForChild("ItemsFrame"):WaitForChild("Frame")
-
     local selectedCount = 0
-
     for key, itemData in pairs(itemsWon) do
         local itemId = itemData.itemId
         local data = ItemsModule[itemId] or ItemsModule[tostring(itemId)]
-        
         if data and data.SafeId then
             local nameLower = data.Name:lower()
             local rarity = data.Rarity
-
             if string.find(nameLower, "safe") and (rarity == "Legendary" or rarity == "Insane") then
                 for _, btn in ipairs(frame:GetChildren()) do
                     if btn:IsA("ImageButton") and btn:FindFirstChild("Price") and btn:FindFirstChild("Rarity") then
-                        local btnRarity = btn.Rarity.TextLabel.Text
-                        if btnRarity == rarity then
-                            print("🎯 Selecting Safe:", data.Name, "| ID:", itemId, "| Rarity:", rarity)
+                        if btn.Rarity.TextLabel.Text == rarity then
                             tryClick(btn)
                             selectedCount = selectedCount + 1
                             totalTargetsObtained = totalTargetsObtained + 1
@@ -482,142 +298,79 @@ local function handleItemsWon()
             end
         end
     end
-
-    if selectedCount == 0 then
-        print("ℹ No matching Safe found in ItemsWon with required rarity")
-        return false
-    end
-
-    local confirmButton = gui:WaitForChild("ItemsFrame"):WaitForChild("ConfirmButton")
+    if selectedCount == 0 then return false end
+    local confirmButton = gui.ItemsFrame.ConfirmButton
     repeat taskWait() until confirmButton.Visible
-    print("✅ Clicking Confirm")
     tryClick(confirmButton)
     task.wait(1)
-
-    local sellButton = gui:WaitForChild("SellItems"):WaitForChild("Frame"):WaitForChild("Normal"):WaitForChild("Button")
+    local sellButton = gui.SellItems.Frame.Normal.Button
     repeat taskWait() until sellButton.Visible
-    print("💰 Selling all remaining items")
     tryClick(sellButton)
-
-    print("🎉 Done - Safe selected, confirmed, and rest sold")
     return true
 end
 
-spawn(function()
-while not halted do
-taskWait(60)
-local runtime = math.floor((tick() - sessionStartTime) / 60)
-print("⏱️ Runtime:", runtime, "minutes")
-print("📊 Targets found:", totalTargetsFound, "| Obtained:", totalTargetsObtained)
-if totalTargetsFound > 0 then
-local successRate = (totalTargetsObtained / totalTargetsFound) * 100
-print("📊 Success rate: " .. string.format("%.1f", successRate) .. "%")
-end
-end
-end)
-
--- MODIFIED: Run placement check BEFORE starting auction loop
-print("\n🔧 PHASE 1: Pre-Auction Furniture Placement Check")
-print("==================================================")
-local placementComplete = PlaceTargetInventoryItems()
-
-if placementComplete then
-    print("\n✅ Placement phase complete. Starting auction loop...")
-    print("==================================================\n")
-else
-    print("\n⚠️ Placement phase completed with some issues. Still proceeding to auctions...")
-    print("==================================================\n")
-end
-
--- Original auction loop starts here
-while not halted do
-if storageFull() then
-print("❌ Storage completely full. Script halted.")
-print("📊 FINAL STATS - Runtime:", math.floor((tick() - sessionStartTime) / 60), "minutes")
-print("📊 Targets found:", totalTargetsFound, "| Obtained:", totalTargetsObtained)
-if totalTargetsFound > 0 then
-local successRate = (totalTargetsObtained / totalTargetsFound) * 100
-print("📊 Success rate: " .. string.format("%.1f", successRate) .. "%")
-end
-halted = true
-break
-end
-
-print("➡ Entering auction...")
-pcall(function() EnterQueue:InvokeServer("85") end)
-
-local auctionStartTime = tick()
-auctionEnded = false
-
-repeat
-taskWait(0.1)
-until inAuction or tick() - auctionStartTime > 10
-
-if not inAuction then
-continue
-end
-
-obtainedTarget = false
-garagesSkipped = 0
-local targetFoundInThisAuction = false
-local targetItemId = nil
-local targetItemData = nil
-
-while inAuction and not auctionEnded do
-local found, foundId, foundData = scanCurrentGarageForTarget()
-if found then
-targetFoundInThisAuction = true
-targetItemId = foundId
-targetItemData = foundData
-print("💵 Bidding on target Safe:", targetItemData.Name)
-
-local bidStartTime = tick()
-while not obtainedTarget and inAuction and currentGarage and not auctionEnded do
-if currentNextBid and currentBidder ~= LocalPlayer then
-pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
-end
-if tick() - bidStartTime > 60 then break end
-taskWait(BID_CHECK_INTERVAL)
-end
-else
-garagesSkipped = garagesSkipped + 1
-print("⏭ Skipping garage - No target Safe found", garagesSkipped.."/"..MAX_GARAGES)
-
-if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
-pcall(function() SkipCountdown:InvokeServer() end)
-taskWait(0.1)
-pcall(function() Skip:InvokeServer() end)
-lastSkipTime = tick()
-end
-taskWait(1)
-
-end
-taskWait(0.5)
-
-end
-
-taskWait(3)
-
-if targetFoundInThisAuction then
-handleItemsWon()
-else
-checkForButton()
-LocalPlayer.PlayerGui.DescendantAdded:Connect(function(obj)
-    if obj.Name == "Button" then
-        task.wait()
-        tryClick(obj)
-    end
-end)
-
 task.spawn(function()
-    local timeout = tick() + 5
-    while tick() < timeout do
-        task.wait(0.5)
-        checkForButton()
+    while true do
+        PlaceTargetInventoryItems()
+        task.wait(600)
     end
 end)
-end
 
-task.wait(1)
-
+while not halted do
+    if storageFull() then
+        halted = true
+        break
+    end
+    pcall(function() EnterQueue:InvokeServer("85") end)
+    local auctionStartTime = tick()
+    auctionEnded = false
+    repeat taskWait(0.1) until inAuction or tick() - auctionStartTime > 10
+    if not inAuction then continue end
+    obtainedTarget = false
+    garagesSkipped = 0
+    local targetFoundInThisAuction = false
+    while inAuction and not auctionEnded do
+        local found, foundId, foundData = scanCurrentGarageForTarget()
+        if found then
+            targetFoundInThisAuction = true
+            local bidStartTime = tick()
+            while not obtainedTarget and inAuction and currentGarage and not auctionEnded do
+                if currentNextBid and currentBidder ~= LocalPlayer then
+                    pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
+                end
+                if tick() - bidStartTime > 60 then break end
+                taskWait(BID_CHECK_INTERVAL)
+            end
+        else
+            garagesSkipped = garagesSkipped + 1
+            if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
+                pcall(function() SkipCountdown:InvokeServer() end)
+                taskWait(0.1)
+                pcall(function() Skip:InvokeServer() end)
+                lastSkipTime = tick()
+            end
+            taskWait(1)
+        end
+        taskWait(0.5)
+    end
+    taskWait(3)
+    if targetFoundInThisAuction then
+        handleItemsWon()
+    else
+        checkForButton()
+        LocalPlayer.PlayerGui.DescendantAdded:Connect(function(obj)
+            if obj.Name == "Button" then
+                task.wait()
+                tryClick(obj)
+            end
+        end)
+        task.spawn(function()
+            local timeout = tick() + 5
+            while tick() < timeout do
+                task.wait(0.5)
+                checkForButton()
+            end
+        end)
+    end
+    task.wait(1)
 end
