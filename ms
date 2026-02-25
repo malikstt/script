@@ -1,106 +1,116 @@
-task.spawn(function()
-	local Players = game:GetService("Players")
-	local ReplicatedStorage = game:GetService("ReplicatedStorage")
-	local HttpService = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
 
-	local player = Players.LocalPlayer
+local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
+local ItemsModule = require(ReplicatedStorage.Modules.Items)
 
-	local httpRequest =
-		(syn and syn.request) or
-		(http and http.request) or
-		(http_request) or
-		(fluxus and fluxus.request) or
-		(request)
+local PODIUM_ID = "4"
 
-	if not httpRequest then return end
+-- Function to count podiums in Furniture (placed)
+local function countPlacedPodiums(playerData)
+    local count = 0
+    local podiumList = {}
+    
+    if playerData and playerData.Furniture then
+        for guid, furnitureData in pairs(playerData.Furniture) do
+            if tostring(furnitureData.Id) == PODIUM_ID then
+                count = count + 1
+                table.insert(podiumList, {
+                    guid = guid,
+                    id = furnitureData.Id,
+                    floor = furnitureData.Floor
+                })
+            end
+        end
+    end
+    
+    return count, podiumList
+end
 
-	local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
-	local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
+-- Function to count podiums in Inventory (unplaced)
+local function countInventoryPodiums(playerData)
+    local count = 0
+    local podiumList = {}
+    
+    if playerData and playerData.Inventory then
+        for guid, itemData in pairs(playerData.Inventory) do
+            if tostring(itemData.Id) == PODIUM_ID then
+                -- Verify it's actually a Floor Podium
+                local itemInfo = ItemsModule[PODIUM_ID]
+                if itemInfo and itemInfo.Name == "Floor Podium" then
+                    count = count + 1
+                    table.insert(podiumList, {
+                        guid = guid,
+                        id = itemData.Id,
+                        data = itemData
+                    })
+                end
+            end
+        end
+    end
+    
+    return count, podiumList
+end
 
-	local RemoteEvent =
-		ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
+-- Main function to get podium counts
+local function getPodiumCounts()
+    print("\n" .. string.rep("=", 40))
+    print("FETCHING PODIUM DATA...")
+    print(string.rep("=", 40))
+    
+    -- Get player data
+    local success, playerData = pcall(function()
+        return DataEvent:InvokeServer()
+    end)
+    
+    if not success or not playerData then
+        print("❌ Failed to get player data")
+        return
+    end
+    
+    -- Get counts
+    local placedCount, placedList = countPlacedPodiums(playerData)
+    local inventoryCount, inventoryList = countInventoryPodiums(playerData)
+    
+    -- Display results
+    print("\n📊 PODIUM COUNTS:")
+    print(string.rep("-", 30))
+    print("🪑 Placed podiums:   " .. placedCount)
+    print("📦 Inventory podiums: " .. inventoryCount)
+    print("💰 Total owned:      " .. (placedCount + inventoryCount))
+    
+    -- Show individual podiums if any exist
+    if placedCount > 0 then
+        print("\n🏠 PLACED PODIUMS:")
+        for i, podium in ipairs(placedList) do
+            print(string.format("  %d. GUID: %s (Floor %s)", i, podium.guid, tostring(podium.floor)))
+        end
+    end
+    
+    if inventoryCount > 0 then
+        print("\n📦 INVENTORY PODIUMS:")
+        for i, podium in ipairs(inventoryList) do
+            print(string.format("  %d. GUID: %s", i, podium.guid))
+        end
+    end
+    
+    print("\n" .. string.rep("=", 40))
+    
+    return {
+        placed = placedCount,
+        inventory = inventoryCount,
+        total = placedCount + inventoryCount,
+        placedList = placedList,
+        inventoryList = inventoryList
+    }
+end
 
-	local WEBHOOK = webhook_url or ""
+-- Run once
+getPodiumCounts()
 
-	local lastPoints
-	local STOP = false
-
-	local function sendWebhook(tier, pet, image)
-		if STOP then return end
-		STOP = true
-		if WEBHOOK == "" then return end
-
-		httpRequest({
-			Url = WEBHOOK,
-			Method = "POST",
-			Headers = { ["Content-Type"] = "application/json" },
-			Body = HttpService:JSONEncode({
-				username = "BGSI Season Guard",
-				embeds = {{
-					title = "🚨 SECRET PET DETECTED – PREMIUM",
-					description = "Claiming has been **PERMANENTLY DISABLED**.",
-					color = 16711680,
-					thumbnail = { url = image },
-					fields = {
-						{ name = "Player", value = player.Name, inline = true },
-						{ name = "Tier", value = tostring(tier), inline = true },
-						{ name = "Pet", value = pet, inline = true },
-						{ name = "Rarity", value = "Secret", inline = true },
-						{ name = "Pass", value = "Premium", inline = true },
-					}
-				}}
-			})
-		})
-	end
-
-	while true do
-		if STOP then break end
-
-		local data = LocalData:Get()
-		local s = data and data.Season
-		if not s then
-			task.wait(5)
-			continue
-		end
-
-		local pts = s.Points or 0
-
-		if lastPoints == nil then
-			lastPoints = pts
-			task.wait(5)
-			continue
-		end
-
-		if pts > lastPoints then
-			local level = s.Level or 0
-			local tiers = s.InfinityTiers or s.Tiers
-
-			if tiers then
-				for tier = level + 1, math.huge do
-					local tierData = tiers[tier]
-					if not tierData then break end
-
-					local reward = tierData.Premium
-					if reward and reward.Type == "Pet" then
-						local info = PetsModule[reward.Name]
-						if info and info.Rarity == "Secret" then
-							sendWebhook(
-								tier,
-								reward.Name,
-								"https://content.bgsi.io/" .. reward.Name:lower():gsub(" ", "_") .. ".webp"
-							)
-							break
-						end
-					end
-				end
-			end
-
-			if not STOP then
-				RemoteEvent:FireServer("ClaimSeason")
-				lastPoints = pts
-			end
-		end
-
-		task.wait(5)
-	end
-end)
+-- Optional: Keep checking every 30 seconds
+while true do
+    task.wait(30)
+    getPodiumCounts()
+end
