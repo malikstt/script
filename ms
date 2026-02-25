@@ -41,19 +41,59 @@ local function generatePosition(index)
     return GRID_CONFIG.startPos + Vector3.new(xOffset, 0, -zOffset)
 end
 
+local function debugFurniture(playerData)
+    print("\n🔍 DEBUG: Checking all furniture with ID 4")
+    local podiumCount = 0
+    
+    if playerData and playerData.Furniture then
+        for guid, furnitureData in pairs(playerData.Furniture) do
+            local itemId = tostring(furnitureData.Id)
+            local itemInfo = ItemsModule[itemId]
+            local itemName = itemInfo and itemInfo.Name or "Unknown"
+            
+            if itemId == PODIUM_ID or itemName == "Floor Podium" then
+                podiumCount = podiumCount + 1
+                print("  Found podium:")
+                print("    GUID: " .. guid)
+                print("    ID: " .. itemId)
+                print("    Name: " .. itemName)
+                if furnitureData.Pos then
+                    print(string.format("    Position: (%.2f, %.2f, %.2f)", furnitureData.Pos[1], furnitureData.Pos[2], furnitureData.Pos[3]))
+                else
+                    print("    Position: No position data")
+                end
+                print("    Floor: " .. tostring(furnitureData.Floor))
+                print("")
+            end
+        end
+    end
+    
+    print("📌 Total podiums found in Furniture table: " .. podiumCount)
+    return podiumCount
+end
+
 local function getOccupiedPositions(playerData)
     local occupied = {}
     
     if playerData and playerData.Furniture then
         for _, furnitureData in pairs(playerData.Furniture) do
-            if tostring(furnitureData.Id) == PODIUM_ID and furnitureData.Pos and type(furnitureData.Pos) == "table" then
+            local itemId = tostring(furnitureData.Id)
+            local itemInfo = ItemsModule[itemId]
+            local itemName = itemInfo and itemInfo.Name or "Unknown"
+            
+            -- Check both ID and name to be sure
+            if (itemId == PODIUM_ID or itemName == "Floor Podium") and furnitureData.Pos and type(furnitureData.Pos) == "table" then
                 local pos = Vector3.new(furnitureData.Pos[1], furnitureData.Pos[2], furnitureData.Pos[3])
                 
                 for i = 1, GRID_CONFIG.itemsPerRow * GRID_CONFIG.rowsPerFloor do
                     local gridPos = generatePosition(i)
-                    if gridPos and (pos - gridPos).Magnitude < 2 then
-                        occupied[i] = true
-                        break
+                    if gridPos then
+                        local distance = (pos - gridPos).Magnitude
+                        if distance < 3 then -- Increased tolerance
+                            occupied[i] = true
+                            print("  Position " .. i .. " is occupied (distance: " .. string.format("%.2f", distance) .. ")")
+                            break
+                        end
                     end
                 end
             end
@@ -61,72 +101,6 @@ local function getOccupiedPositions(playerData)
     end
     
     return occupied
-end
-
-local function scanAllFurniture(playerData)
-    print("\n" .. string.rep("=", 50))
-    print("🔍 SCANNING ALL PLACED FURNITURE")
-    print(string.rep("=", 50))
-    
-    local totalItems = 0
-    local itemsByName = {}
-    local podiumPositions = {}
-
-    if playerData and playerData.Furniture then
-        for guid, furnitureData in pairs(playerData.Furniture) do
-            totalItems = totalItems + 1
-            
-            local itemId = tostring(furnitureData.Id)
-            local itemInfo = ItemsModule[itemId]
-            local itemName = itemInfo and itemInfo.Name or "Unknown"
-            local itemRarity = itemInfo and itemInfo.Rarity or "Unknown"
-            
-            if not itemsByName[itemName] then
-                itemsByName[itemName] = {
-                    count = 0,
-                    items = {}
-                }
-            end
-            
-            itemsByName[itemName].count = itemsByName[itemName].count + 1
-            
-            local pos = furnitureData.Pos
-            local posStr = "No position data"
-            if pos and type(pos) == "table" then
-                posStr = string.format("(%.2f, %.2f, %.2f)", pos[1], pos[2], pos[3])
-                
-                if itemId == PODIUM_ID then
-                    local vectorPos = Vector3.new(pos[1], pos[2], pos[3])
-                    table.insert(podiumPositions, vectorPos)
-                end
-            end
-            
-            table.insert(itemsByName[itemName].items, {
-                guid = guid,
-                id = itemId,
-                rarity = itemRarity,
-                position = posStr,
-                floor = furnitureData.Floor or 1
-            })
-        end
-    end
-
-    print("\n📊 FURNITURE SUMMARY")
-    print("Total items placed: " .. totalItems)
-    print("\n📋 ITEMS BY TYPE:")
-
-    local sortedNames = {}
-    for name in pairs(itemsByName) do
-        table.insert(sortedNames, name)
-    end
-    table.sort(sortedNames)
-
-    for _, name in ipairs(sortedNames) do
-        local data = itemsByName[name]
-        print(string.format("  %s: %d", name, data.count))
-    end
-
-    return podiumPositions
 end
 
 local function placePodium(positionIndex)
@@ -166,7 +140,12 @@ local function placeMissingPodiums()
         return
     end
     
-    scanAllFurniture(playerData)
+    -- First debug what furniture exists
+    local podiumCount = debugFurniture(playerData)
+    
+    if podiumCount == 0 then
+        print("⚠ No podiums found in Furniture table - will treat all positions as empty")
+    end
     
     local occupied = getOccupiedPositions(playerData)
     local totalPositions = GRID_CONFIG.itemsPerRow * GRID_CONFIG.rowsPerFloor
@@ -178,7 +157,7 @@ local function placeMissingPodiums()
         end
     end
     
-    print("\n📌 Podiums placed:", placedCount, "/", MAX_PODIUMS)
+    print("\n📌 Grid positions occupied:", placedCount, "/", MAX_PODIUMS)
     
     if placedCount >= MAX_PODIUMS then
         print("✨ Maximum podiums already placed!")
