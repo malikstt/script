@@ -4,28 +4,6 @@ local HttpService = game:GetService("HttpService")
 local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 local taskWait = task.wait
-
--- GLOBAL CONFIGURATION VARIABLES (read directly as globals)
--- Do NOT modify these values here - they should be set externally
--- GARAGE_ID - The garage ID to enter
--- SCAN_DURATION - How long to scan each garage for targets
--- BID_INTERVAL - Time between bid attempts
--- SKIP_COOLDOWN - Time between skip attempts
--- STAY_INAUCTION_TIMEOUT - Max time to stay in auction
--- TARGET_RARITY - Table of target rarities {Insane=true, Legendary=true}
--- TARGET_NAME - Substring to match in item names
--- MUST_HAVE_NAME_AND_RARITY - Require both name and rarity match
--- WEBHOOK_URL - Discord webhook URL for notifications
--- AUTO_PLACE_TARGETS - Auto-place target items in shop
--- HANDLE_ITEMS_WON - Auto-handle ItemsWon GUI
--- DEBUG_PRINTS - Enable debug print statements
-
-print("Autofarm v1.01.1 started")
-if DEBUG_PRINTS then
-    print("Configuration loaded - GARAGE_ID:", GARAGE_ID)
-    print("Debug mode enabled")
-end
-
 local nonSaveVars = LocalPlayer:FindFirstChild("NonSaveVars")
 local ownsPlot = nonSaveVars and nonSaveVars:FindFirstChild("OwnsPlot")
 local currentPlot = ownsPlot and ownsPlot:IsA("ValueBase") and ownsPlot.Value or "7"
@@ -73,10 +51,8 @@ local GRID_CONFIG = {
     rowsPerFloor = math.floor(canvas.Size.Z / 6) - 1,
 }
 
-local function getCurrentGarage()
-    local garages = AuctionsFolder:GetChildren()
-    if #garages == 0 then return nil end
-    return garages[1]
+if DEBUG_PRINTS then
+    print("Script initialized with global configs")
 end
 
 task.spawn(function()
@@ -109,18 +85,21 @@ local function isTargetItem(itemId)
 end
 
 local function sendWebhook(itemId, itemData, playerName)
-    local color = 0
-    if itemData.Rarity == "Insane" then
-        color = 16711680
-    elseif itemData.Rarity == "Legendary" then
-        color = 12894976
+    -- Set color based on rarity: Purple for Legendary, Yellow/Orange for Insane
+    local embedColor = 0
+    if itemData.Rarity == "Legendary" then
+        embedColor = 0x800080  -- Purple
+    elseif itemData.Rarity == "Insane" then
+        embedColor = 0xFFA500  -- Orange/Yellow
+    else
+        embedColor = 0x00FF00  -- Green for others (fallback)
     end
     
     local webhookData = {
         content = "",
         embeds = {{
             title = "Target Item Found",
-            color = color,
+            color = embedColor,
             fields = {
                 {name="Item ID",value=itemId,inline=true},
                 {name="Name",value=itemData.Name,inline=true},
@@ -194,17 +173,41 @@ local function verifyItemRemoved(guid)
 end
 
 local function PlaceTargetInventoryItems()
-    if not AUTO_PLACE_TARGETS then return false end
+    if not AUTO_PLACE_TARGETS then 
+        if DEBUG_PRINTS then
+            print("Auto place disabled, skipping")
+        end
+        return false 
+    end
+    if DEBUG_PRINTS then
+        print("Attempting to place target items from inventory")
+    end
     local playerData = DataEvent:InvokeServer()
     if not playerData then return false end
     local itemsToPlace = findTargetItemsInInventory(playerData)
-    if #itemsToPlace == 0 then return true end
+    if #itemsToPlace == 0 then 
+        if DEBUG_PRINTS then
+            print("No target items in inventory to place")
+        end
+        return true 
+    end
+    if DEBUG_PRINTS then
+        print("Found", #itemsToPlace, "target items in inventory")
+    end
     local currentFurniture = getFurnitureCount(playerData)
     local maxShopSpace = playerData.ShopSpace or 100
     local availableSpace = maxShopSpace - currentFurniture
     local maxPositions = GRID_CONFIG.itemsPerRow * GRID_CONFIG.rowsPerFloor
     local canPlaceCount = math.min(availableSpace, maxPositions, #itemsToPlace)
-    if canPlaceCount == 0 then return false end
+    if canPlaceCount == 0 then 
+        if DEBUG_PRINTS then
+            print("No space to place items")
+        end
+        return false 
+    end
+    if DEBUG_PRINTS then
+        print("Can place", canPlaceCount, "items")
+    end
     local placedCount = 0
     for i, item in ipairs(itemsToPlace) do
         if placedCount >= canPlaceCount then break end
@@ -230,12 +233,18 @@ local function PlaceTargetInventoryItems()
             if success and verifyItemRemoved(item.GUID) then
                 placed = true
                 placedCount = placedCount + 1
+                if DEBUG_PRINTS then
+                    print("Placed item:", item.Id)
+                end
             else
                 retryCount = retryCount + 1
             end
             task.wait(0.2)
         end
         task.wait(0.1)
+    end
+    if DEBUG_PRINTS then
+        print("Placed", placedCount, "items total")
     end
     return true
 end
@@ -250,6 +259,30 @@ UpdateCurrentBid.OnClientEvent:Connect(function(data)
     end
 end)
 
+AuctionsFolder.ChildAdded:Connect(function(garage)
+    inAuction = true
+    auctionEnded = false
+    currentGarage = garage
+    garagesSkipped = 0
+    targetGarage = nil
+    wonThisAuction = false
+    if DEBUG_PRINTS then
+        print("New auction started, garage:", garage.Name)
+    end
+end)
+
+AuctionsFolder.ChildRemoved:Connect(function()
+    if #AuctionsFolder:GetChildren() == 0 then
+        inAuction = false
+        currentGarage = nil
+        currentTargetData = nil
+        targetGarage = nil
+        if DEBUG_PRINTS then
+            print("Auction ended")
+        end
+    end
+end)
+
 local function storageFull()
     local success, data = pcall(function() return DataEvent:InvokeServer() end)
     if not success or not data then return false end
@@ -260,6 +293,9 @@ local function storageFull()
     local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
     local invCount = RepLibrary:GetLengthOfInventory(inv)
     local isFull = invCount >= invSpace and carrySpace <= 0
+    if isFull and DEBUG_PRINTS then
+        print("Storage full, halting")
+    end
     return isFull
 end
 
@@ -269,6 +305,9 @@ local function scanCurrentGarageForTarget()
     if not itemsFolder then return false end
     taskWait(0.5)
     local startTime = tick()
+    if DEBUG_PRINTS then
+        print("Scanning garage:", currentGarage.Name)
+    end
     while tick() - startTime < SCAN_DURATION do
         for _, itemInstance in pairs(itemsFolder:GetChildren()) do
             local itemId = itemInstance.Name
@@ -276,13 +315,18 @@ local function scanCurrentGarageForTarget()
             if isTarget then
                 currentTargetData = itemData
                 targetGarage = currentGarage
-                print("TARGET FOUND! ID:", itemId, "Name:", itemData.Name, "Rarity:", itemData.Rarity, "Garage:", currentGarage.Name)
+                if DEBUG_PRINTS then
+                    print("TARGET FOUND! ID:", itemId, "Name:", itemData.Name, "Rarity:", itemData.Rarity, "Garage:", currentGarage.Name)
+                end
                 sendWebhook(itemId,itemData,LocalPlayer.Name)
                 totalTargetsFound = totalTargetsFound + 1
                 return true, itemId, itemData
             end
         end
         taskWait(0.2)
+    end
+    if DEBUG_PRINTS then
+        print("No target found in garage:", currentGarage.Name)
     end
     return false
 end
@@ -291,12 +335,25 @@ local function checkForButton()
     local itemsWon = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
     if itemsWon then
         local button = itemsWon:FindFirstChild("Button", true)
-        if button then tryClick(button) end
+        if button then 
+            if DEBUG_PRINTS then
+                print("Clicking button")
+            end
+            tryClick(button) 
+        end
     end
 end
 
 local function handleItemsWon()
-    if not HANDLE_ITEMS_WON then return false end
+    if not HANDLE_ITEMS_WON then 
+        if DEBUG_PRINTS then
+            print("Handle items won disabled, skipping")
+        end
+        return false 
+    end
+    if DEBUG_PRINTS then
+        print("Handling items won")
+    end
     local success, result = pcall(function()
         return DataEvent:InvokeServer()
     end)
@@ -311,12 +368,18 @@ local function handleItemsWon()
         if data then
             local isTarget, _ = isTargetItem(tostring(itemId))
             if isTarget then
+                if DEBUG_PRINTS then
+                    print("Target item in ItemsWon:", data.Name)
+                end
                 for _, btn in ipairs(frame:GetChildren()) do
                     if btn:IsA("ImageButton") and btn:FindFirstChild("Price") and btn:FindFirstChild("Rarity") then
                         if btn.Rarity.TextLabel.Text == data.Rarity then
                             tryClick(btn)
                             selectedCount = selectedCount + 1
                             totalTargetsObtained = totalTargetsObtained + 1
+                            if DEBUG_PRINTS then
+                                print("Selected target item")
+                            end
                             task.wait(1)
                         end
                     end
@@ -324,14 +387,29 @@ local function handleItemsWon()
             end
         end
     end
-    if selectedCount == 0 then return false end
+    if selectedCount == 0 then 
+        if DEBUG_PRINTS then
+            print("No target items in ItemsWon")
+        end
+        return false 
+    end
     local confirmButton = gui.ItemsFrame.ConfirmButton
-    repeat taskWait() until confirmButton.Visible
+    repeat 
+        taskWait() 
+    until confirmButton.Visible
     tryClick(confirmButton)
+    if DEBUG_PRINTS then
+        print("Clicked confirm button")
+    end
     task.wait(1)
     local sellButton = gui.SellItems.Frame.Normal.Button
-    repeat taskWait() until sellButton.Visible
+    repeat 
+        taskWait() 
+    until sellButton.Visible
     tryClick(sellButton)
+    if DEBUG_PRINTS then
+        print("Clicked sell button")
+    end
     return true
 end
 
@@ -344,46 +422,50 @@ if AUTO_PLACE_TARGETS then
     end)
 end
 
-print("Starting main loop (safe garage detection)")
-while not halted do
-    if DEBUG_PRINTS then
-        print("Main loop iteration - Current garage:", currentGarage)
-    end
-    
-    currentGarage = getCurrentGarage()
-    if not currentGarage then
-        inAuction = false
-        task.wait(0.5)
-        continue
-    else
-        inAuction = true
-        if DEBUG_PRINTS then
-            print("In auction - Garage:", currentGarage.Name)
-        end
-    end
+if DEBUG_PRINTS then
+    print("Starting main loop")
+end
 
+while not halted do
     if storageFull() then
         halted = true
         print("Halted due to full storage")
         break
     end
-
+    if DEBUG_PRINTS then
+        print("Entering auction queue for garage:", GARAGE_ID)
+    end
     pcall(function() EnterQueue:InvokeServer(GARAGE_ID) end)
-
+    local auctionStartTime = tick()
+    auctionEnded = false
+    repeat 
+        taskWait(0.1) 
+    until inAuction or tick() - auctionStartTime > 10
+    if not inAuction then 
+        if DEBUG_PRINTS then
+            print("Failed to enter auction, retrying")
+        end
+        continue 
+    end
     obtainedTarget = false
     garagesSkipped = 0
     local targetFoundInThisAuction = false
-    local bidStartTime = tick()
-
     while inAuction and not auctionEnded do
-        currentGarage = getCurrentGarage()
-        if not currentGarage then break end
-
+        if targetGarage and targetGarage ~= currentGarage then
+            if not targetGarage.Parent then
+                if DEBUG_PRINTS then
+                    print("Target garage ended, resetting for new scans")
+                end
+                targetGarage = nil
+                currentTargetData = nil
+            end
+        end
         if not targetGarage or targetGarage == currentGarage then
             local found, foundId, foundData = scanCurrentGarageForTarget()
             if found then
                 targetFoundInThisAuction = true
                 wonThisAuction = false
+                local bidStartTime = tick()
                 if DEBUG_PRINTS then
                     print("Starting bidding loop for target in garage:", currentGarage.Name)
                 end
@@ -395,25 +477,43 @@ while not halted do
                         pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
                     end
                     if currentBidder == LocalPlayer then
-                        print("We are now the highest bidder!")
+                        if DEBUG_PRINTS then
+                            print("We are now the highest bidder!")
+                        end
                         obtainedTarget = true
                         wonThisAuction = true
                     end
-                    if tick() - bidStartTime > STAY_INAUCTION_TIMEOUT then
-                        print("Bidding timeout reached")
-                        break
+                    if tick() - bidStartTime > STAY_INAUCTION_TIMEOUT then 
+                        if DEBUG_PRINTS then
+                            print("Bidding timeout reached")
+                        end
+                        break 
                     end
                     taskWait(BID_INTERVAL)
-                    currentGarage = getCurrentGarage()
+                end
+                if obtainedTarget then
+                    if DEBUG_PRINTS then
+                        print("Successfully obtained target in garage:", currentGarage.Name)
+                    end
+                else
+                    if DEBUG_PRINTS then
+                        print("Failed to obtain target in garage:", currentGarage.Name)
+                    end
                 end
             else
-                if not targetGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
-                    pcall(function() SkipCountdown:InvokeServer() end)
-                    taskWait(0.1)
-                    pcall(function() Skip:InvokeServer() end)
-                    lastSkipTime = tick()
+                if not targetGarage then
+                    garagesSkipped = garagesSkipped + 1
                     if DEBUG_PRINTS then
-                        print("Skipped garage")
+                        print("Skipping garage", garagesSkipped, "of", MAX_GARAGES)
+                    end
+                    if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
+                        pcall(function() SkipCountdown:InvokeServer() end)
+                        taskWait(0.1)
+                        pcall(function() Skip:InvokeServer() end)
+                        lastSkipTime = tick()
+                        if DEBUG_PRINTS then
+                            print("Skipped garage")
+                        end
                     end
                 end
             end
@@ -423,14 +523,33 @@ while not halted do
             end
             taskWait(0.5)
         end
-
         taskWait(0.5)
     end
-
+    task.wait(3)
     if targetFoundInThisAuction and wonThisAuction then
+        if DEBUG_PRINTS then
+            print("Handling items won for this auction")
+        end
         handleItemsWon()
     else
+        if DEBUG_PRINTS then
+            print("Checking for button")
+        end
         checkForButton()
+        LocalPlayer.PlayerGui.DescendantAdded:Connect(function(obj)
+            if obj.Name == "Button" then
+                task.wait()
+                tryClick(obj)
+            end
+        end)
+        task.spawn(function()
+            local timeout = tick() + 5
+            while tick() < timeout do
+                task.wait(0.5)
+                checkForButton()
+            end
+        end)
     end
     task.wait(1)
 end
+print("Script ended")
