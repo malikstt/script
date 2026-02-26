@@ -2,8 +2,11 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
 local taskWait = task.wait
+
 local nonSaveVars = LocalPlayer:FindFirstChild("NonSaveVars")
 local ownsPlot = nonSaveVars and nonSaveVars:FindFirstChild("OwnsPlot")
 local currentPlot = ownsPlot and ownsPlot:IsA("ValueBase") and ownsPlot.Value or "7"
@@ -25,14 +28,22 @@ local Events = ReplicatedStorage:WaitForChild("Events")
 local Shop = Events:WaitForChild("Shop")
 local Data = Events:WaitForChild("Data")
 
+local SCAN_DURATION = 2
+local BID_CHECK_INTERVAL = 0.2
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
+
 local totalTargetsFound = 0
 local totalTargetsObtained = 0
 local sessionStartTime = tick()
+local totalGemSafes = 0
+local totalPetSafes = 0
+local safesPlaced = 0
+local autoFarm = true
+local halted = false
 
 local inAuction = false
 local obtainedTarget = false
 local auctionEnded = false
-local halted = false
 local currentNextBid
 local currentBidder
 local currentGarage = nil
@@ -40,9 +51,9 @@ local garagesSkipped = 0
 local MAX_GARAGES = 3
 local currentTargetData = nil
 local targetGarage = nil
-local wonThisAuction = false
 
 local lastSkipTime = 0
+local SKIP_COOLDOWN = 1
 
 local GRID_CONFIG = {
     startPos = canvas.Position + Vector3.new(-canvas.Size.X/2 + 4, canvas.Size.Y/2 + 1, -canvas.Size.Z/2 + 4),
@@ -51,10 +62,419 @@ local GRID_CONFIG = {
     rowsPerFloor = math.floor(canvas.Size.Z / 6) - 1,
 }
 
-if DEBUG_PRINTS then
-    print("Script initialized with global configs")
+-- UI Elements
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AuctionStats"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local main = Instance.new("Frame")
+main.Name = "Main"
+main.Size = UDim2.new(0, 380, 0, 480)
+main.Position = UDim2.new(0, 20, 0.5, -240)
+main.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+main.BackgroundTransparency = 0.4
+main.BorderSizePixel = 0
+main.Parent = screenGui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 20)
+corner.Parent = main
+
+local gradient = Instance.new("UIGradient")
+gradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 180, 255))
+})
+gradient.Transparency = NumberSequence.new({
+    NumberSequenceKeypoint.new(0, 0.85),
+    NumberSequenceKeypoint.new(1, 0.9)
+})
+gradient.Rotation = 45
+gradient.Parent = main
+
+local stroke = Instance.new("UIStroke")
+stroke.Color = Color3.fromRGB(140, 90, 255)
+stroke.Thickness = 1.5
+stroke.Transparency = 0.6
+stroke.Parent = main
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -20, 0, 45)
+title.Position = UDim2.new(0, 10, 0, 10)
+title.BackgroundTransparency = 1
+title.Text = "SAFE COLLECTOR"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.TextScaled = true
+title.Font = Enum.Font.GothamBlack
+title.Parent = main
+
+local titleGradient = Instance.new("UIGradient")
+titleGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(180, 130, 255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 140, 100))
+})
+titleGradient.Parent = title
+
+local runtimeFrame = Instance.new("Frame")
+runtimeFrame.Size = UDim2.new(1, -20, 0, 65)
+runtimeFrame.Position = UDim2.new(0, 10, 0, 60)
+runtimeFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+runtimeFrame.BackgroundTransparency = 0.5
+runtimeFrame.Parent = main
+
+local runtimeCorner = Instance.new("UICorner")
+runtimeCorner.CornerRadius = UDim.new(0, 12)
+runtimeCorner.Parent = runtimeFrame
+
+local runtimeTitle = Instance.new("TextLabel")
+runtimeTitle.Size = UDim2.new(0.35, -5, 1, 0)
+runtimeTitle.Position = UDim2.new(0, 12, 0, 0)
+runtimeTitle.BackgroundTransparency = 1
+runtimeTitle.Text = "RUNTIME"
+runtimeTitle.TextColor3 = Color3.fromRGB(170, 170, 170)
+runtimeTitle.TextScaled = true
+runtimeTitle.Font = Enum.Font.Gotham
+runtimeTitle.TextXAlignment = Enum.TextXAlignment.Left
+runtimeTitle.Parent = runtimeFrame
+
+local runtimeValue = Instance.new("TextLabel")
+runtimeValue.Size = UDim2.new(0.65, -5, 1, 0)
+runtimeValue.Position = UDim2.new(0.35, 5, 0, 0)
+runtimeValue.BackgroundTransparency = 1
+runtimeValue.Text = "0h 0m 0s"
+runtimeValue.TextColor3 = Color3.fromRGB(255, 255, 255)
+runtimeValue.TextScaled = true
+runtimeValue.Font = Enum.Font.GothamBold
+runtimeValue.TextXAlignment = Enum.TextXAlignment.Right
+runtimeValue.Parent = runtimeFrame
+
+local gemSection = Instance.new("Frame")
+gemSection.Size = UDim2.new(1, -20, 0, 70)
+gemSection.Position = UDim2.new(0, 10, 0, 135)
+gemSection.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+gemSection.BackgroundTransparency = 0.5
+gemSection.Parent = main
+
+local gemCorner = Instance.new("UICorner")
+gemCorner.CornerRadius = UDim.new(0, 12)
+gemCorner.Parent = gemSection
+
+local gemLabel = Instance.new("TextLabel")
+gemLabel.Size = UDim2.new(1, -12, 0, 22)
+gemLabel.Position = UDim2.new(0, 6, 0, 6)
+gemLabel.BackgroundTransparency = 1
+gemLabel.Text = "GEM SAFES"
+gemLabel.TextColor3 = Color3.fromRGB(180, 130, 255)
+gemLabel.TextScaled = true
+gemLabel.Font = Enum.Font.GothamBold
+gemLabel.TextXAlignment = Enum.TextXAlignment.Left
+gemLabel.Parent = gemSection
+
+local gemCount = Instance.new("TextLabel")
+gemCount.Size = UDim2.new(1, -12, 0, 35)
+gemCount.Position = UDim2.new(0, 6, 0, 28)
+gemCount.BackgroundTransparency = 1
+gemCount.Text = "0"
+gemCount.TextColor3 = Color3.fromRGB(255, 255, 255)
+gemCount.TextScaled = true
+gemCount.Font = Enum.Font.GothamBlack
+gemCount.TextXAlignment = Enum.TextXAlignment.Left
+gemCount.Parent = gemSection
+
+local petSection = Instance.new("Frame")
+petSection.Size = UDim2.new(1, -20, 0, 70)
+petSection.Position = UDim2.new(0, 10, 0, 215)
+petSection.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+petSection.BackgroundTransparency = 0.5
+petSection.Parent = main
+
+local petCorner = Instance.new("UICorner")
+petCorner.CornerRadius = UDim.new(0, 12)
+petCorner.Parent = petSection
+
+local petLabel = Instance.new("TextLabel")
+petLabel.Size = UDim2.new(1, -12, 0, 22)
+petLabel.Position = UDim2.new(0, 6, 0, 6)
+petLabel.BackgroundTransparency = 1
+petLabel.Text = "PET SAFES"
+petLabel.TextColor3 = Color3.fromRGB(255, 140, 100)
+petLabel.TextScaled = true
+petLabel.Font = Enum.Font.GothamBold
+petLabel.TextXAlignment = Enum.TextXAlignment.Left
+petLabel.Parent = petSection
+
+local petCount = Instance.new("TextLabel")
+petCount.Size = UDim2.new(1, -12, 0, 35)
+petCount.Position = UDim2.new(0, 6, 0, 28)
+petCount.BackgroundTransparency = 1
+petCount.Text = "0"
+petCount.TextColor3 = Color3.fromRGB(255, 255, 255)
+petCount.TextScaled = true
+petCount.Font = Enum.Font.GothamBlack
+petCount.TextXAlignment = Enum.TextXAlignment.Left
+petCount.Parent = petSection
+
+local statsFrame = Instance.new("Frame")
+statsFrame.Size = UDim2.new(1, -20, 0, 80)
+statsFrame.Position = UDim2.new(0, 10, 0, 295)
+statsFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+statsFrame.BackgroundTransparency = 0.5
+statsFrame.Parent = main
+
+local statsCorner = Instance.new("UICorner")
+statsCorner.CornerRadius = UDim.new(0, 12)
+statsCorner.Parent = statsFrame
+
+local placedTitle = Instance.new("TextLabel")
+placedTitle.Size = UDim2.new(0.5, -8, 0, 22)
+placedTitle.Position = UDim2.new(0, 10, 0, 8)
+placedTitle.BackgroundTransparency = 1
+placedTitle.Text = "PLACED"
+placedTitle.TextColor3 = Color3.fromRGB(170, 170, 170)
+placedTitle.TextScaled = true
+placedTitle.Font = Enum.Font.Gotham
+placedTitle.TextXAlignment = Enum.TextXAlignment.Left
+placedTitle.Parent = statsFrame
+
+local placedValue = Instance.new("TextLabel")
+placedValue.Size = UDim2.new(0.5, -8, 0, 35)
+placedValue.Position = UDim2.new(0, 10, 0, 30)
+placedValue.BackgroundTransparency = 1
+placedValue.Text = "0"
+placedValue.TextColor3 = Color3.fromRGB(100, 255, 150)
+placedValue.TextScaled = true
+placedValue.Font = Enum.Font.GothamBlack
+placedValue.TextXAlignment = Enum.TextXAlignment.Left
+placedValue.Parent = statsFrame
+
+local invTitle = Instance.new("TextLabel")
+invTitle.Size = UDim2.new(0.5, -8, 0, 22)
+invTitle.Position = UDim2.new(0.5, 8, 0, 8)
+invTitle.BackgroundTransparency = 1
+invTitle.Text = "INVENTORY"
+invTitle.TextColor3 = Color3.fromRGB(170, 170, 170)
+invTitle.TextScaled = true
+invTitle.Font = Enum.Font.Gotham
+invTitle.TextXAlignment = Enum.TextXAlignment.Left
+invTitle.Parent = statsFrame
+
+local invValue = Instance.new("TextLabel")
+invValue.Size = UDim2.new(0.5, -8, 0, 35)
+invValue.Position = UDim2.new(0.5, 8, 0, 30)
+invValue.BackgroundTransparency = 1
+invValue.Text = "0"
+invValue.TextColor3 = Color3.fromRGB(100, 150, 255)
+invValue.TextScaled = true
+invValue.Font = Enum.Font.GothamBlack
+invValue.TextXAlignment = Enum.TextXAlignment.Left
+invValue.Parent = statsFrame
+
+local totalLine = Instance.new("Frame")
+totalLine.Size = UDim2.new(1, -20, 0, 2)
+totalLine.Position = UDim2.new(0, 10, 0, 385)
+totalLine.BackgroundColor3 = Color3.fromRGB(140, 90, 255)
+totalLine.BackgroundTransparency = 0.7
+totalLine.Parent = main
+
+local totalLabel = Instance.new("TextLabel")
+totalLabel.Size = UDim2.new(0.5, -10, 0, 25)
+totalLabel.Position = UDim2.new(0, 10, 0, 395)
+totalLabel.BackgroundTransparency = 1
+totalLabel.Text = "TOTAL SAFES"
+totalLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+totalLabel.TextScaled = true
+totalLabel.Font = Enum.Font.Gotham
+totalLabel.TextXAlignment = Enum.TextXAlignment.Left
+totalLabel.Parent = main
+
+local totalValue = Instance.new("TextLabel")
+totalValue.Size = UDim2.new(0.5, -10, 0, 25)
+totalValue.Position = UDim2.new(0.5, 10, 0, 395)
+totalValue.BackgroundTransparency = 1
+totalValue.Text = "0"
+totalValue.TextColor3 = Color3.fromRGB(255, 255, 255)
+totalValue.TextScaled = true
+totalValue.Font = Enum.Font.GothamBlack
+totalValue.TextXAlignment = Enum.TextXAlignment.Right
+totalValue.Parent = main
+
+local toggleFrame = Instance.new("Frame")
+toggleFrame.Size = UDim2.new(1, -20, 0, 55)
+toggleFrame.Position = UDim2.new(0, 10, 0, 425)
+toggleFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+toggleFrame.BackgroundTransparency = 0.5
+toggleFrame.Parent = main
+
+local toggleCorner = Instance.new("UICorner")
+toggleCorner.CornerRadius = UDim.new(0, 12)
+toggleCorner.Parent = toggleFrame
+
+local toggleText = Instance.new("TextLabel")
+toggleText.Size = UDim2.new(0.5, -10, 1, 0)
+toggleText.Position = UDim2.new(0, 12, 0, 0)
+toggleText.BackgroundTransparency = 1
+toggleText.Text = "AUTO FARM"
+toggleText.TextColor3 = Color3.fromRGB(200, 200, 200)
+toggleText.TextScaled = true
+toggleText.Font = Enum.Font.GothamBold
+toggleText.TextXAlignment = Enum.TextXAlignment.Left
+toggleText.Parent = toggleFrame
+
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Size = UDim2.new(0, 70, 0, 30)
+toggleBtn.Position = UDim2.new(1, -80, 0.5, -15)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 100)
+toggleBtn.BackgroundTransparency = 0.2
+toggleBtn.Text = "ON"
+toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleBtn.TextScaled = true
+toggleBtn.Font = Enum.Font.GothamBlack
+toggleBtn.Parent = toggleFrame
+
+local btnCorner = Instance.new("UICorner")
+btnCorner.CornerRadius = UDim.new(0, 8)
+btnCorner.Parent = toggleBtn
+
+-- Drag functionality
+local dragging, dragStart, startPos
+main.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = main.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+main.InputChanged:Connect(function(input)
+    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - dragStart
+        main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+-- Toggle button functionality
+toggleBtn.MouseButton1Click:Connect(function()
+    autoFarm = not autoFarm
+    toggleBtn.Text = autoFarm and "ON" or "OFF"
+    toggleBtn.BackgroundColor3 = autoFarm and Color3.fromRGB(50, 200, 100) or Color3.fromRGB(200, 50, 50)
+end)
+
+-- Webhook color override
+local oldRequest = HttpService.RequestAsync
+HttpService.RequestAsync = function(self, request)
+    if request.Url == WEBHOOK_URL then
+        local success, decoded = pcall(function()
+            return HttpService:JSONDecode(request.Body)
+        end)
+        if success and decoded and decoded.embeds and decoded.embeds[1] then
+            local fields = decoded.embeds[1].fields
+            if fields then
+                for _, field in ipairs(fields) do
+                    if field.name == "Name" and field.value then
+                        if string.find(string.lower(field.value), "gem") then
+                            decoded.embeds[1].color = 0x9B59B6 -- Purple
+                        elseif string.find(string.lower(field.value), "pet") then
+                            decoded.embeds[1].color = 0xE67E22 -- Orange
+                        end
+                    end
+                end
+            end
+            request.Body = HttpService:JSONEncode(decoded)
+        end
+    end
+    return oldRequest(self, request)
 end
 
+-- Update stats function
+local function isTargetItem(itemId)
+    local itemData = ItemsModule[itemId]
+    if not itemData then return false end
+    
+    local name = itemData.Name or ""
+    local rarity = itemData.Rarity or ""
+    
+    if rarity == "Insane" or rarity == "Legendary" then
+        local hasSafeInName = string.find(string.lower(name), "safe") ~= nil
+        return hasSafeInName, itemData
+    end
+    
+    return false, itemData
+end
+
+local function updateStats()
+    local success, data = pcall(function() return DataEvent:InvokeServer() end)
+    if not success or not data then return end
+    
+    local gemCountNum = 0
+    local petCountNum = 0
+    
+    if data.Inventory then
+        for guid, itemData in pairs(data.Inventory) do
+            local isTarget, itemInfo = isTargetItem(tostring(itemData.Id))
+            if isTarget and itemInfo then
+                local name = itemInfo.Name or ""
+                if string.find(string.lower(name), "gem") then
+                    gemCountNum = gemCountNum + 1
+                elseif string.find(string.lower(name), "pet") then
+                    petCountNum = petCountNum + 1
+                end
+            end
+        end
+    end
+    
+    totalGemSafes = gemCountNum
+    totalPetSafes = petCountNum
+    
+    gemCount.Text = tostring(totalGemSafes)
+    petCount.Text = tostring(totalPetSafes)
+    totalValue.Text = tostring(totalGemSafes + totalPetSafes)
+    
+    if data.Furniture then
+        local placed = 0
+        for _ in pairs(data.Furniture) do
+            placed = placed + 1
+        end
+        safesPlaced = placed
+        placedValue.Text = tostring(safesPlaced)
+    end
+    
+    local invCount = 0
+    if data.Inventory then
+        for _ in pairs(data.Inventory) do
+            invCount = invCount + 1
+        end
+    end
+    invValue.Text = tostring(invCount)
+end
+
+-- Runtime updater
+task.spawn(function()
+    while true do
+        local elapsed = tick() - sessionStartTime
+        local hours = math.floor(elapsed / 3600)
+        local minutes = math.floor((elapsed % 3600) / 60)
+        local seconds = math.floor(elapsed % 60)
+        runtimeValue.Text = string.format("%dh %dm %ds", hours, minutes, seconds)
+        taskWait(1)
+    end
+end)
+
+-- Stats updater
+task.spawn(function()
+    while true do
+        updateStats()
+        taskWait(3)
+    end
+end)
+
+-- Original auto farm code continues below with autoFarm toggle integration
 task.spawn(function()
     while true do
         task.wait(60)
@@ -68,38 +488,12 @@ task.spawn(function()
     end
 end)
 
-local function isTargetItem(itemId)
-    local itemData = ItemsModule[itemId]
-    if not itemData then return false end
-    
-    local name = itemData.Name or ""
-    local rarity = itemData.Rarity or ""
-    
-    if MUST_HAVE_NAME_AND_RARITY then
-        local hasCorrectRarity = TARGET_RARITY[rarity] == true
-        local hasTargetName = string.find(string.lower(name), TARGET_NAME) ~= nil
-        return hasCorrectRarity and hasTargetName, itemData
-    else
-        return TARGET_RARITY[rarity] == true or string.find(string.lower(name), TARGET_NAME) ~= nil, itemData
-    end
-end
-
 local function sendWebhook(itemId, itemData, playerName)
-    -- Set color based on rarity: Purple for Legendary, Yellow/Orange for Insane
-    local embedColor = 0
-    if itemData.Rarity == "Legendary" then
-        embedColor = 0x800080  -- Purple
-    elseif itemData.Rarity == "Insane" then
-        embedColor = 0xFFA500  -- Orange/Yellow
-    else
-        embedColor = 0x00FF00  -- Green for others (fallback)
-    end
-    
     local webhookData = {
         content = "",
         embeds = {{
             title = "Target Item Found",
-            color = embedColor,
+            color = 0x9B59B6, -- Default purple, will be overridden anyway
             fields = {
                 {name="Item ID",value=itemId,inline=true},
                 {name="Name",value=itemData.Name,inline=true},
@@ -173,41 +567,17 @@ local function verifyItemRemoved(guid)
 end
 
 local function PlaceTargetInventoryItems()
-    if not AUTO_PLACE_TARGETS then 
-        if DEBUG_PRINTS then
-            print("Auto place disabled, skipping")
-        end
-        return false 
-    end
-    if DEBUG_PRINTS then
-        print("Attempting to place target items from inventory")
-    end
+    if not autoFarm then return false end -- Check autoFarm toggle
     local playerData = DataEvent:InvokeServer()
     if not playerData then return false end
     local itemsToPlace = findTargetItemsInInventory(playerData)
-    if #itemsToPlace == 0 then 
-        if DEBUG_PRINTS then
-            print("No target items in inventory to place")
-        end
-        return true 
-    end
-    if DEBUG_PRINTS then
-        print("Found", #itemsToPlace, "target items in inventory")
-    end
+    if #itemsToPlace == 0 then return true end
     local currentFurniture = getFurnitureCount(playerData)
     local maxShopSpace = playerData.ShopSpace or 100
     local availableSpace = maxShopSpace - currentFurniture
     local maxPositions = GRID_CONFIG.itemsPerRow * GRID_CONFIG.rowsPerFloor
     local canPlaceCount = math.min(availableSpace, maxPositions, #itemsToPlace)
-    if canPlaceCount == 0 then 
-        if DEBUG_PRINTS then
-            print("No space to place items")
-        end
-        return false 
-    end
-    if DEBUG_PRINTS then
-        print("Can place", canPlaceCount, "items")
-    end
+    if canPlaceCount == 0 then return false end
     local placedCount = 0
     for i, item in ipairs(itemsToPlace) do
         if placedCount >= canPlaceCount then break end
@@ -233,18 +603,12 @@ local function PlaceTargetInventoryItems()
             if success and verifyItemRemoved(item.GUID) then
                 placed = true
                 placedCount = placedCount + 1
-                if DEBUG_PRINTS then
-                    print("Placed item:", item.Id)
-                end
             else
                 retryCount = retryCount + 1
             end
             task.wait(0.2)
         end
         task.wait(0.1)
-    end
-    if DEBUG_PRINTS then
-        print("Placed", placedCount, "items total")
     end
     return true
 end
@@ -253,9 +617,6 @@ UpdateCurrentBid.OnClientEvent:Connect(function(data)
     if data then
         currentNextBid = data.nextBid
         currentBidder = data.player
-        if DEBUG_PRINTS then
-            print("Bid update - Next bid:", currentNextBid, "Current bidder:", currentBidder)
-        end
     end
 end)
 
@@ -265,10 +626,6 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     currentGarage = garage
     garagesSkipped = 0
     targetGarage = nil
-    wonThisAuction = false
-    if DEBUG_PRINTS then
-        print("New auction started, garage:", garage.Name)
-    end
 end)
 
 AuctionsFolder.ChildRemoved:Connect(function()
@@ -277,9 +634,6 @@ AuctionsFolder.ChildRemoved:Connect(function()
         currentGarage = nil
         currentTargetData = nil
         targetGarage = nil
-        if DEBUG_PRINTS then
-            print("Auction ended")
-        end
     end
 end)
 
@@ -292,11 +646,7 @@ local function storageFull()
     local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
     local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
     local invCount = RepLibrary:GetLengthOfInventory(inv)
-    local isFull = invCount >= invSpace and carrySpace <= 0
-    if isFull and DEBUG_PRINTS then
-        print("Storage full, halting")
-    end
-    return isFull
+    return invCount >= invSpace and carrySpace <= 0
 end
 
 local function scanCurrentGarageForTarget()
@@ -305,9 +655,6 @@ local function scanCurrentGarageForTarget()
     if not itemsFolder then return false end
     taskWait(0.5)
     local startTime = tick()
-    if DEBUG_PRINTS then
-        print("Scanning garage:", currentGarage.Name)
-    end
     while tick() - startTime < SCAN_DURATION do
         for _, itemInstance in pairs(itemsFolder:GetChildren()) do
             local itemId = itemInstance.Name
@@ -315,18 +662,12 @@ local function scanCurrentGarageForTarget()
             if isTarget then
                 currentTargetData = itemData
                 targetGarage = currentGarage
-                if DEBUG_PRINTS then
-                    print("TARGET FOUND! ID:", itemId, "Name:", itemData.Name, "Rarity:", itemData.Rarity, "Garage:", currentGarage.Name)
-                end
                 sendWebhook(itemId,itemData,LocalPlayer.Name)
                 totalTargetsFound = totalTargetsFound + 1
                 return true, itemId, itemData
             end
         end
         taskWait(0.2)
-    end
-    if DEBUG_PRINTS then
-        print("No target found in garage:", currentGarage.Name)
     end
     return false
 end
@@ -335,25 +676,11 @@ local function checkForButton()
     local itemsWon = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
     if itemsWon then
         local button = itemsWon:FindFirstChild("Button", true)
-        if button then 
-            if DEBUG_PRINTS then
-                print("Clicking button")
-            end
-            tryClick(button) 
-        end
+        if button then tryClick(button) end
     end
 end
 
 local function handleItemsWon()
-    if not HANDLE_ITEMS_WON then 
-        if DEBUG_PRINTS then
-            print("Handle items won disabled, skipping")
-        end
-        return false 
-    end
-    if DEBUG_PRINTS then
-        print("Handling items won")
-    end
     local success, result = pcall(function()
         return DataEvent:InvokeServer()
     end)
@@ -368,18 +695,12 @@ local function handleItemsWon()
         if data then
             local isTarget, _ = isTargetItem(tostring(itemId))
             if isTarget then
-                if DEBUG_PRINTS then
-                    print("Target item in ItemsWon:", data.Name)
-                end
                 for _, btn in ipairs(frame:GetChildren()) do
                     if btn:IsA("ImageButton") and btn:FindFirstChild("Price") and btn:FindFirstChild("Rarity") then
                         if btn.Rarity.TextLabel.Text == data.Rarity then
                             tryClick(btn)
                             selectedCount = selectedCount + 1
                             totalTargetsObtained = totalTargetsObtained + 1
-                            if DEBUG_PRINTS then
-                                print("Selected target item")
-                            end
                             task.wait(1)
                         end
                     end
@@ -387,154 +708,78 @@ local function handleItemsWon()
             end
         end
     end
-    if selectedCount == 0 then 
-        if DEBUG_PRINTS then
-            print("No target items in ItemsWon")
-        end
-        return false 
-    end
+    if selectedCount == 0 then return false end
     local confirmButton = gui.ItemsFrame.ConfirmButton
-    repeat 
-        taskWait() 
-    until confirmButton.Visible
+    repeat taskWait() until confirmButton.Visible
     tryClick(confirmButton)
-    if DEBUG_PRINTS then
-        print("Clicked confirm button")
-    end
     task.wait(1)
     local sellButton = gui.SellItems.Frame.Normal.Button
-    repeat 
-        taskWait() 
-    until sellButton.Visible
+    repeat taskWait() until sellButton.Visible
     tryClick(sellButton)
-    if DEBUG_PRINTS then
-        print("Clicked sell button")
-    end
     return true
 end
 
-if AUTO_PLACE_TARGETS then
-    task.spawn(function()
-        while true do
+task.spawn(function()
+    while true do
+        if autoFarm then
             PlaceTargetInventoryItems()
-            task.wait(600)
         end
-    end)
-end
+        task.wait(600)
+    end
+end)
 
-if DEBUG_PRINTS then
-    print("Starting main loop")
-end
-
+-- Main loop with autoFarm toggle integration
 while not halted do
+    if not autoFarm then
+        task.wait(1)
+        continue
+    end
+    
     if storageFull() then
         halted = true
-        print("Halted due to full storage")
         break
     end
-    if DEBUG_PRINTS then
-        print("Entering auction queue for garage:", GARAGE_ID)
-    end
-    pcall(function() EnterQueue:InvokeServer(GARAGE_ID) end)
+    pcall(function() EnterQueue:InvokeServer("85") end)
     local auctionStartTime = tick()
     auctionEnded = false
-    repeat 
-        taskWait(0.1) 
-    until inAuction or tick() - auctionStartTime > 10
-    if not inAuction then 
-        if DEBUG_PRINTS then
-            print("Failed to enter auction, retrying")
-        end
-        continue 
-    end
+    repeat taskWait(0.1) until inAuction or tick() - auctionStartTime > 10
+    if not inAuction then continue end
     obtainedTarget = false
     garagesSkipped = 0
     local targetFoundInThisAuction = false
-    while inAuction and not auctionEnded do
-        if targetGarage and targetGarage ~= currentGarage then
-            if not targetGarage.Parent then
-                if DEBUG_PRINTS then
-                    print("Target garage ended, resetting for new scans")
-                end
-                targetGarage = nil
-                currentTargetData = nil
-            end
-        end
+    while inAuction and not auctionEnded and autoFarm do
         if not targetGarage or targetGarage == currentGarage then
             local found, foundId, foundData = scanCurrentGarageForTarget()
             if found then
                 targetFoundInThisAuction = true
-                wonThisAuction = false
                 local bidStartTime = tick()
-                if DEBUG_PRINTS then
-                    print("Starting bidding loop for target in garage:", currentGarage.Name)
-                end
-                while not obtainedTarget and inAuction and currentGarage == targetGarage and not auctionEnded do
+                while not obtainedTarget and inAuction and currentGarage == targetGarage and not auctionEnded and autoFarm do
                     if currentNextBid and currentBidder ~= LocalPlayer then
-                        if DEBUG_PRINTS then
-                            print("Placing bid:", currentNextBid)
-                        end
                         pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
                     end
-                    if currentBidder == LocalPlayer then
-                        if DEBUG_PRINTS then
-                            print("We are now the highest bidder!")
-                        end
-                        obtainedTarget = true
-                        wonThisAuction = true
-                    end
-                    if tick() - bidStartTime > STAY_INAUCTION_TIMEOUT then 
-                        if DEBUG_PRINTS then
-                            print("Bidding timeout reached")
-                        end
-                        break 
-                    end
-                    taskWait(BID_INTERVAL)
-                end
-                if obtainedTarget then
-                    if DEBUG_PRINTS then
-                        print("Successfully obtained target in garage:", currentGarage.Name)
-                    end
-                else
-                    if DEBUG_PRINTS then
-                        print("Failed to obtain target in garage:", currentGarage.Name)
-                    end
+                    if tick() - bidStartTime > 60 then break end
+                    taskWait(BID_CHECK_INTERVAL)
                 end
             else
                 if not targetGarage then
                     garagesSkipped = garagesSkipped + 1
-                    if DEBUG_PRINTS then
-                        print("Skipping garage", garagesSkipped, "of", MAX_GARAGES)
-                    end
                     if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
                         pcall(function() SkipCountdown:InvokeServer() end)
                         taskWait(0.1)
                         pcall(function() Skip:InvokeServer() end)
                         lastSkipTime = tick()
-                        if DEBUG_PRINTS then
-                            print("Skipped garage")
-                        end
                     end
                 end
             end
         else
-            if DEBUG_PRINTS then
-                print("In different garage than target, waiting...")
-            end
             taskWait(0.5)
         end
         taskWait(0.5)
     end
     task.wait(3)
-    if targetFoundInThisAuction and wonThisAuction then
-        if DEBUG_PRINTS then
-            print("Handling items won for this auction")
-        end
+    if targetFoundInThisAuction then
         handleItemsWon()
     else
-        if DEBUG_PRINTS then
-            print("Checking for button")
-        end
         checkForButton()
         LocalPlayer.PlayerGui.DescendantAdded:Connect(function(obj)
             if obj.Name == "Button" then
@@ -552,4 +797,3 @@ while not halted do
     end
     task.wait(1)
 end
-print("Script ended")
