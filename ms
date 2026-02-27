@@ -20,7 +20,7 @@ local ItemsModule = require(ReplicatedStorage.Modules.Items)
 --// WINDOW SIZE BASED ON SCREEN SIZE
 local cam = workspace.CurrentCamera
 local viewport = cam.ViewportSize
-local winSize = UDim2.fromOffset(viewport.X * 0.55, viewport.Y * 0.35)
+local winSize = UDim2.fromOffset(viewport.X * 0.60, viewport.Y * 0.30)
 
 --// CREATE WINDOW
 local Window = Fluent:CreateWindow({
@@ -64,8 +64,6 @@ end
 -- Uses firetouchinterest instead of teleporting
 -- Allows being "registered" in multiple shops at once
 ----------------------------------------------------------------
-
-Tabs.Main:AddSection("Shop Register")
 
 local registerPlayers = {}
 local registerEnabled = false
@@ -145,8 +143,6 @@ end)
 -- SEND OFFERS SYSTEM
 -- Sends offers automatically to selected players
 ----------------------------------------------------------------
-
-Tabs.Main:AddSection("Send Offers")
 
 local sendPlayers = {}
 local sendEnabled = false
@@ -259,8 +255,6 @@ end)
 -- Accepts incoming offers automatically
 ----------------------------------------------------------------
 
-Tabs.Main:AddSection("Accept Offers")
-
 local acceptAny = false
 local acceptPlayer = ""
 local acceptSpecific = false
@@ -329,8 +323,6 @@ end)
 -- PLACE ITEMS SYSTEM
 -- Automatically places inventory items on shelves
 ----------------------------------------------------------------
-
-Tabs.Main:AddSection("Place Items")
 
 local placeEnabled = false
 
