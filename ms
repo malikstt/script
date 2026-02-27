@@ -1,7 +1,6 @@
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("Rep licatedStorage")
-local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/xHeptc/Kavo-UI-Library/main/source.lua"))()
@@ -12,208 +11,187 @@ local PlayerSection = MainTab:NewSection("Players")
 local ShopSection = MainTab:NewSection("Shop")
 
 local selectedPlayers = {}
-local autoTPEnabled = false
-local acceptOffersEnabled = false
-local selectedAcceptPlayer = nil
-local tpConnection = nil
-local acceptConnection = nil
-local placeItemsConnection = nil
-local placeItemsEnabled = false
+local autoTP = false
+local tpConn
+local cashLabels = {}
 
-local function getCash(player)
-    local success, cash = pcall(function()
-        return player:FindFirstChild("SaveVars") and player.SaveVars:FindFirstChild("Cash") and player.SaveVars.Cash.Value
-    end)
-    return success and cash or 0
+local function getCash(p)
+if p and p:FindFirstChild("SaveVars") and p.SaveVars:FindFirstChild("Cash") then
+return p.SaveVars.Cash.Value
+end
+return 0
 end
 
-local function updatePlayerList()
-    PlayerSection:Clear()
-    PlayerSection:AddToggle("Auto TP", nil, function(state)
-        autoTPEnabled = state
-        if autoTPEnabled then
-            if tpConnection then tpConnection:Disconnect() end
-            tpConnection = game:GetService("RunService").Heartbeat:Connect(function()
-                if autoTPEnabled then
-                    for _, player in pairs(selectedPlayers) do
-                        if player and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-                            LocalPlayer.Character.HumanoidRootPart.CFrame = player.Character.HumanoidRootPart.CFrame
-                        end
-                    end
-                    task.wait(0.5)
-                end
-            end)
-        else
-            if tpConnection then
-                tpConnection:Disconnect()
-                tpConnection = nil
-            end
-        end
-    end)
-    
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer then
-            PlayerSection:AddToggle(player.Name .. " ($" .. tostring(getCash(player)) .. ")", nil, function(state)
-                selectedPlayers[player] = state
-            end)
-        end
-    end
+local function refreshPlayers()
+PlayerSection:Clear()
+cashLabels = {}
+
+PlayerSection:AddToggle("Auto TP", nil, function(state)
+autoTP = state
+if autoTP then
+if tpConn then tpConn:Disconnect() end
+tpConn = RunService.Heartbeat:Connect(function()
+for p,_ in pairs(selectedPlayers) do
+if p and p.Character and p.Character:FindFirstChild("HumanoidRootPart") and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+LocalPlayer.Character.HumanoidRootPart.CFrame = p.Character.HumanoidRootPart.CFrame
+end
+end
+task.wait(0.5)
+end)
+else
+if tpConn then tpConn:Disconnect() tpConn=nil end
+end
+end)
+
+for _,p in ipairs(Players:GetPlayers()) do
+if p~=LocalPlayer then
+local label = PlayerSection:AddLabel(p.Name.." $"..getCash(p))
+cashLabels[p]=label
+PlayerSection:AddToggle(p.Name, nil, function(state)
+if state then
+selectedPlayers[p]=true
+else
+selectedPlayers[p]=nil
+end
+end)
+if p:FindFirstChild("SaveVars") and p.SaveVars:FindFirstChild("Cash") then
+p.SaveVars.Cash:GetPropertyChangedSignal("Value"):Connect(function()
+if cashLabels[p] then
+cashLabels[p]:Update(p.Name.." $"..getCash(p))
+end
+end)
+end
+end
+end
 end
 
 local function teleportToRandomShelf()
-    local plotName = LocalPlayer:FindFirstChild("NonSaveVars") and LocalPlayer.NonSaveVars:FindFirstChild("OwnsPlot") and LocalPlayer.NonSaveVars.OwnsPlot.Value and LocalPlayer.NonSaveVars.OwnsPlot.Value.Name
-    if not plotName then return end
-    
-    local plot = workspace:FindFirstChild("Plots") and workspace.Plots:FindFirstChild(plotName)
-    if not plot then return end
-    
-    local shelves = {}
-    for _, furniture in ipairs(plot:FindFirstChild("Furniture"):GetChildren()) do
-        local s = furniture:FindFirstChild("Shelves")
-        if s then
-            for _, shelf in ipairs(s:GetChildren()) do
-                table.insert(shelves, shelf)
-            end
-        end
-    end
-    
-    if #shelves > 0 then
-        local randomShelf = shelves[math.random(1, #shelves)]
-        if randomShelf and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-            LocalPlayer.Character.HumanoidRootPart.CFrame = randomShelf.CFrame
-        end
-    end
+local plotName = LocalPlayer:WaitForChild("NonSaveVars"):WaitForChild("OwnsPlot").Value.Name
+local plot = workspace:WaitForChild("Plots"):WaitForChild(plotName)
+local shelves={}
+for _,f in ipairs(plot:WaitForChild("Furniture"):GetChildren()) do
+local s=f:FindFirstChild("Shelves")
+if s then
+for _,sh in ipairs(s:GetChildren()) do
+table.insert(shelves,sh)
 end
+end
+end
+if #shelves>0 and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+LocalPlayer.Character.HumanoidRootPart.CFrame = shelves[math.random(1,#shelves)].CFrame
+end
+end
+
+local placeEnabled=false
+local placeConn
 
 local function placeAllItems()
-    local GetAll = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
-    local SellRemote = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Shop"):WaitForChild("SellItemInShop")
-    local ItemsModule = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Items"))
-    
-    local data = GetAll:InvokeServer()
-    
-    local plotName = LocalPlayer:FindFirstChild("NonSaveVars") and LocalPlayer.NonSaveVars:FindFirstChild("OwnsPlot") and LocalPlayer.NonSaveVars.OwnsPlot.Value and LocalPlayer.NonSaveVars.OwnsPlot.Value.Name
-    if not plotName then return end
-    
-    local plot = workspace:FindFirstChild("Plots") and workspace.Plots:FindFirstChild(plotName)
-    if not plot then return end
-    
-    local shelves = {}
-    for _, furniture in ipairs(plot:FindFirstChild("Furniture"):GetChildren()) do
-        local s = furniture:FindFirstChild("Shelves")
-        if s then
-            for _, shelf in ipairs(s:GetChildren()) do
-                table.insert(shelves, shelf)
-            end
-        end
-    end
-    
-    local guids = {}
-    for guid, info in pairs(data.Inventory) do
-        local id = tonumber(info.Id)
-        local itemData = ItemsModule[id]
-        local name = itemData and string.lower(itemData.Name or "") or ""
-        if id ~= 281 and id ~= 2294 and not string.find(name, "safe") then
-            table.insert(guids, guid)
-        end
-    end
-    
-    local count = math.min(#shelves, #guids)
-    for i = 1, count do
-        if not placeItemsEnabled then break end
-        SellRemote:FireServer(guids[i], shelves[i], true)
-        task.wait(1)
-    end
+local SellRemote = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Shop"):WaitForChild("SellItemInShop")
+local GetAll = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
+local ItemsModule = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Items"))
+local data = GetAll:InvokeServer()
+local plotName = LocalPlayer:WaitForChild("NonSaveVars"):WaitForChild("OwnsPlot").Value.Name
+local plot = workspace:WaitForChild("Plots"):WaitForChild(plotName)
+local shelves={}
+for _,f in ipairs(plot:WaitForChild("Furniture"):GetChildren()) do
+local s=f:FindFirstChild("Shelves")
+if s then
+for _,sh in ipairs(s:GetChildren()) do
+table.insert(shelves,sh)
+end
+end
+end
+local guids={}
+for guid,info in pairs(data.Inventory) do
+local id=tonumber(info.Id)
+local itemData=ItemsModule[id]
+local name=itemData and string.lower(itemData.Name or "") or ""
+if id~=281 and id~=2294 and not string.find(name,"safe") then
+table.insert(guids,guid)
+end
+end
+local count=math.min(#shelves,#guids)
+for i=1,count do
+if not placeEnabled then break end
+SellRemote:FireServer(guids[i],shelves[i],true)
+task.wait(1)
+end
 end
 
-local function acceptOffersFromPlayer(playerName)
-    local AcceptRemote = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Shop"):WaitForChild("AcceptPlayerOffer")
-    
-    local function tryAccept(obj)
-        local from = obj:GetAttribute("OfferFromPlayerName")
-        local guid = obj:GetAttribute("GUID")
-        local price = obj:GetAttribute("Offer")
-        
-        if from and guid and price and (not playerName or from == playerName) then
-            AcceptRemote:InvokeServer(from, guid, price)
-        end
-    end
-    
-    for _, gui in ipairs(LocalPlayer.PlayerGui:GetChildren()) do
-        tryAccept(gui)
-    end
-    
-    LocalPlayer.PlayerGui.ChildAdded:Connect(function(child)
-        task.wait(0.05)
-        if acceptOffersEnabled and (not selectedAcceptPlayer or child:GetAttribute("OfferFromPlayerName") == selectedAcceptPlayer) then
-            tryAccept(child)
-        end
-    end)
+local acceptAny=false
+local acceptPlayer=nil
+local acceptConn
+
+local function acceptOffers(filter)
+local AcceptRemote = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Shop"):WaitForChild("AcceptPlayerOffer")
+local function tryAccept(obj)
+local from=obj:GetAttribute("OfferFromPlayerName")
+local guid=obj:GetAttribute("GUID")
+local price=obj:GetAttribute("Offer")
+if from and guid and price and (not filter or from==filter) then
+AcceptRemote:InvokeServer(from,guid,price)
+end
+end
+for _,gui in ipairs(LocalPlayer.PlayerGui:GetChildren()) do
+tryAccept(gui)
+end
+LocalPlayer.PlayerGui.ChildAdded:Connect(function(child)
+task.wait(0.05)
+if acceptAny or acceptPlayer then
+tryAccept(child)
+end
+end)
 end
 
-ShopSection:AddButton("Teleport to Random Shelf", function()
-    teleportToRandomShelf()
+ShopSection:AddButton("Teleport Random Shelf", function()
+teleportToRandomShelf()
 end)
 
-ShopSection:AddToggle("Place All Items (Every 1s)", nil, function(state)
-    placeItemsEnabled = state
-    if placeItemsEnabled then
-        if placeItemsConnection then placeItemsConnection:Disconnect() end
-        placeItemsConnection = game:GetService("RunService").Heartbeat:Connect(function()
-            if placeItemsEnabled then
-                placeAllItems()
-                task.wait(1)
-            end
-        end)
-    else
-        if placeItemsConnection then
-            placeItemsConnection:Disconnect()
-            placeItemsConnection = nil
-        end
-    end
+ShopSection:AddToggle("Place All Items Every 1s", nil, function(state)
+placeEnabled=state
+if placeEnabled then
+if placeConn then placeConn:Disconnect() end
+placeConn=RunService.Heartbeat:Connect(function()
+placeAllItems()
+task.wait(1)
+end)
+else
+if placeConn then placeConn:Disconnect() placeConn=nil end
+end
 end)
 
 ShopSection:AddToggle("Accept Any Offers", nil, function(state)
-    acceptOffersEnabled = state
-    if acceptOffersEnabled then
-        selectedAcceptPlayer = nil
-        if acceptConnection then acceptConnection:Disconnect() end
-        acceptConnection = game:GetService("RunService").Heartbeat:Connect(function()
-            if acceptOffersEnabled then
-                acceptOffersFromPlayer()
-                task.wait(0.5)
-            end
-        end)
-    else
-        if acceptConnection then
-            acceptConnection:Disconnect()
-            acceptConnection = nil
-        end
-    end
+acceptAny=state
+acceptPlayer=nil
+if acceptAny then
+if acceptConn then acceptConn:Disconnect() end
+acceptConn=RunService.Heartbeat:Connect(function()
+acceptOffers()
+task.wait(0.5)
+end)
+else
+if acceptConn then acceptConn:Disconnect() acceptConn=nil end
+end
 end)
 
-local playerDropdown = {}
-for _, player in ipairs(Players:GetPlayers()) do
-    if player ~= LocalPlayer then
-        table.insert(playerDropdown, player.Name)
-    end
+local dropdownPlayers={}
+for _,p in ipairs(Players:GetPlayers()) do
+if p~=LocalPlayer then
+table.insert(dropdownPlayers,p.Name)
+end
 end
 
-ShopSection:AddDropdown("Accept From Player", playerDropdown, function(selected)
-    selectedAcceptPlayer = selected
-    if acceptOffersEnabled then
-        if acceptConnection then acceptConnection:Disconnect() end
-        acceptConnection = game:GetService("RunService").Heartbeat:Connect(function()
-            if acceptOffersEnabled and selectedAcceptPlayer then
-                acceptOffersFromPlayer(selectedAcceptPlayer)
-                task.wait(0.5)
-            end
-        end)
-    end
+ShopSection:AddDropdown("Accept From Player", dropdownPlayers, function(sel)
+acceptPlayer=sel
+acceptAny=false
+if acceptConn then acceptConn:Disconnect() end
+acceptConn=RunService.Heartbeat:Connect(function()
+acceptOffers(sel)
+task.wait(0.5)
+end)
 end)
 
-Players.PlayerAdded:Connect(updatePlayerList)
-Players.PlayerRemoving:Connect(updatePlayerList)
-LocalPlayer.SaveVars.Cash:GetPropertyChangedSignal("Value"):Connect(updatePlayerList)
+Players.PlayerAdded:Connect(refreshPlayers)
+Players.PlayerRemoving:Connect(refreshPlayers)
 
-updatePlayerList()
+refreshPlayers()
