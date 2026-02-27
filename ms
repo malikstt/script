@@ -21,14 +21,10 @@ local Tabs = {
     Main = Window:AddTab({ Title = "Main", Icon = "home" })
 }
 
-local misc = ReplicatedStorage.Events.Misc
-
 local function getAllPlayerNames()
     local t = {}
     for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer then
-            table.insert(t, p.Name)
-        end
+        table.insert(t, p.Name)
     end
     return t
 end
@@ -43,28 +39,30 @@ local function getOtherPlayerNames()
     return t
 end
 
-local selectedShop = ""
+local selectedShops = {}
 local shopSpamEnabled = false
+local shopIndex = 1
 
 Tabs.Main:AddDropdown("RegisterPlayers", {
     Title = "Select Shops",
     Values = getAllPlayerNames(),
-    Multi = false,
-    Default = "",
+    Multi = true,
+    Default = {},
     Callback = function(Value)
-        selectedShop = Value
+        selectedShops = Value
     end
 })
 
 Tabs.Main:AddToggle("RegisterToggle", {
-    Title = "Spam Enter Shop",
+    Title = "Cycle Between Shops",
     Default = false,
     Callback = function(Value)
         shopSpamEnabled = Value
+        shopIndex = 1
     end
 })
 
-local function enterShop(playerName)
+local function teleportToShop(playerName)
     local char = LocalPlayer.Character
     if not char then return end
     
@@ -84,37 +82,26 @@ local function enterShop(playerName)
     if not canvas then return end
     
     char:SetPrimaryPartCFrame(canvas.CFrame + Vector3.new(0,3,0))
-    misc.SetInsideShop:FireServer(floor)
-end
-
-local function enterOwnShop()
-    local char = LocalPlayer.Character
-    if not char then return end
-    
-    local nonSaveVars = LocalPlayer:FindFirstChild("NonSaveVars")
-    if not nonSaveVars then return end
-    
-    local defaultFloor = nonSaveVars:FindFirstChild("DefaultFloor")
-    if not defaultFloor then return end
-    
-    local floor = defaultFloor.Value
-    if not floor then return end
-    
-    local canvas = floor:FindFirstChild("Canvas")
-    if not canvas then return end
-    
-    char:SetPrimaryPartCFrame(canvas.CFrame + Vector3.new(0,3,0))
-    misc.SetInsideShop:FireServer(floor)
 end
 
 task.spawn(function()
     while true do
-        if shopSpamEnabled then
+        if shopSpamEnabled and next(selectedShops) ~= nil then
             pcall(function()
-                if selectedShop and selectedShop ~= "" then
-                    enterShop(selectedShop)
+                local shopNames = {}
+                for name, enabled in pairs(selectedShops) do
+                    if enabled then
+                        table.insert(shopNames, name)
+                    end
                 end
-                enterOwnShop()
+                
+                if #shopNames > 0 then
+                    if shopIndex > #shopNames then
+                        shopIndex = 1
+                    end
+                    teleportToShop(shopNames[shopIndex])
+                    shopIndex = shopIndex + 1
+                end
             end)
         end
         task.wait(0.05)
