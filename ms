@@ -21,6 +21,8 @@ local Tabs = {
     Main = Window:AddTab({ Title = "Main", Icon = "home" })
 }
 
+local misc = ReplicatedStorage.Events.Misc
+
 local function getAllPlayerNames()
     local t = {}
     for _, p in ipairs(Players:GetPlayers()) do
@@ -55,51 +57,54 @@ Tabs.Main:AddDropdown("RegisterPlayers", {
 })
 
 Tabs.Main:AddToggle("RegisterToggle", {
-    Title = "Spam Touch Shop",
+    Title = "Spam Enter Shop",
     Default = false,
     Callback = function(Value)
         shopSpamEnabled = Value
     end
 })
 
-local function registerShop(playerName)
+local function enterShop(playerName)
     local char = LocalPlayer.Character
     if not char then return end
-    local root = char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
+    
     local plr = Players:FindFirstChild(playerName)
     if not plr then return end
-    local owns = plr:FindFirstChild("NonSaveVars")
-    if not owns then return end
-    local plotVal = owns:FindFirstChild("OwnsPlot")
-    if not plotVal then return end
-    local plot = plotVal.Value
-    if typeof(plot) ~= "Instance" then return end
-    local door = plot:FindFirstChild("Door", true)
-    if not door then return end
-    local startPart = door:FindFirstChild("StartPart")
-    if not startPart then return end
-    firetouchinterest(root, startPart, 0)
-    firetouchinterest(root, startPart, 1)
+    
+    local nonSaveVars = plr:FindFirstChild("NonSaveVars")
+    if not nonSaveVars then return end
+    
+    local defaultFloor = nonSaveVars:FindFirstChild("DefaultFloor")
+    if not defaultFloor then return end
+    
+    local floor = defaultFloor.Value
+    if not floor then return end
+    
+    local canvas = floor:FindFirstChild("Canvas")
+    if not canvas then return end
+    
+    char:SetPrimaryPartCFrame(canvas.CFrame + Vector3.new(0,3,0))
+    misc.SetInsideShop:FireServer(floor)
 end
 
-local function registerOwnShop()
+local function enterOwnShop()
     local char = LocalPlayer.Character
     if not char then return end
-    local root = char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    local owns = LocalPlayer:FindFirstChild("NonSaveVars")
-    if not owns then return end
-    local plotVal = owns:FindFirstChild("OwnsPlot")
-    if not plotVal then return end
-    local plot = plotVal.Value
-    if typeof(plot) ~= "Instance" then return end
-    local door = plot:FindFirstChild("Door", true)
-    if not door then return end
-    local startPart = door:FindFirstChild("StartPart")
-    if not startPart then return end
-    firetouchinterest(root, startPart, 0)
-    firetouchinterest(root, startPart, 1)
+    
+    local nonSaveVars = LocalPlayer:FindFirstChild("NonSaveVars")
+    if not nonSaveVars then return end
+    
+    local defaultFloor = nonSaveVars:FindFirstChild("DefaultFloor")
+    if not defaultFloor then return end
+    
+    local floor = defaultFloor.Value
+    if not floor then return end
+    
+    local canvas = floor:FindFirstChild("Canvas")
+    if not canvas then return end
+    
+    char:SetPrimaryPartCFrame(canvas.CFrame + Vector3.new(0,3,0))
+    misc.SetInsideShop:FireServer(floor)
 end
 
 task.spawn(function()
@@ -107,9 +112,9 @@ task.spawn(function()
         if shopSpamEnabled then
             pcall(function()
                 if selectedShop and selectedShop ~= "" then
-                    registerShop(selectedShop)
+                    enterShop(selectedShop)
                 end
-                registerOwnShop()
+                enterOwnShop()
             end)
         end
         task.wait(0.05)
@@ -165,8 +170,14 @@ task.spawn(function()
                         
                         local inv = targetData.Inventory
                         
-                        local plot = target.NonSaveVars.OwnsPlot.Value
-                        if not plot then return end
+                        local nonSaveVars = target:FindFirstChild("NonSaveVars")
+                        if not nonSaveVars then return end
+                        
+                        local plotVal = nonSaveVars:FindFirstChild("OwnsPlot")
+                        if not plotVal then return end
+                        
+                        local plot = plotVal.Value
+                        if typeof(plot) ~= "Instance" then return end
                         
                         local instances = {}
                         for _, v in pairs(plot:GetDescendants()) do
@@ -278,8 +289,14 @@ task.spawn(function()
                 local myData = GetAllRemote:InvokeServer()
                 if not myData or not myData.Inventory then return end
                 
-                local plot = LocalPlayer.NonSaveVars.OwnsPlot.Value
-                if not plot then return end
+                local nonSaveVars = LocalPlayer:FindFirstChild("NonSaveVars")
+                if not nonSaveVars then return end
+                
+                local plotVal = nonSaveVars:FindFirstChild("OwnsPlot")
+                if not plotVal then return end
+                
+                local plot = plotVal.Value
+                if typeof(plot) ~= "Instance" then return end
                 
                 local shelves = {}
                 for _, f in pairs(plot.Furniture:GetChildren()) do
