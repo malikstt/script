@@ -1,202 +1,197 @@
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 
-local Shop = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Shop")
-local InsertFurniture = Shop:WaitForChild("InsertFurniture")
-local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
-local ItemsModule = require(ReplicatedStorage.Modules.Items)
+local Window = Fluent:CreateWindow({
+    Title = "Shop & Player Manager",
+    SubTitle = "Main Controls",
+    TabWidth = 160,
+    Size = UDim2.fromOffset(580, 520),
+    Acrylic = true,
+    Theme = "Dark"
+})
 
-local nonSaveVars = LocalPlayer:FindFirstChild("NonSaveVars")
-local ownsPlot = nonSaveVars and nonSaveVars:FindFirstChild("OwnsPlot")
-local currentPlot = ownsPlot and ownsPlot:IsA("ValueBase") and ownsPlot.Value or "7"
-local canvas = workspace.Plots[tostring(currentPlot)].Interior.Shop1.Canvas
-
-local PODIUM_ID = "4"
-local MAX_PODIUMS = 10
-local PLACEMENT_INTERVAL = 5
-
-local GRID_CONFIG = {
-    startPos = canvas.Position + Vector3.new(-canvas.Size.X/2 + 4, canvas.Size.Y/2 + 1, -canvas.Size.Z/2 + 4),
-    spacing = 6,
-    itemsPerRow = math.floor(canvas.Size.X / 6) - 1,
-    rowsPerFloor = math.floor(canvas.Size.Z / 6) - 1,
+local Tabs = {
+    Main = Window:AddTab({ Title = "Main", Icon = "home" })
 }
 
-print("🎯 Podium Placement Script Started")
-print("📍 Canvas Size:", canvas.Size.X, "x", canvas.Size.Z)
-print("📊 Grid:", GRID_CONFIG.itemsPerRow, "x", GRID_CONFIG.rowsPerFloor, "=", GRID_CONFIG.itemsPerRow * GRID_CONFIG.rowsPerFloor, "positions")
-print("⏱️  Check Interval:", PLACEMENT_INTERVAL, "seconds\n")
+local selectedPlayers = {}
+local targetAcceptPlayer = ""
+local autoTpEnabled = false
+local placeItemsEnabled = false
+local acceptAnyEnabled = false
+local acceptSpecificEnabled = false
 
-local function generatePosition(index)
-    local row = math.floor((index - 1) / GRID_CONFIG.itemsPerRow)
-    local col = (index - 1) % GRID_CONFIG.itemsPerRow
-    local xOffset = col * GRID_CONFIG.spacing
-    local zOffset = row * GRID_CONFIG.spacing
-    
-    if row >= GRID_CONFIG.rowsPerFloor then
-        return nil
+local function getPlayerNames()
+    local n = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then table.insert(n, p.Name) end
     end
-    
-    return GRID_CONFIG.startPos + Vector3.new(xOffset, 0, -zOffset)
+    return n
 end
 
-local function debugFurniture(playerData)
-    print("\n🔍 DEBUG: Checking all furniture with ID 4")
-    local podiumCount = 0
-    
-    if playerData and playerData.Furniture then
-        for guid, furnitureData in pairs(playerData.Furniture) do
-            local itemId = tostring(furnitureData.Id)
-            local itemInfo = ItemsModule[itemId]
-            local itemName = itemInfo and itemInfo.Name or "Unknown"
-            
-            if itemId == PODIUM_ID or itemName == "Floor Podium" then
-                podiumCount = podiumCount + 1
-                print("  Found podium:")
-                print("    GUID: " .. guid)
-                print("    ID: " .. itemId)
-                print("    Name: " .. itemName)
-                if furnitureData.Pos then
-                    print(string.format("    Position: (%.2f, %.2f, %.2f)", furnitureData.Pos[1], furnitureData.Pos[2], furnitureData.Pos[3]))
-                else
-                    print("    Position: No position data")
+local CashLabel = Tabs.Main:AddParagraph({
+    Title = "Selected Player Cash",
+    Content = "Select a player to view cash"
+})
+
+local PlayerMultiSelect = Tabs.Main:AddDropdown("MultiTP", {
+    Title = "Select Players to TP",
+    Values = getPlayerNames(),
+    Multi = true,
+    Default = {},
+    Callback = function(Value)
+        selectedPlayers = Value
+    end
+})
+
+local AutoTPToggle = Tabs.Main:AddToggle("AutoTP", {
+    Title = "Auto TP (0.5s)",
+    Default = false,
+    Callback = function(Value)
+        autoTpEnabled = Value
+    end
+})
+
+task.spawn(function()
+    while task.wait(0.5) do
+        if autoTpEnabled and #selectedPlayers > 0 then
+            for _, name in ipairs(selectedPlayers) do
+                local p = Players:FindFirstChild(name)
+                if p and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+                    LocalPlayer.Character:SetPrimaryPartCFrame(p.Character.HumanoidRootPart.CFrame)
+                    
+                    local cashPath = p:FindFirstChild("SaveVars") and p.SaveVars:FindFirstChild("Cash")
+                    if cashPath then
+                        CashLabel:SetDesc(name .. " Cash: " .. tostring(cashPath.Value))
+                    end
+                    task.wait(0.5)
                 end
-                print("    Floor: " .. tostring(furnitureData.Floor))
-                print("")
+                if not autoTpEnabled then break end
             end
         end
     end
-    
-    print("📌 Total podiums found in Furniture table: " .. podiumCount)
-    return podiumCount
-end
+end)
 
-local function getOccupiedPositions(playerData)
-    local occupied = {}
-    
-    if playerData and playerData.Furniture then
-        for _, furnitureData in pairs(playerData.Furniture) do
-            local itemId = tostring(furnitureData.Id)
-            local itemInfo = ItemsModule[itemId]
-            local itemName = itemInfo and itemInfo.Name or "Unknown"
+Tabs.Main:AddSection("Shop Section")
+
+Tabs.Main:AddButton({
+    Title = "Teleport to Random Shelf",
+    Callback = function()
+        local plotName = LocalPlayer:WaitForChild("NonSaveVars"):WaitForChild("OwnsPlot").Value.Name
+        local plot = workspace:WaitForChild("Plots"):WaitForChild(plotName)
+        local shelves = {}
+        for _, furniture in ipairs(plot:WaitForChild("Furniture"):GetChildren()) do
+            local s = furniture:FindFirstChild("Shelves")
+            if s then
+                for _, shelf in ipairs(s:GetChildren()) do
+                    table.insert(shelves, shelf)
+                end
+            end
+        end
+        if #shelves > 0 then
+            local randomShelf = shelves[math.random(1, #shelves)]
+            LocalPlayer.Character:SetPrimaryPartCFrame(randomShelf.CFrame * CFrame.new(0, 3, 0))
+        end
+    end
+})
+
+local PlaceToggle = Tabs.Main:AddToggle("PlaceItems", {
+    Title = "Place All Items (1s)",
+    Default = false,
+    Callback = function(Value)
+        placeItemsEnabled = Value
+    end
+})
+
+task.spawn(function()
+    local SellRemote = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Shop"):WaitForChild("SellItemInShop")
+    local GetAll = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
+    local ItemsModule = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Items"))
+
+    while task.wait(1) do
+        if placeItemsEnabled then
+            local data = GetAll:InvokeServer()
+            local plotName = LocalPlayer:WaitForChild("NonSaveVars"):WaitForChild("OwnsPlot").Value.Name
+            local plot = workspace:WaitForChild("Plots"):WaitForChild(plotName)
             
-            -- Check both ID and name to be sure
-            if (itemId == PODIUM_ID or itemName == "Floor Podium") and furnitureData.Pos and type(furnitureData.Pos) == "table" then
-                local pos = Vector3.new(furnitureData.Pos[1], furnitureData.Pos[2], furnitureData.Pos[3])
-                
-                for i = 1, GRID_CONFIG.itemsPerRow * GRID_CONFIG.rowsPerFloor do
-                    local gridPos = generatePosition(i)
-                    if gridPos then
-                        local distance = (pos - gridPos).Magnitude
-                        if distance < 3 then -- Increased tolerance
-                            occupied[i] = true
-                            print("  Position " .. i .. " is occupied (distance: " .. string.format("%.2f", distance) .. ")")
-                            break
-                        end
+            local shelves = {}
+            for _, furniture in ipairs(plot:WaitForChild("Furniture"):GetChildren()) do
+                local s = furniture:FindFirstChild("Shelves")
+                if s then
+                    for _, shelf in ipairs(s:GetChildren()) do
+                        table.insert(shelves, shelf)
                     end
                 end
             end
+
+            local guids = {}
+            for guid, info in pairs(data.Inventory) do
+                local itemData = ItemsModule[tonumber(info.Id)]
+                local name = itemData and string.lower(itemData.Name or "") or ""
+                if info.Id ~= 281 and info.Id ~= 2294 and not string.find(name, "safe") then
+                    table.insert(guids, guid)
+                end
+            end
+
+            local count = math.min(#shelves, #guids)
+            for i = 1, count do
+                if not placeItemsEnabled then break end
+                SellRemote:FireServer(guids[i], shelves[i], true)
+                task.wait(0.1)
+            end
         end
     end
-    
-    return occupied
+end)
+
+local AcceptAnyToggle = Tabs.Main:AddToggle("AcceptAny", {
+    Title = "Accept Any Offers",
+    Default = false,
+    Callback = function(Value)
+        acceptAnyEnabled = Value
+    end
+})
+
+local PlayerToAccept = Tabs.Main:AddDropdown("AcceptSpecificPlayer", {
+    Title = "Select Player to Accept From",
+    Values = getPlayerNames(),
+    Default = "",
+    Callback = function(Value)
+        targetAcceptPlayer = Value
+    end
+})
+
+local AcceptSpecificToggle = Tabs.Main:AddToggle("AcceptSpecific", {
+    Title = "Accept Offers From Selected Player",
+    Default = false,
+    Callback = function(Value)
+        acceptSpecificEnabled = Value
+    end
+})
+
+local function handleOffer(obj)
+    local AcceptRemote = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Shop"):WaitForChild("AcceptPlayerOffer")
+    local from = obj:GetAttribute("OfferFromPlayerName")
+    local guid = obj:GetAttribute("GUID")
+    local price = obj:GetAttribute("Offer")
+
+    if from and guid and price then
+        if acceptAnyEnabled then
+            AcceptRemote:InvokeServer(from, guid, price)
+        elseif acceptSpecificEnabled and from == targetAcceptPlayer then
+            AcceptRemote:InvokeServer(from, guid, price)
+        end
+    end
 end
 
-local function placePodium(positionIndex)
-    local pos = generatePosition(positionIndex)
-    if not pos then
-        return false
-    end
-    
-    local args = {
-        {
-            Id = PODIUM_ID,
-            CFrame = CFrame.new(pos),
-            Floor = 1
-        }
-    }
-    
-    local success = pcall(function()
-        return InsertFurniture:InvokeServer(unpack(args))
-    end)
-    
-    if success then
-        print("✅ Placed podium at position " .. positionIndex .. " (row " .. (math.floor((positionIndex-1)/GRID_CONFIG.itemsPerRow)+1) .. ", col " .. ((positionIndex-1)%GRID_CONFIG.itemsPerRow+1) .. ")")
-    end
-    
-    return success
+LocalPlayer.PlayerGui.ChildAdded:Connect(function(child)
+    task.wait(0.1)
+    handleOffer(child)
+end)
+
+for _, gui in ipairs(LocalPlayer.PlayerGui:GetChildren()) do
+    handleOffer(gui)
 end
 
-local function placeMissingPodiums()
-    print("\n🔍 Checking podiums...")
-    
-    local success, playerData = pcall(function()
-        return DataEvent:InvokeServer()
-    end)
-    
-    if not success or not playerData then
-        print("❌ Failed to get player data")
-        return
-    end
-    
-    -- First debug what furniture exists
-    local podiumCount = debugFurniture(playerData)
-    
-    if podiumCount == 0 then
-        print("⚠ No podiums found in Furniture table - will treat all positions as empty")
-    end
-    
-    local occupied = getOccupiedPositions(playerData)
-    local totalPositions = GRID_CONFIG.itemsPerRow * GRID_CONFIG.rowsPerFloor
-    
-    local placedCount = 0
-    for i = 1, totalPositions do
-        if occupied[i] then
-            placedCount = placedCount + 1
-        end
-    end
-    
-    print("\n📌 Grid positions occupied:", placedCount, "/", MAX_PODIUMS)
-    
-    if placedCount >= MAX_PODIUMS then
-        print("✨ Maximum podiums already placed!")
-        return
-    end
-    
-    local emptyPositions = {}
-    for i = 1, totalPositions do
-        if not occupied[i] then
-            table.insert(emptyPositions, i)
-        end
-    end
-    
-    local canPlace = math.min(#emptyPositions, MAX_PODIUMS - placedCount)
-    
-    if canPlace <= 0 then
-        print("🚫 No empty positions available")
-        return
-    end
-    
-    print("🎨 Empty positions:", #emptyPositions)
-    print("🎨 Placing", canPlace, "podium(s)...")
-    
-    local placed = 0
-    for i = 1, canPlace do
-        local positionIndex = emptyPositions[i]
-        
-        if placePodium(positionIndex) then
-            placed = placed + 1
-        end
-        
-        task.wait(0.5)
-    end
-    
-    print("✅ Placed", placed, "podium(s) total")
-    print(string.rep("=", 50))
-end
-
-while true do
-    placeMissingPodiums()
-    task.wait(PLACEMENT_INTERVAL)
-end
+Window:SelectTab(Tabs.Main)
