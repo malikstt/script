@@ -83,11 +83,33 @@ local function registerShop(playerName)
     firetouchinterest(root, startPart, 1)
 end
 
+local function registerOwnShop()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local owns = LocalPlayer:FindFirstChild("NonSaveVars")
+    if not owns then return end
+    local plotVal = owns:FindFirstChild("OwnsPlot")
+    if not plotVal then return end
+    local plot = plotVal.Value
+    if typeof(plot) ~= "Instance" then return end
+    local door = plot:FindFirstChild("Door", true)
+    if not door then return end
+    local startPart = door:FindFirstChild("StartPart")
+    if not startPart then return end
+    firetouchinterest(root, startPart, 0)
+    firetouchinterest(root, startPart, 1)
+end
+
 task.spawn(function()
     while true do
-        if shopSpamEnabled and selectedShop and selectedShop ~= "" then
+        if shopSpamEnabled then
             pcall(function()
-                registerShop(selectedShop)
+                if selectedShop and selectedShop ~= "" then
+                    registerShop(selectedShop)
+                end
+                registerOwnShop()
             end)
         end
         task.wait(0.05)
@@ -127,6 +149,7 @@ Tabs.Main:AddToggle("SendToggle", {
 
 local MakeOfferRemote = ReplicatedStorage.Events.Shop.MakePlayerOffer
 local GetInventoryRemote = ReplicatedStorage.Events.Data.Get
+local GetAllRemote = ReplicatedStorage.Events.Data.GetAll
 
 task.spawn(function()
     while true do
@@ -136,10 +159,15 @@ task.spawn(function()
                     pcall(function()
                         local target = Players:FindFirstChild(name)
                         if not target then return end
-                        local inv = GetInventoryRemote:InvokeServer("Inventory", target)
-                        if type(inv) ~= "table" then return end
+                        
+                        local targetData = GetAllRemote:InvokeServer(target)
+                        if type(targetData) ~= "table" or not targetData.Inventory then return end
+                        
+                        local inv = targetData.Inventory
+                        
                         local plot = target.NonSaveVars.OwnsPlot.Value
                         if not plot then return end
+                        
                         local instances = {}
                         for _, v in pairs(plot:GetDescendants()) do
                             if v.Name == "Item" then
@@ -148,21 +176,25 @@ task.spawn(function()
                                 end
                             end
                         end
+                        
                         local map = {}
                         for _, inst in pairs(instances) do
                             map[inst.Name] = map[inst.Name] or {}
                             table.insert(map[inst.Name], inst)
                         end
+                        
                         for guid, data in pairs(inv) do
-                            local info = ItemsModule[data.Id]
-                            if info then
-                                local match = map[info.Name]
-                                if match and #match > 0 then
-                                    local instance = table.remove(match,1)
-                                    local real = RepLibrary:GetItemPrice(data)
-                                    local price = math.floor(real * (1 + offerPercent/100))
-                                    MakeOfferRemote:InvokeServer(target,guid,price,instance)
-                                    break
+                            if not data.ItemPlaced then
+                                local info = ItemsModule[data.Id]
+                                if info then
+                                    local match = map[info.Name]
+                                    if match and #match > 0 then
+                                        local instance = table.remove(match,1)
+                                        local real = RepLibrary:GetItemPrice(data)
+                                        local price = math.floor(real * (1 + offerPercent/100))
+                                        MakeOfferRemote:InvokeServer(target,guid,price,instance)
+                                        break
+                                    end
                                 end
                             end
                         end
@@ -238,14 +270,17 @@ Tabs.Main:AddToggle("PlaceToggle", {
 })
 
 local SellRemote = ReplicatedStorage.Events.Shop.SellItemInShop
-local GetAllRemote = ReplicatedStorage.Events.Data.GetAll
 
 task.spawn(function()
     while true do
         if placeEnabled then
             pcall(function()
-                local data = GetAllRemote:InvokeServer()
+                local myData = GetAllRemote:InvokeServer()
+                if not myData or not myData.Inventory then return end
+                
                 local plot = LocalPlayer.NonSaveVars.OwnsPlot.Value
+                if not plot then return end
+                
                 local shelves = {}
                 for _, f in pairs(plot.Furniture:GetChildren()) do
                     local s = f:FindFirstChild("Shelves")
@@ -255,12 +290,16 @@ task.spawn(function()
                         end
                     end
                 end
-                local guids = {}
-                for guid, info in pairs(data.Inventory) do
-                    table.insert(guids,guid)
+                
+                local availableGuids = {}
+                for guid, info in pairs(myData.Inventory) do
+                    if not info.ItemPlaced then
+                        table.insert(availableGuids, guid)
+                    end
                 end
-                for i=1, math.min(#guids,#shelves) do
-                    SellRemote:FireServer(guids[i],shelves[i],true)
+                
+                for i=1, math.min(#availableGuids,#shelves) do
+                    SellRemote:FireServer(availableGuids[i],shelves[i],true)
                     task.wait(0.1)
                 end
             end)
