@@ -9,7 +9,7 @@ local ItemsModule = require(ReplicatedStorage.Modules.Items)
 
 local cam = workspace.CurrentCamera
 local viewport = cam.ViewportSize
-local winSize = UDim2.fromOffset(viewport.X * 0.60, viewport.Y * 0.50)
+local winSize = UDim2.fromOffset(viewport.X * 0.30, viewport.Y * 0.55)
 
 local Window = Fluent:CreateWindow({
     Title = "Shop & Player Manager",
