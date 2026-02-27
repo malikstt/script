@@ -322,37 +322,75 @@ Tabs.Main:AddDropdown("TradePlayerSelect", {
     end
 })
 
-Tabs.Main:AddToggle("ShopTeleportToggle", {
-    Title = "Teleport Back & Forth",
-    Default = false,
+Tabs.Main:AddSection("Shop Teleport")
+
+local tpLoopEnabled = false
+local tpPlayers = {}
+
+Tabs.Main:AddDropdown("TeleportPlayers", {
+    Title = "Select Players (include yourself)",
+    Values = (function()
+        local t = {}
+        for _,p in ipairs(Players:GetPlayers()) do
+            table.insert(t,p.Name)
+        end
+        return t
+    end)(),
+    Multi = true,
+    Default = {},
     Callback = function(Value)
-        ShopTPEnabled = Value
+        tpPlayers = Value
     end
 })
 
-task.spawn(function()
-    repeat task.wait() until getRoot(LocalPlayer)
-    YourShopCFrame = getRoot(LocalPlayer).CFrame
-end)
+Tabs.Main:AddToggle("TeleportLoopToggle", {
+    Title = "Teleport Back & Forth",
+    Default = false,
+    Callback = function(Value)
+        tpLoopEnabled = Value
+    end
+})
+
+local function teleportToPlot(playerName)
+    local plr = Players:FindFirstChild(playerName)
+    if not plr then return end
+
+    local plot = plr:FindFirstChild("NonSaveVars")
+        and plr.NonSaveVars:FindFirstChild("OwnsPlot")
+        and plr.NonSaveVars.OwnsPlot.Value
+
+    if typeof(plot) ~= "Instance" then return end
+
+    local door = plot:FindFirstChild("Door", true)
+    if not door then return end
+
+    local startPart = door:FindFirstChild("StartPart")
+    if not startPart then return end
+
+    local char = LocalPlayer.Character
+    if char and char.PrimaryPart then
+        char:SetPrimaryPartCFrame(startPart.CFrame + Vector3.new(0,3,0))
+    end
+end
 
 task.spawn(function()
-    while task.wait(TeleportDelay) do
-        if ShopTPEnabled and SelectedTradePlayer then
-            local myRoot = getRoot(LocalPlayer)
-            local targetRoot = getRoot(SelectedTradePlayer)
+    while task.wait(1) do
+        if not tpLoopEnabled then continue end
 
-            if myRoot and targetRoot then
-                myRoot.CFrame = targetRoot.CFrame * CFrame.new(0,0,-4)
-                task.wait(TeleportDelay)
-                SendOffersFunction()
-                AcceptOffersFunction()
-                task.wait(TeleportDelay)
-                if YourShopCFrame then
-                    myRoot.CFrame = YourShopCFrame
+        for playerName, state in pairs(tpPlayers) do
+            if state then
+                teleportToPlot(playerName)
+
+                if SendOffersFunction then
+                    SendOffersFunction()
                 end
+
+                if AcceptOffersFunction then
+                    AcceptOffersFunction()
+                end
+
+                task.wait(1)
             end
         end
     end
 end)
-
-Window:SelectTab(Tabs.Main)
