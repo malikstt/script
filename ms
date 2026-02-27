@@ -7,7 +7,7 @@ local Window = Fluent:CreateWindow({
     Title = "Shop & Player Manager",
     SubTitle = "Main Controls",
     TabWidth = 160,
-    Size = UDim2.fromOffset(380, 300),
+    Size = UDim2.fromOffset(380, 200),
     Acrylic = true,
     Theme = "Dark"
 })
