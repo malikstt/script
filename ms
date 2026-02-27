@@ -1,28 +1,13 @@
---// LOAD UI LIBRARY
--- Creates the Fluent UI window system used for all controls
 local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
-
---// SERVICES
--- Core Roblox services used throughout the script
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
---// PLAYER REFERENCES
--- LocalPlayer is you
 local LocalPlayer = Players.LocalPlayer
-
---// GAME MODULES
--- RepLibrary handles pricing
--- ItemsModule contains item info
 local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
 local ItemsModule = require(ReplicatedStorage.Modules.Items)
-
---// WINDOW SIZE BASED ON SCREEN SIZE
 local cam = workspace.CurrentCamera
 local viewport = cam.ViewportSize
-local winSize = UDim2.fromOffset(viewport.X * 0.65, viewport.Y * 0.45)
+local winSize = UDim2.fromOffset(viewport.X * 0.55, viewport.Y * 0.35)
 
---// CREATE WINDOW
 local Window = Fluent:CreateWindow({
     Title = "Shop & Player Manager",
     SubTitle = "Parallel System",
@@ -36,9 +21,6 @@ local Tabs = {
     Main = Window:AddTab({ Title = "Main", Icon = "home" })
 }
 
---// PLAYER LIST FUNCTIONS
-
--- Returns ALL players including you
 local function getAllPlayerNames()
     local t = {}
     for _, p in ipairs(Players:GetPlayers()) do
@@ -47,7 +29,6 @@ local function getAllPlayerNames()
     return t
 end
 
--- Returns all players except you
 local function getOtherPlayerNames()
     local t = {}
     for _, p in ipairs(Players:GetPlayers()) do
@@ -58,17 +39,9 @@ local function getOtherPlayerNames()
     return t
 end
 
-----------------------------------------------------------------
--- SHOP REGISTRATION SYSTEM
--- This makes the game think you are inside selected shops
--- Uses firetouchinterest instead of teleporting
--- Allows being "registered" in multiple shops at once
-----------------------------------------------------------------
-
-Tabs.Main:AddSection("Shop Register")
-
-local registerPlayers = {}
-local registerEnabled = false
+local selectedShops = {}
+local shopSpamEnabled = false
+local shopIndex = 1
 
 Tabs.Main:AddDropdown("RegisterPlayers", {
     Title = "Select Shops",
@@ -76,77 +49,67 @@ Tabs.Main:AddDropdown("RegisterPlayers", {
     Multi = true,
     Default = {},
     Callback = function(Value)
-        registerPlayers = Value
+        selectedShops = Value
+        print("Selected shops:", table.concat(Value, ", "))
     end
 })
 
 Tabs.Main:AddToggle("RegisterToggle", {
-    Title = "Register In Shops",
+    Title = "Cycle Between Shops",
     Default = false,
     Callback = function(Value)
-        registerEnabled = Value
+        shopSpamEnabled = Value
+        shopIndex = 1
+        print("Shop cycling:", Value and "Enabled" or "Disabled")
     end
 })
 
-local function registerShop(playerName)
-
+local function teleportToShop(playerName)
     local char = LocalPlayer.Character
     if not char then return end
-
-    local root = char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-
+    
     local plr = Players:FindFirstChild(playerName)
     if not plr then return end
-
-    local owns = plr:FindFirstChild("NonSaveVars")
-    if not owns then return end
-
-    local plotVal = owns:FindFirstChild("OwnsPlot")
-    if not plotVal then return end
-
-    local plot = plotVal.Value
-    if typeof(plot) ~= "Instance" then return end
-
-    local door = plot:FindFirstChild("Door", true)
-    if not door then return end
-
-    local startPart = door:FindFirstChild("StartPart")
-    if not startPart then return end
-
-    firetouchinterest(root, startPart, 0)
-    firetouchinterest(root, startPart, 1)
-
+    
+    local nonSaveVars = plr:FindFirstChild("NonSaveVars")
+    if not nonSaveVars then return end
+    
+    local defaultFloor = nonSaveVars:FindFirstChild("DefaultFloor")
+    if not defaultFloor then return end
+    
+    local floor = defaultFloor.Value
+    if not floor then return end
+    
+    local canvas = floor:FindFirstChild("Canvas")
+    if not canvas then return end
+    
+    char:SetPrimaryPartCFrame(canvas.CFrame + Vector3.new(0,3,0))
+    print("Teleported to", playerName, "'s shop")
 end
 
 task.spawn(function()
     while true do
-
-        if registerEnabled then
-
-            for name, state in pairs(registerPlayers) do
-
-                if state then
-                    pcall(function()
-                        registerShop(name)
-                    end)
+        if shopSpamEnabled and next(selectedShops) ~= nil then
+            pcall(function()
+                local shopNames = {}
+                for name, enabled in pairs(selectedShops) do
+                    if enabled then
+                        table.insert(shopNames, name)
+                    end
                 end
-
-            end
-
+                
+                if #shopNames > 0 then
+                    if shopIndex > #shopNames then
+                        shopIndex = 1
+                    end
+                    teleportToShop(shopNames[shopIndex])
+                    shopIndex = shopIndex + 1
+                end
+            end)
         end
-
-        task.wait(0.5)
-
+        task.wait(0.05)
     end
 end)
-
-----------------------------------------------------------------
--- SEND OFFERS SYSTEM
--- Sends offers automatically to selected players
-----------------------------------------------------------------
-
-Tabs.Main:AddSection("Send Offers")
 
 local sendPlayers = {}
 local sendEnabled = false
@@ -159,6 +122,7 @@ Tabs.Main:AddDropdown("SendPlayers", {
     Default = {},
     Callback = function(Value)
         sendPlayers = Value
+        print("Sending offers to:", table.concat(Value, ", "))
     end
 })
 
@@ -168,6 +132,7 @@ Tabs.Main:AddDropdown("OfferPercent", {
     Default = "+50%",
     Callback = function(Value)
         offerPercent = Value == "+50%" and 50 or -50
+        print("Offer percent set to:", Value)
     end
 })
 
@@ -176,90 +141,64 @@ Tabs.Main:AddToggle("SendToggle", {
     Default = false,
     Callback = function(Value)
         sendEnabled = Value
+        print("Sending offers:", Value and "Started" or "Stopped")
     end
 })
 
 local MakeOfferRemote = ReplicatedStorage.Events.Shop.MakePlayerOffer
-local GetInventoryRemote = ReplicatedStorage.Events.Data.Get
 
 task.spawn(function()
-
     while true do
-
         if sendEnabled then
-
             for name, state in pairs(sendPlayers) do
-
                 if state then
-
                     pcall(function()
-
                         local target = Players:FindFirstChild(name)
-                        if not target then return end
-
-                        local inv = GetInventoryRemote:InvokeServer("Inventory", target)
-                        if type(inv) ~= "table" then return end
-
-                        local plot = target.NonSaveVars.OwnsPlot.Value
-                        if not plot then return end
-
-                        local instances = {}
-
-                        for _, v in pairs(plot:GetDescendants()) do
-                            if v.Name == "Item" then
-                                for _, item in pairs(v:GetChildren()) do
-                                    table.insert(instances, item)
+                        if not target then 
+                            print("Target player not found:", name)
+                            return 
+                        end
+                        
+                        local nonSaveVars = target:FindFirstChild("NonSaveVars")
+                        if not nonSaveVars then return end
+                        
+                        local plotVal = nonSaveVars:FindFirstChild("OwnsPlot")
+                        if not plotVal then return end
+                        
+                        local plot = plotVal.Value
+                        if typeof(plot) ~= "Instance" then return end
+                        
+                        local shelfItems = {}
+                        for _, container in pairs(plot:GetDescendants()) do
+                            if container.Name == "Shelves" or container.Name == "Item" then
+                                for _, item in pairs(container:GetChildren()) do
+                                    if item:IsA("BasePart") or item:IsA("Model") then
+                                        table.insert(shelfItems, item)
+                                    end
                                 end
                             end
                         end
-
-                        local map = {}
-
-                        for _, inst in pairs(instances) do
-                            map[inst.Name] = map[inst.Name] or {}
-                            table.insert(map[inst.Name], inst)
-                        end
-
-                        for guid, data in pairs(inv) do
-
-                            local info = ItemsModule[data.Id]
-                            if info then
-
-                                local match = map[info.Name]
-
-                                if match and #match > 0 then
-
-                                    local instance = table.remove(match,1)
-
-                                    local real = RepLibrary:GetItemPrice(data)
-
-                                    local price = math.floor(real * (1 + offerPercent/100))
-
-                                    MakeOfferRemote:InvokeServer(target,guid,price,instance)
-
-                                    break
-                                end
+                        
+                        print("Found", #shelfItems, "items on", name, "'s shelves")
+                        
+                        for _, shelfItem in ipairs(shelfItems) do
+                            local itemName = shelfItem.Name
+                            local price = 1000
+                            local success = pcall(function()
+                                MakeOfferRemote:InvokeServer(target, "00000000-0000-0000-0000-000000000000", price, shelfItem)
+                            end)
+                            if success then
+                                print("Made offer on", itemName, "to", name, "for", price)
                             end
+                            task.wait(0.1)
                         end
-
                     end)
-
                 end
             end
         end
-
         task.wait(1)
-
     end
-
 end)
-
-----------------------------------------------------------------
--- ACCEPT OFFERS SYSTEM
--- Accepts incoming offers automatically
-----------------------------------------------------------------
-
-Tabs.Main:AddSection("Accept Offers")
 
 local acceptAny = false
 local acceptPlayer = ""
@@ -270,6 +209,7 @@ Tabs.Main:AddToggle("AcceptAny", {
     Default = false,
     Callback = function(v)
         acceptAny = v
+        print("Accept any offers:", v and "Enabled" or "Disabled")
     end
 })
 
@@ -279,6 +219,7 @@ Tabs.Main:AddDropdown("AcceptPlayer", {
     Default = "",
     Callback = function(v)
         acceptPlayer = v
+        print("Accepting offers from:", v)
     end
 })
 
@@ -287,50 +228,39 @@ Tabs.Main:AddToggle("AcceptSpecific", {
     Default = false,
     Callback = function(v)
         acceptSpecific = v
+        print("Accept specific player:", v and "Enabled" or "Disabled")
     end
 })
 
 local AcceptRemote = ReplicatedStorage.Events.Shop.AcceptPlayerOffer
 
 local function acceptLoop()
-
     for _, gui in ipairs(LocalPlayer.PlayerGui:GetChildren()) do
-
         local from = gui:GetAttribute("OfferFromPlayerName")
         local guid = gui:GetAttribute("GUID")
         local price = gui:GetAttribute("Offer")
-
         if from and guid and price then
-
-            if acceptAny or (acceptSpecific and from == acceptPlayer) then
-
+            if acceptAny then
                 pcall(function()
                     AcceptRemote:InvokeServer(from,guid,price)
+                    print("Accepted offer from", from, "for", price)
                 end)
-
+            elseif acceptSpecific and from == acceptPlayer then
+                pcall(function()
+                    AcceptRemote:InvokeServer(from,guid,price)
+                    print("Accepted offer from", from, "for", price)
+                end)
             end
         end
     end
 end
 
 task.spawn(function()
-
     while true do
-
         pcall(acceptLoop)
-
         task.wait(1)
-
     end
-
 end)
-
-----------------------------------------------------------------
--- PLACE ITEMS SYSTEM
--- Automatically places inventory items on shelves
-----------------------------------------------------------------
-
-Tabs.Main:AddSection("Place Items")
 
 local placeEnabled = false
 
@@ -339,6 +269,7 @@ Tabs.Main:AddToggle("PlaceToggle", {
     Default = false,
     Callback = function(v)
         placeEnabled = v
+        print("Placing items:", v and "Started" or "Stopped")
     end
 })
 
@@ -346,19 +277,22 @@ local SellRemote = ReplicatedStorage.Events.Shop.SellItemInShop
 local GetAllRemote = ReplicatedStorage.Events.Data.GetAll
 
 task.spawn(function()
-
     while true do
-
         if placeEnabled then
-
             pcall(function()
-
-                local data = GetAllRemote:InvokeServer()
-
-                local plot = LocalPlayer.NonSaveVars.OwnsPlot.Value
-
+                local myData = GetAllRemote:InvokeServer()
+                if not myData or not myData.Inventory then return end
+                
+                local nonSaveVars = LocalPlayer:FindFirstChild("NonSaveVars")
+                if not nonSaveVars then return end
+                
+                local plotVal = nonSaveVars:FindFirstChild("OwnsPlot")
+                if not plotVal then return end
+                
+                local plot = plotVal.Value
+                if typeof(plot) ~= "Instance" then return end
+                
                 local shelves = {}
-
                 for _, f in pairs(plot.Furniture:GetChildren()) do
                     local s = f:FindFirstChild("Shelves")
                     if s then
@@ -367,29 +301,28 @@ task.spawn(function()
                         end
                     end
                 end
-
-                local guids = {}
-
-                for guid, info in pairs(data.Inventory) do
-                    table.insert(guids,guid)
+                
+                print("Found", #shelves, "empty shelves in your shop")
+                
+                local availableGuids = {}
+                for guid, info in pairs(myData.Inventory) do
+                    if not info.ItemPlaced then
+                        table.insert(availableGuids, guid)
+                    end
                 end
-
-                for i=1, math.min(#guids,#shelves) do
-
-                    SellRemote:FireServer(guids[i],shelves[i],true)
-
+                
+                print("Found", #availableGuids, "items in inventory to place")
+                
+                for i=1, math.min(#availableGuids,#shelves) do
+                    SellRemote:FireServer(availableGuids[i],shelves[i],true)
+                    print("Placed item", availableGuids[i], "on shelf")
                     task.wait(0.1)
-
                 end
-
             end)
-
         end
-
         task.wait(1)
-
     end
-
 end)
 
 Window:SelectTab(Tabs.Main)
+print("Script loaded successfully!")
