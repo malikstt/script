@@ -20,7 +20,7 @@ local ItemsModule = require(ReplicatedStorage.Modules.Items)
 --// WINDOW SIZE BASED ON SCREEN SIZE
 local cam = workspace.CurrentCamera
 local viewport = cam.ViewportSize
-local winSize = UDim2.fromOffset(viewport.X * 0.35, viewport.Y * 0.55)
+local winSize = UDim2.fromOffset(viewport.X * 0.35, viewport.Y * 0.25)
 
 --// CREATE WINDOW
 local Window = Fluent:CreateWindow({
