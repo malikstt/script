@@ -9,7 +9,7 @@ local ItemsModule = require(ReplicatedStorage.Modules.Items)
 
 local cam = workspace.CurrentCamera
 local viewport = cam.ViewportSize
-local winSize = UDim2.fromOffset(viewport.X * 0.30, viewport.Y * 0.55)
+local winSize = UDim2.fromOffset(viewport.X * 0.25, viewport.Y * 0.25)
 
 local Window = Fluent:CreateWindow({
     Title = "Shop & Player Manager",
@@ -79,7 +79,7 @@ Tabs.Main:AddSection("Send Offers")
 
 local sendOfferPlayers = {}
 local sendOffersEnabled = false
-local offerPercent = 0
+local offerPercent = 50
 
 Tabs.Main:AddDropdown("OfferPlayers", {
     Title = "Select Players to Send Offers",
@@ -91,14 +91,16 @@ Tabs.Main:AddDropdown("OfferPlayers", {
     end
 })
 
-Tabs.Main:AddSlider("OfferPercentSlider", {
+Tabs.Main:AddDropdown("OfferPercentSelect", {
     Title = "Offer Percentage",
-    Min = -50,
-    Max = 50,
-    Default = 0,
-    Rounding = 0,
+    Values = {"+50%", "-50%"},
+    Default = "+50%",
     Callback = function(Value)
-        offerPercent = Value
+        if Value == "+50%" then
+            offerPercent = 50
+        elseif Value == "-50%" then
+            offerPercent = -50
+        end
     end
 })
 
