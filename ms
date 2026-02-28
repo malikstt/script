@@ -13,6 +13,7 @@ local GetRemote = ReplicatedStorage.Events.Data.Get
 local GetAllRemote = ReplicatedStorage.Events.Data.GetAll
 local AcceptRemote = ReplicatedStorage.Events.Shop.AcceptPlayerOffer
 local SellRemote = ReplicatedStorage.Events.Shop.SellItemInShop
+local InsertFurnitureRemote = ReplicatedStorage.Events.Shop.InsertFurniture
 
 local cam = workspace.CurrentCamera
 local viewport = cam.ViewportSize
@@ -189,8 +190,6 @@ task.spawn(function()
 
                         end)
 
-                        print("Offered",info.Name,"to",playerName,"for",offer)
-
                         task.wait(0.25)
 
                     end
@@ -250,8 +249,6 @@ task.spawn(function()
                             AcceptRemote:InvokeServer(from,guid,price)
                         end)
 
-                        print("Accepted offer from",from)
-
                     end
 
                 end
@@ -296,35 +293,70 @@ task.spawn(function()
             local plot=plotVal.Value
             if not plot then return end
 
-            local shelves={}
+            local shop1=plot:FindFirstChild("Interior") and plot.Interior:FindFirstChild("Shop1")
+            if not shop1 then return end
 
-            for _,v in pairs(plot:GetDescendants()) do
-                if v.Name=="Shelf" then
-                    table.insert(shelves,v)
+            local canvas=shop1:FindFirstChild("Canvas")
+            if not canvas then return end
+
+            local GRID_CONFIG = {
+                startPos = canvas.Position + Vector3.new(-canvas.Size.X/2 + 4, canvas.Size.Y/2 + 1, -canvas.Size.Z/2 + 4),
+                spacing = 6,
+                itemsPerRow = math.floor(canvas.Size.X / 6) - 1,
+                rowsPerFloor = math.floor(canvas.Size.Z / 6) - 1,
+            }
+
+            local function generatePosition(index)
+                local row = math.floor((index - 1) / GRID_CONFIG.itemsPerRow)
+                local col = (index - 1) % GRID_CONFIG.itemsPerRow
+
+                local xOffset = col * GRID_CONFIG.spacing
+                local zOffset = row * GRID_CONFIG.spacing
+
+                if row >= GRID_CONFIG.rowsPerFloor then
+                    return nil
+                end
+
+                return GRID_CONFIG.startPos + Vector3.new(xOffset, 0, zOffset)
+            end
+
+            local currentFurniture = 0
+            if myData.Furniture then
+                for _ in pairs(myData.Furniture) do
+                    currentFurniture+=1
                 end
             end
+
+            local maxShopSpace = myData.ShopSpace or 100
+            local availableSpace = maxShopSpace - currentFurniture
+
+            if availableSpace<=0 then return end
 
             local index=1
 
             for guid,info in pairs(inv) do
 
-                if not info.ItemPlaced and shelves[index] then
+                if availableSpace<=0 then break end
+
+                if not info.ItemPlaced and tostring(info.Id)~="681" and tostring(info.Id)~="2294" then
+
+                    local pos=generatePosition(index)
+                    if not pos then break end
 
                     pcall(function()
-
-                        SellRemote:FireServer(
-                            guid,
-                            shelves[index],
-                            true
-                        )
-
+                        InsertFurnitureRemote:InvokeServer({
+                            GUID = guid,
+                            Type = "Decor",
+                            Floor = 1,
+                            Id = info.Id,
+                            CFrame = CFrame.new(pos)
+                        })
                     end)
 
-                    print("Placed item",guid)
-
                     index+=1
+                    availableSpace-=1
 
-                    task.wait(0.25)
+                    task.wait(0.15)
 
                 end
 
