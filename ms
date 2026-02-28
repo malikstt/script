@@ -13,7 +13,6 @@ local GetRemote = ReplicatedStorage.Events.Data.Get
 local GetAllRemote = ReplicatedStorage.Events.Data.GetAll
 local AcceptRemote = ReplicatedStorage.Events.Shop.AcceptPlayerOffer
 local SellRemote = ReplicatedStorage.Events.Shop.SellItemInShop
-local InsertFurnitureRemote = ReplicatedStorage.Events.Shop.InsertFurniture
 
 local cam = workspace.CurrentCamera
 local viewport = cam.ViewportSize
@@ -62,30 +61,20 @@ Tabs.Main:AddDropdown("TeleportPlayer",{
 Tabs.Main:AddButton({
     Title="Teleport To Shop",
     Callback=function()
-
         pcall(function()
-
             if not selectedTeleportPlayer then return end
-
             local char=LocalPlayer.Character
             if not char then return end
-
             local target=Players:FindFirstChild(selectedTeleportPlayer)
             if not target then return end
-
             local plot=target.NonSaveVars.OwnsPlot.Value
             if not plot then return end
-
             local door=plot:FindFirstChild("Door",true)
             if not door then return end
-
             local part=door:FindFirstChild("StartPart")
             if not part then return end
-
             char:SetPrimaryPartCFrame(part.CFrame+Vector3.new(0,3,0))
-
         end)
-
     end
 })
 
@@ -121,12 +110,9 @@ Tabs.Main:AddToggle("SendToggle",{
 })
 
 local function getPlacedMap(plot)
-
     local map={}
-
     local furniture=plot:FindFirstChild("Furniture")
     if not furniture then return map end
-
     for _,v in pairs(furniture:GetDescendants()) do
         if v.Name=="Item" then
             for _,item in pairs(v:GetChildren()) do
@@ -135,75 +121,42 @@ local function getPlacedMap(plot)
             end
         end
     end
-
     return map
 end
 
 task.spawn(function()
-
     while true do
-
         pcall(function()
-
             if not sendEnabled then return end
-
             for playerName,state in pairs(sendPlayers) do
-
                 if not state then continue end
-
                 local target=Players:FindFirstChild(playerName)
                 if not target then continue end
-
                 local inv=GetRemote:InvokeServer("Inventory",target)
                 if type(inv)~="table" then continue end
-
                 local plotVal=target.NonSaveVars and target.NonSaveVars.OwnsPlot
                 if not plotVal then continue end
-
                 local plot=plotVal.Value
                 if not plot then continue end
-
                 local placedMap=getPlacedMap(plot)
-
                 for guid,itemData in pairs(inv) do
-
                     local info=ItemsModule[itemData.Id]
                     if not info then continue end
-
                     local placed=placedMap[info.Name]
-
                     if placed and #placed>0 then
-
                         local instance=table.remove(placed,1)
-
                         local price=RepLibrary:GetItemPrice(itemData)
                         local offer=math.floor(price*(1+offerPercent/100))
-
                         pcall(function()
-
-                            MakeOfferRemote:InvokeServer(
-                                target,
-                                guid,
-                                offer,
-                                instance
-                            )
-
+                            MakeOfferRemote:InvokeServer(target,guid,offer,instance)
                         end)
-
                         task.wait(0.25)
-
                     end
-
                 end
-
             end
-
         end)
-
         task.wait(1)
-
     end
-
 end)
 
 local acceptPlayers={}
@@ -228,39 +181,24 @@ Tabs.Main:AddToggle("AcceptToggle",{
 })
 
 task.spawn(function()
-
     while true do
-
         pcall(function()
-
             if not acceptEnabled then return end
-
             for _,gui in ipairs(LocalPlayer.PlayerGui:GetChildren()) do
-
                 local from=gui:GetAttribute("OfferFromPlayerName")
                 local guid=gui:GetAttribute("GUID")
                 local price=gui:GetAttribute("Offer")
-
                 if from and guid and price then
-
                     if acceptPlayers[from] then
-
                         pcall(function()
                             AcceptRemote:InvokeServer(from,guid,price)
                         end)
-
                     end
-
                 end
-
             end
-
         end)
-
         task.wait(0.5)
-
     end
-
 end)
 
 local placeEnabled=false
@@ -274,100 +212,62 @@ Tabs.Main:AddToggle("PlaceToggle",{
 })
 
 task.spawn(function()
-
     while true do
-
         pcall(function()
-
             if not placeEnabled then return end
 
-            local myData=GetAllRemote:InvokeServer()
-            if not myData then return end
+            local data = GetAllRemote:InvokeServer()
+            if not data or not data.Inventory then return end
 
-            local inv=myData.Inventory
-            if not inv then return end
+            local plotVal = LocalPlayer:FindFirstChild("NonSaveVars") and LocalPlayer.NonSaveVars:FindFirstChild("OwnsPlot")
+            if not plotVal or not plotVal.Value then return end
 
-            local plotVal=LocalPlayer.NonSaveVars and LocalPlayer.NonSaveVars.OwnsPlot
-            if not plotVal then return end
-
-            local plot=plotVal.Value
+            local plot = workspace:WaitForChild("Plots"):FindFirstChild(plotVal.Value.Name)
             if not plot then return end
 
-            local shop1=plot:FindFirstChild("Interior") and plot.Interior:FindFirstChild("Shop1")
-            if not shop1 then return end
+            local shelves = {}
+            local furnitureFolder = plot:FindFirstChild("Furniture")
+            if not furnitureFolder then return end
 
-            local canvas=shop1:FindFirstChild("Canvas")
-            if not canvas then return end
-
-            local GRID_CONFIG = {
-                startPos = canvas.Position + Vector3.new(-canvas.Size.X/2 + 4, canvas.Size.Y/2 + 1, -canvas.Size.Z/2 + 4),
-                spacing = 6,
-                itemsPerRow = math.floor(canvas.Size.X / 6) - 1,
-                rowsPerFloor = math.floor(canvas.Size.Z / 6) - 1,
-            }
-
-            local function generatePosition(index)
-                local row = math.floor((index - 1) / GRID_CONFIG.itemsPerRow)
-                local col = (index - 1) % GRID_CONFIG.itemsPerRow
-
-                local xOffset = col * GRID_CONFIG.spacing
-                local zOffset = row * GRID_CONFIG.spacing
-
-                if row >= GRID_CONFIG.rowsPerFloor then
-                    return nil
-                end
-
-                return GRID_CONFIG.startPos + Vector3.new(xOffset, 0, zOffset)
-            end
-
-            local currentFurniture = 0
-            if myData.Furniture then
-                for _ in pairs(myData.Furniture) do
-                    currentFurniture+=1
+            for _, furniture in ipairs(furnitureFolder:GetChildren()) do
+                local s = furniture:FindFirstChild("Shelves")
+                if s then
+                    for _, shelf in ipairs(s:GetChildren()) do
+                        table.insert(shelves, shelf)
+                    end
                 end
             end
 
-            local maxShopSpace = myData.ShopSpace or 100
-            local availableSpace = maxShopSpace - currentFurniture
+            if #shelves == 0 then return end
 
-            if availableSpace<=0 then return end
+            local freeShelves = {}
+            for _, shelf in ipairs(shelves) do
+                if #shelf:GetChildren() == 0 then
+                    table.insert(freeShelves, shelf)
+                end
+            end
 
-            local index=1
+            if #freeShelves == 0 then return end
 
-            for guid,info in pairs(inv) do
+            local shelfIndex = 1
 
-                if availableSpace<=0 then break end
-
-                if not info.ItemPlaced and tostring(info.Id)~="681" and tostring(info.Id)~="2294" then
-
-                    local pos=generatePosition(index)
-                    if not pos then break end
-
+            for guid, info in pairs(data.Inventory) do
+                if shelfIndex > #freeShelves then break end
+                local id = tonumber(info.Id)
+                local itemData = id and ItemsModule[id]
+                local name = itemData and string.lower(itemData.Name or "") or ""
+                if not info.ItemPlaced and id ~= 681 and id ~= 2294 and not string.find(name,"safe") then
                     pcall(function()
-                        InsertFurnitureRemote:InvokeServer({
-                            GUID = guid,
-                            Type = "Decor",
-                            Floor = 1,
-                            Id = info.Id,
-                            CFrame = CFrame.new(pos)
-                        })
+                        SellRemote:FireServer(guid, freeShelves[shelfIndex], true)
                     end)
-
-                    index+=1
-                    availableSpace-=1
-
+                    shelfIndex += 1
                     task.wait(0.15)
-
                 end
-
             end
 
         end)
-
         task.wait(1)
-
     end
-
 end)
 
 Window:SelectTab(Tabs.Main)
