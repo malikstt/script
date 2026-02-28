@@ -2,160 +2,238 @@ local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
 local LocalPlayer = Players.LocalPlayer
 
+local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
 local ItemsModule = require(ReplicatedStorage.Modules.Items)
 
 local MakeOfferRemote = ReplicatedStorage.Events.Shop.MakePlayerOffer
+local GetInventoryRemote = ReplicatedStorage.Events.Data.GetAll
 local AcceptRemote = ReplicatedStorage.Events.Shop.AcceptPlayerOffer
-local GetAllRemote = ReplicatedStorage.Events.Data.GetAll
 local SellRemote = ReplicatedStorage.Events.Shop.SellItemInShop
 
 local cam = workspace.CurrentCamera
 local viewport = cam.ViewportSize
 
 local Window = Fluent:CreateWindow({
-    Title = "Malik",
-    SubTitle = "lmklmk",
+    Title = "Shop & Player Manager",
+    SubTitle = "Full Fixed System",
     TabWidth = 160,
-    Size = UDim2.fromOffset(viewport.X * 0.5, viewport.Y * 0.4),
+    Size = UDim2.fromOffset(viewport.X * 0.55, viewport.Y * 0.35),
     Acrylic = true,
     Theme = "Dark"
 })
 
-pcall(function()
-    Fluent.Options.AccentColor:SetValue(Color3.fromRGB(255,0,0))
-end)
+local Tabs = {
+    Main = Window:AddTab({ Title = "Main", Icon = "home" })
+}
 
-local Tab = Window:AddTab({ Title = "Main", Icon = "home" })
+--------------------------------------------------
+-- PLAYER LIST FUNCTIONS
+--------------------------------------------------
 
-local function getOtherPlayers()
+local function getAllPlayerNames()
+
     local t = {}
-    for _,p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer then
-            table.insert(t,p.Name)
-        end
+
+    for _, p in ipairs(Players:GetPlayers()) do
+        table.insert(t, p.Name)
     end
+
     return t
 end
 
-local teleportTargets = {}
-local teleportEnabled = false
-local teleportIndex = 1
+local function getOtherPlayerNames()
 
-Tab:AddDropdown("TeleportTargets",{
-    Title="Teleport Targets",
-    Values=getOtherPlayers(),
-    Multi=true,
-    Callback=function(v)
-        teleportTargets=v
+    local t = {}
+
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            table.insert(t, p.Name)
+        end
+    end
+
+    return t
+end
+
+--------------------------------------------------
+-- SHOP CYCLER
+--------------------------------------------------
+
+local selectedShops = {}
+local shopSpamEnabled = false
+local shopIndex = 1
+
+Tabs.Main:AddDropdown("RegisterPlayers", {
+    Title = "Select Shops",
+    Values = getAllPlayerNames(),
+    Multi = true,
+    Default = {},
+    Callback = function(v)
+        selectedShops = v
     end
 })
 
-Tab:AddToggle("TeleportToggle",{
-    Title="Teleport Cycle",
-    Default=false,
-    Callback=function(v)
-        teleportEnabled=v
-        teleportIndex=1
+Tabs.Main:AddToggle("RegisterToggle", {
+    Title = "Cycle Between Shops",
+    Default = false,
+    Callback = function(v)
+        shopSpamEnabled = v
+        shopIndex = 1
     end
 })
 
-local function teleportTo(playerName)
-    local char=LocalPlayer.Character
+local function teleportToShop(playerName)
+
+    local char = LocalPlayer.Character
     if not char then return end
 
-    local plr=Players:FindFirstChild(playerName)
+    local plr = Players:FindFirstChild(playerName)
     if not plr then return end
 
-    local non=plr:FindFirstChild("NonSaveVars")
-    if not non then return end
-
-    local floor=non:FindFirstChild("DefaultFloor")
+    local floor = plr.NonSaveVars.DefaultFloor.Value
     if not floor then return end
 
-    local canvas=floor.Value and floor.Value:FindFirstChild("Canvas")
+    local canvas = floor:FindFirstChild("Canvas")
     if not canvas then return end
 
-    char:SetPrimaryPartCFrame(canvas.CFrame+Vector3.new(0,3,0))
+    char:SetPrimaryPartCFrame(canvas.CFrame + Vector3.new(0,3,0))
+
 end
 
 task.spawn(function()
+
     while true do
-        if teleportEnabled then
 
-            local list={}
-            for name,enabled in pairs(teleportTargets) do
+        if shopSpamEnabled then
+
+            local shopNames = {}
+
+            for name, enabled in pairs(selectedShops) do
                 if enabled then
-                    table.insert(list,name)
+                    table.insert(shopNames, name)
                 end
             end
 
-            if #list>0 then
+            if #shopNames > 0 then
 
-                if teleportIndex>#list then
-                    teleportIndex=1
+                if shopIndex > #shopNames then
+                    shopIndex = 1
                 end
 
-                teleportTo(list[teleportIndex])
+                teleportToShop(shopNames[shopIndex])
 
-                teleportIndex+=1
+                shopIndex += 1
+
             end
+
         end
+
         task.wait(0.25)
+
     end
+
 end)
 
-local sendTargets={}
-local sendEnabled=false
-local offerPercent=50
+--------------------------------------------------
+-- SEND OFFERS (FULLY FIXED)
+--------------------------------------------------
 
-Tab:AddDropdown("SendTargets",{
-    Title="Send Targets",
-    Values=getOtherPlayers(),
-    Multi=true,
-    Callback=function(v)
-        sendTargets=v
+local sendPlayers = {}
+local sendEnabled = false
+local offerPercent = 50
+
+Tabs.Main:AddDropdown("SendPlayers", {
+    Title = "Send To Players",
+    Values = getOtherPlayerNames(),
+    Multi = true,
+    Default = {},
+    Callback = function(v)
+        sendPlayers = v
     end
 })
 
-Tab:AddDropdown("Percent",{
-    Title="Offer Percent",
-    Values={"+50%","-50%"},
-    Default="+50%",
-    Callback=function(v)
-        offerPercent=v=="+50%" and 50 or -50
+Tabs.Main:AddDropdown("OfferPercent", {
+    Title = "Offer Percent",
+    Values = {"+50%","-50%"},
+    Default = "+50%",
+    Callback = function(v)
+        offerPercent = v == "+50%" and 50 or -50
     end
 })
 
-Tab:AddToggle("SendToggle",{
-    Title="Send Offers",
-    Default=false,
-    Callback=function(v)
-        sendEnabled=v
+Tabs.Main:AddToggle("SendToggle", {
+    Title = "Send Offers",
+    Default = false,
+    Callback = function(v)
+        sendEnabled = v
     end
 })
 
-local function getPlacedItems(plot)
+local function SendOffersFunction()
 
-    local items={}
+    if not sendEnabled then return end
 
-    local furniture=plot:FindFirstChild("Furniture")
-    if not furniture then return items end
+    for playerName, state in pairs(sendPlayers) do
 
-    for _,f in ipairs(furniture:GetChildren()) do
+        if not state then continue end
 
-        local shelves=f:FindFirstChild("Shelves")
+        local target = Players:FindFirstChild(playerName)
+        if not target then continue end
 
-        if shelves then
+        local inv = GetInventoryRemote:InvokeServer("Inventory", target)
+        if type(inv) ~= "table" then continue end
 
-            for _,shelf in ipairs(shelves:GetChildren()) do
+        local plot = target.NonSaveVars.OwnsPlot.Value
+        if not plot then continue end
 
-                local item=shelf:FindFirstChild("Item")
+        local furniture = plot:FindFirstChild("Furniture")
+        if not furniture then continue end
 
-                if item and item:GetAttribute("ItemId") then
-                    table.insert(items,item)
+        local placedMap = {}
+
+        for _, v in pairs(furniture:GetDescendants()) do
+
+            if v.Name == "Item" then
+
+                for _, item in pairs(v:GetChildren()) do
+
+                    placedMap[item.Name] = placedMap[item.Name] or {}
+
+                    table.insert(placedMap[item.Name], item)
+
                 end
+
+            end
+
+        end
+
+        for guid, itemData in pairs(inv) do
+
+            local itemInfo = ItemsModule[itemData.Id]
+            if not itemInfo then continue end
+
+            local placedInstances = placedMap[itemInfo.Name]
+
+            if placedInstances and #placedInstances > 0 then
+
+                local instance = table.remove(placedInstances,1)
+
+                local price = RepLibrary:GetItemPrice(itemData)
+
+                local offerPrice = math.floor(price * (1 + offerPercent/100))
+
+                MakeOfferRemote:InvokeServer(
+                    target,
+                    guid,
+                    offerPrice,
+                    instance
+                )
+
+                print("Offered", itemInfo.Name, "for", offerPrice)
+
+                task.wait(1)
 
             end
 
@@ -163,68 +241,51 @@ local function getPlacedItems(plot)
 
     end
 
-    return items
-end
-
-local function getPrice(item)
-
-    local id=item:GetAttribute("ItemId")
-    if not id then return end
-
-    local info=ItemsModule[id]
-    if not info then return end
-
-    local base=info.Price or 0
-
-    return math.floor(base*(1+offerPercent/100))
 end
 
 task.spawn(function()
+
     while true do
 
-        if sendEnabled then
+        pcall(SendOffersFunction)
 
-            for name,enabled in pairs(sendTargets) do
+        task.wait(1)
 
-                if enabled then
+    end
 
-                    local plr=Players:FindFirstChild(name)
+end)
 
-                    if plr then
+--------------------------------------------------
+-- ACCEPT OFFERS
+--------------------------------------------------
 
-                        local non=plr:FindFirstChild("NonSaveVars")
+local acceptAny = false
 
-                        if non then
+Tabs.Main:AddToggle("AcceptAny", {
+    Title = "Accept Any",
+    Default = false,
+    Callback = function(v)
+        acceptAny = v
+    end
+})
 
-                            local plotVal=non:FindFirstChild("OwnsPlot")
+task.spawn(function()
 
-                            if plotVal and plotVal.Value then
+    while true do
 
-                                local items=getPlacedItems(plotVal.Value)
+        if acceptAny then
 
-                                for _,item in ipairs(items) do
+            for _, gui in ipairs(LocalPlayer.PlayerGui:GetChildren()) do
 
-                                    local price=getPrice(item)
+                local from = gui:GetAttribute("OfferFromPlayerName")
+                local guid = gui:GetAttribute("GUID")
+                local price = gui:GetAttribute("Offer")
 
-                                    if price then
+                if from and guid and price then
 
-                                        pcall(function()
-                                            MakeOfferRemote:InvokeServer(plr,nil,price,item)
-                                        end)
+                    AcceptRemote:InvokeServer(from,guid,price)
 
-                                        print("Offered",price,"for",item.Name,"from",plr.Name)
-
-                                        task.wait(0.4)
-
-                                    end
-
-                                end
-
-                            end
-
-                        end
-
-                    end
+                    print("Accepted offer")
 
                 end
 
@@ -235,57 +296,20 @@ task.spawn(function()
         task.wait(1)
 
     end
-end)
-
-local acceptAny=false
-
-Tab:AddToggle("AcceptToggle",{
-    Title="Accept All Offers",
-    Default=false,
-    Callback=function(v)
-        acceptAny=v
-    end
-})
-
-task.spawn(function()
-
-    while true do
-
-        if acceptAny then
-
-            for _,gui in ipairs(LocalPlayer.PlayerGui:GetChildren()) do
-
-                local from=gui:GetAttribute("OfferFromPlayerName")
-                local guid=gui:GetAttribute("GUID")
-                local price=gui:GetAttribute("Offer")
-
-                if from and guid and price then
-
-                    pcall(function()
-                        AcceptRemote:InvokeServer(from,guid,price)
-                    end)
-
-                    print("Accepted",from,price)
-
-                end
-
-            end
-
-        end
-
-        task.wait(0.5)
-
-    end
 
 end)
 
-local placeEnabled=false
+--------------------------------------------------
+-- PLACE ITEMS
+--------------------------------------------------
 
-Tab:AddToggle("PlaceToggle",{
-    Title="Auto Place",
-    Default=false,
-    Callback=function(v)
-        placeEnabled=v
+local placeEnabled = false
+
+Tabs.Main:AddToggle("PlaceToggle", {
+    Title = "Place Items",
+    Default = false,
+    Callback = function(v)
+        placeEnabled = v
     end
 })
 
@@ -295,57 +319,33 @@ task.spawn(function()
 
         if placeEnabled then
 
-            local data=GetAllRemote:InvokeServer()
+            local myData = GetInventoryRemote:InvokeServer()
 
-            if data and data.Inventory then
+            local plot = LocalPlayer.NonSaveVars.OwnsPlot.Value
 
-                local non=LocalPlayer:FindFirstChild("NonSaveVars")
+            local shelves = {}
 
-                if non then
+            for _, v in pairs(plot.Furniture:GetDescendants()) do
+                if v.Name == "Shelf" then
+                    table.insert(shelves,v)
+                end
+            end
 
-                    local plotVal=non:FindFirstChild("OwnsPlot")
+            local index = 1
 
-                    if plotVal and plotVal.Value then
+            for guid, info in pairs(myData.Inventory) do
 
-                        local shelves={}
+                if not info.ItemPlaced and shelves[index] then
 
-                        local furniture=plotVal.Value:FindFirstChild("Furniture")
+                    SellRemote:FireServer(
+                        guid,
+                        shelves[index],
+                        true
+                    )
 
-                        if furniture then
+                    index += 1
 
-                            for _,f in ipairs(furniture:GetChildren()) do
-
-                                local s=f:FindFirstChild("Shelves")
-
-                                if s then
-                                    for _,shelf in ipairs(s:GetChildren()) do
-                                        table.insert(shelves,shelf)
-                                    end
-                                end
-
-                            end
-
-                        end
-
-                        local guids={}
-
-                        for guid,info in pairs(data.Inventory) do
-                            if not info.ItemPlaced then
-                                table.insert(guids,guid)
-                            end
-                        end
-
-                        for i=1,math.min(#guids,#shelves) do
-
-                            SellRemote:FireServer(guids[i],shelves[i],true)
-
-                            print("Placed",guids[i])
-
-                            task.wait(0.25)
-
-                        end
-
-                    end
+                    task.wait(0.25)
 
                 end
 
@@ -359,4 +359,4 @@ task.spawn(function()
 
 end)
 
-Window:SelectTab(Tab)
+Window:SelectTab(Tabs.Main)
