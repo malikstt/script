@@ -217,19 +217,13 @@ task.spawn(function()
             if not placeEnabled then return end
 
             local data = GetAllRemote:InvokeServer()
-            if not data or not data.Inventory then return end
+            if not data then return end
 
-            local plotVal = LocalPlayer:FindFirstChild("NonSaveVars") and LocalPlayer.NonSaveVars:FindFirstChild("OwnsPlot")
-            if not plotVal or not plotVal.Value then return end
-
-            local plot = workspace:WaitForChild("Plots"):FindFirstChild(plotVal.Value.Name)
-            if not plot then return end
+            local plotName = LocalPlayer:WaitForChild("NonSaveVars"):WaitForChild("OwnsPlot").Value.Name
+            local plot = workspace:WaitForChild("Plots"):WaitForChild(plotName)
 
             local shelves = {}
-            local furnitureFolder = plot:FindFirstChild("Furniture")
-            if not furnitureFolder then return end
-
-            for _, furniture in ipairs(furnitureFolder:GetChildren()) do
+            for _, furniture in ipairs(plot:WaitForChild("Furniture"):GetChildren()) do
                 local s = furniture:FindFirstChild("Shelves")
                 if s then
                     for _, shelf in ipairs(s:GetChildren()) do
@@ -238,31 +232,19 @@ task.spawn(function()
                 end
             end
 
-            if #shelves == 0 then return end
-
-            local freeShelves = {}
-            for _, shelf in ipairs(shelves) do
-                if #shelf:GetChildren() == 0 then
-                    table.insert(freeShelves, shelf)
+            local guids = {}
+            for guid, info in pairs(data.Inventory) do
+                local id = tonumber(info.Id)
+                local itemData = ItemsModule[id]
+                local name = itemData and string.lower(itemData.Name or "") or ""
+                if id ~= 681 and id ~= 2294 and not string.find(name, "safe") then
+                    table.insert(guids, guid)
                 end
             end
 
-            if #freeShelves == 0 then return end
-
-            local shelfIndex = 1
-
-            for guid, info in pairs(data.Inventory) do
-                if shelfIndex > #freeShelves then break end
-                local id = tonumber(info.Id)
-                local itemData = id and ItemsModule[id]
-                local name = itemData and string.lower(itemData.Name or "") or ""
-                if not info.ItemPlaced and id ~= 681 and id ~= 2294 and not string.find(name,"safe") then
-                    pcall(function()
-                        SellRemote:FireServer(guid, freeShelves[shelfIndex], true)
-                    end)
-                    shelfIndex += 1
-                    task.wait(0.15)
-                end
+            local count = math.min(#shelves, #guids)
+            for i = 1, count do
+                SellRemote:FireServer(guids[i], shelves[i], true)
             end
 
         end)
