@@ -9,7 +9,7 @@ local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
 local ItemsModule = require(ReplicatedStorage.Modules.Items)
 
 local MakeOfferRemote = ReplicatedStorage.Events.Shop.MakePlayerOffer
-local GetInventoryRemote = ReplicatedStorage.Events.Data.GetAll
+local GetInventoryRemote = ReplicatedStorage.Events.Data.Get
 local AcceptRemote = ReplicatedStorage.Events.Shop.AcceptPlayerOffer
 local SellRemote = ReplicatedStorage.Events.Shop.SellItemInShop
 
@@ -17,8 +17,8 @@ local cam = workspace.CurrentCamera
 local viewport = cam.ViewportSize
 
 local Window = Fluent:CreateWindow({
-    Title = "Malik no",
-    SubTitle = "lmklmk",
+    Title = "Shop & Player Manager",
+    SubTitle = "Full Fixed System",
     TabWidth = 160,
     Size = UDim2.fromOffset(viewport.X * 0.55, viewport.Y * 0.35),
     Acrylic = true,
@@ -58,7 +58,7 @@ Tabs.Main:AddDropdown("RegisterPlayers", {
     Default = {},
     Callback = function(v)
         selectedShops = v
-        print("Shops selected")
+        print("Shops updated")
     end
 })
 
@@ -68,7 +68,7 @@ Tabs.Main:AddToggle("RegisterToggle", {
     Callback = function(v)
         shopSpamEnabled = v
         shopIndex = 1
-        print("Cycle:", v)
+        print("Shop cycling:", v)
     end
 })
 
@@ -78,25 +78,17 @@ local function teleportToShop(playerName)
     if not char then return end
 
     local plr = Players:FindFirstChild(playerName)
-    if not plr then
-        print("Teleport failed player missing:", playerName)
-        return
-    end
+    if not plr then return end
 
     local floor = plr.NonSaveVars.DefaultFloor.Value
-    if not floor then
-        print("Teleport failed floor missing:", playerName)
-        return
-    end
+    if not floor then return end
 
     local canvas = floor:FindFirstChild("Canvas")
-    if not canvas then
-        print("Teleport failed canvas missing:", playerName)
-        return
-    end
+    if not canvas then return end
 
     char:SetPrimaryPartCFrame(canvas.CFrame + Vector3.new(0,3,0))
-    print("Teleported to:", playerName)
+
+    print("Teleported to", playerName)
 
 end
 
@@ -145,7 +137,7 @@ Tabs.Main:AddDropdown("SendPlayers", {
     Default = {},
     Callback = function(v)
         sendPlayers = v
-        print("Send targets updated")
+        print("Send players updated")
     end
 })
 
@@ -155,7 +147,7 @@ Tabs.Main:AddDropdown("OfferPercent", {
     Default = "+50%",
     Callback = function(v)
         offerPercent = v == "+50%" and 50 or -50
-        print("Offer percent set:", offerPercent)
+        print("Offer percent set to", offerPercent)
     end
 })
 
@@ -164,33 +156,24 @@ Tabs.Main:AddToggle("SendToggle", {
     Default = false,
     Callback = function(v)
         sendEnabled = v
-        print("Send enabled:", v)
+        print("Send offers:", v)
     end
 })
 
-local function buildPlacedMap(plot)
+local function getPlacedMap(plot)
 
     local map = {}
 
     local furniture = plot:FindFirstChild("Furniture")
-    if not furniture then
-        print("Furniture missing")
-        return map
-    end
+    if not furniture then return map end
 
-    for _, v in ipairs(furniture:GetDescendants()) do
-
+    for _,v in pairs(furniture:GetDescendants()) do
         if v.Name == "Item" then
-
-            for _, obj in ipairs(v:GetChildren()) do
-
-                map[obj.Name] = map[obj.Name] or {}
-                table.insert(map[obj.Name], obj)
-
+            for _,item in pairs(v:GetChildren()) do
+                map[item.Name] = map[item.Name] or {}
+                table.insert(map[item.Name], item)
             end
-
         end
-
     end
 
     return map
@@ -208,90 +191,68 @@ local function SendOffersFunction()
         local target = Players:FindFirstChild(playerName)
 
         if not target then
-            print("Player missing:", playerName)
+            print("Player not found", playerName)
             continue
         end
 
-        local data
-
-        local success, err = pcall(function()
-            data = GetInventoryRemote:InvokeServer("Inventory", target)
+        local ok, inv = pcall(function()
+            return GetInventoryRemote:InvokeServer("Inventory", target)
         end)
 
-        if not success or not data or not data.Inventory then
-            print("Inventory failed:", playerName)
+        if not ok or type(inv) ~= "table" then
+            print("Inventory failed", playerName)
             continue
         end
 
-        local plotValue = target.NonSaveVars.OwnsPlot.Value
+        local plotVal = target.NonSaveVars and target.NonSaveVars.OwnsPlot
 
-        if not plotValue then
-            print("Plot missing:", playerName)
+        if not plotVal or not plotVal.Value then
+            print("Plot missing", playerName)
             continue
         end
 
-        local placedMap = buildPlacedMap(plotValue)
+        local placedMap = getPlacedMap(plotVal.Value)
 
-        local count = 0
+        for guid, itemData in pairs(inv) do
 
-        for guid, itemData in pairs(data.Inventory) do
+            local info = ItemsModule[itemData.Id]
 
-            if not itemData.ItemPlaced then
-                continue
+            if info then
+
+                local placed = placedMap[info.Name]
+
+                if placed and #placed > 0 then
+
+                    local instance = table.remove(placed,1)
+
+                    local price = RepLibrary:GetItemPrice(itemData)
+
+                    local offer = math.floor(price * (1 + offerPercent/100))
+
+                    local success = pcall(function()
+
+                        MakeOfferRemote:InvokeServer(
+                            target,
+                            guid,
+                            offer,
+                            instance
+                        )
+
+                    end)
+
+                    if success then
+                        print("Offer sent", info.Name, offer, playerName)
+                    else
+                        print("Offer failed", info.Name, playerName)
+                    end
+
+                    task.wait(0.5)
+
+                end
+
             end
-
-            local itemInfo = ItemsModule[itemData.Id]
-
-            if not itemInfo then
-                print("Item info missing:", itemData.Id)
-                continue
-            end
-
-            local placedList = placedMap[itemInfo.Name]
-
-            if not placedList or #placedList == 0 then
-                print("Instance missing:", itemInfo.Name)
-                continue
-            end
-
-            local instance = table.remove(placedList,1)
-
-            local price
-
-            local ok = pcall(function()
-                price = RepLibrary:GetItemPrice(itemData)
-            end)
-
-            if not ok or not price then
-                print("Price failed:", itemInfo.Name)
-                continue
-            end
-
-            local offerPrice = math.floor(price * (1 + offerPercent / 100))
-
-            local worked, err2 = pcall(function()
-
-                MakeOfferRemote:InvokeServer(
-                    target,
-                    guid,
-                    offerPrice,
-                    instance
-                )
-
-            end)
-
-            if worked then
-                print("SUCCESS:", playerName, itemInfo.Name, offerPrice)
-                count += 1
-            else
-                print("FAILED:", err2)
-            end
-
-            task.wait(0.25)
 
         end
-
-        print("Total offers sent to", playerName, count)
 
     end
 
@@ -336,7 +297,7 @@ task.spawn(function()
 
                     AcceptRemote:InvokeServer(from,guid,price)
 
-                    print("Accepted:", from, guid, price)
+                    print("Accepted offer", guid, price)
 
                 end
 
@@ -357,7 +318,7 @@ Tabs.Main:AddToggle("PlaceToggle", {
     Default = false,
     Callback = function(v)
         placeEnabled = v
-        print("Place enabled:", v)
+        print("Place items:", v)
     end
 })
 
@@ -367,41 +328,41 @@ task.spawn(function()
 
         if placeEnabled then
 
-            local myData = GetInventoryRemote:InvokeServer()
+            local ok, myData = pcall(function()
+                return GetInventoryRemote:InvokeServer("Inventory", LocalPlayer)
+            end)
 
-            local plot = LocalPlayer.NonSaveVars.OwnsPlot.Value
+            if ok and type(myData) == "table" then
 
-            if not plot then
-                print("Your plot missing")
-                task.wait(2)
-                continue
-            end
+                local plot = LocalPlayer.NonSaveVars.OwnsPlot.Value
 
-            local shelves = {}
+                local shelves = {}
 
-            for _, v in pairs(plot.Furniture:GetDescendants()) do
-                if v.Name == "Shelf" then
-                    table.insert(shelves,v)
+                for _, v in pairs(plot.Furniture:GetDescendants()) do
+                    if v.Name == "Shelf" then
+                        table.insert(shelves,v)
+                    end
                 end
-            end
 
-            local index = 1
+                local index = 1
 
-            for guid, info in pairs(myData.Inventory) do
+                for guid, info in pairs(myData) do
 
-                if not info.ItemPlaced and shelves[index] then
+                    if not info.ItemPlaced and shelves[index] then
 
-                    SellRemote:FireServer(
-                        guid,
-                        shelves[index],
-                        true
-                    )
+                        SellRemote:FireServer(
+                            guid,
+                            shelves[index],
+                            true
+                        )
 
-                    print("Placed:", guid)
+                        print("Placed item", guid)
 
-                    index += 1
+                        index += 1
 
-                    task.wait(0.25)
+                        task.wait(0.25)
+
+                    end
 
                 end
 
