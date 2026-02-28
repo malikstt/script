@@ -139,14 +139,24 @@ task.spawn(function()
                 local plot=plotVal.Value
                 if not plot then continue end
                 local placedMap=getPlacedMap(plot)
+
+                local sortedItems = {}
                 for guid,itemData in pairs(inv) do
-                    local info=ItemsModule[itemData.Id]
+                    local price = RepLibrary:GetItemPrice(itemData)
+                    table.insert(sortedItems,{GUID=guid,Data=itemData,Price=price})
+                end
+                table.sort(sortedItems,function(a,b) return a.Price > b.Price end)
+
+                for _, item in ipairs(sortedItems) do
+                    local guid = item.GUID
+                    local itemData = item.Data
+                    local info = ItemsModule[itemData.Id]
                     if not info then continue end
-                    local placed=placedMap[info.Name]
-                    if placed and #placed>0 then
-                        local instance=table.remove(placed,1)
-                        local price=RepLibrary:GetItemPrice(itemData)
-                        local offer=math.floor(price*(1+offerPercent/100))
+                    local placed = placedMap[info.Name]
+                    if placed and #placed > 0 then
+                        local instance = table.remove(placed,1)
+                        local price = item.Price
+                        local offer = math.floor(price*(1+offerPercent/100))
                         pcall(function()
                             MakeOfferRemote:InvokeServer(target,guid,offer,instance)
                         end)
@@ -217,34 +227,45 @@ task.spawn(function()
             if not placeEnabled then return end
 
             local data = GetAllRemote:InvokeServer()
-            if not data then return end
+            if not data or not data.Inventory then return end
 
             local plotName = LocalPlayer:WaitForChild("NonSaveVars"):WaitForChild("OwnsPlot").Value.Name
             local plot = workspace:WaitForChild("Plots"):WaitForChild(plotName)
 
             local shelves = {}
-            for _, furniture in ipairs(plot:WaitForChild("Furniture"):GetChildren()) do
-                local s = furniture:FindFirstChild("Shelves")
-                if s then
-                    for _, shelf in ipairs(s:GetChildren()) do
-                        table.insert(shelves, shelf)
+            local furnitureFolder = plot:FindFirstChild("Furniture")
+            if furnitureFolder then
+                for _, furniture in ipairs(furnitureFolder:GetChildren()) do
+                    local s = furniture:FindFirstChild("Shelves")
+                    if s then
+                        for _, shelf in ipairs(s:GetChildren()) do
+                            table.insert(shelves, shelf)
+                        end
                     end
                 end
             end
 
-            local guids = {}
+            local sortedInventory = {}
             for guid, info in pairs(data.Inventory) do
                 local id = tonumber(info.Id)
                 local itemData = ItemsModule[id]
                 local name = itemData and string.lower(itemData.Name or "") or ""
-                if id ~= 681 and id ~= 2294 and not string.find(name, "safe") then
-                    table.insert(guids, guid)
+                if id ~= 681 and id ~= 2294 and not string.find(name,"safe") then
+                    local price = RepLibrary:GetItemPrice(info)
+                    table.insert(sortedInventory,{GUID=guid,Data=info,Price=price})
                 end
             end
 
-            local count = math.min(#shelves, #guids)
-            for i = 1, count do
-                SellRemote:FireServer(guids[i], shelves[i], true)
+            table.sort(sortedInventory,function(a,b) return a.Price > b.Price end)
+
+            local shelfIndex = 1
+            for _, item in ipairs(sortedInventory) do
+                if shelfIndex > #shelves then break end
+                pcall(function()
+                    SellRemote:FireServer(item.GUID, shelves[shelfIndex], true)
+                end)
+                shelfIndex += 1
+                task.wait(0.15)
             end
 
         end)
