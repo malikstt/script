@@ -79,13 +79,14 @@ for gId, data in pairs(Garages) do
     end
 end
 
--- Get safe items function
+-- Get safe items function - FIXED: Removed SafeId check to include more safes
 local function getSafeItems()
     local safes = {}
     for itemId, item in pairs(ItemsModule) do
         if type(item) == "table" and item.Name then
             local itemName = tostring(item.Name)
-            if item.SafeId or string.find(itemName:lower(), "safe") then
+            -- Just check if name contains "safe" (case insensitive)
+            if string.find(itemName:lower(), "safe") then
                 local display = itemName .. " [ID: " .. tostring(itemId) .. "]"
                 table.insert(safes, display)
             end
@@ -98,7 +99,7 @@ end
 local function getItemsFromGarage(garageId)
     local list = {}
     for itemId, item in pairs(ItemsModule) do
-        if type(item) == "table" and item.Garages then
+        if type(item) == "table" and item.Name and item.Garages then
             for _, gId in ipairs(item.Garages) do
                 if tostring(gId) == tostring(garageId) then
                     local display = item.Name .. " [ID: " .. tostring(itemId) .. "]"
@@ -268,7 +269,10 @@ local function placeLoop()
     end)
 end
 
--- Create dropdowns in Auctions tab
+-- FIX 1: Declare ItemDropdown first
+local ItemDropdown
+
+-- Create dropdowns in Auctions tab (proper order)
 local GarageDropdown = Tabs.Auctions:AddDropdown("GarageSelect", {
     Title = "Filter by Garage",
     Values = garageNames,
@@ -283,6 +287,7 @@ local GarageDropdown = Tabs.Auctions:AddDropdown("GarageSelect", {
             selectedGarageId = gId
             newList = getItemsFromGarage(gId)
         end
+        -- ItemDropdown now exists because we declared it first
         ItemDropdown:SetValues(newList)
         Fluent:Notify({
             Title = "Garage Selected",
@@ -292,20 +297,23 @@ local GarageDropdown = Tabs.Auctions:AddDropdown("GarageSelect", {
     end
 })
 
-local ItemDropdown = Tabs.Auctions:AddDropdown("ItemSelect", {
+-- Now create ItemDropdown
+ItemDropdown = Tabs.Auctions:AddDropdown("ItemSelect", {
     Title = "Select Target Items",
     Values = getSafeItems(),
     Multi = true,
     Callback = function(selected)
-        -- Clear selected targets
+        -- FIX 2: Handle dictionary properly (not array)
         selectedTargets = {}
         
-        -- Parse selected items and store their IDs
-        for _, display in ipairs(selected) do
-            -- Extract ID from display string "[ID: X]"
-            local idMatch = string.match(display, "%[ID: (%d+)%]")
-            if idMatch then
-                table.insert(selectedTargets, tonumber(idMatch))
+        -- selected is a dictionary: {["display"] = true/false}
+        for display, state in pairs(selected) do
+            if state then -- Only if selected
+                -- Extract ID from display string "[ID: X]"
+                local idMatch = string.match(display, "%[ID: (%d+)%]")
+                if idMatch then
+                    table.insert(selectedTargets, tonumber(idMatch))
+                end
             end
         end
         
@@ -437,22 +445,20 @@ Tabs.Misc:AddButton({
     end
 })
 
--- Status indicator
-Tabs.Misc:AddParagraph({
+-- FIX 3: Store paragraph reference properly
+local TargetParagraph = Tabs.Misc:AddParagraph({
     Title = "Current Targets",
     Content = "No targets selected"
 })
 
--- Update target count display
+-- Update target count display (fixed loop)
 task.spawn(function()
     while true do
-        local targetCount = #selectedTargets
-        local targetText = targetCount > 0 and targetCount .. " items selected" or "No targets selected"
-        for _, tab in ipairs(Tabs.Misc:GetParagraphs()) do
-            if tab.Title == "Current Targets" then
-                tab:SetDesc(targetText)
-                break
-            end
+        local count = #selectedTargets
+        if count > 0 then
+            TargetParagraph:SetDesc(count .. " items selected")
+        else
+            TargetParagraph:SetDesc("No targets selected")
         end
         task.wait(2)
     end
