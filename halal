@@ -30,38 +30,57 @@ local Window = Fluent:CreateWindow({
 
 local Tabs = {
     Main = Window:AddTab({ Title = "Main", Icon = "home" }),
-    Auctions = Window:AddTab({ Title = "Auctions", Icon = "shopping-cart" })
+    Auctions = Window:AddTab({ Title = "Auctions", Icon = "shopping-cart" }),
+    Misc = Window:AddTab({ Title = "Misc", Icon = "settings" })
 }
 
 Window:SelectTab(Tabs.Main)
 
 -- AUTO TOGGLES
-local autoEnter=false
-local autoBid=false
-local autoSkip=false
-local autoPlace=false
-local selectedGarageId = "1" -- Default to garage ID 1
-local selectedTargets = {"681", "2294"} -- Default target IDs from your example
+local autoEnter = false
+local autoBid = false
+local autoSkip = false
+local autoPlace = false
 
 -- Running states
-local runningEnter=false
-local runningBid=false
-local runningSkip=false
-local runningPlace=false
+local runningEnter = false
+local runningBid = false
+local runningSkip = false
+local runningPlace = false
 
 -- WEBHOOK
 local webhookURL = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
-local webhookEnabled=true
-local webhookUserId=""
+local webhookEnabled = true
+local webhookUserId = ""
 
 -- SESSION
-local sessionStart=tick()
-local targetsFound=0
-local targetsObtained=0
-local currentGarage="None"
-local currentStatus="Idle"
+local sessionStart = tick()
+local targetsFound = 0
+local targetsObtained = 0
+local currentGarage = "None"
+local currentStatus = "Idle"
 
--- SAFE ITEMS FUNCTION (matches your logic)
+-- TARGET SELECTION (using dropdown system)
+local selectedGarageId = nil
+local selectedTargets = {}
+
+-- GARAGE LIST BUILDING
+local garageNames = {"None"}
+local displayGarageToId = {}
+
+if Garages then
+    pcall(function()
+        for gId, data in pairs(Garages) do
+            if type(data) == "table" and data.Name then
+                local display = data.Name .. " [ID: " .. tostring(gId) .. "]"
+                table.insert(garageNames, display)
+                displayGarageToId[display] = gId
+            end
+        end
+    end)
+end
+
+-- SAFE ITEMS FUNCTION
 local function getSafeItems()
     local safes = {}
     if not Items then return safes end
@@ -70,7 +89,6 @@ local function getSafeItems()
             local name = item.Name or ""
             local rarity = item.Rarity or ""
             
-            -- Only target Insane or Legendary AND must contain "safe"
             if rarity == "Insane" or rarity == "Legendary" then
                 if string.find(string.lower(name), "safe") then
                     table.insert(safes, name .. " [ID: " .. tostring(itemId) .. "]")
@@ -81,16 +99,40 @@ local function getSafeItems()
     return safes
 end
 
--- TARGET CHECK (matches your logic)
+-- ITEMS FROM GARAGE
+local function getItemsFromGarage(garageId)
+    local list = {}
+    if not Items then return list end
+    for itemId, item in pairs(Items) do
+        if type(item) == "table" and item.Name and item.Garages then
+            for _, gId in ipairs(item.Garages) do
+                if tostring(gId) == tostring(garageId) then
+                    local rarity = item.Rarity or ""
+                    if rarity == "Insane" or rarity == "Legendary" then
+                        if string.find(string.lower(item.Name), "safe") then
+                            table.insert(list, item.Name .. " [ID: " .. tostring(itemId) .. "]")
+                        end
+                    end
+                    break
+                end
+            end
+        end
+    end
+    return list
+end
+
+-- TARGET CHECK
 local function isTarget(itemId)
     if not Items then return false end
     local item = Items[tonumber(itemId)]
     if not item then return false end
     
-    -- Check if item ID is in selected targets list
-    for _, targetId in ipairs(selectedTargets) do
-        if tostring(itemId) == tostring(targetId) then
-            return true, item
+    if #selectedTargets > 0 then
+        for _, targetDisplay in ipairs(selectedTargets) do
+            local id = string.match(targetDisplay, "%[ID: (%d+)%]")
+            if id and tostring(itemId) == id then
+                return true, item
+            end
         end
     end
     
@@ -111,7 +153,6 @@ local FoundLabel = Tabs.Main:AddParagraph({ Title = "Targets Found", Content = "
 local ObtainedLabel = Tabs.Main:AddParagraph({ Title = "Targets Obtained", Content = "0" })
 local GarageLabel = Tabs.Main:AddParagraph({ Title = "Garage", Content = "None" })
 local StatusLabel = Tabs.Main:AddParagraph({ Title = "Status", Content = "Idle" })
-local TargetDisplay = Tabs.Main:AddParagraph({ Title = "Current Targets", Content = "681, 2294" })
 
 -- Update loop
 task.spawn(function()
@@ -122,14 +163,6 @@ task.spawn(function()
             ObtainedLabel:SetDesc(tostring(targetsObtained))
             GarageLabel:SetDesc(currentGarage)
             StatusLabel:SetDesc(currentStatus)
-            
-            local targetText = ""
-            for i, id in ipairs(selectedTargets) do
-                targetText = targetText .. id
-                if i < #selectedTargets then targetText = targetText .. ", " end
-            end
-            if targetText == "" then targetText = "None" end
-            TargetDisplay:SetDesc(targetText)
         end)
         task.wait(1)
     end
@@ -163,16 +196,15 @@ end
 
 -- AUTO LOOPS
 local function enterLoop()
-    if runningEnter or not EnterQueue then return end
+    if runningEnter or not EnterQueue or not selectedGarageId then return end
     runningEnter = true
     task.spawn(function()
         while autoEnter do
             currentStatus = "Entering Queue (Garage: " .. selectedGarageId .. ")"
             pcall(function()
-                -- EnterQueue requires garage ID as argument
                 EnterQueue:InvokeServer(selectedGarageId)
             end)
-            task.wait(5) -- Wait between enter attempts
+            task.wait(5)
         end
         runningEnter = false
         currentStatus = "Idle"
@@ -217,7 +249,6 @@ local function bidLoop()
                         if isT and itemData then
                             targetsFound = targetsFound + 1
                             
-                            -- Update current garage if available
                             if garageValue then
                                 currentGarage = tostring(garageValue.Value)
                             end
@@ -225,7 +256,6 @@ local function bidLoop()
                             sendWebhook(itemId, itemData)
                             currentStatus = "Bidding on " .. (itemData.Name or "Unknown")
                             
-                            -- Place bid with auction name and bid amount
                             pcall(function()
                                 PlaceBid:FireServer(auction.Name, bidValue.Value)
                             end)
@@ -258,80 +288,92 @@ end
 
 -- ==================== AUCTIONS TAB ====================
 
--- Garage ID Input (since you need to specify garage ID for EnterQueue)
+-- Initialize dropdowns
+local ItemDropdown = { SetValues = function() end, Value = {} }
+local GarageDropdown = { Value = "None", SetValues = function() end }
+
+-- Garage dropdown
 pcall(function()
-    if Tabs.Auctions and Tabs.Auctions.AddInput then
-        Tabs.Auctions:AddInput("GarageIdInput", {
-            Title = "Garage ID",
-            Default = "1",
-            Placeholder = "Enter garage ID (e.g., 1)",
-            Callback = function(value)
-                if value and value ~= "" then
-                    selectedGarageId = value
-                    Fluent:Notify({
-                        Title = "Garage ID Set",
-                        Content = "Using Garage ID: " .. value,
-                        Duration = 2
-                    })
-                end
+    if Tabs.Auctions and Tabs.Auctions.AddDropdown then
+        GarageDropdown = Tabs.Auctions:AddDropdown({
+            Title = "Select Garages",
+            Values = garageNames,
+            Default = "None",
+            Callback = function(selected)
+                pcall(function()
+                    if selected == "None" then
+                        selectedGarageId = nil
+                        if ItemDropdown and ItemDropdown.SetValues then
+                            ItemDropdown:SetValues(getSafeItems())
+                        end
+                    else
+                        selectedGarageId = displayGarageToId[selected]
+                        if ItemDropdown and ItemDropdown.SetValues then
+                            ItemDropdown:SetValues(getItemsFromGarage(selectedGarageId))
+                        end
+                    end
+                end)
             end
-        })
+        }) or GarageDropdown
     end
 end)
 
--- Target Items Input (multi-line for multiple IDs)
+-- Item dropdown (MULTI SELECT)
 pcall(function()
-    if Tabs.Auctions and Tabs.Auctions.AddInput then
-        Tabs.Auctions:AddInput("TargetIdsInput", {
-            Title = "Target Item IDs",
-            Default = "681,2294",
-            Placeholder = "Enter IDs separated by commas",
-            Callback = function(value)
-                if value and value ~= "" then
+    if Tabs.Auctions and Tabs.Auctions.AddDropdown then
+        ItemDropdown = Tabs.Auctions:AddDropdown({
+            Title = "Select Target Items",
+            Values = getSafeItems(),
+            Multi = true,
+            Callback = function(selected)
+                pcall(function()
                     selectedTargets = {}
-                    for id in string.gmatch(value, "([^,]+)") do
-                        local trimmed = id:match("^%s*(.-)%s*$")
-                        if trimmed and trimmed ~= "" then
-                            table.insert(selectedTargets, trimmed)
+                    if selected then
+                        for display, state in pairs(selected) do
+                            if state then
+                                table.insert(selectedTargets, display)
+                            end
                         end
                     end
+                    
                     Fluent:Notify({
                         Title = "Targets Updated",
                         Content = #selectedTargets .. " items selected",
                         Duration = 3
                     })
-                end
+                end)
             end
-        })
+        }) or ItemDropdown
     end
 end)
 
--- Available Items Display (read-only)
+-- Refresh button
 pcall(function()
-    if Tabs.Auctions and Tabs.Auctions.AddParagraph then
-        local safeItems = getSafeItems()
-        local displayText = "Available Safes:\n"
-        for i, item in ipairs(safeItems) do
-            if i > 5 then
-                displayText = displayText .. "... and " .. (#safeItems - 5) .. " more"
-                break
+    if Tabs.Auctions and Tabs.Auctions.AddButton then
+        Tabs.Auctions:AddButton({
+            Title = "Refresh Items",
+            Callback = function()
+                pcall(function()
+                    local selectedDisplay = GarageDropdown and GarageDropdown.Value or "None"
+                    
+                    if selectedDisplay == "None" then
+                        if ItemDropdown and ItemDropdown.SetValues then
+                            ItemDropdown:SetValues(getSafeItems())
+                        end
+                    else
+                        local gId = displayGarageToId[selectedDisplay]
+                        if ItemDropdown and ItemDropdown.SetValues then
+                            ItemDropdown:SetValues(getItemsFromGarage(gId))
+                        end
+                    end
+                    
+                    Fluent:Notify({
+                        Title = "Updated",
+                        Content = "Items refreshed",
+                        Duration = 3
+                    })
+                end)
             end
-            displayText = displayText .. "• " .. item .. "\n"
-        end
-        if #safeItems == 0 then displayText = "No safe items found" end
-        Tabs.Auctions:AddParagraph({
-            Title = "Available Safe Items",
-            Content = displayText
-        })
-    end
-end)
-
--- Separator
-pcall(function()
-    if Tabs.Auctions and Tabs.Auctions.AddParagraph then
-        Tabs.Auctions:AddParagraph({
-            Title = "",
-            Content = "──────────"
         })
     end
 end)
@@ -340,16 +382,20 @@ end)
 pcall(function()
     if Tabs.Auctions and Tabs.Auctions.AddToggle then
         Tabs.Auctions:AddToggle("AutoEnterToggle", {
-            Title = "Auto Enter Auction (Garage ID: {id})",
+            Title = "Auto Enter Auction",
             Default = false,
             Callback = function(value)
                 autoEnter = value
                 if value then 
-                    Fluent:Notify({
-                        Title = "Auto Enter Started",
-                        Content = "Using Garage ID: " .. selectedGarageId,
-                        Duration = 3
-                    })
+                    if not selectedGarageId then
+                        Fluent:Notify({
+                            Title = "Error",
+                            Content = "Select a garage first",
+                            Duration = 3
+                        })
+                        autoEnter = false
+                        return
+                    end
                     enterLoop() 
                 end
             end
@@ -366,11 +412,13 @@ pcall(function()
             Callback = function(value)
                 autoBid = value
                 if value then 
-                    Fluent:Notify({
-                        Title = "Auto Bid Started",
-                        Content = "Targeting " .. #selectedTargets .. " items",
-                        Duration = 3
-                    })
+                    if #selectedTargets == 0 then
+                        Fluent:Notify({
+                            Title = "Warning",
+                            Content = "No targets selected",
+                            Duration = 3
+                        })
+                    end
                     bidLoop() 
                 end
             end
@@ -406,12 +454,11 @@ pcall(function()
     end
 end)
 
--- ==================== MAIN TAB SETTINGS ====================
+-- ==================== MISC TAB (WEBHOOK SETTINGS) ====================
 
--- Webhook settings in Main tab
 pcall(function()
-    if Tabs.Main and Tabs.Main.AddInput then
-        Tabs.Main:AddInput("WebhookInput", {
+    if Tabs.Misc and Tabs.Misc.AddInput then
+        Tabs.Misc:AddInput("WebhookInput", {
             Title = "Webhook URL",
             Default = webhookURL,
             Callback = function(v) webhookURL = v end
@@ -420,8 +467,8 @@ pcall(function()
 end)
 
 pcall(function()
-    if Tabs.Main and Tabs.Main.AddInput then
-        Tabs.Main:AddInput("UserPingInput", {
+    if Tabs.Misc and Tabs.Misc.AddInput then
+        Tabs.Misc:AddInput("UserPingInput", {
             Title = "User ID to ping",
             Default = "",
             Callback = function(v) webhookUserId = v end
@@ -430,8 +477,8 @@ pcall(function()
 end)
 
 pcall(function()
-    if Tabs.Main and Tabs.Main.AddToggle then
-        Tabs.Main:AddToggle("WebhookToggle", {
+    if Tabs.Misc and Tabs.Misc.AddToggle then
+        Tabs.Misc:AddToggle("WebhookToggle", {
             Title = "Enable Webhook",
             Default = true,
             Callback = function(v) webhookEnabled = v end
@@ -440,8 +487,8 @@ pcall(function()
 end)
 
 pcall(function()
-    if Tabs.Main and Tabs.Main.AddButton then
-        Tabs.Main:AddButton({
+    if Tabs.Misc and Tabs.Misc.AddButton then
+        Tabs.Misc:AddButton({
             Title = "Test Webhook",
             Callback = function()
                 if webhookURL == "" then 
