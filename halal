@@ -1,330 +1,279 @@
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+
 local LocalPlayer = Players.LocalPlayer
-local taskWait = task.wait
 
 local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
-local ItemsModule = require(ReplicatedStorage.Modules.Items)
-local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
+local Events = ReplicatedStorage:WaitForChild("Events")
+local Auctions = Events:WaitForChild("Auctions")
 
-local Auctions = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
 local EnterQueue = Auctions:WaitForChild("EnterQueue")
 local Skip = Auctions:WaitForChild("Skip")
-local SkipCountdown = Auctions:WaitForChild("SkipCountdown")
-local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
 local PlaceBid = Auctions:WaitForChild("PlaceBid")
-local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 
-local TARGET_ITEM_ID = "2740"
-local SCAN_DURATION = 2
-local BID_CHECK_INTERVAL = 0.2
+local ItemsModule = require(ReplicatedStorage.Modules.Items)
 
-local totalTargetsFound = 0
-local totalTargetsObtained = 0
-local sessionStartTime = tick()
+local nonSaveVars = LocalPlayer:WaitForChild("NonSaveVars")
+local ownsPlot = nonSaveVars:WaitForChild("OwnsPlot")
 
-local inAuction = false
-local obtainedTarget = false
-local auctionEnded = false
-local halted = false
-local currentNextBid
-local currentBidder
-local currentGarage = nil
-local garagesSkipped = 0
-local MAX_GARAGES = 3
+local Window = Fluent:CreateWindow({
+    Title = "Auction Manager",
+    SubTitle = "Automation Interface",
+    TabWidth = 160,
+    Size = UDim2.fromOffset(580,460),
+    Acrylic = true,
+    Theme = "Dark"
+})
 
-local lastSkipTime = 0
-local SKIP_COOLDOWN = 1
+local Tabs = {
+    Dashboard = Window:AddTab({Title="Dashboard",Icon="activity"}),
+    Auctions = Window:AddTab({Title="Auctions",Icon="gavel"}),
+    Misc = Window:AddTab({Title="Misc",Icon="settings"})
+}
 
-local targetItemName = ItemsModule[TARGET_ITEM_ID] and ItemsModule[TARGET_ITEM_ID].Name or "Valentine"
-print("🔍 Targeting:", targetItemName, "ID:", TARGET_ITEM_ID)
-print("📊 Session started - tracking targets...")
+Window:SelectTab(Tabs.Dashboard)
 
-UpdateCurrentBid.OnClientEvent:Connect(function(data)
-if data then
-currentNextBid = data.nextBid
-currentBidder = data.player
-end
-end)
+local autoEnter=false
+local autoBid=false
+local autoSkip=false
+local autoPlace=false
 
-AuctionsFolder.ChildAdded:Connect(function(garage)
-inAuction = true
-auctionEnded = false
-currentGarage = garage
-garagesSkipped = 0
-print("🏁 Entered garage:", garage.Name)
-end)
+local webhookURL=""
+local webhookEnabled=false
+local webhookUserId=""
 
-AuctionsFolder.ChildRemoved:Connect(function(garage)
-if #AuctionsFolder:GetChildren() == 0 then
-inAuction = false
-currentGarage = nil
-print("🏁 Left auction")
-end
-end)
+local sessionStart=tick()
+local targetsFound=0
+local targetsObtained=0
+local currentGarage="None"
+local currentStatus="Idle"
 
-local function storageFull()
-local success, data = pcall(function() return DataEvent:InvokeServer() end)
-if not success or not data then return false end
-local inv = data.Inventory or {}
-local invLevel = data.InventoryLevel
-local carryLevel = data.CarryLevel
-local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
-local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
-local invCount = RepLibrary:GetLengthOfInventory(inv)
+local runningEnter=false
+local runningBid=false
+local runningSkip=false
+local runningPlace=false
 
-local currentTargetsInInv = 0
-for _, item in pairs(inv) do
-if item.itemId == TARGET_ITEM_ID then
-currentTargetsInInv = currentTargetsInInv + 1
-end
+local function formatTime(sec)
+    local h=math.floor(sec/3600)
+    local m=math.floor((sec%3600)/60)
+    local s=math.floor(sec%60)
+    return string.format("%02d:%02d:%02d",h,m,s)
 end
 
-print("📊 Session stats - Found:", totalTargetsFound, "| Obtained:", totalTargetsObtained, "| In inventory:", currentTargetsInInv)
-
-return invCount >= invSpace and carrySpace <= 0
-
-end
-
-local function clickButton(btn)
-if not btn then return end
-pcall(function()
-btn:Activate()
-if getconnections then
-for _, connection in pairs(getconnections(btn.MouseButton1Click)) do
-pcall(function() connection:Function() end)
-end
-end
-end)
-end
-
-local function scanCurrentGarageForTarget()
-if not currentGarage then return false end
-
-local itemsFolder = currentGarage:FindFirstChild("Items")
-if not itemsFolder then return false end
-
-taskWait(0.5)
-
-local startTime = tick()
-while tick() - startTime < SCAN_DURATION do
-for _, itemInstance in pairs(itemsFolder:GetChildren()) do
-if itemInstance.Name == TARGET_ITEM_ID then
-print("🎯 Target found in garage:", currentGarage.Name)
-return true
-end
-end
-taskWait(0.2)
-end
-
-return false
-
-end
-
-local function tryClick(obj)
-    if obj:IsA("TextButton") or obj:IsA("ImageButton") then
-        print("Auto clicking:", obj:GetFullName())
-
-        pcall(function()
-            obj:Activate()
-        end)
-
-        if getconnections then
-            for _, v in pairs(getconnections(obj.MouseButton1Click)) do
-                pcall(function()
-                    v:Fire()
-                end)
-            end
-        end
-    end
-end
-
-local function checkForButton()
-    local itemsWon = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
-    if itemsWon then
-        local button = itemsWon:FindFirstChild("Button", true)
-        if button then
-            tryClick(button)
-        end
-    end
-end
-
-spawn(function()
-while not halted do
-taskWait(60)
-local runtime = math.floor((tick() - sessionStartTime) / 60)
-print("⏱️ Runtime:", runtime, "minutes")
-print("📊 Targets found:", totalTargetsFound, "| Obtained:", totalTargetsObtained)
-if totalTargetsFound > 0 then
-local successRate = (totalTargetsObtained / totalTargetsFound) * 100
-print("📊 Success rate: " .. string.format("%.1f", successRate) .. "%")
-end
-end
-end)
-
-while not halted do
-if storageFull() then
-print("❌ Storage completely full. Script halted.")
-print("📊 FINAL STATS - Runtime:", math.floor((tick() - sessionStartTime) / 60), "minutes")
-print("📊 Targets found:", totalTargetsFound, "| Obtained:", totalTargetsObtained)
-if totalTargetsFound > 0 then
-local successRate = (totalTargetsObtained / totalTargetsFound) * 100
-print("📊 Success rate: " .. string.format("%.1f", successRate) .. "%")
-end
-halted = true
-break
-end
-
-print("➡ Entering auction...")
-pcall(function() EnterQueue:InvokeServer("1") end)
-
-local auctionStartTime = tick()
-auctionEnded = false
-
-repeat
-taskWait(0.1)
-until inAuction or tick() - auctionStartTime > 10
-
-if not inAuction then
-continue
-end
-
-obtainedTarget = false
-garagesSkipped = 0
-local targetFoundInThisAuction = false
-
-while inAuction and not auctionEnded do
-if scanCurrentGarageForTarget() then
-targetFoundInThisAuction = true
-print("💵 Bidding in target garage")
-
-local bidStartTime = tick()
-while not obtainedTarget and inAuction and currentGarage and not auctionEnded do
-if currentNextBid and currentBidder ~= LocalPlayer then
-pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
-end
-if tick() - bidStartTime > 60 then break end
-taskWait(BID_CHECK_INTERVAL)
-end
-else
-garagesSkipped = garagesSkipped + 1
-print("⏭ Skipping garage", garagesSkipped.."/"..MAX_GARAGES)
-
-if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
-pcall(function() SkipCountdown:InvokeServer() end)
-taskWait(0.1)
-pcall(function() Skip:InvokeServer() end)
-lastSkipTime = tick()
-end
-taskWait(1)
-
-end
-taskWait(0.5)
-
-end
-
-taskWait(3)
-
-if targetFoundInThisAuction then
-local player = Players.LocalPlayer
-local gui = player.PlayerGui:WaitForChild("ItemsWon")
-
-local Items = require(game.ReplicatedStorage.Modules.Items)
-
-local TARGET_ID = 2740
-local targetData = Items[TARGET_ID] or Items[tostring(TARGET_ID)]
-
-if targetData then
-local clickedCount = 0
-
-local function scan()
-    local frame = gui:WaitForChild("ItemsFrame"):WaitForChild("Frame")
-    
-    for _, item in ipairs(frame:GetChildren()) do
-        if item:IsA("ImageButton") and item:FindFirstChild("Price") and item:FindFirstChild("Rarity") then
-            
-            local price = tonumber(item.Price.Text:match("%d+"))
-            local rarity = item.Rarity.TextLabel.Text
-            
-            if price == targetData.Price
-            and rarity == targetData.Rarity
-            and targetData.SafeId then
-                
-                tryClick(item)
-                clickedCount = clickedCount + 1
-                totalTargetsObtained = totalTargetsObtained + 1
-                task.wait(0.15)
-            end
-        end
-    end
-end
-
-task.wait(0.5)
-scan()
-
-if clickedCount <= 0 then
-    local done = false
-    local conn
-    conn = gui.DescendantAdded:Connect(function()
-        task.wait(0.2)
-        scan()
-        if clickedCount > 0 then
-            done = true
-            conn:Disconnect()
-        end
-    end)
-    
-    repeat task.wait() until done
-end
-
-repeat task.wait() until clickedCount > 0
-
-print("Selected", clickedCount, targetData.Name)
-
-task.wait(0.5)
-
-local confirmButton = gui
-    :WaitForChild("ItemsFrame")
-    :WaitForChild("ConfirmButton")
-
-repeat task.wait() until confirmButton.Visible
-
-tryClick(confirmButton)
-
-print("Confirmed")
-
-task.wait(0.5)
-
-local sellButton = gui
-    :WaitForChild("SellItems")
-    :WaitForChild("Frame")
-    :WaitForChild("Normal")
-    :WaitForChild("Button")
-
-repeat task.wait() until sellButton.Visible
-
-tryClick(sellButton)
-
-print("Sold rest")
-end
-else
-checkForButton()
-LocalPlayer.PlayerGui.DescendantAdded:Connect(function(obj)
-    if obj.Name == "Button" then
-        task.wait()
-        tryClick(obj)
-    end
-end)
+local SessionLabel=Tabs.Dashboard:AddParagraph({Title="Session Time",Content="00:00:00"})
+local FoundLabel=Tabs.Dashboard:AddParagraph({Title="Targets Found",Content="0"})
+local ObtainedLabel=Tabs.Dashboard:AddParagraph({Title="Targets Obtained",Content="0"})
+local GarageLabel=Tabs.Dashboard:AddParagraph({Title="Garage",Content="None"})
+local StatusLabel=Tabs.Dashboard:AddParagraph({Title="Status",Content="Idle"})
 
 task.spawn(function()
-    local timeout = tick() + 5
-    while tick() < timeout do
-        task.wait(0.5)
-        checkForButton()
+    while true do
+        SessionLabel:SetDesc(formatTime(tick()-sessionStart))
+        FoundLabel:SetDesc(tostring(targetsFound))
+        ObtainedLabel:SetDesc(tostring(targetsObtained))
+        GarageLabel:SetDesc(currentGarage)
+        StatusLabel:SetDesc(currentStatus)
+        task.wait(1)
     end
 end)
+
+local function sendWebhook(itemId,itemData)
+    if not webhookEnabled then return end
+    if webhookURL=="" then return end
+    local data={
+        content=webhookUserId~="" and "<@"..webhookUserId.."> Target Found" or "Target Found",
+        embeds={{
+            title=itemData.Name,
+            fields={
+                {name="Item ID",value=tostring(itemId),inline=true},
+                {name="Rarity",value=itemData.Rarity,inline=true}
+            },
+            color=itemData.Rarity=="Insane" and 16711680 or 65280
+        }}
+    }
+    pcall(function()
+        HttpService:RequestAsync({
+            Url=webhookURL,
+            Method="POST",
+            Headers={["Content-Type"]="application/json"},
+            Body=HttpService:JSONEncode(data)
+        })
+    end)
 end
 
-task.wait(1)
-
+local function isTarget(itemId)
+    local item=ItemsModule[itemId]
+    if not item then return false end
+    if item.Rarity=="Insane" or item.Rarity=="Legendary" then
+        if string.find(string.lower(item.Name),"safe") then
+            return true,item
+        end
+    end
+    return false,item
 end
+
+local function enterLoop()
+    if runningEnter then return end
+    runningEnter=true
+    task.spawn(function()
+        while autoEnter do
+            currentStatus="Entering Queue"
+            pcall(function()
+                EnterQueue:FireServer()
+            end)
+            task.wait(2)
+        end
+        runningEnter=false
+        currentStatus="Idle"
+    end)
+end
+
+local function skipLoop()
+    if runningSkip then return end
+    runningSkip=true
+    task.spawn(function()
+        while autoSkip do
+            currentStatus="Skipping Garage"
+            pcall(function()
+                Skip:FireServer()
+            end)
+            task.wait(3)
+        end
+        runningSkip=false
+        currentStatus="Idle"
+    end)
+end
+
+local function bidLoop()
+    if runningBid then return end
+    runningBid=true
+    task.spawn(function()
+        while autoBid do
+            currentStatus="Scanning Auctions"
+            for _,auction in ipairs(AuctionsFolder:GetChildren()) do
+                if not autoBid then break end
+                local itemIdValue=auction:FindFirstChild("ItemId")
+                local bidValue=auction:FindFirstChild("NextBid")
+                if itemIdValue and bidValue then
+                    local itemId=tostring(itemIdValue.Value)
+                    local isT,itemData=isTarget(itemId)
+                    if isT then
+                        targetsFound+=1
+                        sendWebhook(itemId,itemData)
+                        currentStatus="Bidding "..itemData.Name
+                        pcall(function()
+                            PlaceBid:FireServer(auction.Name,bidValue.Value)
+                        end)
+                    end
+                end
+            end
+            task.wait(0.5)
+        end
+        runningBid=false
+        currentStatus="Idle"
+    end)
+end
+
+local function placeLoop()
+    if runningPlace then return end
+    runningPlace=true
+    task.spawn(function()
+        while autoPlace do
+            currentStatus="Placing Items"
+            local plotId=ownsPlot.Value
+            local plot=workspace.Plots:FindFirstChild(tostring(plotId))
+            if plot then
+                currentGarage=plot.Name
+            end
+            task.wait(5)
+        end
+        runningPlace=false
+        currentStatus="Idle"
+    end)
+end
+
+Tabs.Auctions:AddToggle("AutoEnterToggle",{
+    Title="Auto Enter Selected Auction",
+    Default=false,
+    Callback=function(v)
+        autoEnter=v
+        if v then enterLoop() end
+    end
+})
+
+Tabs.Auctions:AddToggle("AutoBidToggle",{
+    Title="Auto Bid for selected target(s)",
+    Default=false,
+    Callback=function(v)
+        autoBid=v
+        if v then bidLoop() end
+    end
+})
+
+Tabs.Auctions:AddToggle("AutoSkipToggle",{
+    Title="Auto Skip Garages",
+    Default=false,
+    Callback=function(v)
+        autoSkip=v
+        if v then skipLoop() end
+    end
+})
+
+Tabs.Auctions:AddToggle("AutoPlaceToggle",{
+    Title="Auto Place Items On Plot",
+    Default=false,
+    Callback=function(v)
+        autoPlace=v
+        if v then placeLoop() end
+    end
+})
+
+Tabs.Misc:AddInput("WebhookInput",{
+    Title="Webhook URL",
+    Default="",
+    Callback=function(v)
+        webhookURL=v
+    end
+})
+
+Tabs.Misc:AddInput("UserPingInput",{
+    Title="User ID to ping",
+    Default="",
+    Callback=function(v)
+        webhookUserId=v
+    end
+})
+
+Tabs.Misc:AddToggle("WebhookToggle",{
+    Title="Send found item webhook",
+    Default=false,
+    Callback=function(v)
+        webhookEnabled=v
+    end
+})
+
+Tabs.Misc:AddButton({
+    Title="Test webhook",
+    Callback=function()
+        if webhookURL=="" then return end
+        local data={
+            content=webhookUserId~="" and "<@"..webhookUserId.."> Test webhook" or "Test webhook",
+            embeds={{
+                title="Auction Manager",
+                description="Webhook working",
+                color=65280
+            }}
+        }
+        pcall(function()
+            HttpService:RequestAsync({
+                Url=webhookURL,
+                Method="POST",
+                Headers={["Content-Type"]="application/json"},
+                Body=HttpService:JSONEncode(data)
+            })
+        end)
+    end
+})
