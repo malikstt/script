@@ -28,14 +28,10 @@ local Window = Fluent:CreateWindow({
     Theme = "Dark"
 })
 
-local Tabs = {}
-local function safeAddTab(name,icon)
-    local success, tab = pcall(function() return Window:AddTab({Title=name,Icon=icon}) end)
-    if success then return tab end
-end
-
-Tabs.Main = safeAddTab("Main","") or {AddParagraph=function() return {SetDesc=function() end} end, AddInput=function() end, AddToggle=function() end, AddButton=function() end, AddDropdown=function() return {SetValues=function() end, Value="None"} end}
-Tabs.Auctions = safeAddTab("Auctions","shopping-cart") or {AddParagraph=function() return {SetDesc=function() end} end, AddInput=function() end, AddToggle=function() end, AddButton=function() end, AddDropdown=function() return {SetValues=function() end, Value="None"} end}
+local Tabs = {
+    Main = Window:AddTab({ Title = "Main", Icon = "home" }),
+    Auctions = Window:AddTab({ Title = "Auctions", Icon = "shopping-cart" })
+}
 
 Window:SelectTab(Tabs.Main)
 
@@ -44,15 +40,18 @@ local autoEnter=false
 local autoBid=false
 local autoSkip=false
 local autoPlace=false
+local selectedGarageId = "1" -- Default to garage ID 1
+local selectedTargets = {"681", "2294"} -- Default target IDs from your example
 
+-- Running states
 local runningEnter=false
 local runningBid=false
 local runningSkip=false
 local runningPlace=false
 
 -- WEBHOOK
-local webhookURL=""
-local webhookEnabled=false
+local webhookURL = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
+local webhookEnabled=true
 local webhookUserId=""
 
 -- SESSION
@@ -62,334 +61,324 @@ local targetsObtained=0
 local currentGarage="None"
 local currentStatus="Idle"
 
--- TARGET SELECTION
-local selectedGarageId = nil
-local selectedTargets = {}
-
--- SAFE ITEMS
+-- SAFE ITEMS FUNCTION (matches your logic)
 local function getSafeItems()
     local safes = {}
     if not Items then return safes end
-    for itemId,item in pairs(Items) do
-        if type(item)=="table" and item.Name then
-            if item.SafeId or string.find(string.lower(item.Name),"safe") then
-                table.insert(safes,item.Name.." [ID: "..tostring(itemId).."]")
+    for itemId, item in pairs(Items) do
+        if type(item) == "table" and item.Name then
+            local name = item.Name or ""
+            local rarity = item.Rarity or ""
+            
+            -- Only target Insane or Legendary AND must contain "safe"
+            if rarity == "Insane" or rarity == "Legendary" then
+                if string.find(string.lower(name), "safe") then
+                    table.insert(safes, name .. " [ID: " .. tostring(itemId) .. "]")
+                end
             end
         end
     end
     return safes
 end
 
--- ITEMS FROM GARAGE
-local function getItemsFromGarage(garageId)
-    local list={}
-    if not Items then return list end
-    for itemId,item in pairs(Items) do
-        if type(item)=="table" and item.Name and item.Garages then
-            for _,gId in ipairs(item.Garages) do
-                if tostring(gId)==tostring(garageId) then
-                    table.insert(list,item.Name.." [ID: "..tostring(itemId).."]")
-                    break
-                end
-            end
+-- TARGET CHECK (matches your logic)
+local function isTarget(itemId)
+    if not Items then return false end
+    local item = Items[tonumber(itemId)]
+    if not item then return false end
+    
+    -- Check if item ID is in selected targets list
+    for _, targetId in ipairs(selectedTargets) do
+        if tostring(itemId) == tostring(targetId) then
+            return true, item
         end
     end
-    return list
+    
+    return false, item
 end
 
 -- FORMAT TIME
 local function formatTime(sec)
-    local h=math.floor(sec/3600)
-    local m=math.floor((sec%3600)/60)
-    local s=math.floor(sec%60)
-    return string.format("%02d:%02d:%02d",h,m,s)
+    local h = math.floor(sec/3600)
+    local m = math.floor((sec%3600)/60)
+    local s = math.floor(sec%60)
+    return string.format("%02d:%02d:%02d", h, m, s)
 end
 
--- MAIN TAB
-local safePcall=function(func) pcall(func) end
-local SessionLabel,FoundLabel,ObtainedLabel,GarageLabel,StatusLabel
+-- MAIN TAB ELEMENTS
+local SessionLabel = Tabs.Main:AddParagraph({ Title = "Session Time", Content = "00:00:00" })
+local FoundLabel = Tabs.Main:AddParagraph({ Title = "Targets Found", Content = "0" })
+local ObtainedLabel = Tabs.Main:AddParagraph({ Title = "Targets Obtained", Content = "0" })
+local GarageLabel = Tabs.Main:AddParagraph({ Title = "Garage", Content = "None" })
+local StatusLabel = Tabs.Main:AddParagraph({ Title = "Status", Content = "Idle" })
+local TargetDisplay = Tabs.Main:AddParagraph({ Title = "Current Targets", Content = "681, 2294" })
 
--- Protected main tab creation
-local function setupMain()
-    local success
-    success, SessionLabel = pcall(function() return Tabs.Main:AddParagraph({Title="Session Time",Content="00:00:00"}) end)
-    if not success then SessionLabel = {SetDesc=function() end} end
-    
-    success, FoundLabel = pcall(function() return Tabs.Main:AddParagraph({Title="Targets Found",Content="0"}) end)
-    if not success then FoundLabel = {SetDesc=function() end} end
-    
-    success, ObtainedLabel = pcall(function() return Tabs.Main:AddParagraph({Title="Targets Obtained",Content="0"}) end)
-    if not success then ObtainedLabel = {SetDesc=function() end} end
-    
-    success, GarageLabel = pcall(function() return Tabs.Main:AddParagraph({Title="Garage",Content="None"}) end)
-    if not success then GarageLabel = {SetDesc=function() end} end
-    
-    success, StatusLabel = pcall(function() return Tabs.Main:AddParagraph({Title="Status",Content="Idle"}) end)
-    if not success then StatusLabel = {SetDesc=function() end} end
-end
-setupMain()
-
+-- Update loop
 task.spawn(function()
     while true do
-        safePcall(function()
-            if SessionLabel and SessionLabel.SetDesc then SessionLabel:SetDesc(formatTime(tick()-sessionStart)) end
-            if FoundLabel and FoundLabel.SetDesc then FoundLabel:SetDesc(tostring(targetsFound)) end
-            if ObtainedLabel and ObtainedLabel.SetDesc then ObtainedLabel:SetDesc(tostring(targetsObtained)) end
-            if GarageLabel and GarageLabel.SetDesc then GarageLabel:SetDesc(currentGarage) end
-            if StatusLabel and StatusLabel.SetDesc then StatusLabel:SetDesc(currentStatus) end
+        pcall(function()
+            SessionLabel:SetDesc(formatTime(tick()-sessionStart))
+            FoundLabel:SetDesc(tostring(targetsFound))
+            ObtainedLabel:SetDesc(tostring(targetsObtained))
+            GarageLabel:SetDesc(currentGarage)
+            StatusLabel:SetDesc(currentStatus)
+            
+            local targetText = ""
+            for i, id in ipairs(selectedTargets) do
+                targetText = targetText .. id
+                if i < #selectedTargets then targetText = targetText .. ", " end
+            end
+            if targetText == "" then targetText = "None" end
+            TargetDisplay:SetDesc(targetText)
         end)
         task.wait(1)
     end
 end)
 
--- WEBHOOK
-local function sendWebhook(itemId,itemData)
-    if not webhookEnabled or webhookURL=="" or not itemData then return end
-    local data={
-        content=webhookUserId~="" and "<@"..webhookUserId.."> Target Found" or "Target Found",
-        embeds={{title=itemData.Name or "Unknown",fields={{name="Item ID",value=tostring(itemId),inline=true},{name="Rarity",value=itemData.Rarity or "Unknown",inline=true}},color=itemData.Rarity=="Insane" and 16711680 or 65280}}
+-- WEBHOOK FUNCTION
+local function sendWebhook(itemId, itemData)
+    if not webhookEnabled or webhookURL == "" or not itemData then return end
+    local data = {
+        content = webhookUserId ~= "" and "<@" .. webhookUserId .. "> Target Found" or "Target Found",
+        embeds = {{
+            title = itemData.Name or "Unknown",
+            color = itemData.Rarity == "Insane" and 16711680 or 65280,
+            fields = {
+                { name = "Item ID", value = tostring(itemId), inline = true },
+                { name = "Rarity", value = itemData.Rarity or "Unknown", inline = true },
+                { name = "Garage", value = currentGarage, inline = true }
+            },
+            footer = { text = os.date("%Y-%m-%d %H:%M:%S") }
+        }}
     }
     pcall(function()
-        HttpService:RequestAsync({Url=webhookURL,Method="POST",Headers={["Content-Type"]="application/json"},Body=HttpService:JSONEncode(data)})
+        HttpService:RequestAsync({
+            Url = webhookURL,
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = HttpService:JSONEncode(data)
+        })
     end)
-end
-
--- TARGET CHECK
-local function isTarget(itemId)
-    if not Items then return false end
-    local item=Items[itemId]
-    if not item then return false end
-    if #selectedTargets>0 then
-        for _,t in ipairs(selectedTargets) do if tostring(itemId)==tostring(t) then return true,item end end
-        return false,item
-    end
-    if item.Rarity=="Insane" or item.Rarity=="Legendary" then
-        if item.Name and string.find(string.lower(item.Name),"safe") then return true,item end
-    end
-    return false,item
 end
 
 -- AUTO LOOPS
 local function enterLoop()
     if runningEnter or not EnterQueue then return end
-    runningEnter=true
+    runningEnter = true
     task.spawn(function()
         while autoEnter do
-            currentStatus="Entering Queue"
-            pcall(function() EnterQueue:FireServer() end)
-            task.wait(2)
+            currentStatus = "Entering Queue (Garage: " .. selectedGarageId .. ")"
+            pcall(function()
+                -- EnterQueue requires garage ID as argument
+                EnterQueue:InvokeServer(selectedGarageId)
+            end)
+            task.wait(5) -- Wait between enter attempts
         end
-        runningEnter=false
-        currentStatus="Idle"
+        runningEnter = false
+        currentStatus = "Idle"
     end)
 end
 
 local function skipLoop()
     if runningSkip or not Skip then return end
-    runningSkip=true
+    runningSkip = true
     task.spawn(function()
         while autoSkip do
-            currentStatus="Skipping Garage"
-            pcall(function() Skip:FireServer() end)
+            currentStatus = "Skipping Garage"
+            pcall(function()
+                Skip:FireServer()
+            end)
             task.wait(3)
         end
-        runningSkip=false
-        currentStatus="Idle"
+        runningSkip = false
+        currentStatus = "Idle"
     end)
 end
 
 local function bidLoop()
     if runningBid or not AuctionsFolder or not PlaceBid then return end
-    runningBid=true
+    runningBid = true
     task.spawn(function()
         while autoBid do
-            currentStatus="Scanning Auctions"
+            currentStatus = "Scanning Auctions"
             local success, children = pcall(function() return AuctionsFolder:GetChildren() end)
             if success then
-                for _,auction in ipairs(children) do
+                for _, auction in ipairs(children) do
                     if not autoBid then break end
-                    local idValue = pcall(function() return auction:FindFirstChild("ItemId") end) and auction:FindFirstChild("ItemId") or nil
+                    
+                    local itemIdValue = pcall(function() return auction:FindFirstChild("ItemId") end) and auction:FindFirstChild("ItemId") or nil
                     local bidValue = pcall(function() return auction:FindFirstChild("NextBid") end) and auction:FindFirstChild("NextBid") or nil
-                    if idValue and bidValue then
-                        local isT,itemData=isTarget(tostring(idValue.Value))
+                    local garageValue = pcall(function() return auction:FindFirstChild("GarageId") end) and auction:FindFirstChild("GarageId") or nil
+                    
+                    if itemIdValue and bidValue then
+                        local itemId = itemIdValue.Value
+                        local isT, itemData = isTarget(itemId)
+                        
                         if isT and itemData then
-                            targetsFound+=1
-                            sendWebhook(idValue.Value,itemData)
-                            currentStatus="Bidding "..(itemData.Name or "Unknown")
-                            pcall(function() PlaceBid:FireServer(auction.Name,bidValue.Value) end)
+                            targetsFound = targetsFound + 1
+                            
+                            -- Update current garage if available
+                            if garageValue then
+                                currentGarage = tostring(garageValue.Value)
+                            end
+                            
+                            sendWebhook(itemId, itemData)
+                            currentStatus = "Bidding on " .. (itemData.Name or "Unknown")
+                            
+                            -- Place bid with auction name and bid amount
+                            pcall(function()
+                                PlaceBid:FireServer(auction.Name, bidValue.Value)
+                            end)
                         end
                     end
                 end
             end
             task.wait(0.5)
         end
-        runningBid=false
-        currentStatus="Idle"
+        runningBid = false
+        currentStatus = "Idle"
     end)
 end
 
 local function placeLoop()
     if runningPlace or not ownsPlot or not Workspace.Plots then return end
-    runningPlace=true
+    runningPlace = true
     task.spawn(function()
         while autoPlace do
-            currentStatus="Placing Items"
-            local plotId=ownsPlot.Value
+            currentStatus = "Placing Items"
+            local plotId = ownsPlot.Value
             local plot = pcall(function() return Workspace.Plots:FindFirstChild(tostring(plotId)) end) and Workspace.Plots:FindFirstChild(tostring(plotId)) or nil
-            if plot then currentGarage=plot.Name end
+            if plot then currentGarage = plot.Name end
             task.wait(5)
         end
-        runningPlace=false
-        currentStatus="Idle"
+        runningPlace = false
+        currentStatus = "Idle"
     end)
 end
 
--- ==================== AUCTIONS TAB (COMPLETELY PROTECTED) ====================
-local garageNames = {"None"}
-local displayGarageToId = {}
+-- ==================== AUCTIONS TAB ====================
 
--- Build garage list (protected)
-if Garages then
-    pcall(function()
-        for gId, data in pairs(Garages) do
-            if type(data) == "table" and data.Name then
-                local display = data.Name .. " [ID: " .. tostring(gId) .. "]"
-                table.insert(garageNames, display)
-                displayGarageToId[display] = gId
-            end
-        end
-    end)
-end
-
--- Initialize dropdowns with full protection
-local ItemDropdown = {SetValues=function() end, Value={}}
-local GarageDropdown = {Value="None", SetValues=function() end}
-
--- Protected garage dropdown creation
+-- Garage ID Input (since you need to specify garage ID for EnterQueue)
 pcall(function()
-    if Tabs.Auctions and Tabs.Auctions.AddDropdown then
-        GarageDropdown = Tabs.Auctions:AddDropdown({
-            Title = "Select Garages",
-            Values = garageNames,
-            Default = "None",
-            Callback = function(selected)
-                pcall(function()
-                    local newList
-                    if selected == "None" then
-                        newList = getSafeItems()
-                        selectedGarageId = nil
-                    else
-                        selectedGarageId = displayGarageToId[selected]
-                        newList = getItemsFromGarage(selectedGarageId)
-                    end
-                    
-                    if ItemDropdown and ItemDropdown.SetValues then
-                        ItemDropdown:SetValues(newList)
-                        pcall(function()
-                            Fluent:Notify({
-                                Title = "Garage Updated",
-                                Content = "Items list refreshed",
-                                Duration = 2
-                            })
-                        end)
-                    end
-                end)
+    if Tabs.Auctions and Tabs.Auctions.AddInput then
+        Tabs.Auctions:AddInput("GarageIdInput", {
+            Title = "Garage ID",
+            Default = "1",
+            Placeholder = "Enter garage ID (e.g., 1)",
+            Callback = function(value)
+                if value and value ~= "" then
+                    selectedGarageId = value
+                    Fluent:Notify({
+                        Title = "Garage ID Set",
+                        Content = "Using Garage ID: " .. value,
+                        Duration = 2
+                    })
+                end
             end
-        }) or GarageDropdown
+        })
     end
 end)
 
--- Protected item dropdown creation (MULTI SELECT)
+-- Target Items Input (multi-line for multiple IDs)
 pcall(function()
-    if Tabs.Auctions and Tabs.Auctions.AddDropdown then
-        ItemDropdown = Tabs.Auctions:AddDropdown({
-            Title = "Select Items",
-            Values = getSafeItems(),
-            Multi = true,
-            Callback = function(selected)
-                pcall(function()
+    if Tabs.Auctions and Tabs.Auctions.AddInput then
+        Tabs.Auctions:AddInput("TargetIdsInput", {
+            Title = "Target Item IDs",
+            Default = "681,2294",
+            Placeholder = "Enter IDs separated by commas",
+            Callback = function(value)
+                if value and value ~= "" then
                     selectedTargets = {}
-                    if selected then
-                        for display, state in pairs(selected) do
-                            if state then
-                                local id = string.match(display, "%[ID: (%d+)%]")
-                                if id then
-                                    table.insert(selectedTargets, tonumber(id))
-                                end
-                            end
+                    for id in string.gmatch(value, "([^,]+)") do
+                        local trimmed = id:match("^%s*(.-)%s*$")
+                        if trimmed and trimmed ~= "" then
+                            table.insert(selectedTargets, trimmed)
                         end
                     end
-                    
                     Fluent:Notify({
                         Title = "Targets Updated",
                         Content = #selectedTargets .. " items selected",
                         Duration = 3
                     })
-                end)
-            end
-        }) or ItemDropdown
-    end
-end)
-
--- Protected refresh button
-pcall(function()
-    if Tabs.Auctions and Tabs.Auctions.AddButton then
-        Tabs.Auctions:AddButton({
-            Title = "Refresh Items",
-            Callback = function()
-                pcall(function()
-                    local selectedDisplay = GarageDropdown and GarageDropdown.Value or "None"
-                    local newList
-                    
-                    if selectedDisplay == "None" then
-                        newList = getSafeItems()
-                    else
-                        local gId = displayGarageToId[selectedDisplay]
-                        newList = getItemsFromGarage(gId)
-                    end
-                    
-                    if ItemDropdown and ItemDropdown.SetValues then
-                        ItemDropdown:SetValues(newList)
-                    end
-                    
-                    Fluent:Notify({
-                        Title = "Updated",
-                        Content = "Items refreshed",
-                        Duration = 3
-                    })
-                end)
+                end
             end
         })
     end
 end)
 
--- Protected toggles
+-- Available Items Display (read-only)
+pcall(function()
+    if Tabs.Auctions and Tabs.Auctions.AddParagraph then
+        local safeItems = getSafeItems()
+        local displayText = "Available Safes:\n"
+        for i, item in ipairs(safeItems) do
+            if i > 5 then
+                displayText = displayText .. "... and " .. (#safeItems - 5) .. " more"
+                break
+            end
+            displayText = displayText .. "• " .. item .. "\n"
+        end
+        if #safeItems == 0 then displayText = "No safe items found" end
+        Tabs.Auctions:AddParagraph({
+            Title = "Available Safe Items",
+            Content = displayText
+        })
+    end
+end)
+
+-- Separator
+pcall(function()
+    if Tabs.Auctions and Tabs.Auctions.AddParagraph then
+        Tabs.Auctions:AddParagraph({
+            Title = "",
+            Content = "──────────"
+        })
+    end
+end)
+
+-- Auto Enter Toggle
 pcall(function()
     if Tabs.Auctions and Tabs.Auctions.AddToggle then
         Tabs.Auctions:AddToggle("AutoEnterToggle", {
-            Title = "Auto Enter Selected Auction",
+            Title = "Auto Enter Auction (Garage ID: {id})",
             Default = false,
             Callback = function(value)
                 autoEnter = value
-                if value then enterLoop() end
+                if value then 
+                    Fluent:Notify({
+                        Title = "Auto Enter Started",
+                        Content = "Using Garage ID: " .. selectedGarageId,
+                        Duration = 3
+                    })
+                    enterLoop() 
+                end
             end
         })
     end
 end)
 
+-- Auto Bid Toggle
 pcall(function()
     if Tabs.Auctions and Tabs.Auctions.AddToggle then
         Tabs.Auctions:AddToggle("AutoBidToggle", {
-            Title = "Auto Bid for selected target(s)",
+            Title = "Auto Bid on Targets",
             Default = false,
             Callback = function(value)
                 autoBid = value
-                if value then bidLoop() end
+                if value then 
+                    Fluent:Notify({
+                        Title = "Auto Bid Started",
+                        Content = "Targeting " .. #selectedTargets .. " items",
+                        Duration = 3
+                    })
+                    bidLoop() 
+                end
             end
         })
     end
 end)
 
+-- Auto Skip Toggle
 pcall(function()
     if Tabs.Auctions and Tabs.Auctions.AddToggle then
         Tabs.Auctions:AddToggle("AutoSkipToggle", {
@@ -403,10 +392,11 @@ pcall(function()
     end
 end)
 
+-- Auto Place Toggle
 pcall(function()
     if Tabs.Auctions and Tabs.Auctions.AddToggle then
         Tabs.Auctions:AddToggle("AutoPlaceToggle", {
-            Title = "Auto Place Items On Plot",
+            Title = "Auto Place Items",
             Default = false,
             Callback = function(value)
                 autoPlace = value
@@ -415,59 +405,74 @@ pcall(function()
         })
     end
 end)
--- ==================== END AUCTIONS TAB ====================
 
--- MISC SETTINGS (ADDED TO MAIN TAB)
+-- ==================== MAIN TAB SETTINGS ====================
+
+-- Webhook settings in Main tab
 pcall(function()
     if Tabs.Main and Tabs.Main.AddInput then
-        Tabs.Main:AddInput("WebhookInput",{Title="Webhook URL",Default="",Callback=function(v) webhookURL=v end})
+        Tabs.Main:AddInput("WebhookInput", {
+            Title = "Webhook URL",
+            Default = webhookURL,
+            Callback = function(v) webhookURL = v end
+        })
     end
 end)
 
 pcall(function()
     if Tabs.Main and Tabs.Main.AddInput then
-        Tabs.Main:AddInput("UserPingInput",{Title="User ID to ping",Default="",Callback=function(v) webhookUserId=v end})
+        Tabs.Main:AddInput("UserPingInput", {
+            Title = "User ID to ping",
+            Default = "",
+            Callback = function(v) webhookUserId = v end
+        })
     end
 end)
 
 pcall(function()
     if Tabs.Main and Tabs.Main.AddToggle then
-        Tabs.Main:AddToggle("WebhookToggle",{Title="Send found item webhook",Default=false,Callback=function(v) webhookEnabled=v end})
+        Tabs.Main:AddToggle("WebhookToggle", {
+            Title = "Enable Webhook",
+            Default = true,
+            Callback = function(v) webhookEnabled = v end
+        })
     end
 end)
 
 pcall(function()
     if Tabs.Main and Tabs.Main.AddButton then
-        Tabs.Main:AddButton({Title="Test webhook",Callback=function()
-            if webhookURL=="" then return end
-            local data={content=webhookUserId~="" and "<@"..webhookUserId.."> Test webhook" or "Test webhook",embeds={{title="Auction Manager",description="Webhook working",color=65280}}}
-            pcall(function() HttpService:RequestAsync({Url=webhookURL,Method="POST",Headers={["Content-Type"]="application/json"},Body=HttpService:JSONEncode(data)}) end)
-        end})
-    end
-end)
-
--- TARGET PARAGRAPH (ADDED TO MAIN TAB)
-local TargetParagraph = {SetDesc=function() end}
-pcall(function()
-    if Tabs.Main and Tabs.Main.AddParagraph then
-        TargetParagraph = Tabs.Main:AddParagraph({Title="Current Targets",Content="No targets selected"}) or TargetParagraph
-    end
-end)
-
-task.spawn(function()
-    while true do
-        pcall(function()
-            local text = #selectedTargets>0 and #selectedTargets.." items selected" or "No targets selected"
-            if TargetParagraph and TargetParagraph.SetDesc then
-                TargetParagraph:SetDesc(text)
+        Tabs.Main:AddButton({
+            Title = "Test Webhook",
+            Callback = function()
+                if webhookURL == "" then 
+                    Fluent:Notify({ Title = "Error", Content = "No webhook URL set", Duration = 3 })
+                    return 
+                end
+                local data = {
+                    content = webhookUserId ~= "" and "<@" .. webhookUserId .. "> Test" or "Test",
+                    embeds = {{
+                        title = "Auction Manager",
+                        description = "Webhook is working!",
+                        color = 65280
+                    }}
+                }
+                local success = pcall(function()
+                    HttpService:RequestAsync({
+                        Url = webhookURL,
+                        Method = "POST",
+                        Headers = { ["Content-Type"] = "application/json" },
+                        Body = HttpService:JSONEncode(data)
+                    })
+                end)
+                Fluent:Notify({
+                    Title = success and "Success" or "Failed",
+                    Content = success and "Webhook sent" or "Failed to send",
+                    Duration = 3
+                })
             end
-        end)
-        task.wait(2)
+        })
     end
 end)
 
 -- FINALLY INIT FLUENT
 Fluent:Init()
-if Tabs.Auctions then Window:SelectTab(Tabs.Auctions) end
-task.wait()
-if Tabs.Main then Window:SelectTab(Tabs.Main) end
