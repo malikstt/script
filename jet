@@ -28,7 +28,7 @@ local Data = Events:WaitForChild("Data")
 
 local SCAN_DURATION = 2
 local BID_CHECK_INTERVAL = 0.2
-local WEBHOOK_URL = "YOUR_WEBHOOK_HERE"
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
 
 -- ✅ TARGET IDS ONLY
 local targetItemIds = {
@@ -65,14 +65,51 @@ local GRID_CONFIG = {
     rowsPerFloor = math.floor(canvas.Size.Z / 6) - 1,
 }
 
--- ✅ ID ONLY CHECK
+task.spawn(function()
+    while true do
+        task.wait(60)
+        for _, connection in pairs(getconnections(UserInputService.InputEnded)) do
+            if connection.Function then
+                pcall(function()
+                    connection.Function({})
+                end)
+            end
+        end
+    end
+end)
+
+-- ✅ CHECK ONLY TARGET IDS
 local function isTargetItem(itemId)
     itemId = tostring(itemId)
     if targetItemIds[itemId] then
-        local itemData = ItemsModule[itemId]
-        return true, itemData
+        return true, ItemsModule[itemId]
     end
     return false, ItemsModule[itemId]
+end
+
+local function sendWebhook(itemId, itemData, playerName)
+    local webhookData = {
+        content = "",
+        embeds = {{
+            title = "Target Item Found",
+            color = 65280,
+            fields = {
+                {name="Item ID", value=tostring(itemId), inline=true},
+                {name="Name", value=itemData.Name, inline=true},
+                {name="Rarity", value=itemData.Rarity, inline=true},
+                {name="Found By", value=playerName, inline=false}
+            },
+            footer = {text=os.date("%Y-%m-%d %H:%M:%S")}
+        }}
+    }
+    pcall(function()
+        HttpService:RequestAsync({
+            Url = WEBHOOK_URL,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = HttpService:JSONEncode(webhookData)
+        })
+    end)
 end
 
 local function tryClick(obj)
@@ -92,11 +129,22 @@ local function generatePosition(index)
     return GRID_CONFIG.startPos + Vector3.new(col * GRID_CONFIG.spacing, 0, row * GRID_CONFIG.spacing)
 end
 
+local function getFurnitureCount(playerData)
+    local count = 0
+    if playerData and playerData.Furniture then
+        for _ in pairs(playerData.Furniture) do
+            count = count + 1
+        end
+    end
+    return count
+end
+
 local function findTargetItemsInInventory(playerData)
     local items = {}
     if playerData and playerData.Inventory then
         for guid, itemData in pairs(playerData.Inventory) do
-            if targetItemIds[tostring(itemData.Id)] then
+            local isTarget, _ = isTargetItem(tostring(itemData.Id))
+            if isTarget then
                 table.insert(items,{GUID=guid,Id=itemData.Id,Data=itemData})
             end
         end
@@ -104,81 +152,73 @@ local function findTargetItemsInInventory(playerData)
     return items
 end
 
+local function verifyItemRemoved(guid)
+    task.wait(0.5)
+    local playerData = DataEvent:InvokeServer()
+    if playerData and playerData.Inventory then
+        return playerData.Inventory[guid] == nil
+    end
+    return false
+end
+
 local function PlaceTargetInventoryItems()
     local playerData = DataEvent:InvokeServer()
     if not playerData then return false end
     local itemsToPlace = findTargetItemsInInventory(playerData)
     if #itemsToPlace == 0 then return true end
-
+    local currentFurniture = getFurnitureCount(playerData)
+    local maxShopSpace = playerData.ShopSpace or 100
+    local availableSpace = maxShopSpace - currentFurniture
+    local maxPositions = GRID_CONFIG.itemsPerRow * GRID_CONFIG.rowsPerFloor
+    local canPlaceCount = math.min(availableSpace, maxPositions, #itemsToPlace)
+    if canPlaceCount == 0 then return false end
     local placedCount = 0
-    for i,item in ipairs(itemsToPlace) do
-        local pos = generatePosition(placedCount+1)
-        if not pos then break end
-        pcall(function()
-            Shop.InsertFurniture:InvokeServer({
-                GUID = item.GUID,
-                Type = "Decor",
-                Floor = 1,
-                Id = item.Id,
-                CFrame = CFrame.new(pos)
-            })
-        end)
-        placedCount += 1
-        task.wait(0.2)
+    for i, item in ipairs(itemsToPlace) do
+        if placedCount >= canPlaceCount then break end
+        local positionIndex = placedCount + 1
+        local placed = false
+        local retryCount = 0
+        local maxRetries = maxPositions - positionIndex + 1
+        while not placed and retryCount < maxRetries do
+            local itemPos = generatePosition(positionIndex + retryCount)
+            if not itemPos then break end
+            local args = {
+                {
+                    GUID = item.GUID,
+                    Type = "Decor",
+                    Floor = 1,
+                    Id = item.Id,
+                    CFrame = CFrame.new(itemPos)
+                }
+            }
+            local success = pcall(function()
+                return Shop.InsertFurniture:InvokeServer(unpack(args))
+            end)
+            if success and verifyItemRemoved(item.GUID) then
+                placed = true
+                placedCount = placedCount + 1
+            else
+                retryCount = retryCount + 1
+            end
+            task.wait(0.2)
+        end
+        task.wait(0.1)
     end
     return true
 end
 
-local function scanCurrentGarageForTarget()
-    if not currentGarage then return false end
-    local itemsFolder = currentGarage:FindFirstChild("Items")
-    if not itemsFolder then return false end
-
-    local startTime = tick()
-    while tick() - startTime < SCAN_DURATION do
-        for _, itemInstance in pairs(itemsFolder:GetChildren()) do
-            if targetItemIds[itemInstance.Name] then
-                currentTargetData = ItemsModule[itemInstance.Name]
-                targetGarage = currentGarage
-                totalTargetsFound += 1
-                return true
-            end
-        end
-        taskWait(0.2)
+UpdateCurrentBid.OnClientEvent:Connect(function(data)
+    if data then
+        currentNextBid = data.nextBid
+        currentBidder = data.player
     end
-    return false
-end
-
-local function handleItemsWon()
-    local success, result = pcall(function()
-        return DataEvent:InvokeServer()
-    end)
-    if not success or not result or not result.ItemsWon then return false end
-
-    local gui = LocalPlayer.PlayerGui:WaitForChild("ItemsWon")
-    local frame = gui:WaitForChild("ItemsFrame"):WaitForChild("Frame")
-
-    for key,itemData in pairs(result.ItemsWon) do
-        if targetItemIds[tostring(itemData.itemId)] then
-            for _,btn in ipairs(frame:GetChildren()) do
-                if btn:IsA("ImageButton") then
-                    tryClick(btn)
-                    task.wait(0.5)
-                end
-            end
-        end
-    end
-
-    if gui.ItemsFrame:FindFirstChild("ConfirmButton") then
-        tryClick(gui.ItemsFrame.ConfirmButton)
-    end
-
-    return true
-end
+end)
 
 AuctionsFolder.ChildAdded:Connect(function(garage)
     inAuction = true
+    auctionEnded = false
     currentGarage = garage
+    garagesSkipped = 0
     targetGarage = nil
 end)
 
@@ -186,35 +226,56 @@ AuctionsFolder.ChildRemoved:Connect(function()
     if #AuctionsFolder:GetChildren() == 0 then
         inAuction = false
         currentGarage = nil
+        currentTargetData = nil
         targetGarage = nil
     end
 end)
 
-while not halted do
-    pcall(function() EnterQueue:InvokeServer("85") end)
+local function storageFull()
+    local success, data = pcall(function() return DataEvent:InvokeServer() end)
+    if not success or not data then return false end
+    local inv = data.Inventory or {}
+    local invLevel = data.InventoryLevel
+    local carryLevel = data.CarryLevel
+    local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
+    local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
+    local invCount = RepLibrary:GetLengthOfInventory(inv)
+    return invCount >= invSpace and carrySpace <= 0
+end
 
-    repeat taskWait(0.1) until inAuction
-
-    while inAuction do
-        if scanCurrentGarageForTarget() then
-            repeat
-                if currentNextBid and currentBidder ~= LocalPlayer then
-                    pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
-                end
-                taskWait(BID_CHECK_INTERVAL)
-            until not inAuction
-        else
-            if tick() - lastSkipTime > SKIP_COOLDOWN then
-                pcall(function() SkipCountdown:InvokeServer() end)
-                taskWait(0.1)
-                pcall(function() Skip:InvokeServer() end)
-                lastSkipTime = tick()
+local function scanCurrentGarageForTarget()
+    if not currentGarage then return false end
+    local itemsFolder = currentGarage:FindFirstChild("Items")
+    if not itemsFolder then return false end
+    taskWait(0.5)
+    local startTime = tick()
+    while tick() - startTime < SCAN_DURATION do
+        for _, itemInstance in pairs(itemsFolder:GetChildren()) do
+            local itemId = itemInstance.Name
+            local isTarget, itemData = isTargetItem(itemId)
+            if isTarget then
+                currentTargetData = itemData
+                targetGarage = currentGarage
+                sendWebhook(itemId,itemData,LocalPlayer.Name)
+                totalTargetsFound = totalTargetsFound + 1
+                return true, itemId, itemData
             end
         end
-        taskWait(0.5)
+        taskWait(0.2)
     end
-
-    task.wait(2)
-    handleItemsWon()
-    task.wait(1)
+    return false
 end
+
+local function checkForButton()
+    local itemsWon = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
+    if itemsWon then
+        local button = itemsWon:FindFirstChild("Button", true)
+        if button then tryClick(button) end
+    end
+end
+
+local function handleItemsWon()
+    local success, result = pcall(function()
+        return DataEvent:InvokeServer()
+    end)
+    if not success or not result or not result.ItemsWon then return false end
