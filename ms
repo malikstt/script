@@ -2,6 +2,7 @@ local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService")
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -48,35 +49,162 @@ local function getOtherPlayers()
     return t
 end
 
-local selectedTeleportPlayer=nil
+local function getPlayerPlotNumber(player)
+    local success, result = pcall(function()
+        local plot = player.NonSaveVars.OwnsPlot.Value
+        if plot then
+            return tonumber(plot.Name)
+        end
+    end)
+    return success and result or nil
+end
 
-Tabs.Main:AddDropdown("TeleportPlayer",{
-    Title="Select Player Shop",
-    Values=getAllPlayers(),
-    Callback=function(v)
-        selectedTeleportPlayer=v
+-- Updated teleport function using your new method
+local function enterPlotNormally(plotNumber)
+    if not plotNumber then return end
+    
+    local character = LocalPlayer.Character
+    if not character then return end
+    
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    
+    local plot = workspace:WaitForChild("Plots"):FindFirstChild(tostring(plotNumber))
+    if not plot then return end
+    
+    local exterior = plot:FindFirstChild("Exterior")
+    if not exterior then return end
+    
+    for _, door in ipairs(CollectionService:GetTagged("Door")) do
+        if door:IsDescendantOf(exterior) and door:FindFirstChild("TouchPart") then
+            local touchPart = door.TouchPart
+            root.CFrame = touchPart.CFrame + Vector3.new(0, 0, -2)
+            firetouchinterest(root, touchPart, 0)
+            task.wait()
+            firetouchinterest(root, touchPart, 1)
+            break
+        end
+    end
+end
+
+local teleportPlayers = {} -- Table to store selected players for teleporting
+local teleportEnabled = false
+local teleportDelay = 10 -- Delay between teleports in seconds
+
+-- Dropdown for selecting multiple players to teleport to
+Tabs.Main:AddDropdown("TeleportPlayers",{
+    Title = "Select Players to Visit",
+    Values = getAllPlayers(),
+    Multi = true,
+    Default = {},
+    Callback = function(v)
+        teleportPlayers = v
     end
 })
 
-Tabs.Main:AddButton({
-    Title="Teleport To Shop",
-    Callback=function()
+-- Toggle to enable/disable automatic teleport cycling
+Tabs.Main:AddToggle("TeleportToggle",{
+    Title = "Auto Teleport Cycle",
+    Default = false,
+    Callback = function(v)
+        teleportEnabled = v
+    end
+})
+
+-- Label to show current status
+local statusLabel = Tabs.Main:AddLabel("Status: Idle")
+
+-- Teleport cycling loop
+task.spawn(function()
+    while true do
         pcall(function()
-            if not selectedTeleportPlayer then return end
-            local char=LocalPlayer.Character
-            if not char then return end
-            local target=Players:FindFirstChild(selectedTeleportPlayer)
-            if not target then return end
-            local plot=target.NonSaveVars.OwnsPlot.Value
-            if not plot then return end
-            local door=plot:FindFirstChild("Door",true)
-            if not door then return end
-            local part=door:FindFirstChild("StartPart")
-            if not part then return end
-            char:SetPrimaryPartCFrame(part.CFrame+Vector3.new(0,3,0))
+            if not teleportEnabled then 
+                statusLabel:SetText("Status: Idle")
+                task.wait(1)
+                return 
+            end
+            
+            local playersToVisit = {}
+            for playerName, state in pairs(teleportPlayers) do
+                if state then
+                    local player = Players:FindFirstChild(playerName)
+                    if player and player ~= LocalPlayer then
+                        local plotNumber = getPlayerPlotNumber(player)
+                        if plotNumber then
+                            table.insert(playersToVisit, {name = playerName, plot = plotNumber})
+                        end
+                    end
+                end
+            end
+            
+            if #playersToVisit == 0 then
+                statusLabel:SetText("Status: No players selected")
+                task.wait(teleportDelay)
+                return
+            end
+            
+            for i, playerInfo in ipairs(playersToVisit) do
+                if not teleportEnabled then break end
+                
+                statusLabel:SetText(string.format("Status: Teleporting to %s (%d/%d)", 
+                    playerInfo.name, i, #playersToVisit))
+                
+                enterPlotNormally(playerInfo.plot)
+                
+                -- Wait between teleports (except after the last one)
+                if i < #playersToVisit then
+                    for waitCount = teleportDelay, 1, -1 do
+                        if not teleportEnabled then break end
+                        statusLabel:SetText(string.format("Status: Next teleport in %ds...", waitCount))
+                        task.wait(1)
+                    end
+                end
+            end
+            
+            if teleportEnabled then
+                statusLabel:SetText("Status: Cycle complete, restarting...")
+                -- Brief pause before restarting the cycle
+                task.wait(3)
+            end
         end)
+        task.wait(1)
+    end
+end)
+
+-- Optional: Add a button for instant teleport to selected players (first one only)
+Tabs.Main:AddButton({
+    Title = "Teleport Now (First Selected)",
+    Callback = function()
+        for playerName, state in pairs(teleportPlayers) do
+            if state then
+                local player = Players:FindFirstChild(playerName)
+                if player and player ~= LocalPlayer then
+                    local plotNumber = getPlayerPlotNumber(player)
+                    if plotNumber then
+                        enterPlotNormally(plotNumber)
+                        statusLabel:SetText(string.format("Status: Teleported to %s", playerName))
+                    end
+                end
+                break
+            end
+        end
     end
 })
+
+-- Optional: Add slider for delay adjustment
+Tabs.Main:AddSlider("DelaySlider", {
+    Title = "Teleport Delay (seconds)",
+    Default = 10,
+    Min = 3,
+    Max = 30,
+    Rounding = 1,
+    Callback = function(v)
+        teleportDelay = v
+    end
+})
+
+-- The rest of your existing code remains the same below this line
+-- (Send offers, accept offers, place items sections remain unchanged)
 
 local sendPlayers={}
 local sendEnabled=false
