@@ -131,7 +131,7 @@ task.spawn(function()
 
                 enterNormally(plot)
 
-                task.wait(math.random(8,12))
+                task.wait(math.random(30,32))
 
             end
 
