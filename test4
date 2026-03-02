@@ -1,163 +1,234 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
+
 local LocalPlayer = Players.LocalPlayer
 
-local SHELVES = {
-    {Id = "4", SizeX = 14, SizeZ = 11},
-    {Id = "5", SizeX = 18, SizeZ = 21}
-}
-local EXCLUDED_ID = "681"
-local FLOOR = 1
-
+-- Remote events
 local InsertFurniture = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Shop"):WaitForChild("InsertFurniture")
 local SellRemote = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Shop"):WaitForChild("SellItemInShop")
 local GetAll = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
-local ItemsModule = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Items"))
+local AcceptRemote = ReplicatedStorage.Events.Shop.AcceptOfferServer
+local DeclineRemote = ReplicatedStorage.Events.Shop.DeclineOfferServer
 
-print("[TASK 1] : Waiting for plot ownership")
+-- Modules
+local ItemsModule = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Items"))
+local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
+
+-- Configuration
+local SHELVES = {
+    {Id = "4", SizeX = 14, SizeZ = 11, Max = math.huge},
+    {Id = "5", SizeX = 18, SizeZ = 21, Max = 3}
+}
+local FLOOR = 1
+
+-- Wait for plot ownership
 local nsv = LocalPlayer:WaitForChild("NonSaveVars")
 local own = nsv:WaitForChild("OwnsPlot")
 repeat task.wait() until own.Value and own.Value ~= 0
-print("[TASK 1] : Plot acquired " .. tostring(own.Value))
 
 local plot = Workspace:WaitForChild("Plots"):WaitForChild(tostring(own.Value))
 local canvas = plot:WaitForChild("Interior"):WaitForChild("Shop1"):WaitForChild("Canvas")
 
-print("[TASK 2] : Calculating grid positions")
-local function generateGridPositionsForShelf(shelfData)
+-- ==================== SHELF PLACEMENT FUNCTIONS ====================
+
+local function generateGridPositions(shelf)
     local positions = {}
-    local canvasSizeX = canvas.Size.X
-    local canvasSizeZ = canvas.Size.Z
-    local fitX = math.floor(canvasSizeX / shelfData.SizeX)
-    local fitZ = math.floor(canvasSizeZ / shelfData.SizeZ)
-    local startX = canvas.Position.X - canvasSizeX/2 + (shelfData.SizeX/2)
-    local startZ = canvas.Position.Z - canvasSizeZ/2 + (shelfData.SizeZ/2)
+    local fitX = math.floor(canvas.Size.X / shelf.SizeX)
+    local fitZ = math.floor(canvas.Size.Z / shelf.SizeZ)
+    local startX = canvas.Position.X - canvas.Size.X/2 + shelf.SizeX/2
+    local startZ = canvas.Position.Z - canvas.Size.Z/2 + shelf.SizeZ/2
     local y = canvas.Position.Y + canvas.Size.Y/2 + 1
-    
     for x = 0, fitX - 1 do
         for z = 0, fitZ - 1 do
-            local posX = startX + (x * shelfData.SizeX)
-            local posZ = startZ + (z * shelfData.SizeZ)
-            table.insert(positions, Vector3.new(posX, y, posZ))
+            table.insert(positions, Vector3.new(startX + x*shelf.SizeX, y, startZ + z*shelf.SizeZ))
         end
     end
     return positions
 end
 
-local shelfType4Positions = generateGridPositionsForShelf(SHELVES[1])
-local shelfType5Positions = generateGridPositionsForShelf(SHELVES[2])
-
-print("[TASK 2] : Type 4 fits " .. #shelfType4Positions .. " units")
-print("[TASK 2] : Type 5 fits " .. #shelfType5Positions .. " units")
-
-print("[TASK 3] : Placing shelves")
-local allPlacements = {}
-local maxCount = math.min(#shelfType4Positions, #shelfType5Positions) * 2
-
-for i = 1, maxCount do
-    if i % 2 == 1 then
-        local posIndex = math.floor(i / 2) + 1
-        if posIndex <= #shelfType4Positions then
-            table.insert(allPlacements, {
-                Id = SHELVES[1].Id,
-                Position = shelfType4Positions[posIndex]
-            })
-        end
-    else
-        local posIndex = i / 2
-        if posIndex <= #shelfType5Positions then
-            table.insert(allPlacements, {
-                Id = SHELVES[2].Id,
-                Position = shelfType5Positions[posIndex]
-            })
-        end
-    end
-end
-
-print("[TASK 3] : Total to place " .. #allPlacements)
-
-local placedShelves = {}
-for i, placement in ipairs(allPlacements) do
-    local args = {{
-        Id = placement.Id,
-        CFrame = CFrame.new(placement.Position),
-        Floor = FLOOR
-    }}
-    
-    local success = pcall(function()
-        InsertFurniture:InvokeServer(unpack(args))
-    end)
-    
-    if success then
-        print("[TASK 3] : Placed " .. i .. "/" .. #allPlacements .. " type " .. placement.Id)
-        table.insert(placedShelves, placement)
-    else
-        print("[TASK 3] : Failed " .. i .. " type " .. placement.Id)
-    end
-    
-    task.wait(0.15)
-end
-
-print("[TASK 3] : Placed " .. #placedShelves .. " shelves")
-
-print("[TASK 4] : Waiting for shelves")
-task.wait(3)
-
-print("[TASK 4] : Collecting shelves")
-local shelfObjects = {}
-for _, furniture in ipairs(plot:WaitForChild("Furniture"):GetChildren()) do
-    local s = furniture:FindFirstChild("Shelves")
-    if s then
-        for _, shelf in ipairs(s:GetChildren()) do
-            table.insert(shelfObjects, shelf)
-        end
-    end
-end
-print("[TASK 4] : Found " .. #shelfObjects .. " shelves")
-
-print("[TASK 5] : Getting inventory")
-local data = GetAll:InvokeServer()
-local itemsToSell = {}
-
-if data and data.Inventory then
-    for guid, itemData in pairs(data.Inventory) do
-        if tostring(itemData.Id) ~= EXCLUDED_ID then
-            local isShelfItem = false
-            for _, shelf in ipairs(SHELVES) do
-                if tonumber(itemData.Id) == tonumber(shelf.Id) then
-                    isShelfItem = true
+local function placeShelvesPrioritized(shelves, floor)
+    local placed = {}
+    table.sort(shelves, function(a,b) return a.Max < b.Max end)
+    for _, shelf in ipairs(shelves) do
+        local positions = generateGridPositions(shelf)
+        local placedCount = 0
+        for _, pos in ipairs(positions) do
+            if placedCount >= shelf.Max then break end
+            local success = false
+            for attempt = 1, 3 do
+                success = pcall(function()
+                    InsertFurniture:InvokeServer({Id = shelf.Id, CFrame = CFrame.new(pos), Floor = floor})
+                end)
+                if success then
+                    placedCount += 1
+                    table.insert(placed, {Id = shelf.Id, Position = pos})
+                    task.wait(0.15)
                     break
+                else
+                    task.wait(0.1)
                 end
             end
-            
-            if not isShelfItem then
-                table.insert(itemsToSell, {
-                    GUID = guid,
-                    Id = itemData.Id
-                })
+        end
+    end
+    return placed
+end
+
+-- ==================== GET SHELVES FUNCTION ====================
+
+local function getMyShelves()
+    local plotVal = LocalPlayer.NonSaveVars and LocalPlayer.NonSaveVars.OwnsPlot
+    if not plotVal or not plotVal.Value then return {} end
+
+    local shelves = {}
+    local furniture = plotVal.Value:FindFirstChild("Furniture")
+    if not furniture then return shelves end
+
+    for _, v in ipairs(furniture:GetDescendants()) do
+        if v.Name == "Shelves" then
+            for _, shelf in ipairs(v:GetChildren()) do
+                table.insert(shelves, shelf)
             end
         end
     end
+
+    return shelves
 end
 
-print("[TASK 5] : Found " .. #itemsToSell .. " items")
+-- ==================== SELL ITEMS FUNCTION ====================
 
-print("[TASK 6] : Selling items")
-local sellCount = math.min(#shelfObjects, #itemsToSell)
-
-for i = 1, sellCount do
-    local success = pcall(function()
-        SellRemote:FireServer(itemsToSell[i].GUID, shelfObjects[i], true)
+local function sellItems()
+    pcall(function()
+        local data = GetAll:InvokeServer()
+        
+        local plotName = LocalPlayer.NonSaveVars.OwnsPlot.Value.Name
+        local plot = workspace:WaitForChild("Plots"):WaitForChild(plotName)
+        
+        local shelves = {}
+        for _, furniture in ipairs(plot:WaitForChild("Furniture"):GetChildren()) do
+            local s = furniture:FindFirstChild("Shelves")
+            if s then
+                for _, shelf in ipairs(s:GetChildren()) do
+                    table.insert(shelves, shelf)
+                end
+            end
+        end
+        
+        local guids = {}
+        for guid, info in pairs(data.Inventory) do
+            local id = tonumber(info.Id)
+            local itemData = ItemsModule[id]
+            local name = itemData and string.lower(itemData.Name or "") or ""
+            if id ~= 281 and id ~= 2294 and not string.find(name, "safe") then
+                table.insert(guids, guid)
+            end
+        end
+        
+        print(string.format("[SELL] Found %d items to sell, %d shelves available", #guids, #shelves))
+        
+        local count = math.min(#shelves, #guids)
+        for i = 1, count do
+            local success = pcall(function()
+                SellRemote:FireServer(guids[i], shelves[i], true)
+            end)
+            if success then
+                print("[SELL] Sold item to shelf:", shelves[i]:GetFullName())
+            end
+            task.wait(0.1)
+        end
     end)
+end
+
+-- ==================== ACCEPT/DECLINE OFFERS FUNCTION ====================
+
+local function processOffers()
+    pcall(function()
+        local processed = 0
+        for _, shelf in ipairs(getMyShelves()) do
+            local offer = shelf:GetAttribute("Offer")
+            if not offer then continue end
+            
+            local itemFolder = shelf:FindFirstChild("Item")
+            if not itemFolder then continue end
+            
+            local item = itemFolder:GetChildren()[1]
+            if not item then continue end
+            
+            local id = item:GetAttribute("Id")
+            if not id then continue end
+            
+            local basePrice = RepLibrary:GetItemPrice({Id = id})
+            if not basePrice or basePrice <= 0 then continue end
+            
+            local percent = ((offer - basePrice) / basePrice) * 100
+            
+            if percent >= 10 then
+                local success = pcall(function()
+                    AcceptRemote:FireServer(shelf)
+                end)
+                if success then
+                    print(string.format("[OFFER] ACCEPTED - Shelf: %s | Offer: $%d | Base: $%d | +%.1f%%", 
+                        shelf.Name, offer, basePrice, percent))
+                end
+            else
+                local success = pcall(function()
+                    DeclineRemote:FireServer(shelf)
+                end)
+                if success then
+                    -- Only print declines if it's a significant difference or for debugging
+                    if percent <= -10 or percent < 0 then
+                        print(string.format("[OFFER] DECLINED - Shelf: %s | Offer: $%d | Base: $%d | %.1f%%", 
+                            shelf.Name, offer, basePrice, percent))
+                    end
+                end
+            end
+            processed += 1
+        end
+        if processed > 0 then
+            print(string.format("[OFFER] Processed %d offers", processed))
+        end
+    end)
+end
+
+-- ==================== SHELF PLACEMENT LOOP FUNCTION ====================
+
+local function runShelfPlacement()
+    pcall(function()
+        local placedShelves = placeShelvesPrioritized(SHELVES, FLOOR)
+        if #placedShelves > 0 then
+            print(string.format("[PLACEMENT] Placed %d new shelves", #placedShelves))
+        end
+    end)
+end
+
+-- ==================== MAIN LOOP ====================
+
+print("[SYSTEM] Starting automated shop manager...")
+print(string.format("[SYSTEM] Shelf placement: every 10 minutes | Selling: every 5 minutes | Offers: every 1 minute"))
+
+-- Run initial cycles
+task.spawn(function()
+    task.wait(2) -- Small delay to ensure everything loads
+    runShelfPlacement()
+    sellItems()
+    processOffers()
+end)
+
+-- Main loop with different timers
+while true do
+    -- Process offers every minute
+    task.wait(60) -- 1 minute
+    processOffers()
     
-    if success then
-        print("[TASK 6] : Sold " .. i .. "/" .. sellCount .. " id " .. itemsToSell[i].Id)
-    else
-        print("[TASK 6] : Failed " .. i)
+    -- Sell items every 5 minutes
+    if tick() % 300 < 60 then -- Check if we're in the 5-minute window
+        task.wait(2) -- Small delay to avoid conflicts
+        sellItems()
     end
     
-    task.wait(0.1)
+    -- Place shelves every 10 minutes
+    if tick() % 600 < 60 then -- Check if we're in the 10-minute window
+        task.wait(4) -- Small delay to avoid conflicts
+        runShelfPlacement()
+    end
 end
-
-print("[DONE] : Placed " .. #placedShelves .. " sold " .. sellCount)
