@@ -31,7 +31,7 @@ local Tabs = {
     Main = Window:AddTab({ Title = "Main", Icon = "home" })
 }
 
-local function getAllPlayers()
+local function getAllPlayersIncludingSelf()
     local t = {}
     for _,p in ipairs(Players:GetPlayers()) do
         table.insert(t,p.Name)
@@ -59,7 +59,7 @@ local teleportEnabled = false
 
 Tabs.Main:AddDropdown("TeleportPlayersMulti", {
     Title = "Teleport To Player Shops",
-    Values = getOtherPlayers(),
+    Values = getAllPlayersIncludingSelf(),
     Multi = true,
     Default = {},
     Callback = function(v)
