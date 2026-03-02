@@ -22,7 +22,7 @@ local Window = Fluent:CreateWindow({
     Title = "Malik",
     SubTitle = "lmklmk",
     TabWidth = 160,
-    Size = UDim2.fromOffset(viewport.X * 0.55, viewport.Y * 0.35),
+    Size = UDim2.fromOffset(viewport.X * 0.35, viewport.Y * 0.55),
     Acrylic = true,
     Theme = "Dark"
 })
@@ -49,9 +49,8 @@ local function getOtherPlayers()
     return t
 end
 
-
 --------------------------------------------------
--- NEW TELEPORT SYSTEM (TOGGLE + MULTI + 8-12 SEC)
+-- TELEPORT SHOPS SYSTEM
 --------------------------------------------------
 
 local teleportPlayers = {}
@@ -74,7 +73,6 @@ Tabs.Main:AddToggle("TeleportToggle", {
         teleportEnabled = v
     end
 })
-
 
 local function enterNormally(plot)
 
@@ -105,7 +103,6 @@ local function enterNormally(plot)
     end
 
 end
-
 
 task.spawn(function()
 
@@ -146,6 +143,91 @@ task.spawn(function()
 
 end)
 
+--------------------------------------------------
+-- NEW PIVOT TELEPORT SYSTEM
+--------------------------------------------------
+
+local pivotTargetPlayer = nil
+local pivotTeleportEnabled = false
+
+Tabs.Main:AddDropdown("PivotTeleportPlayer", {
+    Title = "Teleport To Player (Pivot)",
+    Values = getAllPlayersIncludingSelf(),
+    Multi = false,
+    Default = nil,
+    Callback = function(v)
+        pivotTargetPlayer = v
+    end
+})
+
+Tabs.Main:AddToggle("PivotTeleportToggle", {
+    Title = "Pivot Teleport Toggle",
+    Default = false,
+    Callback = function(v)
+        pivotTeleportEnabled = v
+    end
+})
+
+task.spawn(function()
+
+    local currentTargetCharacter = nil
+    local lastUpdateTime = 0
+
+    while true do
+
+        pcall(function()
+
+            if not pivotTeleportEnabled then
+                currentTargetCharacter = nil
+                return
+            end
+
+            local now = tick()
+
+            -- update target every 0.5 seconds
+            if now - lastUpdateTime >= 0.5 then
+
+                lastUpdateTime = now
+
+                if pivotTargetPlayer then
+
+                    local targetPlayer = Players:FindFirstChild(pivotTargetPlayer)
+
+                    if targetPlayer then
+                        currentTargetCharacter = targetPlayer.Character
+                    else
+                        currentTargetCharacter = nil
+                    end
+
+                else
+                    currentTargetCharacter = nil
+                end
+
+            end
+
+            -- pivot every 0.05 seconds
+            if currentTargetCharacter then
+
+                local targetRoot = currentTargetCharacter:FindFirstChild("HumanoidRootPart")
+                local myCharacter = LocalPlayer.Character
+
+                if targetRoot and myCharacter then
+
+                    myCharacter:PivotTo(
+                        targetRoot.CFrame * CFrame.new(0,0,-2)
+                    )
+
+                end
+
+            end
+
+        end)
+
+        task.wait(0.05)
+
+    end
+
+end)
 
 --------------------------------------------------
 -- REST OF YOUR ORIGINAL CODE UNCHANGED
