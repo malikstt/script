@@ -1,94 +1,53 @@
-ALWAYS_TICKET_TEAM = true
-
-task.spawn(function()
-    if ALWAYS_TICKET_TEAM then
-        local Players = game:GetService("Players")
-        local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
-        local player = Players.LocalPlayer
-        local remote = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
-        local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
-        local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
-
-        local MAX_TEAM_SIZE = 8
-
-        local function getPetInfo(pet)
-            local info = PetsModule[pet.Name]
-            if not info or not info.Stats then return nil end
-            return info
-        end
-
-        local function getSortedPets()
-            local data = LocalData:Get()
-            if not data or not data.Pets then return {} end
-            local pets = {}
-            for _, pet in pairs(data.Pets) do
-                local info = getPetInfo(pet)
-                if info and info.Stats and info.Stats.Tickets then
-                    table.insert(pets, {
-                        Id = pet.Id,
-                        Name = pet.Name,
-                        Tickets = info.Stats.Tickets,
-                        Stats = info.Stats
-                    })
-                end
-            end
-            table.sort(pets, function(a, b)
-                return a.Tickets > b.Tickets
-            end)
-            return pets
-        end
-
-        local function getEquippedTeam()
-            local data = LocalData:Get()
-            if not data then return {} end
-            local equipped = {}
-            if data.Teams and data.TeamEquipped then
-                local team = data.Teams[data.TeamEquipped]
-                if team and team.Pets then
-                    for _, id in ipairs(team.Pets) do
-                        equipped[id] = true
-                    end
-                end
-            end
-            return equipped
-        end
-
-        task.spawn(function()
-            while task.wait(1) do
-                local data = LocalData:Get()
-                if not data or not data.Pets then continue end
-
-                local sorted = getSortedPets()
-                if #sorted == 0 then continue end
-
-                local equipped = getEquippedTeam()
-
-                local desired = {}
-                for i = 1, math.min(MAX_TEAM_SIZE, #sorted) do
-                    desired[sorted[i].Id] = sorted[i]
-                end
-
-                for id in pairs(equipped) do
-                    if not desired[id] then
-                        remote:FireServer("UnequipPet", id)
-                        task.wait(0.15)
-                    end
-                end
-
-                local currentlyEquipped = 0
-                for id in pairs(equipped) do
-                    currentlyEquipped += 1
-                end
-
-                for id, pet in pairs(desired) do
-                    if not equipped[id] and currentlyEquipped < MAX_TEAM_SIZE then
-                        remote:FireServer("EquipPet", id)
-                        task.wait(0.15)
-                        currentlyEquipped += 1
-                    end
-                end
-            end
-        end)
+local Fluent=loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+local Items=require(game:GetService("ReplicatedStorage").Modules.Items)
+local Garages=require(game:GetService("ReplicatedStorage").Modules.Garages)
+local Window=Fluent:CreateWindow({Title="Auction Manager",SubTitle="Garage & Item Selection",TabWidth=160,Size=UDim2.fromOffset(580,460),Acrylic=true,Theme="Dark"})
+local Tabs={Main=Window:AddTab({Title="Main",Icon=""}),Auctions=Window:AddTab({Title="Auctions",Icon="shopping-cart"})}
+local garageNames={"None ( will display safes, please refresh )"}
+local nameToGarageId={}
+local safeItemNames={}
+for id,data in pairs(Garages)do if type(data)=="table"and data.Name then local displayName=tostring(data.Name).." (ID: "..tostring(id)..")" table.insert(garageNames,displayName) nameToGarageId[displayName]=tostring(id)end end
+local function getSafeItems()
+ local safes={}
+ for itemId,item in pairs(Items)do if type(item)=="table"and item.Name then local itemName=tostring(item.Name) if item.SafeId or string.find(itemName,"Safe") then
+  local rarity=item.Rarity or "Common"
+  local garageChances={}
+  if item.Garages then
+   for _,gId in ipairs(item.Garages)do
+    local gData=Garages[tostring(gId)]
+    if gData and gData.Chances then
+     local chance=gData.Chances[rarity] or 0
+     table.insert(garageChances,gData.Name.." (ID:"..gId.."): "..math.floor(chance*100).."%")
     end
-end)
+   end
+  end
+  local chanceStr=table.concat(garageChances,", ")
+  table.insert(safes,string.format("%s [%s] (ID: %s) - %s",itemName,rarity,itemId,chanceStr))
+ end end end
+ return safes
+end
+safeItemNames=getSafeItems()
+local GarageDropdown=Tabs.Auctions:AddDropdown("GarageSelect",{Title="Select Garages",Values=garageNames,Default="None ( will display safes, please refresh )",Callback=function(Value)end})
+local ItemDropdown=Tabs.Auctions:AddDropdown("ItemSelect",{Title="Select Items",Values=safeItemNames,Default=nil,Callback=function(Value)
+ local itemId=Value:match("%(ID:%s*(%d+)%)")
+ if not itemId then return end
+ local item=Items[itemId]
+ if not item then return end
+ local garageDisplay="None"
+ if item.Garages then
+  local garages={}
+  for _,gId in ipairs(item.Garages)do
+   local gData=Garages[tostring(gId)]
+   if gData and gData.Name then table.insert(garages,gData.Name.." (ID:"..gId..")") end
+  end
+  if #garages>0 then garageDisplay=garages[1] end
+ end
+ GarageDropdown:SetValue(garageDisplay)
+end})
+Tabs.Auctions:AddButton({Title="Refresh Items",Description="Refresh based on selection (None = Safes)",Callback=function()
+ local selectedName=GarageDropdown.Value
+ local itemList={}
+ if selectedName=="None ( will display safes, please refresh )" or selectedName==nil then itemList=getSafeItems() else local gId=nameToGarageId[selectedName] for itemId,item in pairs(Items)do if type(item)=="table"and item.Garages then for _,idInList in ipairs(item.Garages)do if tostring(idInList)==gId then local rarity=item.Rarity or "Common" local garageChances={} for _,gid in ipairs(item.Garages)do local gData=Garages[tostring(gid)] if gData and gData.Chances then local chance=gData.Chances[rarity] or 0 table.insert(garageChances,gData.Name.." (ID:"..gid.."): "..math.floor(chance*100).."%") end end local chanceStr=table.concat(garageChances,", ") table.insert(itemList,string.format("%s [%s] (ID: %s) - %s",item.Name,rarity,itemId,chanceStr)) break end end end end end
+ ItemDropdown:SetValues(itemList)
+end})
+Window:SelectTab(Tabs.Main)
