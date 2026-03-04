@@ -4,6 +4,7 @@ local LocalPlayer = Players.LocalPlayer
 local taskWait = task.wait
 
 local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
+local GaragesModule = require(ReplicatedStorage.Modules.GaragesModule)
 
 local Auctions = ReplicatedStorage.Events.Auctions
 local EnterQueue = Auctions.EnterQueue
@@ -21,6 +22,41 @@ local currentGarage
 local currentNextBid
 local currentBidder
 local garageIndex = 0
+local myCash = 0
+
+local function updateCash()
+	local data = DataEvent:InvokeServer()
+	myCash = data.Cash or 0
+end
+
+local function getEntryCost(data)
+	return data.CostToEnter or 0
+end
+
+local function getGarageEstimatedValue(data)
+	return data.EstimatedValue or 0
+end
+
+local function getBestAffordableGarage()
+	updateCash()
+	local bestId = nil
+	local bestValue = 0
+	
+	for id, data in pairs(GaragesModule) do
+		if data.Type == "Cash" then
+			local entryCost = getEntryCost(data)
+			if entryCost > 0 and myCash >= entryCost then
+				local estimatedValue = getGarageEstimatedValue(data)
+				if estimatedValue > bestValue then
+					bestValue = estimatedValue
+					bestId = id
+				end
+			end
+		end
+	end
+	
+	return bestId
+end
 
 local function tryClick(obj)
 	if not obj then return end
@@ -33,25 +69,17 @@ local function tryClick(obj)
 end
 
 local function inventoryFull()
-
 	local data = DataEvent:InvokeServer()
-
 	local invItems = 0
 	for _ in pairs(data.Inventory) do
 		invItems += 1
 	end
-
 	local invSpace = RepLibrary:GetInventorySpace(LocalPlayer,data.InventoryLevel)
-
-	print("Inventory:",invItems.."/"..invSpace)
-
 	return invItems >= invSpace
 end
 
 local function getSelectableCount()
-
 	local data = DataEvent:InvokeServer()
-
 	local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer,data.CarryLevel)
 	local invSpace = RepLibrary:GetInventorySpace(LocalPlayer,data.InventoryLevel)
 
@@ -61,168 +89,98 @@ local function getSelectableCount()
 	end
 
 	local carryItems = data.Carry and #data.Carry or 0
-
-	print("Carry:",carryItems.."/"..carrySpace)
-	print("Inventory:",invItems.."/"..invSpace)
-
 	local availableCarry = carrySpace - carryItems
 	local availableInv = invSpace - invItems
-
-	local selectable = math.max(0,math.min(availableCarry,availableInv))
-
-	print("Selectable items:",selectable)
-
-	return selectable
+	return math.max(0,math.min(availableCarry,availableInv))
 end
 
 local function handleItemsWon()
-
-	print("ItemsWon detected")
-
 	local gui = LocalPlayer.PlayerGui:WaitForChild("ItemsWon")
 	local frame = gui.ItemsFrame.Frame
 	local confirm = gui.ItemsFrame.ConfirmButton
 
 	local maxSelect = getSelectableCount()
-
-	if maxSelect <= 0 then
-		print("No space to take items")
-		return
-	end
+	if maxSelect <= 0 then return end
 
 	local selected = 0
 
 	for _,btn in ipairs(frame:GetChildren()) do
-
 		if btn:IsA("ImageButton") then
-
 			if selected >= maxSelect then break end
-
-			print("Selecting item")
-
 			tryClick(btn)
-
 			selected += 1
-
 			task.wait(0.4)
-
 		end
-
 	end
 
-	print("Confirming items")
-
 	repeat taskWait() until confirm.Visible
-
 	tryClick(confirm)
-
 	task.wait(1)
 
 	local sellButton = gui.SellItems.Frame.Normal.Button
-
 	repeat taskWait() until sellButton.Visible
-
-	print("Selling items")
-
 	tryClick(sellButton)
-
 end
 
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
-
 	if data then
 		currentNextBid = data.nextBid
 		currentBidder = data.player
 	end
-
 end)
 
 AuctionsFolder.ChildAdded:Connect(function(garage)
-
 	currentGarage = garage
 	garageIndex += 1
 	inAuction = true
-
-	print("Garage started:",garageIndex)
-
 end)
 
 AuctionsFolder.ChildRemoved:Connect(function()
-
 	if #AuctionsFolder:GetChildren() == 0 then
-
 		inAuction = false
 		currentGarage = nil
 		garageIndex = 0
-
-		print("Auction ended")
-
 	end
-
 end)
 
 while true do
-
 	while inventoryFull() do
-
-		print("Inventory full, waiting 5 minutes")
-
 		task.wait(300)
-
 	end
 
-	print("Joining queue 104")
+	local bestGarageId = getBestAffordableGarage()
+	if not bestGarageId then
+		task.wait(10)
+		continue
+	end
 
 	pcall(function()
-		EnterQueue:InvokeServer("104")
+		EnterQueue:InvokeServer(bestGarageId)
 	end)
 
 	repeat taskWait(0.1) until inAuction
 
-	print("Auction started")
-
 	while inAuction do
-
 		if garageIndex == 1 or garageIndex == 2 then
-
-			print("Bidding in garage",garageIndex)
-
 			local start = tick()
-
 			while inAuction and garageIndex <= 2 and tick() - start < 60 do
-
 				if currentNextBid and currentBidder ~= LocalPlayer then
-
-					print("Placing bid:",currentNextBid)
-
 					pcall(function()
 						PlaceBid:InvokeServer(currentNextBid)
 					end)
-
 				end
-
 				task.wait(0.2)
-
 			end
-
 		elseif garageIndex == 3 then
-
-			print("Skipping garage 3")
-
 			pcall(function()
 				SkipCountdown:InvokeServer()
 			end)
-
 			task.wait(0.1)
-
 			pcall(function()
 				Skip:InvokeServer()
 			end)
-
 		end
-
 		task.wait(0.5)
-
 	end
 
 	task.wait(3)
@@ -232,5 +190,4 @@ while true do
 	end
 
 	task.wait(2)
-
 end
