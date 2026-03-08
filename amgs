@@ -1,0 +1,196 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+local targetId = "681"
+
+repeat task.wait() until LocalPlayer and LocalPlayer.Character
+
+local Events = ReplicatedStorage:WaitForChild("Events")
+local RemoveFurniture = Events.Shop:WaitForChild("RemoveFurniture")
+local GetAll = Events.Data:WaitForChild("GetAll")
+local UpgradeItems = Events.UI:WaitForChild("UpgradeItems")
+local CollectUpgraded = Events.UI:WaitForChild("CollectUpgraded")
+local GetUpgradingItem = Events.UI:WaitForChild("GetUpgradingItem")
+
+local function getInventoryData()
+    local success, data = pcall(function()
+        return GetAll:InvokeServer()
+    end)
+    
+    if success and data then
+        local currentItems = data.Inventory
+        local usedSlots = 0
+        local itemCount = 0
+        
+        if currentItems then
+            for guid, item in pairs(currentItems) do
+                usedSlots = usedSlots + 1
+                if item.Id == targetId and not item.ItemPlaced then
+                    item.GUID = guid
+                    itemCount = itemCount + 1
+                end
+            end
+        end
+        
+        local maxSlots = 20
+        if data.InventoryLevel then
+            maxSlots = 20 + (data.InventoryLevel * 5)
+        end
+        
+        return {
+            used = usedSlots,
+            max = maxSlots,
+            available = maxSlots - usedSlots,
+            isFull = usedSlots >= maxSlots,
+            itemCount = itemCount,
+            inventory = currentItems
+        }
+    end
+    return nil
+end
+
+local function getFurnitureFolder()
+    local nsv = LocalPlayer:WaitForChild("NonSaveVars",5)
+    if not nsv then return nil end
+
+    local own = nsv:WaitForChild("OwnsPlot",5)
+    if not own then return nil end
+
+    local timeout = 0
+    while not own.Value or own.Value == 0 do
+        task.wait(0.1)
+        timeout = timeout + 0.1
+        if timeout > 5 then return nil end
+    end
+
+    local success, folder = pcall(function()
+        return Workspace
+            :WaitForChild("Plots",5)
+            :WaitForChild(tostring(own.Value),5)
+            :WaitForChild("Furniture",5)
+    end)
+
+    return success and folder or nil
+end
+
+local function removePlacedFurniture()
+    local furnitureFolder = getFurnitureFolder()
+    if not furnitureFolder then
+        return 0
+    end
+
+    local removed = 0
+    
+    for _, model in ipairs(furnitureFolder:GetChildren()) do
+        local inventoryData = getInventoryData()
+        if not inventoryData or inventoryData.isFull then
+            return removed
+        end
+        
+        if model:IsA("Model") then
+            local itemId = model:GetAttribute("ItemId")
+            if itemId and tostring(itemId) == targetId then
+                local success = pcall(function()
+                    RemoveFurniture:InvokeServer(model)
+                end)
+                if success then
+                    removed = removed + 1
+                end
+                task.wait(0.1)
+            end
+        end
+    end
+    return removed
+end
+
+local function handleUpgrading()
+    local upgrading, remaining = GetUpgradingItem:InvokeServer("UpgradingItem")
+
+    if upgrading then
+        if remaining <= 0 then
+            print("Collecting upgrade")
+            CollectUpgraded:InvokeServer()
+            return true
+        else
+            print("Upgrade running, waiting:", remaining)
+            return true
+        end
+    end
+    return false
+end
+
+local function startUpgrade()
+    local data = getInventoryData()
+    if not data then return false end
+    
+    local items = {}
+    if data.inventory then
+        for guid, item in pairs(data.inventory) do
+            if item.Id == targetId and not item.ItemPlaced then
+                item.GUID = guid
+                table.insert(items, item)
+            end
+            if #items == 5 then
+                break
+            end
+        end
+    end
+
+    if #items >= 5 then
+        print("Starting upgrade 681")
+        local success, result, time = UpgradeItems:InvokeServer(items[1])
+        if success then
+            print("Upgrade started. Time:", time)
+            return true
+        else
+            warn("Upgrade failed")
+        end
+    else
+        print("Not enough 681 items for upgrade, need:", 5 - #items)
+    end
+    return false
+end
+
+while true do
+    -- Check if something is upgrading
+    if handleUpgrading() then
+        task.wait(3)
+        continue
+    end
+    
+    -- Get current inventory status
+    local inventoryData = getInventoryData()
+    if not inventoryData then
+        task.wait(2)
+        continue
+    end
+    
+    -- Check if inventory is full
+    if inventoryData.isFull then
+        print("Inventory full, stopping script")
+        break
+    end
+    
+    -- Check if we have enough items for upgrade
+    if inventoryData.itemCount >= 5 then
+        startUpgrade()
+        task.wait(2)
+        continue
+    end
+    
+    -- Try to remove furniture to get more items
+    local needed = 5 - inventoryData.itemCount
+    print("Need", needed, "more items, removing from plot...")
+    
+    local removed = removePlacedFurniture()
+    if removed > 0 then
+        print("Removed", removed, "furniture items")
+    else
+        print("No more furniture to remove")
+        task.wait(5)
+    end
+    
+    task.wait(1)
+end
