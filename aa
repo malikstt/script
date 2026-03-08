@@ -1,173 +1,191 @@
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-local HttpService = game:GetService("HttpService")
-local Workspace = game:GetService("Workspace")
+local ReplicatedStorage=game:GetService("ReplicatedStorage")
+local Players=game:GetService("Players")
+local HttpService=game:GetService("HttpService")
+local Workspace=game:GetService("Workspace")
 
-local player = Players.LocalPlayer
-local Events = ReplicatedStorage:WaitForChild("Events")
+local player=Players.LocalPlayer
+local Events=ReplicatedStorage:WaitForChild("Events")
 
-local Items = require(ReplicatedStorage.Modules.Items)
-local Safes = require(ReplicatedStorage.Modules.Safes)
+local Items=require(ReplicatedStorage.Modules.Items)
+local Safes=require(ReplicatedStorage.Modules.Safes)
 
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
+local WEBHOOK_URL="https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
+local targetId="2294"
 
-local targetId = "2294"
-local RemoveFurniture = Events:WaitForChild("Shop", 5):WaitForChild("RemoveFurniture", 5)
+local RemoveFurniture=Events:WaitForChild("Shop"):WaitForChild("RemoveFurniture")
 
--- Wait until player data is ready
 repeat task.wait() until player and player.Character and player:FindFirstChild("SaveVars") and player.SaveVars:FindFirstChild("Gems")
 
--- Helper to get furniture folder
-local furnitureFolder = getFurnitureFolder()
-if furnitureFolder then
-    for _, model in ipairs(furnitureFolder:GetChildren()) do
-        if model:IsA("Model") then
-            local name = model.Name
+local function getFurnitureFolder()
+local nsv=player:FindFirstChild("NonSaveVars")
+local ownsPlot=nsv and nsv:FindFirstChild("OwnsPlot")
+if not ownsPlot then return nil end
+repeat task.wait() until ownsPlot.Value~=0
 
-            -- detect Pet Safe 2294 from model name
-            if name:find("2294") then
-                pcall(function()
-                    RemoveFurniture:InvokeServer(model)
-                end)
+local success,folder=pcall(function()
+    return Workspace:WaitForChild("Plots"):WaitForChild(tostring(ownsPlot.Value)):WaitForChild("Furniture")
+end)
 
-                task.wait(0.05)
-            end
-        end
+if success then
+    return folder
+end
+
+end
+
+local function removePlacedSafes()
+local furnitureFolder=getFurnitureFolder()
+if not furnitureFolder then return end
+
+for _,model in ipairs(furnitureFolder:GetChildren()) do
+    if model:IsA("Model") and model.Name:find(targetId) then
+        pcall(function()
+            RemoveFurniture:InvokeServer(model)
+        end)
+        task.wait(0.05)
     end
 end
--- Sends webhook and increments total owned by 1
+
+end
+
 local function sendSafeWebhook(result)
-    if not result or not result.ItemId then return end
-    local itemId = tostring(result.ItemId)
-    local itemData = Items[itemId]
-    if not itemData then return end
+if not result or not result.ItemId then return end
 
-    local playerData = Events.Data.GetAll:InvokeServer()
-    local totalOwned = 1 -- +1 for the item we just got
-    if playerData then
-        if playerData.Inventory then
-            for _, item in pairs(playerData.Inventory) do
-                if tostring(item.Id) == itemId then
-                    totalOwned += 1
-                end
-            end
-        end
-        if playerData.Furniture then
-            for _, item in pairs(playerData.Furniture) do
-                if tostring(item.Id) == itemId then
-                    totalOwned += 1
-                end
+local itemId=tostring(result.ItemId)
+local itemData=Items[itemId]
+if not itemData then return end
+
+local playerData=Events.Data.GetAll:InvokeServer()
+local totalOwned=1
+
+if playerData then
+    if playerData.Inventory then
+        for _,item in pairs(playerData.Inventory) do
+            if tostring(item.Id)==itemId then
+                totalOwned+=1
             end
         end
     end
 
-    local itemName = itemData.Name
-    if result.SerialId then
-        itemName = itemName .. " #" .. result.SerialId
+    if playerData.Furniture then
+        for _,item in pairs(playerData.Furniture) do
+            if tostring(item.Id)==itemId then
+                totalOwned+=1
+            end
+        end
     end
+end
 
-    pcall(function()
-        HttpService:RequestAsync({
-            Url = WEBHOOK_URL,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = HttpService:JSONEncode({
-                embeds = {{
-                    title = "🔓 SAFE OPENED !!",
-                    color = 5763719,
-                    fields = {
-                        {name="👤 Username", value=player.Name, inline=false},
-                        {name="🏷 Item", value=itemName, inline=false},
-                        {name="⭐ Rarity", value=itemData.Rarity or "Unknown", inline=false},
-                        {name="🧰 Total Owned", value=tostring(totalOwned), inline=false},
-                    }
-                }}
-            })
+local itemName=itemData.Name
+if result.SerialId then
+    itemName=itemName.." #"..result.SerialId
+end
+
+pcall(function()
+    HttpService:RequestAsync({
+        Url=WEBHOOK_URL,
+        Method="POST",
+        Headers={["Content-Type"]="application/json"},
+        Body=HttpService:JSONEncode({
+            embeds={{
+                title="🔓 SAFE OPENED !!",
+                color=5763719,
+                fields={
+                    {name="👤 Username",value=player.Name,inline=false},
+                    {name="🏷 Item",value=itemName,inline=false},
+                    {name="⭐ Rarity",value=itemData.Rarity or "Unknown",inline=false},
+                    {name="🧰 Total Owned",value=tostring(totalOwned),inline=false}
+                }
+            }}
         })
-    end)
+    })
+end)
+
 end
 
--- Process a single safe
 local function processSafe(guid)
-    local success, remaining = pcall(function()
-        return Events.UI.UnlockSafe:InvokeServer(guid)
-    end)
-    if not success or not remaining then return false end
+local success,remaining=pcall(function()
+return Events.UI.UnlockSafe:InvokeServer(guid)
+end)
 
-    local minutes = remaining / 60
-    local gemsNeeded = math.ceil(minutes) * Safes.GemsPerMinute
-
-    if gemsNeeded <= player.SaveVars.Gems.Value then
-        pcall(function() Events.UI.BuySafeUnlock:InvokeServer() end)
-    else
-        local timeLeft = remaining
-        repeat
-            task.wait(1)
-            local _, tl = pcall(function() return Events.UI.GetSafe:InvokeServer() end)
-            timeLeft = tl or timeLeft
-        until timeLeft <= 0
-    end
-
-    task.wait(0.2)
-
-    local result = nil
-    pcall(function() result = Events.UI.SafeResult:InvokeServer() end)
-    if not result then return false end
-
-    sendSafeWebhook(result)
-
-    task.wait(0.2)
-
-    local collected = nil
-    pcall(function() collected = Events.UI.CollectSafe:InvokeServer() end)
-
-    -- Remove target furniture if present
-    local furnitureFolder = getFurnitureFolder()
-    if furnitureFolder then
-        for _, model in ipairs(furnitureFolder:GetChildren()) do
-            if model:IsA("Model") then
-                local itemId = model:GetAttribute("ItemId")
-                if itemId and tostring(itemId) == targetId then
-                    pcall(function()
-                        RemoveFurniture:InvokeServer(model)
-                        task.wait(0.1)
-                    end)
-                end
-            end
-        end
-    end
-
-    return true
+if not success or not remaining then
+    return false
 end
 
--- Main loop
+local minutes=remaining/60
+local gemsNeeded=math.ceil(minutes)*Safes.GemsPerMinute
+
+if gemsNeeded<=player.SaveVars.Gems.Value then
+    pcall(function()
+        Events.UI.BuySafeUnlock:InvokeServer()
+    end)
+else
+    local timeLeft=remaining
+    repeat
+        task.wait(1)
+        local _,tl=pcall(function()
+            return Events.UI.GetSafe:InvokeServer()
+        end)
+        timeLeft=tl or timeLeft
+    until timeLeft<=0
+end
+
+task.wait(0.2)
+
+local result=nil
+pcall(function()
+    result=Events.UI.SafeResult:InvokeServer()
+end)
+
+if not result then
+    return false
+end
+
+sendSafeWebhook(result)
+
+task.wait(0.2)
+
+pcall(function()
+    Events.UI.CollectSafe:InvokeServer()
+end)
+
+removePlacedSafes()
+
+return true
+
+end
+
 task.spawn(function()
-    while true do
-        local data = nil
-        pcall(function() data = Events.Data.GetAll:InvokeServer() end)
-        if not data or not data.Inventory then
-            task.wait(5)
-            continue
-        end
+while true do
+local data=nil
+pcall(function()
+data=Events.Data.GetAll:InvokeServer()
+end)
 
-        local safesToOpen = {}
-        for id, item in pairs(data.Inventory) do
-            if tostring(item.Id) == targetId then
-                table.insert(safesToOpen, id)
-            end
-        end
+    if not data or not data.Inventory then
+        task.wait(5)
+        continue
+    end
 
-        if #safesToOpen == 0 then
-            task.wait(60)
-        else
-            for _, guid in ipairs(safesToOpen) do
-                local ok = processSafe(guid)
-                if not ok then
-                    task.wait(5) -- retry delay
-                else
-                    task.wait(1) -- small delay between safes
-                end
+    local safesToOpen={}
+
+    for id,item in pairs(data.Inventory) do
+        if tostring(item.Id)==targetId then
+            table.insert(safesToOpen,id)
+        end
+    end
+
+    if #safesToOpen==0 then
+        task.wait(60)
+    else
+        for _,guid in ipairs(safesToOpen) do
+            local ok=processSafe(guid)
+            if not ok then
+                task.wait(5)
+            else
+                task.wait(1)
             end
         end
     end
+end
+
 end)
