@@ -121,34 +121,76 @@ local function sendWebhook(itemId, itemData, playerName)
 
     local cash = 0
     local gems = 0
-    local totalOwned = 0
+    local count = 0
+    local craftTimerText = ""
 
-    -- count existing Inventory and Furniture
     if playerData then
         cash = playerData.Cash or 0
         gems = playerData.Gems or 0
 
-        if playerData.Furniture then
-            for _, item in pairs(playerData.Furniture) do
-                if tostring(item.Id) == tostring(itemId) then
-                    totalOwned += 1
+        local function countItems(container)
+            if not container then return end
+            for _, item in pairs(container) do
+                local id = tostring(item.Id)
+                if id == tostring(itemId) then
+                    count += 1
                 end
             end
         end
 
-        if playerData.Inventory then
-            for _, item in pairs(playerData.Inventory) do
-                if tostring(item.Id) == tostring(itemId) then
-                    totalOwned += 1
-                end
-            end
-        end
+        countItems(playerData.Furniture)
+        countItems(playerData.Inventory)
     end
 
-    -- just add +1 for the newly obtained item
-    totalOwned += 1
+    -- +1 for the newly obtained item
+    count += 1
 
-    -- send webhook
+    local fields = {
+        {name="👤 Username", value=playerName, inline=false},
+        {name="🔐 Item", value=itemData.Name or "Unknown", inline=false},
+        {name="⭐ Rarity", value=itemData.Rarity or "Unknown", inline=false},
+        {name="💵 Cash", value=formatNumber(cash), inline=true},
+        {name="💎 Gems", value=formatNumber(gems), inline=true},
+    }
+
+    if tostring(itemId) == "681" then
+        -- check if MGS is crafting
+        local upgrading, remaining
+        pcall(function()
+            upgrading, remaining = ReplicatedStorage.Events.UI.GetUpgradingItem:InvokeServer("UpgradingItem")
+        end)
+
+        if upgrading and remaining and remaining > 0 then
+            craftTimerText = " (⏳ " .. formatTime(remaining) .. ")"
+        end
+
+        -- add MGS + Gem Safe counts
+        local megaGemSafeCount = 0
+        local gemSafeCount = 0
+
+        if playerData then
+            local function countSpecial(container)
+                if not container then return end
+                for _, item in pairs(container) do
+                    local id = tostring(item.Id)
+                    if id == "1162" then megaGemSafeCount += 1 end
+                    if id == "681" then gemSafeCount += 1 end
+                end
+            end
+            countSpecial(playerData.Furniture)
+            countSpecial(playerData.Inventory)
+        end
+
+        -- +1 for newly obtained Gem Safe
+        gemSafeCount += 1
+
+        table.insert(fields, {name="🏭 Total MGS Owned", value=tostring(megaGemSafeCount) .. craftTimerText, inline=false})
+        table.insert(fields, {name="🔐 Total Gem Safe Owned", value=tostring(gemSafeCount), inline=false})
+    else
+        -- For all other items, show Total <Item Name> Owned
+        table.insert(fields, {name="🧰 Total " .. (itemData.Name or "Owned"), value=tostring(count), inline=false})
+    end
+
     pcall(function()
         HttpService:RequestAsync({
             Url = WEBHOOK_URL,
@@ -158,14 +200,7 @@ local function sendWebhook(itemId, itemData, playerName)
                 embeds = {{
                     title = "🎯 ITEM FOUND !!",
                     color = getEmbedColor(itemId),
-                    fields = {
-                        {name="👤 Username", value=playerName, inline=false},
-                        {name="🏷 Item", value=itemData.Name or "Unknown", inline=false},
-                        {name="⭐ Rarity", value=itemData.Rarity or "Unknown", inline=false},
-                        {name="💵 Cash", value=formatNumber(cash), inline=true},
-                        {name="💎 Gems", value=formatNumber(gems), inline=true},
-                        {name="🧰 Total Owned", value=tostring(totalOwned), inline=true},
-                    }
+                    fields = fields
                 }}
             })
         })
