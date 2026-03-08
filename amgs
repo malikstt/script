@@ -1,8 +1,60 @@
-local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 
 local LocalPlayer = Players.LocalPlayer
+
+-- One-time inventory sell setup
+task.spawn(function()
+    local SellRemote = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Shop"):WaitForChild("SellItemInShop")
+    local GetAll = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
+    local ItemsModule = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Items"))
+
+    local data = GetAll:InvokeServer()
+
+    local plotName = LocalPlayer:WaitForChild("NonSaveVars"):WaitForChild("OwnsPlot").Value.Name
+    local plot = Workspace:WaitForChild("Plots"):WaitForChild(plotName)
+
+    local shelves = {}
+    for _, furniture in ipairs(plot:WaitForChild("Furniture"):GetChildren()) do
+        local s = furniture:FindFirstChild("Shelves")
+        if s then
+            for _, shelf in ipairs(s:GetChildren()) do
+                table.insert(shelves, shelf)
+            end
+        end
+    end
+
+    local guids = {}
+    for guid, info in pairs(data.Inventory) do
+        local id = tonumber(info.Id)
+        local itemData = ItemsModule[id]
+        local name = itemData and string.lower(itemData.Name or "") or ""
+        if id ~= 681 and id ~= 2294 and not string.find(name, "safe") then
+            table.insert(guids, guid)
+        end
+    end
+
+    print("Plot:", plot:GetFullName())
+    print("Shelves:", #shelves)
+    for i, shelf in ipairs(shelves) do
+        print(i, shelf:GetFullName())
+    end
+
+    print("Filtered Inventory:", #guids)
+    for i, guid in ipairs(guids) do
+        print(i, guid)
+    end
+
+    local count = math.min(#shelves, #guids)
+    for i = 1, count do
+        SellRemote:FireServer(guids[i], shelves[i], true)
+        print("Sold:", guids[i], "->", shelves[i]:GetFullName())
+        task.wait(0.1)
+    end
+end)
+
+-- Main upgrade/removal script continues below...
 local targetId = "681"
 
 repeat task.wait() until LocalPlayer and LocalPlayer.Character
@@ -188,7 +240,6 @@ local function handleUpgrading()
 
     if upgrading then
         if remaining <= 0 then
-            -- Try to collect, if fails due to full inventory, place one item
             local collected = pcall(function()
                 return CollectUpgraded:InvokeServer()
             end)
@@ -196,7 +247,6 @@ local function handleUpgrading()
             if not collected then
                 print("Inventory full during collection, placing item...")
                 if placeItemFromInventory() then
-                    -- Retry collection
                     pcall(function()
                         CollectUpgraded:InvokeServer()
                     end)
