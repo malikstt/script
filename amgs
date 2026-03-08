@@ -9,10 +9,88 @@ repeat task.wait() until LocalPlayer and LocalPlayer.Character
 
 local Events = ReplicatedStorage:WaitForChild("Events")
 local RemoveFurniture = Events.Shop:WaitForChild("RemoveFurniture")
+local InsertFurniture = Events.Shop:WaitForChild("InsertFurniture")
 local GetAll = Events.Data:WaitForChild("GetAll")
 local UpgradeItems = Events.UI:WaitForChild("UpgradeItems")
 local CollectUpgraded = Events.UI:WaitForChild("CollectUpgraded")
 local GetUpgradingItem = Events.UI:WaitForChild("GetUpgradingItem")
+
+local FLOOR = 1
+
+local function getPlot()
+    local nsv = LocalPlayer:WaitForChild("NonSaveVars",5)
+    if not nsv then return nil end
+    
+    local own = nsv:WaitForChild("OwnsPlot",5)
+    if not own then return nil end
+    
+    local timeout = 0
+    while not own.Value or own.Value == 0 do
+        task.wait(0.1)
+        timeout = timeout + 0.1
+        if timeout > 5 then return nil end
+    end
+    
+    local success, plot = pcall(function()
+        return Workspace.Plots:WaitForChild(tostring(own.Value),5)
+    end)
+    
+    return success and plot or nil
+end
+
+local function placeItemFromInventory()
+    local plot = getPlot()
+    if not plot then return false end
+    
+    local canvas = plot.Interior.Shop1.Canvas
+    
+    local success, data = pcall(function()
+        return GetAll:InvokeServer()
+    end)
+    
+    if not success or not data then return false end
+    
+    local itemToPlace = nil
+    if data.Inventory then
+        for guid, item in pairs(data.Inventory) do
+            if tostring(item.Id) == targetId and not item.ItemPlaced then
+                itemToPlace = {GUID = guid, Id = item.Id}
+                break
+            end
+        end
+    end
+    
+    if not itemToPlace then return false end
+    
+    math.randomseed(tick())
+    
+    local cx, cy, cz = canvas.Position.X, canvas.Position.Y, canvas.Position.Z
+    local sx, sy, sz = canvas.Size.X/2, canvas.Size.Y/2, canvas.Size.Z/2
+    
+    local rx = cx + math.random(-sx*100, sx*100)/100
+    local rz = cz + math.random(-sz*100, sz*100)/100
+    local ry = cy + sy + math.random(5,40)
+    
+    local args = {
+        {
+            GUID = itemToPlace.GUID,
+            Type = "Decor",
+            Floor = FLOOR,
+            Id = itemToPlace.Id,
+            CFrame = CFrame.new(rx, ry, rz)
+        }
+    }
+    
+    local placed = pcall(function()
+        InsertFurniture:InvokeServer(unpack(args))
+    end)
+    
+    if placed then
+        print("Placed one item to free inventory space")
+        return true
+    end
+    return false
+end
 
 local function getInventoryData()
     local success, data = pcall(function()
@@ -27,7 +105,7 @@ local function getInventoryData()
         if currentItems then
             for guid, item in pairs(currentItems) do
                 usedSlots = usedSlots + 1
-                if item.Id == targetId and not item.ItemPlaced then
+                if tostring(item.Id) == targetId and not item.ItemPlaced then
                     item.GUID = guid
                     itemCount = itemCount + 1
                 end
@@ -110,8 +188,22 @@ local function handleUpgrading()
 
     if upgrading then
         if remaining <= 0 then
-            print("Collecting upgrade")
-            CollectUpgraded:InvokeServer()
+            -- Try to collect, if fails due to full inventory, place one item
+            local collected = pcall(function()
+                return CollectUpgraded:InvokeServer()
+            end)
+            
+            if not collected then
+                print("Inventory full during collection, placing item...")
+                if placeItemFromInventory() then
+                    -- Retry collection
+                    pcall(function()
+                        CollectUpgraded:InvokeServer()
+                    end)
+                end
+            else
+                print("Collecting upgrade")
+            end
             return true
         else
             print("Upgrade running, waiting:", remaining)
@@ -128,7 +220,7 @@ local function startUpgrade()
     local items = {}
     if data.inventory then
         for guid, item in pairs(data.inventory) do
-            if item.Id == targetId and not item.ItemPlaced then
+            if tostring(item.Id) == targetId and not item.ItemPlaced then
                 item.GUID = guid
                 table.insert(items, item)
             end
@@ -154,33 +246,28 @@ local function startUpgrade()
 end
 
 while true do
-    -- Check if something is upgrading
     if handleUpgrading() then
         task.wait(3)
         continue
     end
     
-    -- Get current inventory status
     local inventoryData = getInventoryData()
     if not inventoryData then
         task.wait(2)
         continue
     end
     
-    -- Check if inventory is full
     if inventoryData.isFull then
         print("Inventory full, stopping script")
         break
     end
     
-    -- Check if we have enough items for upgrade
     if inventoryData.itemCount >= 5 then
         startUpgrade()
         task.wait(2)
         continue
     end
     
-    -- Try to remove furniture to get more items
     local needed = 5 - inventoryData.itemCount
     print("Need", needed, "more items, removing from plot...")
     
