@@ -1,188 +1,84 @@
-local Players=game:GetService("Players")
-local ReplicatedStorage=game:GetService("ReplicatedStorage")
-local Workspace=game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
 
-local LocalPlayer=Players.LocalPlayer
-local TARGET="wissim1010"
-local TARGET_ID=1162
-local MAX_PER_TRADE=16
+local LocalPlayer = Players.LocalPlayer
 
-local Events=ReplicatedStorage:WaitForChild("Events")
-local RemoveFurniture=Events.Shop:WaitForChild("RemoveFurniture")
-local InsertFurniture=Events.Shop:WaitForChild("InsertFurniture")
-local GetAll=Events.Data:WaitForChild("GetAll")
-
-local TRADE_REQUEST=Events.Trade:WaitForChild("SendRequest")
-local ADD_ITEM=Events.Trade:WaitForChild("AddItem")
-local ACCEPT=Events.Trade:WaitForChild("Accept")
-
-local TRADE_GUI=LocalPlayer.PlayerGui:WaitForChild("Trade")
-
-local function log(a)print("[SYS]",a)end
+local Events = ReplicatedStorage:WaitForChild("Events")
+local RemoveFurniture = Events.Shop:WaitForChild("RemoveFurniture")
+local InsertFurniture = Events.Shop:WaitForChild("InsertFurniture")
+local GetAll = Events.Data:WaitForChild("GetAll")
 
 local function getPlot()
-local own=LocalPlayer:WaitForChild("NonSaveVars"):WaitForChild("OwnsPlot")
-repeat task.wait() until own.Value
-return Workspace.Plots:WaitForChild(tostring(own.Value))
+    local own = LocalPlayer:WaitForChild("NonSaveVars"):WaitForChild("OwnsPlot")
+    repeat task.wait() until own.Value
+    return Workspace.Plots:WaitForChild(tostring(own.Value))
 end
 
 local function getInventory()
-local s,d=pcall(function()
-return GetAll:InvokeServer()
-end)
-if s then return d end
-end
-
-local function getInventoryInfo()
-local data=getInventory()
-if not data then return end
-local used=0
-for _ in pairs(data.Inventory)do used+=1 end
-local repLib=require(ReplicatedStorage.Modules.RepLibrary)
-local max=repLib:GetInventorySpace(LocalPlayer,data.InventoryLevel)
-return used,max,data.Inventory
+    local success,data = pcall(function()
+        return GetAll:InvokeServer()
+    end)
+    if success then
+        return data.Inventory
+    end
 end
 
 local function getNon1162Item(inv)
-for g,i in pairs(inv)do
-if tonumber(i.Id)~=1162 and not i.ItemPlaced then
-return g,i.Id
-end
-end
+    for guid,item in pairs(inv) do
+        if tonumber(item.Id) ~= 1162 and not item.ItemPlaced then
+            return guid,item.Id
+        end
+    end
 end
 
 local function placeItem(guid,id,canvas)
-local pos=canvas.Position
-local size=canvas.Size
-local x=pos.X+math.random(-size.X*50,size.X*50)/100
-local z=pos.Z+math.random(-size.Z*50,size.Z*50)/100
-local y=pos.Y+size.Y+5
-pcall(function()
-InsertFurniture:InvokeServer({
-GUID=guid,
-Type="Decor",
-Floor=1,
-Id=id,
-CFrame=CFrame.new(x,y,z)
-})
-end)
+    local p = canvas.Position
+    local s = canvas.Size
+
+    local x = p.X + math.random(-s.X*50,s.X*50)/100
+    local z = p.Z + math.random(-s.Z*50,s.Z*50)/100
+    local y = p.Y + s.Y + 5
+
+    pcall(function()
+        InsertFurniture:InvokeServer({
+            GUID = guid,
+            Type = "Decor",
+            Floor = 1,
+            Id = id,
+            CFrame = CFrame.new(x,y,z)
+        })
+    end)
 end
 
-local function count1162()
-local _,_,inv=getInventoryInfo()
-if not inv then return 0 end
-local c=0
-for _,v in pairs(inv)do
-if tonumber(v.Id)==1162 then c+=1 end
-end
-return c
-end
-
-local plot=getPlot()
-local furniture=plot:WaitForChild("Furniture")
-local canvas=plot.Interior.Shop1.Canvas
-
-local function runCleaner()
-log("cleaner start 10s")
-local t=os.clock()+10
-while os.clock()<t do
-local used,max,inv=getInventoryInfo()
-if used and used<max then
-for _,model in ipairs(furniture:GetChildren())do
-local id=model:GetAttribute("ItemId")
-if id and tonumber(id)==1162 then
-pcall(function()RemoveFurniture:InvokeServer(model)end)
-task.wait(.15)
-local g,i=getNon1162Item(inv)
-if g then placeItem(g,i,canvas)end
-end
-end
-end
-task.wait(.3)
-end
-log("cleaner done")
-end
-
-local function waitTrade()
-while true do
-local g=TRADE_GUI:FindFirstChildWhichIsA("Frame")
-if g and g.Visible then
-log("trade opened")
-return
-end
-task.wait(.5)
-end
-end
-
-local function waitOtherAccept()
-while true do
-local p2=TRADE_GUI:FindFirstChild("Player2Accepted",true)
-if p2 and p2.Value then
-log("other accepted")
-return
-end
-task.wait(.5)
-end
-end
-
-local function sendRequests()
-while true do
-local p=Players:FindFirstChild(TARGET)
-if p then
-log("send request")
-pcall(function()TRADE_REQUEST:FireServer(p)end)
-end
-task.wait(10)
-end
-end
-
-task.spawn(sendRequests)
-
-local cleanerRan=false
+local plot = getPlot()
+local furniture = plot:WaitForChild("Furniture")
+local canvas = plot.Interior.Shop1.Canvas
 
 while true do
 
-local total=count1162()
-if total==0 then
-log("no 1162 left")
-break
-end
+    for _,model in ipairs(furniture:GetChildren()) do
+        local id = model:GetAttribute("ItemId")
 
-if total>=5 and not cleanerRan then
-runCleaner()
-cleanerRan=true
-log("waiting 20s before trades")
-task.wait(20)
-end
+        if id and tonumber(id) == 1162 then
 
-if total<5 then
-cleanerRan=false
-end
+            pcall(function()
+                RemoveFurniture:InvokeServer(model)
+            end)
 
-repeat task.wait(1) until Players:FindFirstChild(TARGET)
-waitTrade()
+            task.wait(0.15)
 
-local _,_,inv=getInventoryInfo()
-local added=0
+            local inv = getInventory()
+            if inv then
+                local guid,newId = getNon1162Item(inv)
+                if guid then
+                    placeItem(guid,newId,canvas)
+                end
+            end
 
-for guid,item in pairs(inv)do
-if tonumber(item.Id)==1162 then
-if added>=MAX_PER_TRADE then break end
-log("add 1162")
-pcall(function()ADD_ITEM:FireServer(guid)end)
-added+=1
-task.wait(.2)
-end
-end
+        end
+    end
 
-if added>0 then
-log("accept trade")
-pcall(function()ACCEPT:FireServer()end)
-waitOtherAccept()
-repeat task.wait(1) until not (TRADE_GUI:FindFirstChildWhichIsA("Frame") and TRADE_GUI:FindFirstChildWhichIsA("Frame").Visible)
-log("trade finished")
-end
-
-task.wait(2)
+    task.wait(0.5)
 
 end
