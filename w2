@@ -48,6 +48,7 @@ local auctionEnded = false
 local currentGarage = nil
 local currentBidData = nil
 local myCash = 0
+local myGems = 0
 local currentGarageValue = 0
 local bidPlaced = false
 local processingItemsWon = false
@@ -60,27 +61,42 @@ local upgradeKeys = {
     "CarryLevel"
 }
 
+local lastOfferCheck = 0
+local lastUpgradeCheck = 0
+local lastPlacementCheck = 0
+local lastDataFetch = 0
+local OFFER_COOLDOWN = 60
+local UPGRADE_COOLDOWN = 30
+local PLACEMENT_COOLDOWN = 20
+local DATA_COOLDOWN = 2
+
 local function formatNumber(n)
     if n >= 1e6 then return string.format("%.1fM", n/1e6)
     elseif n >= 1e3 then return string.format("%.1fK", n/1e3)
     else return tostring(n) end
 end
 
-local function getData()
-    local success, data = pcall(function() return DataEvent:InvokeServer() end)
-    return success and data or nil
+local function getDataRateLimited()
+    local now = tick()
+    if now - lastDataFetch >= DATA_COOLDOWN then
+        lastDataFetch = now
+        local success, data = pcall(function() return DataEvent:InvokeServer() end)
+        return success and data or nil
+    end
+    return nil
 end
 
-local function updateCash()
-    local data = getData()
-    if data and data.Cash then
+local function updateCashAndGems()
+    local data = getDataRateLimited()
+    if data then
         myCash = tonumber(data.Cash) or 0
+        myGems = tonumber(data.Gems) or 0
     end
-    return myCash
+    return myCash, myGems
 end
 
 local function getInventoryInfo()
-    local data = getData()
+    local data = getDataRateLimited()
     if not data then return nil end
     local invLevel = data.InventoryLevel or 0
     local carryLevel = data.CarryLevel or 0
@@ -182,7 +198,7 @@ local function placeShelves()
 end
 
 local function getInventoryItemsForSale()
-    local data = getData()
+    local data = getDataRateLimited()
     if not data or not data.Inventory then return {} end
     
     local items = {}
@@ -195,7 +211,7 @@ end
 
 local function placeItemsOnShelves()
     print("[PLACING ITEMS] Starting placement")
-    local data = getData()
+    local data = getDataRateLimited()
     if not data then return false end
     
     local itemsToPlace = getInventoryItemsForSale()
@@ -244,12 +260,18 @@ local function placeItemsOnShelves()
 end
 
 local function handleOffers()
+    local now = tick()
+    if now - lastOfferCheck < OFFER_COOLDOWN then return end
+    lastOfferCheck = now
+    
+    print("[OFFERS] Checking shelves")
     local plotVal = LocalPlayer.NonSaveVars and LocalPlayer.NonSaveVars.OwnsPlot
     if not plotVal or not plotVal.Value then return end
     
     local furniture = plotVal.Value:FindFirstChild("Furniture")
     if not furniture then return end
     
+    local offersFound = 0
     for _, v in ipairs(furniture:GetDescendants()) do
         if v.Name == "Shelves" then
             for _, shelf in ipairs(v:GetChildren()) do
@@ -269,6 +291,7 @@ local function handleOffers()
                 if not basePrice or basePrice <= 0 then continue end
                 
                 local percent = ((offer - basePrice) / basePrice) * 100
+                offersFound = offersFound + 1
                 
                 if percent >= MIN_PROFIT_PERCENT and percent <= MAX_PROFIT_PERCENT then
                     print("[OFFERS] Accepting: " .. string.format("%.1f%%", percent) .. " profit")
@@ -280,12 +303,25 @@ local function handleOffers()
             end
         end
     end
+    print("[OFFERS] Checked " .. offersFound .. " offers")
 end
 
 local function buyUpgrades()
-    local data = getData()
+    local now = tick()
+    if now - lastUpgradeCheck < UPGRADE_COOLDOWN then return end
+    
+    local data = getDataRateLimited()
     if not data then return end
-    if myCash < MAX_UPGRADE_PRICE then return end
+    
+    updateCashAndGems()
+    if myCash < MAX_UPGRADE_PRICE and myGems < MAX_UPGRADE_PRICE then 
+        print("[UPGRADES] Cannot afford any upgrades")
+        lastUpgradeCheck = now
+        return 
+    end
+    
+    print("[UPGRADES] Checking affordable upgrades")
+    local boughtAny = false
     
     for _, key in ipairs(upgradeKeys) do
         local levels = Upgrades[key]
@@ -294,13 +330,66 @@ local function buyUpgrades()
         if levels and current and levels[current + 1] then
             local nextLevel = levels[current + 1]
             
-            if nextLevel.Price and nextLevel.Price <= MAX_UPGRADE_PRICE and nextLevel.Price <= myCash then
-                print("[UPGRADES] Buying " .. key .. " for " .. formatNumber(nextLevel.Price))
-                pcall(function() UpgradeClicked:InvokeServer(key) end)
-                task.wait(0.2)
-                updateCash()
+            if nextLevel.Price then
+                local canAfford = (nextLevel.PriceType == "Gems" and myGems >= nextLevel.Price) or 
+                                 (nextLevel.PriceType == "Cash" and myCash >= nextLevel.Price)
+                
+                if canAfford and nextLevel.Price <= MAX_UPGRADE_PRICE then
+                    print("[UPGRADES] Buying " .. key .. " for " .. formatNumber(nextLevel.Price) .. " " .. (nextLevel.PriceType or "Cash"))
+                    local success = pcall(function() UpgradeClicked:InvokeServer(key) end)
+                    if success then
+                        boughtAny = true
+                        task.wait(0.5)
+                        updateCashAndGems()
+                    end
+                end
             end
         end
+    end
+    
+    if not boughtAny then
+        print("[UPGRADES] No affordable upgrades found")
+    end
+    
+    lastUpgradeCheck = now
+end
+
+local function activePlacement()
+    local now = tick()
+    if now - lastPlacementCheck < PLACEMENT_COOLDOWN then return end
+    if processingItemsWon or inAuction then return end
+    lastPlacementCheck = now
+    
+    local data = getDataRateLimited()
+    if not data then return end
+    
+    local itemsInInventory = 0
+    if data.Inventory then
+        for _ in pairs(data.Inventory) do
+            itemsInInventory = itemsInInventory + 1
+        end
+    end
+    
+    local emptyShelves = 0
+    local plotVal = LocalPlayer.NonSaveVars and LocalPlayer.NonSaveVars.OwnsPlot
+    if plotVal and plotVal.Value then
+        local furniture = plotVal.Value:FindFirstChild("Furniture")
+        if furniture then
+            for _, v in ipairs(furniture:GetDescendants()) do
+                if v.Name == "Shelves" then
+                    for _, shelf in ipairs(v:GetChildren()) do
+                        if not shelf:FindFirstChild("Item") then
+                            emptyShelves = emptyShelves + 1
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    if itemsInInventory > 0 and emptyShelves > 0 then
+        print("[ACTIVE PLACEMENT] Placing " .. math.min(itemsInInventory, emptyShelves) .. " items on shelves")
+        placeItemsOnShelves()
     end
 end
 
@@ -309,7 +398,7 @@ local function getEntryCost(garageData)
 end
 
 local function getRandomAffordableGarage()
-    updateCash()
+    updateCashAndGems()
     local affordable = {}
     
     for id, data in pairs(GaragesModule) do
@@ -361,7 +450,7 @@ local function handleItemsWon()
         return
     end
     
-    local data = getData()
+    local data = getDataRateLimited()
     if not data then
         processingItemsWon = false
         return
@@ -576,8 +665,9 @@ task.spawn(function()
         if not halted then
             handleOffers()
             buyUpgrades()
+            activePlacement()
         end
-        task.wait(0.5)
+        task.wait(1)
     end
 end)
 
@@ -594,7 +684,7 @@ end)
 
 while true do
     print("[MAIN] Starting main loop")
-    updateCash()
+    updateCashAndGems()
     
     if shouldStop() then
         print("[MAIN] Stop condition met, halting")
@@ -664,7 +754,7 @@ while true do
     task.wait(3)
     checkForButton()
     placeItemsOnShelves()
-    updateCash()
+    updateCashAndGems()
     task.wait(1)
 end
 
