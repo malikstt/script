@@ -32,7 +32,6 @@ local UpgradeClicked = Events.UI.UpgradeClicked
 
 local MIN_PROFIT_PERCENT = 5
 local MAX_PROFIT_PERCENT = 50
-local BID_MIN_PROFIT = 6
 local MAX_UPGRADE_PRICE = 500
 local TARGET_CASH = 500000
 local SCAN_DURATION = 2
@@ -55,18 +54,10 @@ local processingItemsWon = false
 local lastSkipTime = 0
 local halted = false
 
-local GRID_CONFIG = {
-    startPos = canvas.Position + Vector3.new(-canvas.Size.X/2 + 4, canvas.Size.Y/2 + 1, -canvas.Size.Z/2 + 4),
-    spacing = 6,
-    itemsPerRow = math.floor(canvas.Size.X / 6) - 1,
-    rowsPerFloor = math.floor(canvas.Size.Z / 6) - 1,
-}
-
 local upgradeKeys = {
     "ShopLevel",
     "InventoryLevel",
-    "CarryLevel",
-    "PaycheckAmount"
+    "CarryLevel"
 }
 
 local function formatNumber(n)
@@ -294,6 +285,7 @@ end
 local function buyUpgrades()
     local data = getData()
     if not data then return end
+    if myCash < MAX_UPGRADE_PRICE then return end
     
     for _, key in ipairs(upgradeKeys) do
         local levels = Upgrades[key]
@@ -302,10 +294,11 @@ local function buyUpgrades()
         if levels and current and levels[current + 1] then
             local nextLevel = levels[current + 1]
             
-            if nextLevel.Price and nextLevel.Price <= MAX_UPGRADE_PRICE then
+            if nextLevel.Price and nextLevel.Price <= MAX_UPGRADE_PRICE and nextLevel.Price <= myCash then
                 print("[UPGRADES] Buying " .. key .. " for " .. formatNumber(nextLevel.Price))
                 pcall(function() UpgradeClicked:InvokeServer(key) end)
                 task.wait(0.2)
+                updateCash()
             end
         end
     end
@@ -315,29 +308,23 @@ local function getEntryCost(garageData)
     return garageData.CashNeededToEnter or garageData.AuctionBudget or 0
 end
 
-local function getGarageEstimatedValue(garageData)
-    return garageData.AuctionBudget or 0
-end
-
-local function getBestAffordableGarage()
+local function getRandomAffordableGarage()
     updateCash()
-    local bestId = "51"
-    local bestValue = 0
+    local affordable = {}
     
     for id, data in pairs(GaragesModule) do
         if data.Type == "Cash" then
             local entryCost = getEntryCost(data)
             if entryCost > 0 and myCash >= entryCost then
-                local estimatedValue = getGarageEstimatedValue(data)
-                if estimatedValue > bestValue then
-                    bestValue = estimatedValue
-                    bestId = id
-                end
+                table.insert(affordable, {id = id, data = data, cost = entryCost})
             end
         end
     end
     
-    return bestId
+    if #affordable == 0 then return "51" end
+    
+    local randomIndex = math.random(1, #affordable)
+    return affordable[randomIndex].id
 end
 
 local function tryClick(obj)
@@ -374,10 +361,70 @@ local function handleItemsWon()
         return
     end
     
+    local data = getData()
+    if not data then
+        processingItemsWon = false
+        return
+    end
+    
+    local itemsWon = data.ItemsWon or {}
+    if not itemsWon or next(itemsWon) == nil then
+        print("[ITEMS WON] No items to select")
+        processingItemsWon = false
+        return
+    end
+    
+    print("[ITEMS WON] " .. tostring(#itemsWon) .. " items available")
+    
+    local invInfo = getInventoryInfo()
+    local slotsAvailable = invInfo.available + invInfo.carry
+    print("[ITEMS WON] Can take " .. slotsAvailable .. " items")
+    
+    local sortedItems = {}
+    for key, itemData in pairs(itemsWon) do
+        local itemId = itemData.itemId
+        local itemInfo = ItemsModule[itemId] or ItemsModule[tostring(itemId)]
+        local price = (itemInfo and itemInfo.Price) or 0
+        
+        table.insert(sortedItems, {
+            key = key,
+            id = itemId,
+            data = itemData,
+            price = price,
+            guid = key
+        })
+    end
+    
+    table.sort(sortedItems, function(a, b)
+        return a.price > b.price
+    end)
+    
+    local itemsToTake = math.min(#sortedItems, slotsAvailable)
+    print("[ITEMS WON] Taking top " .. itemsToTake .. " most valuable items")
+    
+    for i = 1, itemsToTake do
+        local item = sortedItems[i]
+        print("[ITEMS WON] Selecting item " .. i .. " value: " .. formatNumber(item.price))
+        
+        for _, btn in ipairs(frame:GetChildren()) do
+            if btn:IsA("ImageButton") and btn:FindFirstChild("Price") then
+                local priceLabel = btn:FindFirstChild("Price")
+                if priceLabel and priceLabel:IsA("TextLabel") then
+                    local btnPrice = tonumber(string.gsub(priceLabel.Text, "[^0-9]", "")) or 0
+                    if math.abs(btnPrice - item.price) < 10 then
+                        tryClick(btn)
+                        task.wait(0.3)
+                        break
+                    end
+                end
+            end
+        end
+    end
+    
     local confirmButton = gui.ItemsFrame and gui.ItemsFrame:FindFirstChild("ConfirmButton")
     if confirmButton then
         repeat task.wait() until confirmButton.Visible
-        print("[ITEMS WON] Confirming")
+        print("[ITEMS WON] Confirming selection")
         tryClick(confirmButton)
     end
     
@@ -390,7 +437,7 @@ local function handleItemsWon()
     
     if sellButton then
         repeat task.wait() until sellButton.Visible
-        print("[ITEMS WON] Selling all")
+        print("[ITEMS WON] Selling items")
         tryClick(sellButton)
         task.wait(0.5)
         checkForButton()
@@ -441,18 +488,6 @@ end
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
     if data then
         currentBidData = data
-        if inAuction and currentGarageValue > 0 then
-            if data.player ~= LocalPlayer and bidPlaced then
-                local nextBid = data.nextBid
-                local profit = currentGarageValue - nextBid
-                local profitPercent = (profit / currentGarageValue) * 100
-                
-                if profitPercent >= BID_MIN_PROFIT and nextBid <= myCash then
-                    print("[AUCTION] Counter-bidding: " .. formatNumber(nextBid))
-                    pcall(function() PlaceBid:InvokeServer(nextBid) end)
-                end
-            end
-        end
     end
 end)
 
@@ -479,11 +514,6 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     currentGarageValue = getGarageValue(garage)
     print("[AUCTION] Garage value: " .. formatNumber(currentGarageValue))
     
-    if currentGarageValue == 0 then
-        print("[AUCTION] Garage has no value, skipping")
-        return
-    end
-    
     local timeout = 0
     while not currentBidData and timeout < 8 do
         task.wait(0.5)
@@ -491,18 +521,14 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     end
     
     if not currentBidData then
-        print("[AUCTION] No bid data, skipping")
+        print("[AUCTION] No bid data")
         return
     end
     
     local nextBid = currentBidData.nextBid
-    local profit = currentGarageValue - nextBid
-    local profitPercent = (profit / currentGarageValue) * 100
-    local worth = profitPercent >= BID_MIN_PROFIT
     local canAfford = nextBid <= myCash
     
     print("[AUCTION] Next bid: " .. formatNumber(nextBid))
-    print("[AUCTION] Profit: " .. formatNumber(profit) .. " (" .. string.format("%.1f", profitPercent) .. "%)")
     
     if currentBidData.player == LocalPlayer then
         print("[AUCTION] Already highest bidder")
@@ -510,8 +536,8 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
         return
     end
     
-    if worth and canAfford then
-        print("[AUCTION] Placing bid")
+    if canAfford then
+        print("[AUCTION] Placing bid on random garage")
         local success = pcall(function() PlaceBid:InvokeServer(nextBid) end)
         if success then
             print("[AUCTION] Bid placed successfully")
@@ -520,7 +546,7 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
             print("[AUCTION] Bid failed")
         end
     else
-        print("[AUCTION] Not bidding - worth: " .. tostring(worth) .. ", can afford: " .. tostring(canAfford))
+        print("[AUCTION] Cannot afford bid")
     end
 end)
 
@@ -579,8 +605,8 @@ while true do
     placeShelves()
     
     if not inAuction and not processingItemsWon then
-        print("[AUCTION] Finding best affordable garage")
-        local garageId = getBestAffordableGarage()
+        print("[AUCTION] Selecting random affordable garage")
+        local garageId = getRandomAffordableGarage()
         local garageData = GaragesModule[garageId]
         if garageData then
             print("[AUCTION] Entering queue for garage: " .. garageData.Name)
@@ -601,8 +627,6 @@ while true do
         continue
     end
     
-    local garagesSkipped = 0
-    
     while inAuction and not auctionEnded and not shouldStop() do
         if currentGarage then
             if currentGarageValue == 0 then
@@ -615,10 +639,8 @@ while true do
                 while inAuction and currentGarage and not auctionEnded do
                     if currentBidData and currentBidData.player ~= LocalPlayer then
                         local nextBid = currentBidData.nextBid
-                        local profit = currentGarageValue - nextBid
-                        local profitPercent = (profit / currentGarageValue) * 100
                         
-                        if profitPercent >= BID_MIN_PROFIT and nextBid <= myCash then
+                        if nextBid <= myCash then
                             pcall(function() PlaceBid:InvokeServer(nextBid) end)
                         end
                     end
@@ -627,7 +649,6 @@ while true do
                     task.wait(BID_CHECK_INTERVAL)
                 end
             else
-                garagesSkipped = garagesSkipped + 1
                 if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
                     print("[AUCTION] Skipping garage (no value)")
                     pcall(function() SkipCountdown:InvokeServer() end)
