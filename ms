@@ -53,6 +53,18 @@ local function getOtherPlayers()
     return t
 end
 
+local function parseNumber(str)
+    if type(str) == "number" then return str end
+    str = str:upper():gsub(",", "")
+    local mult = 1
+    if str:find("K$") then mult = 1000
+    elseif str:find("M$") then mult = 1000000
+    elseif str:find("B$") then mult = 1000000000
+    elseif str:find("T$") then mult = 1000000000000 end
+    local num = tonumber(str:gsub("[KMBT$]", ""))
+    return num and num * mult or 0
+end
+
 local SenderOptions = {
     Enabled = false,
     TargetPlayers = {},
@@ -60,7 +72,7 @@ local SenderOptions = {
     AutoAccept = false,
     AutoAdd = false,
     MinItems = 16,
-    StopWhenCash = 2000000000,
+    StopWhenCash = "2B",
     SendDelay = 5,
     CurrentTargetIndex = 1,
     LastSend = 0
@@ -153,14 +165,13 @@ Tabs.Main:AddDropdown("ShopTargetPlayers", {
     end
 })
 
-Tabs.Main:AddSlider("ShopTeleportDelay", {
+Tabs.Main:AddInput("ShopTeleportDelay", {
     Title = "Shop Teleport Delay",
-    Default = 5,
-    Min = 1,
-    Max = 30,
-    Rounding = 1,
+    Default = "5",
+    Placeholder = "Seconds",
+    Numeric = true,
     Callback = function(v)
-        shopTeleportDelay = v
+        shopTeleportDelay = tonumber(v) or 5
     end
 })
 
@@ -234,36 +245,32 @@ local SenderTargetsDropdown = Tabs.Sender:AddDropdown("SenderTargetPlayers", {
     end
 })
 
-local SenderMinItemsSlider = Tabs.Sender:AddSlider("SenderMinItems", {
+Tabs.Sender:AddInput("SenderMinItems", {
     Title = "Min Items",
-    Default = 16,
-    Min = 1,
-    Max = 50,
-    Rounding = 1,
+    Default = "16",
+    Placeholder = "Number",
+    Numeric = true,
     Callback = function(v)
-        SenderOptions.MinItems = v
+        SenderOptions.MinItems = tonumber(v) or 16
     end
 })
 
-local SenderStopCashSlider = Tabs.Sender:AddSlider("SenderStopCash", {
-    Title = "Stop When Cash (Millions)",
-    Default = 2000,
-    Min = 100,
-    Max = 10000,
-    Rounding = 1,
+Tabs.Sender:AddInput("SenderStopCash", {
+    Title = "Stop When Cash",
+    Default = "2B",
+    Placeholder = "Examples: 500M, 1B, 2.5B",
     Callback = function(v)
-        SenderOptions.StopWhenCash = v * 1000000
+        SenderOptions.StopWhenCash = v
     end
 })
 
-local SenderSendDelaySlider = Tabs.Sender:AddSlider("SenderSendDelay", {
+Tabs.Sender:AddInput("SenderSendDelay", {
     Title = "Send Delay (Seconds)",
-    Default = 5,
-    Min = 1,
-    Max = 30,
-    Rounding = 1,
+    Default = "5",
+    Placeholder = "Seconds",
+    Numeric = true,
     Callback = function(v)
-        SenderOptions.SendDelay = v
+        SenderOptions.SendDelay = tonumber(v) or 5
     end
 })
 
@@ -322,14 +329,13 @@ local ReceiverTargetDropdown = Tabs.Receiver:AddDropdown("ReceiverTargetPlayer",
     end
 })
 
-local ReceiverSendDelaySlider = Tabs.Receiver:AddSlider("ReceiverSendDelay", {
+Tabs.Receiver:AddInput("ReceiverSendDelay", {
     Title = "Send Delay (Seconds)",
-    Default = 5,
-    Min = 1,
-    Max = 30,
-    Rounding = 1,
+    Default = "5",
+    Placeholder = "Seconds",
+    Numeric = true,
     Callback = function(v)
-        ReceiverOptions.SendDelay = v
+        ReceiverOptions.SendDelay = tonumber(v) or 5
     end
 })
 
@@ -401,8 +407,9 @@ task.spawn(function()
             end
             
             local targetCash = checkPlayerCash(currentTarget)
+            local stopCashValue = parseNumber(SenderOptions.StopWhenCash)
             
-            if targetCash and targetCash >= SenderOptions.StopWhenCash then
+            if targetCash and targetCash >= stopCashValue then
                 UIModule:Notify(LocalPlayer, currentTarget .. " has $" .. targetCash .. " - Switching target")
                 switchToNextTarget()
             else
