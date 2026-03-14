@@ -20,11 +20,13 @@ local PlaceBid=Auctions.PlaceBid
 
 local DataEvent=ReplicatedStorage.Events.Data.GetAll
 
+local inAuction=false
+local processingItemsWon=false
+
 local auctionIndex=0
 local shouldBid=false
 
-local currentBidData=nil
-local inAuction=false
+local myCash=0
 
 local function notify(msg)
 pcall(function()
@@ -46,6 +48,58 @@ end
 end
 end
 
+local function updateCash()
+
+local success,data=pcall(function()
+return DataEvent:InvokeServer()
+end)
+
+if success and data and data.Cash then
+myCash=tonumber(data.Cash) or 0
+end
+
+end
+
+local function getEntryCost(garageData)
+return garageData.CashNeededToEnter or garageData.AuctionBudget or 0
+end
+
+local function getGarageEstimatedValue(garageData)
+return garageData.AuctionBudget or 0
+end
+
+local function getBestAffordableGarage()
+
+updateCash()
+
+local bestId=nil
+local bestValue=0
+
+for id,data in pairs(GaragesModule) do
+
+if data.Type=="Cash" then
+
+local entryCost=getEntryCost(data)
+
+if entryCost>0 and myCash>=entryCost then
+
+local estimatedValue=getGarageEstimatedValue(data)
+
+if estimatedValue>bestValue then
+bestValue=estimatedValue
+bestId=id
+end
+
+end
+
+end
+
+end
+
+return bestId
+
+end
+
 local function getInventoryInfo()
 
 local success,data=pcall(function()
@@ -57,22 +111,25 @@ return nil
 end
 
 local inventoryLevel=data.InventoryLevel
-
 local totalSpace=RepLib:GetInventorySpace(LocalPlayer,inventoryLevel)
 
-local currentCount=0
+local used=0
 
 if data.Inventory then
-for _ in pairs(data.Inventory)do
-currentCount=currentCount+1
+for _ in pairs(data.Inventory) do
+used=used+1
 end
 end
+
+local available=totalSpace-used
+
+local carry=LocalPlayer:GetAttribute("CarrySpace") or 1
 
 return{
 total=totalSpace,
-used=currentCount,
-available=totalSpace-currentCount,
-carry=LocalPlayer:GetAttribute("CarrySpace") or 1,
+used=used,
+available=available,
+carry=carry,
 itemsWon=data.ItemsWon or {}
 }
 
@@ -85,7 +142,6 @@ local list={}
 for _,item in pairs(itemsWon)do
 
 local itemId=item.itemId
-
 local data=ItemsModule[itemId] or ItemsModule[tostring(itemId)]
 
 if data and data.Price then
@@ -107,20 +163,23 @@ end
 
 local function handleItemsWon()
 
+processingItemsWon=true
+
 local info=getInventoryInfo()
 
 if not info then
+processingItemsWon=false
 return
 end
 
 local itemsWon=info.itemsWon
 
 if not itemsWon then
+processingItemsWon=false
 return
 end
 
 local gui=LocalPlayer.PlayerGui:WaitForChild("ItemsWon")
-
 local frame=gui.ItemsFrame.Frame
 
 local itemList=getBestItemList(itemsWon)
@@ -129,6 +188,7 @@ local selectLimit=math.min(info.carry,info.available)
 
 if selectLimit<=0 then
 notify("Inventory full")
+processingItemsWon=false
 return
 end
 
@@ -173,7 +233,6 @@ end
 local confirm=gui.ItemsFrame.ConfirmButton
 
 repeat task.wait() until confirm.Visible
-
 tryClick(confirm)
 
 task.wait(1)
@@ -181,8 +240,21 @@ task.wait(1)
 local sell=gui.SellItems.Frame.Normal.Button
 
 repeat task.wait() until sell.Visible
-
 tryClick(sell)
+
+processingItemsWon=false
+
+end
+
+local function hasInventorySpace()
+
+local info=getInventoryInfo()
+
+if not info then
+return false
+end
+
+return info.available>0
 
 end
 
@@ -190,17 +262,29 @@ local function joinAuction()
 
 while true do
 
-if not inAuction then
+if not processingItemsWon and not inAuction then
 
-local info=getInventoryInfo()
+if not hasInventorySpace() then
+notify("Inventory full")
+task.wait(2)
+continue
+end
 
-if info and info.available>0 then
+local garageId=getBestAffordableGarage()
 
-local id="51"
+if garageId then
+
+local garageData=GaragesModule[garageId]
+
+if garageData then
+
+notify("Joining "..garageData.Name)
 
 pcall(function()
-EnterQueue:InvokeServer(id)
+EnterQueue:InvokeServer(garageId)
 end)
+
+end
 
 end
 
@@ -215,8 +299,6 @@ end
 coroutine.wrap(joinAuction)()
 
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
-
-currentBidData=data
 
 if not shouldBid then
 return
@@ -236,7 +318,7 @@ notify("Bid "..tostring(nextBid))
 
 end)
 
-AuctionsFolder.ChildAdded:Connect(function(garage)
+AuctionsFolder.ChildAdded:Connect(function()
 
 inAuction=true
 
@@ -245,9 +327,9 @@ auctionIndex=auctionIndex+1
 shouldBid=(auctionIndex%3)==1
 
 if shouldBid then
-notify("Bidding "..garage.Name)
+notify("Bidding")
 else
-notify("Skipping "..garage.Name)
+notify("Skipping")
 end
 
 end)
@@ -257,8 +339,6 @@ AuctionsFolder.ChildRemoved:Connect(function()
 if #AuctionsFolder:GetChildren()==0 then
 
 inAuction=false
-
-currentBidData=nil
 
 task.wait(2)
 
