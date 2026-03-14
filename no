@@ -57,6 +57,24 @@ itemsPerRow = math.floor(canvas.Size.X / 6) - 1,
 rowsPerFloor = math.floor(canvas.Size.Z / 6) - 1,
 }
 
+local auctionData = nil
+
+game.ReplicatedStorage.Events.Auctions.SetupAuction.OnClientEvent:Connect(function(data)
+    auctionData = data.items
+end)
+
+local function getItemIdFromBox(boxInstance)
+    if not auctionData then return nil end
+    local boxId = boxInstance:GetAttribute("BoxId")
+    if not boxId then return nil end
+    for _, item in pairs(auctionData) do
+        if item.boxId == boxId then
+            return tostring(item.itemId)
+        end
+    end
+    return nil
+end
+
 task.spawn(function()
 while true do
 task.wait(60)
@@ -366,26 +384,30 @@ return invCount >= invSpace and carrySpace <= 0
 end
 
 local function scanCurrentGarageForTarget()
-if not currentGarage then return false end
-local itemsFolder = currentGarage:FindFirstChild("Items")
-if not itemsFolder then return false end
-taskWait(0.5)
-local startTime = tick()
-while tick() - startTime < SCAN_DURATION do
-for _, itemInstance in pairs(itemsFolder:GetChildren()) do
-local itemId = itemInstance.Name
-local isTarget, itemData = isTargetItem(itemId)
-if isTarget then
-currentTargetData = itemData
-targetGarage = currentGarage
-sendWebhook(itemId,itemData,LocalPlayer.Name)
-totalTargetsFound = totalTargetsFound + 1
-return true, itemId, itemData
-end
-end
-taskWait(0.2)
-end
-return false
+    if not currentGarage then return false end
+    local itemsFolder = currentGarage:FindFirstChild("Items")
+    if not itemsFolder then return false end
+    taskWait(0.5)
+    local startTime = tick()
+    while tick() - startTime < SCAN_DURATION do
+        for _, itemInstance in pairs(itemsFolder:GetChildren()) do
+            local itemId = itemInstance.Name
+            local boxItemId = getItemIdFromBox(itemInstance)
+            if boxItemId then
+                itemId = boxItemId
+            end
+            local isTarget, itemData = isTargetItem(itemId)
+            if isTarget then
+                currentTargetData = itemData
+                targetGarage = currentGarage
+                sendWebhook(itemId,itemData,LocalPlayer.Name)
+                totalTargetsFound = totalTargetsFound + 1
+                return true, itemId, itemData
+            end
+        end
+        taskWait(0.2)
+    end
+    return false
 end
 
 local function checkForButton()
@@ -402,16 +424,14 @@ local function handleItemsWon()
     end)
     if not success or not result or not result.ItemsWon then return false end
     
-    local itemsWon = result.ItemsWon  -- This table uses GUIDs as keys
+    local itemsWon = result.ItemsWon
     local gui = LocalPlayer.PlayerGui:WaitForChild("ItemsWon")
     local frame = gui:WaitForChild("ItemsFrame"):WaitForChild("Frame")
     local selectedCount = 0
     
-    -- ItemsWon is a dictionary where keys are GUIDs
     for guid, itemData in pairs(itemsWon) do
         local itemId = tostring(itemData.itemId)
         
-        -- Check if this item ID is in our target list
         local isTarget = false
         for _, targetId in ipairs(targetItemIds) do
             if itemId == tostring(targetId) then
@@ -421,28 +441,25 @@ local function handleItemsWon()
         end
         
         if isTarget then
-            -- The button name is the GUID from ItemsWon
             local targetButton = frame:FindFirstChild(guid)
             
             if targetButton and targetButton:IsA("ImageButton") then
                 tryClick(targetButton)
                 selectedCount = selectedCount + 1
                 totalTargetsObtained = totalTargetsObtained + 1
-                task.wait(1)  -- Give time for selection to register
+                task.wait(1)
             end
         end
     end
     
     if selectedCount == 0 then return false end
     
-    -- Confirm selection
     local confirmButton = gui.ItemsFrame.ConfirmButton
     repeat taskWait() until confirmButton.Visible
     tryClick(confirmButton)
     
     task.wait(1)
     
-    -- Handle sell screen (they use GUIDs for selling too)
     local sellButton = gui.SellItems.Frame.Normal.Button
     repeat taskWait() until sellButton.Visible
     tryClick(sellButton)
@@ -520,5 +537,3 @@ end)
 end
 task.wait(1)
 end
-
-
