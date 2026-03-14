@@ -1,254 +1,28 @@
-local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
-
-local UIModule = require(game.ReplicatedStorage.Modules.UIModule)
-local Events = game:GetService("ReplicatedStorage"):WaitForChild("Events")
-local Players = game:GetService("Players")
-local CollectionService = game:GetService("CollectionService")
-local LocalPlayer = Players.LocalPlayer
-local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
-local ItemsModule = require(ReplicatedStorage.Modules.Items)
-
-local MakeOfferRemote = Events.Shop.MakePlayerOffer
-local GetRemote = Events.Data.Get
-local SetInsideShopRemote = Events.Misc.SetInsideShop
-
-local Window = Fluent:CreateWindow({
-    Title = "xWesged Tool",
-    SubTitle = "by",
-    TabWidth = 160,
-    Size = UDim2.fromOffset(300, 200),
-    Acrylic = true,
-    Theme = "Dark"
-})
-
-local Tabs = {
-    Main = Window:AddTab({ Title = "Main", Icon = "home" })
-}
-
-local Config = {
-    TargetPlayer = "ANYASTOM20",
-    ProcessEnabled = false,
-    CurrentTargetIndex = 1,
-    LastSend = 0,
-    LastPivot = 0,
-    SendDelay = 5,
-    PivotDelay = 5,
-    StopWhenCash = 2000000000,
-    MinItems = 16,
-    OfferPercent = 50
-}
-
-local function getAllPlayers()
-    local t = {}
-    for _,p in ipairs(Players:GetPlayers()) do
-        table.insert(t,p.Name)
-    end
-    return t
-}
-
-local function getTargetPlayer()
-    return Players:FindFirstChild(Config.TargetPlayer)
-end
-
-local function checkPlayerCash(player)
-    if player and player:FindFirstChild("SaveVars") and player.SaveVars:FindFirstChild("Cash") then
-        return player.SaveVars.Cash.Value
-    end
-    return nil
-end
-
-local function getPlacedMap(plot)
-    local map = {}
-    local furniture = plot:FindFirstChild("Furniture")
-    if not furniture then return map end
-    for _, v in pairs(furniture:GetDescendants()) do
-        if v.Name == "Item" then
-            for _, item in pairs(v:GetChildren()) do
-                map[item.Name] = map[item.Name] or {}
-                table.insert(map[item.Name], item)
-            end
-        end
-    end
-    return map
-end
-
-local function loadPlayerShop(targetPlayer)
-    if not targetPlayer then return end
-    local vars = targetPlayer:FindFirstChild("NonSaveVars")
-    if not vars then return end
-    local plotVal = vars:FindFirstChild("OwnsPlot")
-    if not plotVal then return end
-    local plot = plotVal.Value
-    if not plot then return end
-    local floorVal = vars:FindFirstChild("DefaultFloor")
-    if floorVal and floorVal.Value then
-        pcall(function()
-            SetInsideShopRemote:FireServer(nil)
-            task.wait()
-            SetInsideShopRemote:FireServer(floorVal.Value)
-        end)
-    end
-end
-
-local function pivotToTarget(targetPlayer)
-    if not targetPlayer then return end
-    local character = targetPlayer.Character
-    if not character then return end
-    local root = character:FindFirstChild("HumanoidRootPart")
-    local myCharacter = LocalPlayer.Character
-    if root and myCharacter then
-        myCharacter:PivotTo(root.CFrame * CFrame.new(0, 0, -3))
-        loadPlayerShop(targetPlayer)
-    end
-end
-
-Tabs.Main:AddDropdown("TargetPlayer", {
-    Title = "Select Target",
-    Values = getAllPlayers(),
-    Multi = false,
-    Default = "xWesged",
-    Callback = function(v)
-        Config.TargetPlayer = v
-        UIModule:Notify(LocalPlayer, "Target set to: " .. v)
-    end
-})
-
-local ProcessToggle = Tabs.Main:AddToggle("ProcessToggle", {
-    Title = "Start Process",
-    Default = false,
-    Callback = function(v)
-        Config.ProcessEnabled = v
-        UIModule:Notify(LocalPlayer, "Process " .. (v and "Started" or "Stopped"))
-    end
-})
-
-task.spawn(function()
-    while true do
-        task.wait(1)
-        if not Config.ProcessEnabled then continue end
-        
-        local target = getTargetPlayer()
-        if not target then continue end
-        
-        local targetCash = checkPlayerCash(target)
-        if targetCash and targetCash >= Config.StopWhenCash then
-            UIModule:Notify(LocalPlayer, target.Name .. " reached cash limit")
-            Config.ProcessEnabled = false
-            ProcessToggle:SetValue(false)
-            continue
-        end
-        
-        local now = tick()
-        
-        if now - Config.LastPivot >= Config.PivotDelay then
-            pivotToTarget(target)
-            Config.LastPivot = now
-        end
-        
-        if now - Config.LastSend >= Config.SendDelay then
-            local data = Events.Data.Get:InvokeServer("Inventory")
-            local inventory = data.Inventory or data
-            local availableCount = 0
-            
-            for guid, itemData in pairs(inventory) do
-                if not (itemData.ItemPlaced or itemData.NextOfferDue) then
-                    availableCount = availableCount + 1
-                end
-            end
-            
-            if availableCount >= Config.MinItems then
-                local success = Events.Trading.SendInvite:InvokeServer(target.Name)
-                if success then
-                    UIModule:Notify(LocalPlayer, "Sent trade to " .. target.Name)
-                    Config.LastSend = now
-                end
-            end
-        end
-    end
-end)
-
-task.spawn(function()
-    while true do
-        task.wait(2)
-        if not Config.ProcessEnabled then continue end
-        
-        local data = Events.Data.Get:InvokeServer("Inventory")
-        local inventory = data.Inventory or data
-        local addedCount = 0
-        
-        for guid, itemData in pairs(inventory) do
-            if addedCount >= 16 then break end
-            if not (itemData.ItemPlaced or itemData.NextOfferDue) then
-                local success = Events.Trading.AddItem:InvokeServer({
-                    GUID = guid,
-                    Type = "Item"
-                })
-                if success then
-                    addedCount = addedCount + 1
-                end
-                task.wait(0.1)
-            end
-        end
-        
-        if addedCount > 0 then
-            task.wait(0.5)
-            Events.Trading.AcceptTrade:InvokeServer()
-        end
-    end
-end)
-
-task.spawn(function()
-    while true do
-        task.wait(3)
-        if not Config.ProcessEnabled then continue end
-        
-        local target = getTargetPlayer()
-        if not target then continue end
-        
-        local inv = GetRemote:InvokeServer("Inventory", target)
-        if type(inv) ~= "table" then continue end
-        
-        local plotVal = target.NonSaveVars and target.NonSaveVars.OwnsPlot
-        if not plotVal then continue end
-        
-        local plot = plotVal.Value
-        if not plot then continue end
-        
-        local placedMap = getPlacedMap(plot)
-        
-        local sortedItems = {}
-        for guid, itemData in pairs(inv) do
-            local price = RepLibrary:GetItemPrice(itemData)
-            table.insert(sortedItems, {GUID = guid, Data = itemData, Price = price})
-        end
-        table.sort(sortedItems, function(a, b) return a.Price > b.Price end)
-        
-        for _, item in ipairs(sortedItems) do
-            local guid = item.GUID
-            local itemData = item.Data
-            local info = ItemsModule[itemData.Id]
-            if not info then continue end
-            
-            local placed = placedMap[info.Name]
-            if placed and #placed > 0 then
-                local instance = table.remove(placed, 1)
-                local price = item.Price
-                local offer = math.floor(price * (1 + Config.OfferPercent / 100))
-                
-                pcall(function()
-                    MakeOfferRemote:InvokeServer(target, guid, offer, instance)
-                end)
-                task.wait(0.25)
-            end
-        end
-    end
-end)
-
-Events.Trading.AcceptTradeFromServer.OnClientEvent:Connect(function()
-    if Config.ProcessEnabled then
-        task.wait(0.5)
-        Events.Trading.AcceptTrade:InvokeServer()
-    end
-end)
-
+local ReplicatedStorage=game:GetService("ReplicatedStorage")
+local Players=game:GetService("Players")
+local CollectionService=game:GetService("CollectionService")
+local LocalPlayer=Players.LocalPlayer
+local Fluent=loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+local UIModule=require(ReplicatedStorage.Modules.UIModule)
+local Events=ReplicatedStorage:WaitForChild("Events")
+local RepLibrary=require(ReplicatedStorage.Modules.RepLibrary)
+local ItemsModule=require(ReplicatedStorage.Modules.Items)
+local MakeOfferRemote=Events.Shop.MakePlayerOffer
+local GetRemote=Events.Data.Get
+local SetInsideShopRemote=Events.Misc.SetInsideShop
+local Window=Fluent:CreateWindow({Title="xWesged Tool",SubTitle="by",TabWidth=160,Size=UDim2.fromOffset(300,200),Acrylic=true,Theme="Dark"})
+local Tabs={Main=Window:AddTab({Title="Main",Icon="home"})}
+local Config={TargetPlayer="ANYASTOM20",ProcessEnabled=false,CurrentTargetIndex=1,LastSend=0,LastPivot=0,SendDelay=5,PivotDelay=5,StopWhenCash=2000000000,MinItems=16,OfferPercent=50}
+local function getAllPlayers()local t={}for _,p in ipairs(Players:GetPlayers())do table.insert(t,p.Name)end return t end
+local function getTargetPlayer()return Players:FindFirstChild(Config.TargetPlayer)end
+local function checkPlayerCash(player)if player and player:FindFirstChild("SaveVars")and player.SaveVars:FindFirstChild("Cash")then return player.SaveVars.Cash.Value end return nil end
+local function getPlacedMap(plot)local map={}local furniture=plot:FindFirstChild("Furniture")if not furniture then return map end for _,v in pairs(furniture:GetDescendants())do if v.Name=="Item"then for _,item in pairs(v:GetChildren())do map[item.Name]=map[item.Name]or{}table.insert(map[item.Name],item)end end end return map end
+local function loadPlayerShop(targetPlayer)if not targetPlayer then return end local vars=targetPlayer:FindFirstChild("NonSaveVars")if not vars then return end local plotVal=vars:FindFirstChild("OwnsPlot")if not plotVal then return end local plot=plotVal.Value if not plot then return end local floorVal=vars:FindFirstChild("DefaultFloor")if floorVal and floorVal.Value then pcall(function()SetInsideShopRemote:FireServer(nil)task.wait()SetInsideShopRemote:FireServer(floorVal.Value)end)end end
+local function pivotToTarget(targetPlayer)if not targetPlayer then return end local character=targetPlayer.Character if not character then return end local root=character:FindFirstChild("HumanoidRootPart")local myCharacter=LocalPlayer.Character if root and myCharacter then myCharacter:PivotTo(root.CFrame*CFrame.new(0,0,-3))loadPlayerShop(targetPlayer)end end
+Tabs.Main:AddDropdown("TargetPlayer",{Title="Select Target",Values=getAllPlayers(),Multi=false,Default="xWesged",Callback=function(v)Config.TargetPlayer=v UIModule:Notify(LocalPlayer,"Target set to: "..v)end})
+local ProcessToggle=Tabs.Main:AddToggle("ProcessToggle",{Title="Start Process",Default=false,Callback=function(v)Config.ProcessEnabled=v UIModule:Notify(LocalPlayer,"Process "..(v and"Started"or"Stopped"))end})
+task.spawn(function()while true do task.wait(1)if not Config.ProcessEnabled then continue end local target=getTargetPlayer()if not target then continue end local targetCash=checkPlayerCash(target)if targetCash and targetCash>=Config.StopWhenCash then UIModule:Notify(LocalPlayer,target.Name.." reached cash limit")Config.ProcessEnabled=false ProcessToggle:SetValue(false)continue end local now=tick()if now-Config.LastPivot>=Config.PivotDelay then pivotToTarget(target)Config.LastPivot=now end if now-Config.LastSend>=Config.SendDelay then local data=Events.Data.Get:InvokeServer("Inventory")local inventory=data.Inventory or data local availableCount=0 for guid,itemData in pairs(inventory)do if not(itemData.ItemPlaced or itemData.NextOfferDue)then availableCount=availableCount+1 end end if availableCount>=Config.MinItems then local success=Events.Trading.SendInvite:InvokeServer(target.Name)if success then UIModule:Notify(LocalPlayer,"Sent trade to "..target.Name)Config.LastSend=now end end end end end)
+task.spawn(function()while true do task.wait(2)if not Config.ProcessEnabled then continue end local data=Events.Data.Get:InvokeServer("Inventory")local inventory=data.Inventory or data local addedCount=0 for guid,itemData in pairs(inventory)do if addedCount>=16 then break end if not(itemData.ItemPlaced or itemData.NextOfferDue)then local success=Events.Trading.AddItem:InvokeServer({GUID=guid,Type="Item"})if success then addedCount=addedCount+1 end task.wait(0.1)end end if addedCount>0 then task.wait(0.5)Events.Trading.AcceptTrade:InvokeServer()end end end)
+task.spawn(function()while true do task.wait(3)if not Config.ProcessEnabled then continue end local target=getTargetPlayer()if not target then continue end local inv=GetRemote:InvokeServer("Inventory",target)if type(inv)~="table"then continue end local plotVal=target.NonSaveVars and target.NonSaveVars.OwnsPlot if not plotVal then continue end local plot=plotVal.Value if not plot then continue end local placedMap=getPlacedMap(plot)local sortedItems={}for guid,itemData in pairs(inv)do local price=RepLibrary:GetItemPrice(itemData)table.insert(sortedItems,{GUID=guid,Data=itemData,Price=price})end table.sort(sortedItems,function(a,b)return a.Price>b.Price end)for _,item in ipairs(sortedItems)do local guid=item.GUID local itemData=item.Data local info=ItemsModule[itemData.Id]if not info then continue end local placed=placedMap[info.Name]if placed and #placed>0 then local instance=table.remove(placed,1)local price=item.Price local offer=math.floor(price*(1+Config.OfferPercent/100))pcall(function()MakeOfferRemote:InvokeServer(target,guid,offer,instance)end)task.wait(0.25)end end end end)
+Events.Trading.AcceptTradeFromServer.OnClientEvent:Connect(function()if Config.ProcessEnabled then task.wait(0.5)Events.Trading.AcceptTrade:InvokeServer()end end)
 Window:SelectTab(Tabs.Main)
