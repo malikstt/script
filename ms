@@ -113,86 +113,85 @@ task.spawn(function()
     end
 end)
 
-local pivotTargetPlayer = nil
-local pivotTeleportEnabled = false
+local shopTargetPlayers = {}
+local shopTeleportEnabled = false
+local shopTeleportDelay = 5
 
-Tabs.Main:AddDropdown("PivotTeleportPlayer", {
-    Title = "Teleport To Player (Pivot)",
+Tabs.Main:AddDropdown("ShopTargetPlayers", {
+    Title = "Shop Teleport Players",
     Values = getAllPlayersIncludingSelf(),
-    Multi = false,
-    Default = nil,
+    Multi = true,
+    Default = {},
     Callback = function(v)
-        pivotTargetPlayer = v
+        shopTargetPlayers = v
     end
 })
 
-Tabs.Main:AddToggle("PivotTeleportToggle", {
-    Title = "Pivot Teleport Toggle",
+Tabs.Main:AddSlider("ShopTeleportDelay", {
+    Title = "Shop Teleport Delay",
+    Default = 5,
+    Min = 1,
+    Max = 30,
+    Rounding = 1,
+    Callback = function(v)
+        shopTeleportDelay = v
+    end
+})
+
+Tabs.Main:AddToggle("ShopTeleportToggle", {
+    Title = "Shop Teleport Toggle",
     Default = false,
     Callback = function(v)
-        pivotTeleportEnabled = v
+        shopTeleportEnabled = v
     end
 })
 
+local function teleportToShop(plot)
+    if not plot then return end
+    local exterior = plot:FindFirstChild("Exterior")
+    if not exterior then return end
+    local Character = LocalPlayer.Character
+    if not Character then return end
+    local Root = Character:FindFirstChild("HumanoidRootPart")
+    if not Root then return end
+    local door = nil
+    for _, d in ipairs(CollectionService:GetTagged("Door")) do
+        if d:IsDescendantOf(exterior) and d:FindFirstChild("TouchPart") then
+            door = d
+            break
+        end
+    end
+    if not door then return end
+    local touchPart = door.TouchPart
+    Root.CFrame = touchPart.CFrame + Vector3.new(0,0,-2)
+    local floorVal = exterior.Parent:FindFirstChild("Owner") and exterior.Parent.Owner.Value and exterior.Parent.Owner.Value.NonSaveVars and exterior.Parent.Owner.Value.NonSaveVars:FindFirstChild("DefaultFloor")
+    if floorVal and floorVal.Value then
+        SetInsideShopRemote:FireServer(nil)
+        task.wait()
+        SetInsideShopRemote:FireServer(floorVal.Value)
+    end
+end
+
 task.spawn(function()
-    local currentTargetCharacter = nil
-    local currentTargetPlayer = nil
-    local lastLoadedPlot = nil
-    local lastUpdateTime = 0
     while true do
         pcall(function()
-            if not pivotTeleportEnabled then
-                currentTargetCharacter = nil
-                currentTargetPlayer = nil
-                lastLoadedPlot = nil
-                return
-            end
-            local now = tick()
-            if now - lastUpdateTime >= 0.5 then
-                lastUpdateTime = now
-                if pivotTargetPlayer then
-                    local targetPlayer = Players:FindFirstChild(pivotTargetPlayer)
-                    if targetPlayer then
-                        currentTargetCharacter = targetPlayer.Character
-                        currentTargetPlayer = targetPlayer
-                    else
-                        currentTargetCharacter = nil
-                        currentTargetPlayer = nil
-                    end
-                else
-                    currentTargetCharacter = nil
-                    currentTargetPlayer = nil
-                end
-            end
-            if currentTargetCharacter then
-                local targetRoot = currentTargetCharacter:FindFirstChild("HumanoidRootPart")
-                local myCharacter = LocalPlayer.Character
-                if targetRoot and myCharacter then
-                    myCharacter:PivotTo(targetRoot.CFrame * CFrame.new(0,0,-2))
-                    if currentTargetPlayer then
-                        local vars = currentTargetPlayer:FindFirstChild("NonSaveVars")
-                        if vars then
-                            local plotVal = vars:FindFirstChild("OwnsPlot")
-                            if plotVal and plotVal.Value then
-                                local plot = plotVal.Value
-                                if plot ~= lastLoadedPlot then
-                                    lastLoadedPlot = plot
-                                    local floorVal = vars:FindFirstChild("DefaultFloor")
-                                    if floorVal and floorVal.Value then
-                                        pcall(function()
-                                            SetInsideShopRemote:FireServer(nil)
-                                            task.wait()
-                                            SetInsideShopRemote:FireServer(floorVal.Value)
-                                        end)
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
+            if not shopTeleportEnabled then return end
+            for playerName, state in pairs(shopTargetPlayers) do
+                if not shopTeleportEnabled then break end
+                if not state then continue end
+                local target = Players:FindFirstChild(playerName)
+                if not target then continue end
+                local vars = target:FindFirstChild("NonSaveVars")
+                if not vars then continue end
+                local plotVal = vars:FindFirstChild("OwnsPlot")
+                if not plotVal then continue end
+                local plot = plotVal.Value
+                if not plot then continue end
+                teleportToShop(plot)
+                task.wait(shopTeleportDelay)
             end
         end)
-        task.wait(0.05)
+        task.wait(0.25)
     end
 end)
 
