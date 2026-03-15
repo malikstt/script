@@ -57,24 +57,6 @@ itemsPerRow = math.floor(canvas.Size.X / 6) - 1,
 rowsPerFloor = math.floor(canvas.Size.Z / 6) - 1,
 }
 
-local auctionData = nil
-
-game.ReplicatedStorage.Events.Auctions.SetupAuction.OnClientEvent:Connect(function(data)
-    auctionData = data.items
-end)
-
-local function getItemIdFromBox(boxInstance)
-    if not auctionData then return nil end
-    local boxId = boxInstance:GetAttribute("BoxId")
-    if not boxId then return nil end
-    for _, item in pairs(auctionData) do
-        if item.boxId == boxId then
-            return tostring(item.itemId)
-        end
-    end
-    return nil
-end
-
 task.spawn(function()
 while true do
 task.wait(60)
@@ -105,7 +87,7 @@ if itemId == "681" then
 return 8388736
 elseif itemId == "2294" then
 return 16753920
-elseif itemId == "1321" then
+elseif itemId == "1162" then
 return 255
 else
 return 65280
@@ -384,30 +366,26 @@ return invCount >= invSpace and carrySpace <= 0
 end
 
 local function scanCurrentGarageForTarget()
-    if not currentGarage then return false end
-    local itemsFolder = currentGarage:FindFirstChild("Items")
-    if not itemsFolder then return false end
-    taskWait(0.5)
-    local startTime = tick()
-    while tick() - startTime < SCAN_DURATION do
-        for _, itemInstance in pairs(itemsFolder:GetChildren()) do
-            local itemId = itemInstance.Name
-            local boxItemId = getItemIdFromBox(itemInstance)
-            if boxItemId then
-                itemId = boxItemId
-            end
-            local isTarget, itemData = isTargetItem(itemId)
-            if isTarget then
-                currentTargetData = itemData
-                targetGarage = currentGarage
-                sendWebhook(itemId,itemData,LocalPlayer.Name)
-                totalTargetsFound = totalTargetsFound + 1
-                return true, itemId, itemData
-            end
-        end
-        taskWait(0.2)
-    end
-    return false
+if not currentGarage then return false end
+local itemsFolder = currentGarage:FindFirstChild("Items")
+if not itemsFolder then return false end
+taskWait(0.5)
+local startTime = tick()
+while tick() - startTime < SCAN_DURATION do
+for _, itemInstance in pairs(itemsFolder:GetChildren()) do
+local itemId = itemInstance.Name
+local isTarget, itemData = isTargetItem(itemId)
+if isTarget then
+currentTargetData = itemData
+targetGarage = currentGarage
+sendWebhook(itemId,itemData,LocalPlayer.Name)
+totalTargetsFound = totalTargetsFound + 1
+return true, itemId, itemData
+end
+end
+taskWait(0.2)
+end
+return false
 end
 
 local function checkForButton()
@@ -418,107 +396,45 @@ if button then tryClick(button) end
 end
 end
 
-local function getInventorySpaceSafe()
-    local success, data = pcall(function()
-        return DataEvent:InvokeServer()
-    end)
-
-    if not success or not data then return nil end
-
-    local inventoryLevel = data.InventoryLevel or 1
-    local carryLevel = data.CarryLevel or 1
-    local currentItems = data.Inventory or {}
-    local currentCount = 0
-    for _ in pairs(currentItems) do currentCount += 1 end
-
-    local totalInventory = RepLibrary:GetInventorySpace(LocalPlayer, inventoryLevel)
-    local totalCarry = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
-
-    return {
-        totalInventory = totalInventory,
-        usedInventory = currentCount,
-        availableInventory = totalInventory - currentCount,
-        totalCarry = totalCarry,
-    }
-end
-
 local function handleItemsWon()
-    local gui = LocalPlayer.PlayerGui:WaitForChild("ItemsWon")
-    local itemsFrame = gui:WaitForChild("ItemsFrame")
-    local frame = itemsFrame:WaitForChild("Frame")
-
-    task.wait(3) -- wait for UI to fully populate
-
-    local inventoryData = getInventorySpaceSafe()
-    if not inventoryData then return false end
-    if inventoryData.availableInventory <= 0 or inventoryData.totalCarry <= 0 then
-        print("Inventory or carry full, skipping item selection")
-        return false
-    end
-
-    local success, result = pcall(function()
-        return DataEvent:InvokeServer()
-    end)
-    if not success or not result or not result.ItemsWon then return false end
-
-    local itemsWon = result.ItemsWon
-    local selectedCount = 0
-
-    for _, itemData in pairs(itemsWon) do
-        local itemId = tostring(itemData.itemId)
-        local isTarget = false
-        for _, targetId in ipairs(targetItemIds) do
-            if itemId == tostring(targetId) then
-                isTarget = true
-                break
-            end
-        end
-
-        if isTarget and inventoryData.availableInventory > 0 and inventoryData.totalCarry > 0 then
-            for _, btn in ipairs(frame:GetChildren()) do
-                if btn:IsA("ImageButton") then
-                    local btnId
-                    if btn:GetAttribute("ItemId") then
-                        btnId = tostring(btn:GetAttribute("ItemId"))
-                    elseif btn:FindFirstChild("ItemId") then
-                        btnId = tostring(btn.ItemId.Value)
-                    else
-                        btnId = tostring(btn.Name)
-                    end
-
-                    if btnId == itemId then
-                        tryClick(btn)
-                        selectedCount += 1
-                        totalTargetsObtained += 1
-                        obtainedTarget = true
-
-                        -- decrement available space to avoid overfill
-                        inventoryData.availableInventory -= 1
-                        inventoryData.totalCarry -= 1
-
-                        task.wait(1) -- pause between selections
-                        break
-                    end
-                end
-            end
-        end
-    end
-
-    if selectedCount == 0 then return false end
-
-    -- confirm selection
-    local confirmButton = itemsFrame:WaitForChild("ConfirmButton")
-    repeat taskWait() until confirmButton.Visible
-    tryClick(confirmButton)
-
-    task.wait(1) -- pause before selling
-
-    local sellButton = gui:WaitForChild("SellItems"):WaitForChild("Frame"):WaitForChild("Normal"):WaitForChild("Button")
-    repeat taskWait() until sellButton.Visible
-    tryClick(sellButton)
-
-    return true
+local success, result = pcall(function()
+return DataEvent:InvokeServer()
+end)
+if not success or not result or not result.ItemsWon then return false end
+local itemsWon = result.ItemsWon
+local gui = LocalPlayer.PlayerGui:WaitForChild("ItemsWon")
+local frame = gui:WaitForChild("ItemsFrame"):WaitForChild("Frame")
+local selectedCount = 0
+for key, itemData in pairs(itemsWon) do
+local itemId = itemData.itemId
+local data = ItemsModule[itemId] or ItemsModule[tostring(itemId)]
+if data then
+local isTarget, _ = isTargetItem(tostring(itemId))
+if isTarget then
+for _, btn in ipairs(frame:GetChildren()) do
+if btn:IsA("ImageButton") and btn:FindFirstChild("Price") and btn:FindFirstChild("Rarity") then
+if btn.Rarity.TextLabel.Text == data.Rarity then
+tryClick(btn)
+selectedCount = selectedCount + 1
+totalTargetsObtained = totalTargetsObtained + 1
+task.wait(1)
 end
+end
+end
+end
+end
+end
+if selectedCount == 0 then return false end
+local confirmButton = gui.ItemsFrame.ConfirmButton
+repeat taskWait() until confirmButton.Visible
+tryClick(confirmButton)
+task.wait(1)
+local sellButton = gui.SellItems.Frame.Normal.Button
+repeat taskWait() until sellButton.Visible
+tryClick(sellButton)
+return true
+end
+
 task.spawn(function()
 while true do
 PlaceTargetInventoryItems()
@@ -587,13 +503,5 @@ checkForButton()
 end
 end)
 end
--- wait until ItemsWon UI is fully gone before next auction
-local itemsWonGui = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon")
-if itemsWonGui then
-    repeat task.wait(0.5)
-        itemsWonGui = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon")
-    until not itemsWonGui
-end
-
 task.wait(1)
 end
