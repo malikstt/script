@@ -418,75 +418,102 @@ if button then tryClick(button) end
 end
 end
 
+local function getInventorySpaceSafe()
+    local success, data = pcall(function()
+        return DataEvent:InvokeServer()
+    end)
+
+    if not success or not data then return nil end
+
+    local inventoryLevel = data.InventoryLevel or 1
+    local carryLevel = data.CarryLevel or 1
+    local currentItems = data.Inventory or {}
+    local currentCount = 0
+    for _ in pairs(currentItems) do currentCount += 1 end
+
+    local totalInventory = RepLibrary:GetInventorySpace(LocalPlayer, inventoryLevel)
+    local totalCarry = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
+
+    return {
+        totalInventory = totalInventory,
+        usedInventory = currentCount,
+        availableInventory = totalInventory - currentCount,
+        totalCarry = totalCarry,
+    }
+end
+
 local function handleItemsWon()
-    -- wait for UI to fully appear
     local gui = LocalPlayer.PlayerGui:WaitForChild("ItemsWon")
     local itemsFrame = gui:WaitForChild("ItemsFrame")
     local frame = itemsFrame:WaitForChild("Frame")
 
-    -- give UI time to populate
-    task.wait(3)
+    task.wait(3) -- wait for UI to fully populate
+
+    local inventoryData = getInventorySpaceSafe()
+    if not inventoryData then return false end
+    if inventoryData.availableInventory <= 0 or inventoryData.totalCarry <= 0 then
+        print("Inventory or carry full, skipping item selection")
+        return false
+    end
 
     local success, result = pcall(function()
         return DataEvent:InvokeServer()
     end)
-
-    if not success or not result or not result.ItemsWon then
-        return false
-    end
+    if not success or not result or not result.ItemsWon then return false end
 
     local itemsWon = result.ItemsWon
     local selectedCount = 0
 
     for _, itemData in pairs(itemsWon) do
         local itemId = tostring(itemData.itemId)
-
+        local isTarget = false
         for _, targetId in ipairs(targetItemIds) do
             if itemId == tostring(targetId) then
+                isTarget = true
+                break
+            end
+        end
 
-                for _, btn in ipairs(frame:GetChildren()) do
-                    if btn:IsA("ImageButton") then
-                        local btnId
+        if isTarget and inventoryData.availableInventory > 0 and inventoryData.totalCarry > 0 then
+            for _, btn in ipairs(frame:GetChildren()) do
+                if btn:IsA("ImageButton") then
+                    local btnId
+                    if btn:GetAttribute("ItemId") then
+                        btnId = tostring(btn:GetAttribute("ItemId"))
+                    elseif btn:FindFirstChild("ItemId") then
+                        btnId = tostring(btn.ItemId.Value)
+                    else
+                        btnId = tostring(btn.Name)
+                    end
 
-                        if btn:GetAttribute("ItemId") then
-                            btnId = tostring(btn:GetAttribute("ItemId"))
-                        elseif btn:FindFirstChild("ItemId") then
-                            btnId = tostring(btn.ItemId.Value)
-                        else
-                            btnId = tostring(btn.Name)
-                        end
+                    if btnId == itemId then
+                        tryClick(btn)
+                        selectedCount += 1
+                        totalTargetsObtained += 1
+                        obtainedTarget = true
 
-                        if btnId == itemId then
-                            tryClick(btn)
+                        -- decrement available space to avoid overfill
+                        inventoryData.availableInventory -= 1
+                        inventoryData.totalCarry -= 1
 
-                            selectedCount += 1
-                            totalTargetsObtained += 1
-                            obtainedTarget = true
-
-                            task.wait(1) -- pause between selections
-                        end
+                        task.wait(1) -- pause between selections
+                        break
                     end
                 end
-
             end
         end
     end
 
-    if selectedCount == 0 then
-        return false
-    end
+    if selectedCount == 0 then return false end
 
-    -- wait for confirm
+    -- confirm selection
     local confirmButton = itemsFrame:WaitForChild("ConfirmButton")
     repeat taskWait() until confirmButton.Visible
-
     tryClick(confirmButton)
 
-    -- pause before sell screen
-    task.wait(1)
+    task.wait(1) -- pause before selling
 
     local sellButton = gui:WaitForChild("SellItems"):WaitForChild("Frame"):WaitForChild("Normal"):WaitForChild("Button")
-
     repeat taskWait() until sellButton.Visible
     tryClick(sellButton)
 
