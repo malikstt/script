@@ -2,11 +2,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 local taskWait = task.wait
-
-local UIModule = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("UIModule"))
 
 local nonSaveVars = LocalPlayer:FindFirstChild("NonSaveVars")
 local ownsPlot = nonSaveVars and nonSaveVars:FindFirstChild("OwnsPlot")
@@ -30,8 +27,7 @@ local Shop = Events:WaitForChild("Shop")
 local Data = Events:WaitForChild("Data")
 
 local SCAN_DURATION = 2
-local BID_CHECK_INTERVAL = 0.05
-local MIN_GARAGE_SCAN_TIME = 1.2
+local BID_CHECK_INTERVAL = 0.2
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
 local PET_SAFE_WEBHOOK = "https://discord.com/api/webhooks/1483023142653005914/F7ZnzfoI-CFKMdUiFLSW68VTDk29KH6D_baLERftS9q8wjRdU062SzMLD50qdb-kWDYV"
 local targetItemIds = {"681","2294","1162"}
@@ -51,7 +47,6 @@ local garagesSkipped = 0
 local MAX_GARAGES = 3
 local currentTargetData = nil
 local targetGarage = nil
-local garageAppearTime = 0
 
 local lastSkipTime = 0
 local SKIP_COOLDOWN = 1
@@ -101,147 +96,147 @@ end
 end
 
 local function formatTime(seconds)
-local h = math.floor(seconds / 3600)
-local m = math.floor((seconds % 3600) / 60)
-local s = seconds % 60
-return string.format("%dM %dS", m + (h * 60), s)
+    local h = math.floor(seconds / 3600)
+    local m = math.floor((seconds % 3600) / 60)
+    local s = seconds % 60
+    return string.format("%dM %dS", m + (h * 60), s)
 end
 
 local function formatNumber(n)
-if n >= 1e9 then
-return string.format("%.1fB", n/1e9)
-elseif n >= 1e6 then
-return string.format("%.1fM", n/1e6)
-elseif n >= 1e3 then
-return string.format("%.1fK", n/1e3)
-else
-return tostring(n)
-end
+    if n >= 1e9 then
+        return string.format("%.1fB", n/1e9)
+    elseif n >= 1e6 then
+        return string.format("%.1fM", n/1e6)
+    elseif n >= 1e3 then
+        return string.format("%.1fK", n/1e3)
+    else
+        return tostring(n)
+    end
 end
 
 local function sendWebhook(itemId, itemData, playerName)
-local webhookUrl = WEBHOOK_URL
-if tostring(itemId) == "2294" then
-webhookUrl = PET_SAFE_WEBHOOK
-end
+    local webhookUrl = WEBHOOK_URL
+    if tostring(itemId) == "2294" then
+        webhookUrl = PET_SAFE_WEBHOOK
+    end
+    
+    local playerData
+    pcall(function()
+        playerData = ReplicatedStorage.Events.Data.GetAll:InvokeServer()
+    end)
 
-local playerData
-pcall(function()
-playerData = ReplicatedStorage.Events.Data.GetAll:InvokeServer()
-end)
+    local cash = 0  
+    local gems = 0  
+    local count = 0  
+    local craftTimerText = ""  
 
-local cash = 0
-local gems = 0
-local count = 0
-local craftTimerText = ""
+    if playerData then  
+        cash = playerData.Cash or 0  
+        gems = playerData.Gems or 0  
 
-if playerData then
-cash = playerData.Cash or 0
-gems = playerData.Gems or 0
+        local function countItems(container)  
+            if not container then return end  
+            for _, item in pairs(container) do  
+                local id = tostring(item.Id)  
+                if id == tostring(itemId) then  
+                    count += 1  
+                end  
+            end  
+        end  
 
-local function countItems(container)
-if not container then return end
-for _, item in pairs(container) do
-local id = tostring(item.Id)
-if id == tostring(itemId) then
-count += 1
-end
-end
-end
+        countItems(playerData.Furniture)  
+        countItems(playerData.Inventory)  
+    end  
 
-countItems(playerData.Furniture)
-countItems(playerData.Inventory)
-end
+    count += 1  
 
-count += 1
+    local emoji_cash = "<:cash:1480932250060329141>"  
+    local emoji_gems = "<:gems:1480932306628907080>"  
+    local emoji_gs = "<:gs:1480932184402428105>"  
+    local emoji_mgs = "<:mgs:1480930779314913393>"  
+    local emoji_1 = "<:emoji_1:1480930651342508142>"  
 
-local emoji_cash = "<:cash:1480932250060329141>"
-local emoji_gems = "<:gems:1480932306628907080>"
-local emoji_gs = "<:gs:1480932184402428105>"
-local emoji_mgs = "<:mgs:1480930779314913393>"
-local emoji_1 = "<:emoji_1:1480930651342508142>"
+    local fields = {  
+        {name="Item", value=itemData.Name or "Unknown", inline=false},  
+        {name="⭐ Rarity", value=itemData.Rarity or "Unknown", inline=false},  
+        {name=emoji_cash .. " Cash", value=formatNumber(cash), inline=true},  
+        {name=emoji_gems .. " Gems", value=formatNumber(gems), inline=true},  
+    }  
 
-local fields = {
-{name="Item", value=itemData.Name or "Unknown", inline=false},
-{name="⭐ Rarity", value=itemData.Rarity or "Unknown", inline=false},
-{name=emoji_cash .. " Cash", value=formatNumber(cash), inline=true},
-{name=emoji_gems .. " Gems", value=formatNumber(gems), inline=true},
-}
+    if tostring(itemId) == "681" then  
+        local upgrading, remaining  
+        pcall(function()  
+            upgrading, remaining = ReplicatedStorage.Events.UI.GetUpgradingItem:InvokeServer("UpgradingItem")  
+        end)  
 
-if tostring(itemId) == "681" then
-local upgrading, remaining
-pcall(function()
-upgrading, remaining = ReplicatedStorage.Events.UI.GetUpgradingItem:InvokeServer("UpgradingItem")
-end)
+        if upgrading and remaining and remaining > 0 then  
+            craftTimerText = " (⏳ " .. string.format("%dM %dS", math.floor(remaining/60), remaining%60) .. ")"  
+        end  
 
-if upgrading and remaining and remaining > 0 then
-craftTimerText = " (⏳ " .. string.format("%dM %dS", math.floor(remaining/60), remaining%60) .. ")"
-end
+        local megaGemSafeCount = 0  
+        local gemSafeCount = 0  
 
-local megaGemSafeCount = 0
-local gemSafeCount = 0
+        if playerData then  
+            local function countSpecial(container)  
+                if not container then return end  
+                for _, item in pairs(container) do  
+                    local id = tostring(item.Id)  
+                    if id == "1162" then megaGemSafeCount += 1 end  
+                    if id == "681" then gemSafeCount += 1 end  
+                end  
+            end  
+            countSpecial(playerData.Furniture)  
+            countSpecial(playerData.Inventory)  
+        end  
 
-if playerData then
-local function countSpecial(container)
-if not container then return end
-for _, item in pairs(container) do
-local id = tostring(item.Id)
-if id == "1162" then megaGemSafeCount += 1 end
-if id == "681" then gemSafeCount += 1 end
-end
-end
-countSpecial(playerData.Furniture)
-countSpecial(playerData.Inventory)
-end
+        gemSafeCount += 1  
 
-gemSafeCount += 1
+        table.insert(fields, {  
+            name=" Total Owned",  
+            value=emoji_mgs .. " MGS: " .. tostring(megaGemSafeCount) .. craftTimerText ..  
+                  " | " .. emoji_gs .. " GS: " .. tostring(gemSafeCount),  
+            inline=false  
+        })  
+    elseif tostring(itemId) == "2294" then  
+        local petSafeCount = 0  
+        if playerData then  
+            local function countPets(container)  
+                if not container then return end  
+                for _, item in pairs(container) do  
+                    if tostring(item.Id) == "2294" then  
+                        petSafeCount += 1  
+                    end  
+                end  
+            end  
+            countPets(playerData.Furniture)  
+            countPets(playerData.Inventory)  
+        end  
 
-table.insert(fields, {
-name=" Total Owned",
-value=emoji_mgs .. " MGS: " .. tostring(megaGemSafeCount) .. craftTimerText ..
-" | " .. emoji_gs .. " GS: " .. tostring(gemSafeCount),
-inline=false
-})
-elseif tostring(itemId) == "2294" then
-local petSafeCount = 0
-if playerData then
-local function countPets(container)
-if not container then return end
-for _, item in pairs(container) do
-if tostring(item.Id) == "2294" then
-petSafeCount += 1
-end
-end
-end
-countPets(playerData.Furniture)
-countPets(playerData.Inventory)
-end
+        petSafeCount += 1  
 
-petSafeCount += 1
+        table.insert(fields, {  
+            name="Total Owned",  
+            value=emoji_1 .. " " .. tostring(petSafeCount),  
+            inline=false  
+        })  
+    else  
+        table.insert(fields, {name="Total Owned", value=tostring(count), inline=false})  
+    end  
 
-table.insert(fields, {
-name="Total Owned",
-value=emoji_1 .. " " .. tostring(petSafeCount),
-inline=false
-})
-else
-table.insert(fields, {name="Total Owned", value=tostring(count), inline=false})
-end
-
-pcall(function()
-HttpService:RequestAsync({
-Url = webhookUrl,
-Method = "POST",
-Headers = {["Content-Type"] = "application/json"},
-Body = HttpService:JSONEncode({
-embeds = {{
-title = playerName .. " Got an Item",
-color = getEmbedColor(itemId),
-fields = fields
-}}
-})
-})
-end)
+    pcall(function()  
+        HttpService:RequestAsync({  
+            Url = webhookUrl,  
+            Method = "POST",  
+            Headers = {["Content-Type"] = "application/json"},  
+            Body = HttpService:JSONEncode({  
+                embeds = {{  
+                    title = playerName .. " Got an Item",
+                    color = getEmbedColor(itemId),  
+                    fields = fields  
+                }}  
+            })  
+        })  
+    end)
 end
 
 local function tryClick(obj)
@@ -287,12 +282,14 @@ return false
 end
 
 local function generateAirPosition()
-local cx, cy, cz = canvas.Position.X, canvas.Position.Y, canvas.Position.Z
-local sx, sy, sz = canvas.Size.X/2, canvas.Size.Y/2, canvas.Size.Z/2
-local rx = cx + math.random(-sx*100, sx*100)/100
-local rz = cz + math.random(-sz*100, sz*100)/100
-local ry = cy + sy + math.random(5,40)
-return Vector3.new(rx, ry, rz)
+    local cx, cy, cz = canvas.Position.X, canvas.Position.Y, canvas.Position.Z
+    local sx, sy, sz = canvas.Size.X/2, canvas.Size.Y/2, canvas.Size.Z/2
+
+    local rx = cx + math.random(-sx*100, sx*100)/100
+    local rz = cz + math.random(-sz*100, sz*100)/100
+    local ry = cy + sy + math.random(5,40)
+
+    return Vector3.new(rx, ry, rz)
 end
 
 local function PlaceTargetInventoryItems()
@@ -334,9 +331,9 @@ placedCount = placedCount + 1
 else
 retryCount = retryCount + 1
 end
-task.wait(0.05)
+task.wait(0.2)
 end
-task.wait(0.03)
+task.wait(0.1)
 end
 return true
 end
@@ -354,8 +351,6 @@ auctionEnded = false
 currentGarage = garage
 garagesSkipped = 0
 targetGarage = nil
-garageAppearTime = tick()
-UIModule:Notify(LocalPlayer, "🏁 Auction Started - Scanning for targets...")
 end)
 
 AuctionsFolder.ChildRemoved:Connect(function()
@@ -364,7 +359,6 @@ inAuction = false
 currentGarage = nil
 currentTargetData = nil
 targetGarage = nil
-UIModule:Notify(LocalPlayer, "⏹️ Auction Ended")
 end
 end)
 
@@ -380,36 +374,13 @@ local invCount = RepLibrary:GetLengthOfInventory(inv)
 return invCount >= invSpace and carrySpace <= 0
 end
 
-local function onItemAdded(itemInstance)
-if not itemInstance then return end
-local itemId = itemInstance.Name
-local isTarget, itemData = isTargetItem(itemId)
-if isTarget then
-currentTargetData = itemData
-targetGarage = currentGarage
-sendWebhook(itemId, itemData, LocalPlayer.Name)
-totalTargetsFound = totalTargetsFound + 1
-UIModule:Notify(LocalPlayer, "🎯 Target Found: " .. (itemData.Name or "Unknown") .. " - Bidding started!")
-return true, itemId, itemData
-end
-return false
-end
-
 local function scanCurrentGarageForTarget()
 if not currentGarage then return false end
 local itemsFolder = currentGarage:FindFirstChild("Items")
 if not itemsFolder then return false end
-
-if itemsFolder.ChildAdded:FindFirstChild("TargetDetector") then
-itemsFolder.ChildAdded:FindFirstChild("TargetDetector"):Disconnect()
-end
-
-local connection
-connection = itemsFolder.ChildAdded:Connect(onItemAdded)
-
-task.wait(0.1)
+taskWait(0.5)
 local startTime = tick()
-while tick() - startTime < 0.2 do
+while tick() - startTime < SCAN_DURATION do
 for _, itemInstance in pairs(itemsFolder:GetChildren()) do
 local itemId = itemInstance.Name
 local isTarget, itemData = isTargetItem(itemId)
@@ -418,11 +389,10 @@ currentTargetData = itemData
 targetGarage = currentGarage
 sendWebhook(itemId,itemData,LocalPlayer.Name)
 totalTargetsFound = totalTargetsFound + 1
-UIModule:Notify(LocalPlayer, "🎯 Target Found: " .. (itemData.Name or "Unknown"))
 return true, itemId, itemData
 end
 end
-task.wait(0.05)
+taskWait(0.2)
 end
 return false
 end
@@ -431,10 +401,7 @@ local function checkForButton()
 local itemsWon = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
 if itemsWon then
 local button = itemsWon:FindFirstChild("Button", true)
-if button then
-tryClick(button)
-UIModule:Notify(LocalPlayer, "✅ Claim button clicked")
-end
+if button then tryClick(button) end
 end
 end
 
@@ -459,8 +426,7 @@ if btn.Rarity.TextLabel.Text == data.Rarity then
 tryClick(btn)
 selectedCount = selectedCount + 1
 totalTargetsObtained = totalTargetsObtained + 1
-UIModule:Notify(LocalPlayer, "💰 Won: " .. (data.Name or "Unknown"))
-task.wait(0.2)
+task.wait(0.5)
 end
 end
 end
@@ -471,33 +437,29 @@ if selectedCount == 0 then return false end
 local confirmButton = gui.ItemsFrame.ConfirmButton
 repeat taskWait() until confirmButton.Visible
 tryClick(confirmButton)
-task.wait(0.2)
+task.wait(0.5)
 local sellButton = gui.SellItems.Frame.Normal.Button
 repeat taskWait() until sellButton.Visible
 tryClick(sellButton)
-UIModule:Notify(LocalPlayer, "📦 Items sold")
 return true
 end
 
 task.spawn(function()
 while true do
 PlaceTargetInventoryItems()
-task.wait(600)
+task.wait(300)
 end
 end)
-
-UIModule:Notify(LocalPlayer, "🚀 Auction Sniper Started - Tracking: GS, PS, MGS")
 
 while not halted do
 if storageFull() then
 halted = true
-UIModule:Notify(LocalPlayer, "⚠️ Storage Full - Script Halted")
 break
 end
 pcall(function() EnterQueue:InvokeServer("85") end)
 local auctionStartTime = tick()
 auctionEnded = false
-repeat taskWait(0.03) until inAuction or tick() - auctionStartTime > 10
+repeat taskWait(0.1) until inAuction or tick() - auctionStartTime > 10
 if not inAuction then continue end
 obtainedTarget = false
 garagesSkipped = 0
@@ -518,32 +480,20 @@ end
 else
 if not targetGarage then
 garagesSkipped = garagesSkipped + 1
-local garageAge = tick() - auctionStartTime
-if garageAge < MIN_GARAGE_SCAN_TIME then
-task.wait(0.5)
-local found, _, _ = scanCurrentGarageForTarget()
-if found then
-targetFoundInThisAuction = true
-continue
-end
-end
-if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN and garagesSkipped < MAX_GARAGES then
-if garageAge >= MIN_GARAGE_SCAN_TIME then
+if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
 pcall(function() SkipCountdown:InvokeServer() end)
-task.wait(0.3)
+taskWait(0.1)
 pcall(function() Skip:InvokeServer() end)
 lastSkipTime = tick()
-UIModule:Notify(LocalPlayer, "⏩ Skipping garage - No targets")
-end
 end
 end
 end
 else
-task.wait(0.1)
+taskWait(0.5)
 end
-task.wait(0.1)
+taskWait(0.5)
 end
-task.wait(3)
+task.wait(1.5)
 if targetFoundInThisAuction then
 handleItemsWon()
 else
@@ -555,12 +505,12 @@ tryClick(obj)
 end
 end)
 task.spawn(function()
-local timeout = tick() + 5
+local timeout = tick() + 2.5
 while tick() < timeout do
-task.wait(0.1)
+task.wait(0.5)
 checkForButton()
 end
 end)
 end
-task.wait(1)
+task.wait(0.5)
 end
