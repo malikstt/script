@@ -26,10 +26,10 @@ local Events = ReplicatedStorage:WaitForChild("Events")
 local Shop = Events:WaitForChild("Shop")
 local Data = Events:WaitForChild("Data")
 
-local SCAN_DURATION = 1
+local SCAN_DURATION = 2
 local BID_CHECK_INTERVAL = 0.2
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
-local PET_SAFE_WEBHOOK = "https://discord.com/api/webhooks/1483023142653005914/F7ZnzfoI-CFKMdUiFLSW68VTDk29KH6D_baLERftS9q8wjRdU062SzMLD50qdb-kWDYV"
+local PET_SAFE_WEBHOOK_URL = "https://discord.com/api/webhooks/1483023142653005914/F7ZnzfoI-CFKMdUiFLSW68VTDk29KH6D_baLERftS9q8wjRdU062SzMLD50qdb-kWDYV"
 local targetItemIds = {"681","2294","1162"}
 
 local totalTargetsFound = 0
@@ -115,11 +115,6 @@ local function formatNumber(n)
 end
 
 local function sendWebhook(itemId, itemData, playerName)
-    local webhookUrl = WEBHOOK_URL
-    if tostring(itemId) == "2294" then
-        webhookUrl = PET_SAFE_WEBHOOK
-    end
-    
     local playerData
     pcall(function()
         playerData = ReplicatedStorage.Events.Data.GetAll:InvokeServer()
@@ -222,6 +217,12 @@ local function sendWebhook(itemId, itemData, playerName)
     else  
         table.insert(fields, {name="Total Owned", value=tostring(count), inline=false})  
     end  
+
+    -- Choose webhook URL based on item ID
+    local webhookUrl = WEBHOOK_URL
+    if tostring(itemId) == "2294" then
+        webhookUrl = PET_SAFE_WEBHOOK_URL
+    end
 
     pcall(function()  
         HttpService:RequestAsync({  
@@ -406,73 +407,48 @@ end
 end
 
 local function handleItemsWon()
-    local success, result = pcall(function()
-        return DataEvent:InvokeServer()
-    end)
-
-    if not success or not result or not result.ItemsWon then
-        return false
-    end
-
-    local gui = LocalPlayer.PlayerGui:WaitForChild("ItemsWon")
-    local frame = gui.ItemsFrame.Frame
-
-    local selectedCount = 0
-
-    for _, btn in ipairs(frame:GetChildren()) do
-        if btn:IsA("ImageButton") then
-            local viewport = btn:FindFirstChild("ViewportFrame")
-            if viewport then
-                local model = viewport:FindFirstChildOfClass("Model")
-                if model then
-                    local itemName = model.Name
-                    local foundId = nil
-
-                    for id, data in pairs(ItemsModule) do
-                        if typeof(data) == "table" and data.Name then
-                            if data.Name == itemName then
-                                foundId = tostring(id)
-                                break
-                            end
-                        end
-                    end
-
-                    if foundId then
-                        local isTarget = isTargetItem(foundId)
-                        if isTarget then
-                            tryClick(btn)
-                            selectedCount += 1
-                            totalTargetsObtained += 1
-                            print("Clicked target:", itemName, "ID:", foundId)
-                            task.wait(0.4)
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    if selectedCount == 0 then
-        return false
-    end
-
-    local confirmButton = gui.ItemsFrame:WaitForChild("ConfirmButton")
-    repeat task.wait() until confirmButton.Visible
-    tryClick(confirmButton)
-
-    task.wait(0.5)
-
-    local sellButton = gui.SellItems.Frame.Normal:WaitForChild("Button")
-    repeat task.wait() until sellButton.Visible
-    tryClick(sellButton)
-
-    return true
+local success, result = pcall(function()
+return DataEvent:InvokeServer()
+end)
+if not success or not result or not result.ItemsWon then return false end
+local itemsWon = result.ItemsWon
+local gui = LocalPlayer.PlayerGui:WaitForChild("ItemsWon")
+local frame = gui:WaitForChild("ItemsFrame"):WaitForChild("Frame")
+local selectedCount = 0
+for key, itemData in pairs(itemsWon) do
+local itemId = itemData.itemId
+local data = ItemsModule[itemId] or ItemsModule[tostring(itemId)]
+if data then
+local isTarget, _ = isTargetItem(tostring(itemId))
+if isTarget then
+for _, btn in ipairs(frame:GetChildren()) do
+if btn:IsA("ImageButton") and btn:FindFirstChild("Price") and btn:FindFirstChild("Rarity") then
+if btn.Rarity.TextLabel.Text == data.Rarity then
+tryClick(btn)
+selectedCount = selectedCount + 1
+totalTargetsObtained = totalTargetsObtained + 1
+task.wait(1)
+end
+end
+end
+end
+end
+end
+if selectedCount == 0 then return false end
+local confirmButton = gui.ItemsFrame.ConfirmButton
+repeat taskWait() until confirmButton.Visible
+tryClick(confirmButton)
+task.wait(1)
+local sellButton = gui.SellItems.Frame.Normal.Button
+repeat taskWait() until sellButton.Visible
+tryClick(sellButton)
+return true
 end
 
 task.spawn(function()
 while true do
 PlaceTargetInventoryItems()
-task.wait(300)
+task.wait(600)
 end
 end)
 
@@ -518,7 +494,7 @@ taskWait(0.5)
 end
 taskWait(0.5)
 end
-task.wait(0.5)
+task.wait(3)
 if targetFoundInThisAuction then
 handleItemsWon()
 else
@@ -530,12 +506,12 @@ tryClick(obj)
 end
 end)
 task.spawn(function()
-local timeout = tick() + 2.5
+local timeout = tick() + 5
 while tick() < timeout do
 task.wait(0.5)
 checkForButton()
 end
 end)
 end
-task.wait(0.5)
+task.wait(1)
 end
