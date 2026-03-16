@@ -16,8 +16,6 @@ local UpdateCurrentBid = Auctions.UpdateCurrentBid
 local ShowItemsWon = Auctions.ShowItemsWon
 local SellAllItems = Auctions.SellAllItems
 
-local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
-
 local AuctionsFolder = workspace.Debris.Auctions
 
 local targetItemIds = {
@@ -47,53 +45,6 @@ local function notify(msg)
 	UIModule:Notify(LocalPlayer, msg)
 end
 
-local function destroyItemsWonUI()
-	local gui = LocalPlayer:FindFirstChild("PlayerGui")
-	if not gui then return end
-	
-	local itemsGui = gui:FindFirstChild("ItemsWon")
-	if itemsGui then
-		itemsGui:Destroy()
-	end
-end
-
-local function autoClickItemsWon()
-    task.spawn(function()
-        while true do
-            task.wait(5)
-            
-            local itemsWon = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon")
-            if itemsWon then
-                local confirmButton = itemsWon:FindFirstChild("ItemsFrame") and itemsWon.ItemsFrame:FindFirstChild("ConfirmButton")
-                if confirmButton and confirmButton.Visible then
-                    pcall(function() confirmButton:Activate() end)
-                    task.wait(1)
-                end
-                
-                local sellItems = itemsWon:FindFirstChild("SellItems")
-                if sellItems then
-                    local sellButton = sellItems:FindFirstChild("Frame") and sellItems.Frame:FindFirstChild("Normal") and sellItems.Frame.Normal:FindFirstChild("Button")
-                    if sellButton and sellButton.Visible then
-                        pcall(function() sellButton:Activate() end)
-                    end
-                end
-                
-                task.wait(2)
-                destroyItemsWonUI()
-            end
-        end
-    end)
-end
-
-autoClickItemsWon()
-
-LocalPlayer.PlayerGui.ChildAdded:Connect(function(child)
-	if child.Name == "ItemsWon" then
-		task.wait()
-		child:Destroy()
-	end
-end)
-
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
 	if data then
 		currentNextBid = data.nextBid
@@ -102,79 +53,105 @@ UpdateCurrentBid.OnClientEvent:Connect(function(data)
 end)
 
 local function scanItem(item, depth)
+
 	local id = nil
 	local locationText = depth > 0 and "inside box" or "on display"
-	
+
 	if item:GetAttribute("BoxId") then
+
 		for _, containedItem in ipairs(item:GetChildren()) do
 			if containedItem:IsA("Model") or containedItem:IsA("Folder") then
+
 				local result = scanItem(containedItem, depth + 1)
+
 				if result.found then
 					return result
 				end
+
 			end
 		end
+
 	else
+
 		id = tonumber(item.Name)
+
 		if id and targetItemIds[id] then
 			return {found = true, id = id, location = locationText}
 		end
+
 	end
-	
+
 	return {found = false}
+
 end
 
 local function scanRevealedItems(garage)
+
 	if scanningGarage then return false end
 	scanningGarage = true
-	
+
 	local items = garage:FindFirstChild("Items")
-	if not items then 
+
+	if not items then
 		scanningGarage = false
 		return false
 	end
-	
+
 	for _, item in ipairs(items:GetChildren()) do
-		local result = scanItem(item, 0)
+
+		local result = scanItem(item,0)
+
 		if result.found then
 			foundTarget = true
 			targetGarage = garage
-			notify("Target " .. result.id .. " " .. result.location)
+			notify("Target "..result.id.." "..result.location)
 			scanningGarage = false
 			return true
 		end
+
 	end
-	
+
 	scanningGarage = false
 	return false
+
 end
 
 AuctionsFolder.ChildAdded:Connect(function(garage)
+
 	inAuction = true
 	auctionEnded = false
 	currentGarage = garage
 	garagesSkipped = 0
+
 	if not targetGarage then
 		foundTarget = false
 	end
+
 end)
 
 AuctionsFolder.ChildRemoved:Connect(function(removedGarage)
+
 	if removedGarage == currentGarage then
+
 		task.wait(0.5)
+
 		if #AuctionsFolder:GetChildren() == 0 then
+
 			inAuction = false
 			currentGarage = nil
+
 			if removedGarage == targetGarage then
 				targetGarage = nil
 				foundTarget = false
 			end
+
 		end
+
 	end
+
 end)
 
 ShowItemsWon.OnClientEvent:Connect(function(_,items)
-	destroyItemsWonUI()
 
 	if not items or #items == 0 then
 		return
@@ -183,96 +160,168 @@ ShowItemsWon.OnClientEvent:Connect(function(_,items)
 	local keepList = {}
 
 	for _,item in ipairs(items) do
+
 		local id = item.itemId or item.Id
 		local guid = item.guid or item.GUID
-		
+
 		if targetItemIds[id] then
-			table.insert(keepList, guid)
-			notify("Keeping " .. id)
+			table.insert(keepList,guid)
+			notify("Keeping "..id)
 		end
+
 	end
-	
+
 	if #keepList > 0 then
-		SellAllItems:InvokeServer("Default", keepList)
-		task.wait()
-		destroyItemsWonUI()
+		SellAllItems:InvokeServer("Default",keepList)
 	end
+
+	task.wait(0.5)
+
+	local Player = game.Players.LocalPlayer
+	local gui = Player.PlayerGui:FindFirstChild("ItemsWon")
+
+	if not gui then return end
+
+	local function click(btn)
+
+		if btn and btn.Visible then
+
+			pcall(function()
+				btn:Activate()
+			end)
+
+			if getconnections then
+				for _,v in pairs(getconnections(btn.MouseButton1Click)) do
+					pcall(function()
+						v:Function()
+					end)
+				end
+			end
+
+		end
+
+	end
+
+	local confirm =
+		gui:FindFirstChild("ItemsFrame")
+		and gui.ItemsFrame:FindFirstChild("ConfirmButton")
+
+	if confirm then
+		click(confirm)
+		task.wait(1)
+	end
+
+	local sell =
+		gui:FindFirstChild("SellItems")
+		and gui.SellItems:FindFirstChild("Frame")
+		and gui.SellItems.Frame:FindFirstChild("Normal")
+		and gui.SellItems.Frame.Normal:FindFirstChild("Button")
+
+	if sell then
+		click(sell)
+		task.wait(1)
+	end
+
+	gui:Destroy()
+
 end)
 
 while true do
+
 	notify("Entering Auction Queue")
-	
+
 	local success = pcall(function()
 		EnterQueue:InvokeServer("85")
 	end)
-	
+
 	if not success then
 		task.wait(1)
 	end
-	
+
 	local auctionStartTime = tick()
-	
+
 	while not inAuction do
+
 		if tick() - auctionStartTime > 10 then
 			break
 		end
+
 		task.wait(0.1)
+
 	end
-	
+
 	if not inAuction then
 		continue
 	end
-	
+
 	notify("Auction Started")
-	
+
 	local targetFoundInThisAuction = false
 	garagesSkipped = 0
-	
+
 	while inAuction and not auctionEnded do
+
 		if not targetGarage or targetGarage == currentGarage then
+
 			local found = scanRevealedItems(currentGarage)
-			
+
 			if found then
+
 				targetFoundInThisAuction = true
 				local bidStartTime = tick()
-				
+
 				while not auctionEnded and inAuction and currentGarage == targetGarage do
+
 					if currentNextBid and currentBidder ~= LocalPlayer then
+
 						pcall(function()
 							PlaceBid:InvokeServer(currentNextBid)
 						end)
+
 					end
-					
+
 					if tick() - bidStartTime > BID_TIMEOUT then
 						break
 					end
-					
+
 					task.wait(BID_DELAY)
+
 				end
+
 			else
+
 				garagesSkipped = garagesSkipped + 1
-				
+
 				if tick() - lastSkipTime > SKIP_COOLDOWN then
+
 					pcall(function()
+
 						SkipCountdown:InvokeServer()
 						task.wait(SKIP_DELAY)
 						Skip:InvokeServer()
+
 					end)
+
 					lastSkipTime = tick()
+
 				end
+
 			end
+
 		else
 			task.wait(0.5)
 		end
-		
+
 		task.wait(SCAN_INTERVAL)
+
 	end
-	
+
 	notify("Auction Finished")
 	task.wait(1)
 
 	foundTarget = false
 	targetGarage = nil
+
 end
 
 end)
