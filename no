@@ -21,6 +21,7 @@ local SkipCountdown = Auctions:WaitForChild("SkipCountdown")
 local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
 local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
+local SellAllItems = Auctions:WaitForChild("SellAllItems")
 
 local Events = ReplicatedStorage:WaitForChild("Events")
 local Shop = Events:WaitForChild("Shop")
@@ -47,7 +48,7 @@ local garagesSkipped = 0
 local MAX_GARAGES = 3
 local currentTargetData = nil
 local targetGarage = nil
-local processingItemsWon = false -- Flag to track if we're processing ItemsWon
+local processingItemsWon = false
 
 local lastSkipTime = 0
 local SKIP_COOLDOWN = 1
@@ -219,7 +220,6 @@ local function sendWebhook(itemId, itemData, playerName)
         table.insert(fields, {name="Total Owned", value=tostring(count), inline=false})  
     end  
 
-    -- Choose webhook URL based on item ID
     local webhookUrl = WEBHOOK_URL
     if tostring(itemId) == "2294" then
         webhookUrl = PET_SAFE_WEBHOOK_URL
@@ -239,16 +239,6 @@ local function sendWebhook(itemId, itemData, playerName)
             })  
         })  
     end)
-end
-
-local function tryClick(obj)
-if not obj then return end
-pcall(function() obj:Activate() end)
-if getconnections then
-for _, v in pairs(getconnections(obj.MouseButton1Click)) do
-pcall(function() v:Fire() end)
-end
-end
 end
 
 local function getFurnitureCount(playerData)
@@ -399,16 +389,8 @@ end
 return false
 end
 
-local function checkForButton()
-local itemsWon = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
-if itemsWon then
-local button = itemsWon:FindFirstChild("Button", true)
-if button then tryClick(button) end
-end
-end
-
 local function handleItemsWon()
-    processingItemsWon = true -- Set flag when starting to process
+    processingItemsWon = true
     
     local success, result = pcall(function()
         return DataEvent:InvokeServer()
@@ -419,55 +401,41 @@ local function handleItemsWon()
     end
     
     local itemsWon = result.ItemsWon
-    local gui = LocalPlayer.PlayerGui:WaitForChild("ItemsWon")
-    local frame = gui:WaitForChild("ItemsFrame"):WaitForChild("Frame")
-    local selectedCount = 0
+    local itemsToKeep = {}
+    local itemsToSell = {}
     
-    for key, itemData in pairs(itemsWon) do
-        local itemId = itemData.itemId
-        local data = ItemsModule[itemId] or ItemsModule[tostring(itemId)]
-        if data then
-            local isTarget, _ = isTargetItem(tostring(itemId))
-            if isTarget then
-                for _, btn in ipairs(frame:GetChildren()) do
-                    if btn:IsA("ImageButton") and btn:FindFirstChild("Price") and btn:FindFirstChild("Rarity") then
-                        if btn.Rarity.TextLabel.Text == data.Rarity then
-                            tryClick(btn)
-                            selectedCount = selectedCount + 1
-                            totalTargetsObtained = totalTargetsObtained + 1
-                            task.wait(1)
-                        end
-                    end
-                end
+    for guid, itemData in pairs(itemsWon) do
+        local itemId = tostring(itemData.itemId)
+        local keep = false
+        
+        for _, targetId in ipairs(targetItemIds) do
+            if itemId == targetId then
+                keep = true
+                break
             end
+        end
+        
+        if keep then
+            table.insert(itemsToKeep, guid)
+            totalTargetsObtained = totalTargetsObtained + 1
+        else
+            table.insert(itemsToSell, guid)
         end
     end
     
-    if selectedCount == 0 then 
-        processingItemsWon = false
-        return false 
+    if #itemsToSell > 0 then
+        local sellSuccess = SellAllItems:InvokeServer("Default", itemsToSell)
+        if not sellSuccess then
+            warn("Failed to sell items")
+        end
     end
     
-    local confirmButton = gui.ItemsFrame.ConfirmButton
-    repeat 
-        task.wait() 
-    until confirmButton.Visible
-    tryClick(confirmButton)
-    task.wait(1)
-    
-    local sellButton = gui.SellItems.Frame.Normal.Button
-    repeat 
-        task.wait() 
-    until sellButton.Visible
-    tryClick(sellButton)
-    
-    -- Wait for ItemsWon GUI to fully disappear
     local timeout = tick() + 10
     while LocalPlayer.PlayerGui:FindFirstChild("ItemsWon") and tick() < timeout do
         task.wait(0.5)
     end
     
-    processingItemsWon = false -- Clear flag when done
+    processingItemsWon = false
     return true
 end
 
@@ -478,9 +446,7 @@ task.wait(600)
 end
 end)
 
--- Main loop with synchronization
 while not halted do
-    -- Wait if we're currently processing ItemsWon
     while processingItemsWon do
         task.wait(0.5)
     end
@@ -534,30 +500,11 @@ while not halted do
         taskWait(0.5)
     end
     
-    -- Wait for auction to fully end
     task.wait(3)
     
-    -- Handle ItemsWon with proper synchronization
     if targetFoundInThisAuction then
         handleItemsWon()
-    else
-        checkForButton()
-        LocalPlayer.PlayerGui.DescendantAdded:Connect(function(obj)
-            if obj.Name == "Button" then
-                task.wait()
-                tryClick(obj)
-            end
-        end)
-        
-        task.spawn(function()
-            local timeout = tick() + 5
-            while tick() < timeout do
-                task.wait(0.5)
-                checkForButton()
-            end
-        end)
     end
     
-    -- Wait before next auction to ensure everything is processed
     task.wait(2)
 end
