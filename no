@@ -2,68 +2,18 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 local taskWait = task.wait
 
-print("=== SCRIPT STARTED ===")
-print("Timestamp:", os.time())
-print("LocalPlayer:", LocalPlayer.Name)
-
--- DESTROY ALL SCREEN GUIS - EVEN IF THEY SPAWN AGAIN
-print("Setting up ScreenGui destruction...")
-
-local function destroyScreenGuis()
-    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-    if playerGui then
-        for _, gui in pairs(playerGui:GetChildren()) do
-            if gui:IsA("ScreenGui") then
-                print("Destroying ScreenGui:", gui.Name)
-                gui:Destroy()
-            end
-        end
-    end
-end
-
--- Initial destruction
-destroyScreenGuis()
-
--- Continuously destroy any new ScreenGuis
-local function monitorNewGuis()
-    local playerGui = LocalPlayer:WaitForChild("PlayerGui")
-    playerGui.ChildAdded:Connect(function(child)
-        if child:IsA("ScreenGui") then
-            print("New ScreenGui detected and destroyed:", child.Name)
-            child:Destroy()
-        end
-    end)
-end
-task.spawn(monitorNewGuis)
-
-print("Loading variables...")
 local nonSaveVars = LocalPlayer:FindFirstChild("NonSaveVars")
-print("nonSaveVars found:", nonSaveVars ~= nil)
-
 local ownsPlot = nonSaveVars and nonSaveVars:FindFirstChild("OwnsPlot")
-print("ownsPlot found:", ownsPlot ~= nil)
-
 local currentPlot = ownsPlot and ownsPlot:IsA("ValueBase") and ownsPlot.Value or "7"
-print("currentPlot:", currentPlot)
-
 local canvas = workspace.Plots[tostring(currentPlot)].Interior.Shop1.Canvas
-print("canvas found:", canvas ~= nil)
 
-print("Waiting for Debris.Auctions...")
 local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
-print("AuctionsFolder found")
-
 local ItemsModule = require(ReplicatedStorage.Modules.Items)
-print("ItemsModule loaded")
-
 local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
-print("RepLibrary loaded")
 
-print("Loading events...")
 local Auctions = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
 local EnterQueue = Auctions:WaitForChild("EnterQueue")
 local Skip = Auctions:WaitForChild("Skip")
@@ -76,15 +26,12 @@ local SellAllItems = Auctions:WaitForChild("SellAllItems")
 local Events = ReplicatedStorage:WaitForChild("Events")
 local Shop = Events:WaitForChild("Shop")
 local Data = Events:WaitForChild("Data")
-print("All events loaded")
 
 local SCAN_DURATION = 2
 local BID_CHECK_INTERVAL = 0.2
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
 local PET_SAFE_WEBHOOK_URL = "https://discord.com/api/webhooks/1483023142653005914/F7ZnzfoI-CFKMdUiFLSW68VTDk29KH6D_baLERftS9q8wjRdU062SzMLD50qdb-kWDYV"
 local targetItemIds = {"681","2294","1162"}
-
-print("Target items:", table.concat(targetItemIds, ", "))
 
 local totalTargetsFound = 0
 local totalTargetsObtained = 0
@@ -112,10 +59,68 @@ spacing = 6,
 itemsPerRow = math.floor(canvas.Size.X / 6) - 1,
 rowsPerFloor = math.floor(canvas.Size.Z / 6) - 1,
 }
-print("GRID_CONFIG:", GRID_CONFIG)
+
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+local function destroySpecificGuis()
+local items = PlayerGui:FindFirstChild("ItemsWon")
+if items then items:Destroy() end
+
+local circle = PlayerGui:FindFirstChild("CircleAnimationUI")
+if circle then circle:Destroy() end
+end
+
+destroySpecificGuis()
+
+PlayerGui.ChildAdded:Connect(function(child)
+if child.Name == "ItemsWon" or child.Name == "CircleAnimationUI" then
+child:Destroy()
+end
+end)
+
+local function tryClick(obj)
+if obj and (obj:IsA("TextButton") or obj:IsA("ImageButton")) then
+pcall(function()
+obj:Activate()
+end)
+
+if getconnections then
+for _, v in pairs(getconnections(obj.MouseButton1Click)) do
+pcall(function()
+v:Fire()
+end)
+end
+end
+end
+end
+
+local function checkForButton()
+local itemsWon = PlayerGui:FindFirstChild("ItemsWon", true)
+if itemsWon then
+local button = itemsWon:FindFirstChild("Button", true)
+if button then
+tryClick(button)
+end
+end
+end
+
+checkForButton()
+
+PlayerGui.DescendantAdded:Connect(function(obj)
+if obj.Name == "Button" then
+task.wait()
+tryClick(obj)
+end
+end)
 
 task.spawn(function()
-print("Anti-afk thread started")
+while true do
+task.wait(0.5)
+checkForButton()
+end
+end)
+
+task.spawn(function()
 while true do
 task.wait(60)
 for _, connection in pairs(getconnections(UserInputService.InputEnded)) do
@@ -133,7 +138,6 @@ local itemData = ItemsModule[itemId]
 if not itemData then return false end
 for _, targetId in ipairs(targetItemIds) do
 if tostring(itemId) == tostring(targetId) then
-print("Target item found! ID:", itemId, "Name:", itemData.Name)
 return true, itemData
 end
 end
@@ -173,7 +177,6 @@ end
 end
 
 local function sendWebhook(itemId, itemData, playerName)
-print("Sending webhook for item:", itemId, itemData.Name)
 local playerData
 pcall(function()
 playerData = ReplicatedStorage.Events.Data.GetAll:InvokeServer()
@@ -296,7 +299,6 @@ fields = fields
 })
 })
 end)
-print("Webhook sent")
 end
 
 local function getFurnitureCount(playerData)
@@ -341,49 +343,26 @@ return Vector3.new(rx, ry, rz)
 end
 
 local function PlaceTargetInventoryItems()
-print("Attempting to place target items from inventory...")
 local playerData = DataEvent:InvokeServer()
-if not playerData then 
-print("Failed to get player data")
-return false 
-end
-
+if not playerData then return false end
 local itemsToPlace = findTargetItemsInInventory(playerData)
-print("Target items found in inventory:", #itemsToPlace)
-
-if #itemsToPlace == 0 then 
-print("No target items to place")
-return true 
-end
-
+if #itemsToPlace == 0 then return true end
 local currentFurniture = getFurnitureCount(playerData)
 local maxShopSpace = playerData.ShopSpace or 100
 local availableSpace = maxShopSpace - currentFurniture
 local maxPositions = GRID_CONFIG.itemsPerRow * GRID_CONFIG.rowsPerFloor
 local canPlaceCount = math.min(availableSpace, maxPositions, #itemsToPlace)
-
-print("Placement info - Available space:", availableSpace, "Max positions:", maxPositions, "Can place:", canPlaceCount)
-
-if canPlaceCount == 0 then 
-print("Cannot place any items - no space")
-return false 
-end
-
+if canPlaceCount == 0 then return false end
 local placedCount = 0
 for i, item in ipairs(itemsToPlace) do
 if placedCount >= canPlaceCount then break end
-
-print("Attempting to place item:", item.Id, "GUID:", item.GUID)
-
 local positionIndex = placedCount + 1
 local placed = false
 local retryCount = 0
 local maxRetries = maxPositions - positionIndex + 1
-
 while not placed and retryCount < maxRetries do
 local itemPos = generateAirPosition()
 if not itemPos then break end
-
 local args = {
 {
 GUID = item.GUID,
@@ -393,25 +372,19 @@ Id = item.Id,
 CFrame = CFrame.new(itemPos)
 }
 }
-
 local success = pcall(function()
 return Shop.InsertFurniture:InvokeServer(unpack(args))
 end)
-
 if success and verifyItemRemoved(item.GUID) then
 placed = true
 placedCount = placedCount + 1
-print("Item placed successfully")
 else
 retryCount = retryCount + 1
-print("Placement failed, retry", retryCount)
 end
 task.wait(0.2)
 end
 task.wait(0.1)
 end
-
-print("Placement complete. Placed:", placedCount, "items")
 return true
 end
 
@@ -419,13 +392,10 @@ UpdateCurrentBid.OnClientEvent:Connect(function(data)
 if data then
 currentNextBid = data.nextBid
 currentBidder = data.player
-print("Bid updated - Next bid:", currentNextBid, "Bidder:", currentBidder)
 end
 end)
 
 AuctionsFolder.ChildAdded:Connect(function(garage)
-print("=== NEW AUCTION STARTED ===")
-print("Garage added:", garage.Name)
 inAuction = true
 auctionEnded = false
 currentGarage = garage
@@ -434,13 +404,11 @@ targetGarage = nil
 end)
 
 AuctionsFolder.ChildRemoved:Connect(function()
-print("Auction ended")
 if #AuctionsFolder:GetChildren() == 0 then
 inAuction = false
 currentGarage = nil
 currentTargetData = nil
 targetGarage = nil
-print("No more auctions in queue")
 end
 end)
 
@@ -453,29 +421,15 @@ local carryLevel = data.CarryLevel
 local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
 local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
 local invCount = RepLibrary:GetLengthOfInventory(inv)
-local isFull = invCount >= invSpace and carrySpace <= 0
-if isFull then
-print("Storage is full!")
-end
-return isFull
+return invCount >= invSpace and carrySpace <= 0
 end
 
 local function scanCurrentGarageForTarget()
-if not currentGarage then 
-print("No current garage to scan")
-return false 
-end
-
+if not currentGarage then return false end
 local itemsFolder = currentGarage:FindFirstChild("Items")
-if not itemsFolder then 
-print("No Items folder in garage")
-return false 
-end
-
+if not itemsFolder then return false end
 taskWait(0.5)
 local startTime = tick()
-print("Scanning garage for target items...")
-
 while tick() - startTime < SCAN_DURATION do
 for _, itemInstance in pairs(itemsFolder:GetChildren()) do
 local itemId = itemInstance.Name
@@ -484,20 +438,15 @@ if isTarget then
 currentTargetData = itemData
 targetGarage = currentGarage
 sendWebhook(itemId,itemData,LocalPlayer.Name)
-totalTargetsFound = totalTargetsFound + 1
-print("TARGET FOUND! ID:", itemId, "Name:", itemData.Name, "Total found:", totalTargetsFound)
 return true, itemId, itemData
 end
 end
 taskWait(0.2)
 end
-
-print("No targets found in this garage")
 return false
 end
 
 local function handleItemsWon()
-print("Handling items won...")
 processingItemsWon = true
 
 local success, data = pcall(function()
@@ -505,14 +454,12 @@ return DataEvent:InvokeServer()
 end)
 
 if not success or not data or not data.ItemsWon then
-print("No ItemsWon data found")
 processingItemsWon = false
 return false
 end
 
 local itemsWon = data.ItemsWon
 local keepGuids = {}
-local targetCount = 0
 
 for guid, itemData in pairs(itemsWon) do
 local itemId = tostring(itemData.itemId)
@@ -520,128 +467,83 @@ local isTarget, _ = isTargetItem(itemId)
 
 if isTarget then
 table.insert(keepGuids, guid)
-targetCount = targetCount + 1
-totalTargetsObtained = totalTargetsObtained + 1
-print("Target item won! GUID:", guid, "ID:", itemId)
 end
 end
-
-print("Total target items won in this batch:", targetCount)
 
 if #keepGuids > 0 then
-print("Selling non-target items...")
 local sellSuccess = SellAllItems:InvokeServer("Default", keepGuids)
-print("Sell success:", sellSuccess ~= nil)
 end
 
 processingItemsWon = false
-print("Items won handling complete. Total obtained:", totalTargetsObtained)
 return true
 end
 
 task.spawn(function()
-print("Periodic placement thread started")
 while true do
 PlaceTargetInventoryItems()
 task.wait(600)
 end
 end)
 
-print("=== STARTING MAIN LOOP ===")
-
 while not halted do
-print("=== MAIN LOOP ITERATION ===")
-print("Total targets found so far:", totalTargetsFound)
-print("Total targets obtained so far:", totalTargetsObtained)
-
 while processingItemsWon do
-print("Waiting for items won processing to complete...")
 task.wait(0.5)
 end
 
 if storageFull() then
 halted = true
-print("HALTED - Storage full")
 break
 end
 
-print("Attempting to enter auction queue...")
 pcall(function() EnterQueue:InvokeServer("85") end)
-
 local auctionStartTime = tick()
 auctionEnded = false
 
-print("Waiting for auction to start...")
 repeat
 task.wait(0.1)
 until inAuction or tick() - auctionStartTime > 10
 
-if not inAuction then 
-print("Failed to enter auction, retrying...")
-continue 
-end
+if not inAuction then continue end
 
-print("Successfully entered auction")
 obtainedTarget = false
 garagesSkipped = 0
 local targetFoundInThisAuction = false
 
 while inAuction and not auctionEnded do
 if not targetGarage or targetGarage == currentGarage then
-print("Scanning current garage...")
 local found, foundId, foundData = scanCurrentGarageForTarget()
 if found then
 targetFoundInThisAuction = true
-print("Target found! Beginning bid process...")
 local bidStartTime = tick()
-
 while not obtainedTarget and inAuction and currentGarage == targetGarage and not auctionEnded do
 if currentNextBid and currentBidder ~= LocalPlayer then
-print("Placing bid:", currentNextBid)
 pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
 end
-if tick() - bidStartTime > 60 then 
-print("Bid timeout reached (60 seconds)")
-break 
-end
+if tick() - bidStartTime > 60 then break end
 task.wait(BID_CHECK_INTERVAL)
 end
 else
 if not targetGarage then
 garagesSkipped = garagesSkipped + 1
-print("No target in garage", garagesSkipped, "/", MAX_GARAGES)
-
 if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
-print("Skipping garage...")
 pcall(function() SkipCountdown:InvokeServer() end)
 task.wait(0.1)
 pcall(function() Skip:InvokeServer() end)
 lastSkipTime = tick()
-print("Garage skipped")
 end
 end
 end
 else
-print("Waiting for target garage...")
 task.wait(0.5)
 end
 task.wait(0.5)
 end
 
-print("Auction phase complete. Waiting 3 seconds...")
 task.wait(3)
 
 if targetFoundInThisAuction then
-print("Target was found in this auction, handling items won...")
 handleItemsWon()
-else
-print("No targets found in this auction")
 end
 
-print("Waiting 2 seconds before next auction...")
 task.wait(2)
 end
-
-print("=== SCRIPT ENDED ===")
-print("Final stats - Found:", totalTargetsFound, "Obtained:", totalTargetsObtained)
-print("Session duration:", formatTime(tick() - sessionStartTime))
