@@ -25,28 +25,19 @@ local inAuction=false
 local currentGarage
 local targetGarage
 local lastSkip=0
-local lastWebhookSend=0
-local sentWebhooks={}
+local sentWebhooks = {}
 
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
--- Webhook Configuration
+-- Your exact webhook URLs
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
 local PET_SAFE_WEBHOOK_URL = "https://discord.com/api/webhooks/1483023142653005914/F7ZnzfoI-CFKMdUiFLSW68VTDk29KH6D_baLERftS9q8wjRdU062SzMLD50qdb-kWDYV"
 
-local function getEmbedColor(itemId)
-    local colors = {
-        ["681"] = 0x00FF00,  -- Green for Gem Safe
-        ["2294"] = 0xFFD700, -- Gold for Pet Safe
-        ["1162"] = 0xFF69B4  -- Pink for Mega Gem Safe
-    }
-    return colors[tostring(itemId)] or 0x5865F2 -- Discord blurple default
-end
-
-local function sendWebhook(itemId, itemData, playerName, auctionType)
+-- Your exact webhook function (unchanged)
+local function sendWebhook(itemId, itemData, playerName)
     local playerData
     pcall(function()
-        playerData = DataEvent:InvokeServer()
+        playerData = ReplicatedStorage.Events.Data.GetAll:InvokeServer()
     end)
 
     local cash, gems, count, craftTimerText = 0, 0, 0, ""
@@ -82,10 +73,6 @@ local function sendWebhook(itemId, itemData, playerName, auctionType)
         {name=emoji_cash .. " Cash", value=tostring(cash), inline=true},
         {name=emoji_gems .. " Gems", value=tostring(gems), inline=true},
     }
-
-    if auctionType then
-        table.insert(fields, 1, {name="🔔 Auction Found", value=auctionType, inline=false})
-    end
 
     if tostring(itemId) == "681" then
         local upgrading, remaining
@@ -154,15 +141,22 @@ local function sendWebhook(itemId, itemData, playerName, auctionType)
             Headers = {["Content-Type"] = "application/json"},
             Body = HttpService:JSONEncode({
                 embeds = {{
-                    title = playerName .. " Found a Target Item in Auction! 🎯",
-                    description = "**Starting to bid on this item!**",
+                    title = playerName .. " Got an Item",
                     color = getEmbedColor(itemId),
-                    fields = fields,
-                    timestamp = DateTime.now():ToIsoDate()
+                    fields = fields
                 }}
             })
         })
     end)
+end
+
+local function getEmbedColor(itemId)
+    local colors = {
+        ["681"] = 0x00FF00,
+        ["2294"] = 0xFFD700,
+        ["1162"] = 0xFF69B4
+    }
+    return colors[tostring(itemId)] or 0x5865F2
 end
 
 local function destroyGuis()
@@ -219,10 +213,9 @@ local function placeTargets()
 
     if invCount>=invSpace and carrySpace<=0 then return end  
 
-    local placed=0  
     for i=1,#items do  
         local item=items[i]  
-        local ok=pcall(function()  
+        pcall(function()  
             Shop.InsertFurniture:InvokeServer({  
                 GUID=item.GUID,  
                 Type="Decor",  
@@ -231,9 +224,6 @@ local function placeTargets()
                 CFrame=CFrame.new(Vector3.new(0,50,0))  
             })  
         end)  
-        if ok then  
-            placed+=1  
-        end  
     end
 end
 
@@ -244,20 +234,14 @@ local function scanGarage(garage)
     for _,obj in ipairs(items:GetChildren()) do
         local itemId = obj.Name
         if isTarget(itemId) then
-            targetGarage=garage
+            targetGarage = garage
             
-            -- Send webhook when target item is found
-            local currentTime = tick()
-            local webhookKey = tostring(itemId) .. "_" .. tostring(garage)
-            if not sentWebhooks[webhookKey] or currentTime - sentWebhooks[webhookKey] > 300 then
-                sentWebhooks[webhookKey] = currentTime
-                
-                local itemData = ItemsModule:GetItem(itemId)
+            -- Send webhook if not sent for this item in current auction
+            if not sentWebhooks[itemId] then
+                sentWebhooks[itemId] = true
+                local itemData = ItemsModule[itemId]
                 local playerName = LocalPlayer.Name
-                
-                task.spawn(function()
-                    sendWebhook(itemId, itemData, playerName, "Gem Safe Auction Found")
-                end)
+                sendWebhook(itemId, itemData, playerName)
             end
             
             return true
@@ -270,49 +254,12 @@ local function handleWon()
     local data=getData()
     if not data or not data.ItemsWon then return end
     local keep={}
-    local wonItems={}
-    
     for guid,item in pairs(data.ItemsWon) do
         if isTarget(item.itemId) then
             keep[#keep+1]=guid
-            wonItems[#wonItems+1]=item
         end
     end
-    
     if #keep>0 then
-        -- Send webhook for won items
-        for _,wonItem in pairs(wonItems) do
-            local itemData = ItemsModule:GetItem(wonItem.itemId)
-            local playerName = LocalPlayer.Name
-            task.spawn(function()
-                pcall(function()
-                    local webhookUrl = WEBHOOK_URL
-                    if tostring(wonItem.itemId) == "2294" then
-                        webhookUrl = PET_SAFE_WEBHOOK_URL
-                    end
-                    
-                    HttpService:RequestAsync({
-                        Url = webhookUrl,
-                        Method = "POST",
-                        Headers = {["Content-Type"] = "application/json"},
-                        Body = HttpService:JSONEncode({
-                            embeds = {{
-                                title = playerName .. " WON the Auction! 🎉",
-                                description = "Successfully won the " .. (itemData.Name or "item") .. "!",
-                                color = getEmbedColor(wonItem.itemId),
-                                fields = {
-                                    {name="Item", value=itemData.Name or "Unknown", inline=false},
-                                    {name="⭐ Rarity", value=itemData.Rarity or "Unknown", inline=false},
-                                    {name="💰 Winning Bid", value=tostring(wonItem.bidAmount or "Unknown"), inline=false}
-                                },
-                                timestamp = DateTime.now():ToIsoDate()
-                            }}
-                        })
-                    })
-                end)
-            end)
-        end
-        
         pcall(function()
             SellAllItems:InvokeServer("Default",keep)
         end)
@@ -330,6 +277,7 @@ AuctionsFolder.ChildAdded:Connect(function(g)
     inAuction=true
     currentGarage=g
     targetGarage=nil
+    sentWebhooks = {} -- Reset for new auction
 end)
 
 AuctionsFolder.ChildRemoved:Connect(function()
