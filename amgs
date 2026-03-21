@@ -19,45 +19,6 @@ local function sendCraftNotification()
     })
 end
 
-task.spawn(function()
-    local SellRemote = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Shop"):WaitForChild("SellItemInShop")
-    local GetAll = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
-    local ItemsModule = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Items"))
-
-    local data = GetAll:InvokeServer()
-
-    local plotName = LocalPlayer:WaitForChild("NonSaveVars"):WaitForChild("OwnsPlot").Value.Name
-    local plot = Workspace:WaitForChild("Plots"):WaitForChild(plotName)
-
-    local shelves = {}
-    for _, furniture in ipairs(plot:WaitForChild("Furniture"):GetChildren()) do
-        local s = furniture:FindFirstChild("Shelves")
-        if s then
-            for _, shelf in ipairs(s:GetChildren()) do
-                table.insert(shelves, shelf)
-            end
-        end
-    end
-
-    local guids = {}
-    for guid, info in pairs(data.Inventory) do
-        local id = tonumber(info.Id)
-        local itemData = ItemsModule[id]
-        local name = itemData and string.lower(itemData.Name or "") or ""
-        if id ~= 681 and id ~= 2294 and not string.find(name, "safe") then
-            table.insert(guids, guid)
-        end
-    end
-
-    local count = math.min(#shelves, #guids)
-    for i = 1, count do
-        SellRemote:FireServer(guids[i], shelves[i], true)
-        task.wait(0.1)
-    end
-end)
-
-local targetId = "681"
-
 repeat task.wait() until LocalPlayer and LocalPlayer.Character
 
 local Events = ReplicatedStorage:WaitForChild("Events")
@@ -68,6 +29,7 @@ local UpgradeItems = Events.UI:WaitForChild("UpgradeItems")
 local CollectUpgraded = Events.UI:WaitForChild("CollectUpgraded")
 local GetUpgradingItem = Events.UI:WaitForChild("GetUpgradingItem")
 
+local targetId = "681"
 local FLOOR = 1
 
 local function getPlot()
@@ -80,7 +42,7 @@ local function getPlot()
     local timeout = 0
     while not own.Value or own.Value == 0 do
         task.wait(0.1)
-        timeout = timeout + 0.1
+        timeout += 0.1
         if timeout > 5 then return nil end
     end
     
@@ -134,14 +96,9 @@ local function placeItemFromInventory()
         }
     }
     
-    local placed = pcall(function()
+    return pcall(function()
         InsertFurniture:InvokeServer(unpack(args))
     end)
-    
-    if placed then
-        return true
-    end
-    return false
 end
 
 local function getInventoryData()
@@ -155,11 +112,10 @@ local function getInventoryData()
         local itemCount = 0
         
         if currentItems then
-            for guid, item in pairs(currentItems) do
-                usedSlots = usedSlots + 1
+            for _, item in pairs(currentItems) do
+                usedSlots += 1
                 if tostring(item.Id) == targetId and not item.ItemPlaced then
-                    item.GUID = guid
-                    itemCount = itemCount + 1
+                    itemCount += 1
                 end
             end
         end
@@ -191,7 +147,7 @@ local function getFurnitureFolder()
     local timeout = 0
     while not own.Value or own.Value == 0 do
         task.wait(0.1)
-        timeout = timeout + 0.1
+        timeout += 0.1
         if timeout > 5 then return nil end
     end
 
@@ -207,9 +163,7 @@ end
 
 local function removePlacedFurniture()
     local furnitureFolder = getFurnitureFolder()
-    if not furnitureFolder then
-        return 0
-    end
+    if not furnitureFolder then return 0 end
 
     local removed = 0
     
@@ -222,12 +176,10 @@ local function removePlacedFurniture()
         if model:IsA("Model") then
             local itemId = model:GetAttribute("ItemId")
             if itemId and tostring(itemId) == targetId then
-                local success = pcall(function()
+                pcall(function()
                     RemoveFurniture:InvokeServer(model)
                 end)
-                if success then
-                    removed = removed + 1
-                end
+                removed += 1
                 task.wait(0.1)
             end
         end
@@ -254,9 +206,8 @@ local function handleUpgrading()
                 sendCraftNotification()
             end
             return true
-        else
-            return true
         end
+        return true
     end
     return false
 end
@@ -266,23 +217,18 @@ local function startUpgrade()
     if not data then return false end
     
     local items = {}
-    if data.inventory then
-        for guid, item in pairs(data.inventory) do
-            if tostring(item.Id) == targetId and not item.ItemPlaced then
-                item.GUID = guid
-                table.insert(items, item)
-            end
-            if #items == 5 then
-                break
-            end
+    for guid, item in pairs(data.inventory) do
+        if tostring(item.Id) == targetId and not item.ItemPlaced then
+            item.GUID = guid
+            table.insert(items, item)
         end
+        if #items == 5 then break end
     end
 
     if #items >= 5 then
-        local success, result, time = UpgradeItems:InvokeServer(items[1])
-        if success then
-            return true
-        end
+        return pcall(function()
+            UpgradeItems:InvokeServer(items[1])
+        end)
     end
     return false
 end
