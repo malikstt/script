@@ -1,7 +1,15 @@
+setfpscap(5)
+
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
+local taskWait = task.wait
+
+local nonSaveVars = LocalPlayer:FindFirstChild("NonSaveVars")
+local ownsPlot = nonSaveVars and nonSaveVars:FindFirstChild("OwnsPlot")
+local currentPlot = ownsPlot and ownsPlot:IsA("ValueBase") and ownsPlot.Value or "7"
+local canvas = workspace.Plots[tostring(currentPlot)].Interior.Shop1.Canvas
 
 local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
 local ItemsModule = require(ReplicatedStorage.Modules.Items)
@@ -13,39 +21,57 @@ local Skip = Auctions:WaitForChild("Skip")
 local SkipCountdown = Auctions:WaitForChild("SkipCountdown")
 local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
 local PlaceBid = Auctions:WaitForChild("PlaceBid")
-local SellAllItems = Auctions:WaitForChild("SellAllItems")
-
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
+local SellAllItems = Auctions:WaitForChild("SellAllItems")
 local Shop = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Shop")
 
-local targetItemIds = {["681"]=true,["2294"]=true,["1162"]=true}
+local targetItemIds = {
+    ["681"] = true,
+    ["2294"] = true,
+    ["1162"] = true
+}
 
-local currentNextBid,currentBidder
-local inAuction=false
-local currentGarage
-local targetGarage
-local lastSkip=0
-local sentWebhooks = {}
-
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-
--- Your exact webhook URLs
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
 local PET_SAFE_WEBHOOK_URL = "https://discord.com/api/webhooks/1483023142653005914/F7ZnzfoI-CFKMdUiFLSW68VTDk29KH6D_baLERftS9q8wjRdU062SzMLD50qdb-kWDYV"
 
--- Your exact webhook function (unchanged)
+local currentNextBid = nil
+local currentBidder = nil
+local currentGarage = nil
+local currentGarageId = nil
+local targetFound = false
+local processingItemsWon = false
+
+local cachedPlayerData = nil
+local lastDataFetch = 0
+local DATA_CACHE_DURATION = 5
+
+local garageConnections = {}
+
+local function getPlayerData()
+    local now = tick()
+    if cachedPlayerData and now - lastDataFetch < DATA_CACHE_DURATION then
+        return cachedPlayerData
+    end
+    local success, data = pcall(function() return DataEvent:InvokeServer() end)
+    if success then
+        cachedPlayerData = data
+        lastDataFetch = now
+        return data
+    end
+    return cachedPlayerData
+end
+
+local function isTargetItem(itemId)
+    return targetItemIds[tostring(itemId)] == true
+end
+
 local function sendWebhook(itemId, itemData, playerName)
-    local playerData
-    pcall(function()
-        playerData = ReplicatedStorage.Events.Data.GetAll:InvokeServer()
-    end)
-
-    local cash, gems, count, craftTimerText = 0, 0, 0, ""
-
-    if playerData then
-        cash = playerData.Cash or 0
-        gems = playerData.Gems or 0
-
+    task.spawn(function()
+        local playerData = getPlayerData()
+        local cash = playerData and playerData.Cash or 0
+        local gems = playerData and playerData.Gems or 0
+        local count = 0
+        
         local function countItems(container)
             if not container then return end
             for _, item in pairs(container) do
@@ -54,276 +80,277 @@ local function sendWebhook(itemId, itemData, playerName)
                 end
             end
         end
-
-        countItems(playerData.Furniture)
-        countItems(playerData.Inventory)
-    end
-
-    count = count + 1
-
-    local emoji_cash = "<:cash:1480932250060329141>"
-    local emoji_gems = "<:gems:1480932306628907080>"
-    local emoji_gs = "<:gs:1480932184402428105>"
-    local emoji_mgs = "<:mgs:1480930779314913393>"
-    local emoji_1 = "<:emoji_1:1480930651342508142>"
-
-    local fields = {
-        {name="Item", value=itemData.Name or "Unknown", inline=false},
-        {name="⭐ Rarity", value=itemData.Rarity or "Unknown", inline=false},
-        {name=emoji_cash .. " Cash", value=tostring(cash), inline=true},
-        {name=emoji_gems .. " Gems", value=tostring(gems), inline=true},
-    }
-
-    if tostring(itemId) == "681" then
-        local upgrading, remaining
+        
+        if playerData then
+            countItems(playerData.Furniture)
+            countItems(playerData.Inventory)
+        end
+        count = count + 1
+        
+        local fields = {
+            {name="Item", value=itemData and itemData.Name or "Unknown", inline=false},
+            {name="Rarity", value=itemData and itemData.Rarity or "Unknown", inline=false},
+            {name="Cash", value=tostring(cash), inline=true},
+            {name="Gems", value=tostring(gems), inline=true},
+        }
+        
+        local webhookUrl = tostring(itemId) == "2294" and PET_SAFE_WEBHOOK_URL or WEBHOOK_URL
+        
         pcall(function()
-            upgrading, remaining = ReplicatedStorage.Events.UI.GetUpgradingItem:InvokeServer("UpgradingItem")
-        end)
-
-        if upgrading and remaining and remaining > 0 then
-            craftTimerText = " (⏳ " .. string.format("%dM %dS", math.floor(remaining/60), remaining%60) .. ")"
-        end
-
-        local megaGemSafeCount, gemSafeCount = 0, 0
-
-        if playerData then
-            local function countSpecial(container)
-                if not container then return end
-                for _, item in pairs(container) do
-                    if tostring(item.Id) == "1162" then megaGemSafeCount = megaGemSafeCount + 1 end
-                    if tostring(item.Id) == "681" then gemSafeCount = gemSafeCount + 1 end
-                end
-            end
-            countSpecial(playerData.Furniture)
-            countSpecial(playerData.Inventory)
-        end
-
-        gemSafeCount = gemSafeCount + 1
-
-        table.insert(fields, {
-            name="Total Owned",
-            value=emoji_mgs .. " MGS: " .. tostring(megaGemSafeCount) .. craftTimerText ..
-                  " | " .. emoji_gs .. " GS: " .. tostring(gemSafeCount),
-            inline=false
-        })
-    elseif tostring(itemId) == "2294" then
-        local petSafeCount = 0
-        if playerData then
-            local function countPets(container)
-                if not container then return end
-                for _, item in pairs(container) do
-                    if tostring(item.Id) == "2294" then petSafeCount = petSafeCount + 1 end
-                end
-            end
-            countPets(playerData.Furniture)
-            countPets(playerData.Inventory)
-        end
-        petSafeCount = petSafeCount + 1
-
-        table.insert(fields, {
-            name="Total Owned",
-            value=emoji_1 .. " " .. tostring(petSafeCount),
-            inline=false
-        })
-    else
-        table.insert(fields, {name="Total Owned", value=tostring(count), inline=false})
-    end
-
-    local webhookUrl = WEBHOOK_URL
-    if tostring(itemId) == "2294" then
-        webhookUrl = PET_SAFE_WEBHOOK_URL
-    end
-
-    pcall(function()
-        HttpService:RequestAsync({
-            Url = webhookUrl,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = HttpService:JSONEncode({
-                embeds = {{
-                    title = playerName .. " Got an Item",
-                    color = getEmbedColor(itemId),
-                    fields = fields
-                }}
+            HttpService:RequestAsync({
+                Url = webhookUrl,
+                Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = HttpService:JSONEncode({
+                    embeds = {{
+                        title = playerName .. " GOT ITEM",
+                        fields = fields
+                    }}
+                })
             })
-        })
-    end)
-end
-
-local function getEmbedColor(itemId)
-    local colors = {
-        ["681"] = 0x00FF00,
-        ["2294"] = 0xFFD700,
-        ["1162"] = 0xFF69B4
-    }
-    return colors[tostring(itemId)] or 0x5865F2
-end
-
-local function destroyGuis()
-    local a=PlayerGui:FindFirstChild("ItemsWon")
-    if a then a:Destroy() end
-    local b=PlayerGui:FindFirstChild("CircleAnimationUI")
-    if b then b:Destroy() end
-end
-
-destroyGuis()
-
-PlayerGui.ChildAdded:Connect(function(c)
-    if c.Name=="ItemsWon" or c.Name=="CircleAnimationUI" then
-        c:Destroy()
-    end
-end)
-
-local function getData()
-    local ok,data=pcall(function()
-        return DataEvent:InvokeServer()
-    end)
-    if ok then return data end
-end
-
-local function isTarget(id)
-    return targetItemIds[tostring(id)]
-end
-
-local function findTargets(data)
-    local t={}
-    if data and data.Inventory then
-        for guid,item in pairs(data.Inventory) do
-            if isTarget(item.Id) then
-                t[#t+1]={GUID=guid,Id=item.Id}
-            end
-        end
-    end
-    return t
-end
-
-local function placeTargets()
-    local data=getData()
-    if not data then return end
-
-    local items=findTargets(data)  
-    if #items==0 then return end  
-
-    local inv=data.Inventory or {}  
-    local invLevel=data.InventoryLevel  
-    local carryLevel=data.CarryLevel  
-    local carrySpace=RepLibrary:GetCarrySpace(LocalPlayer,carryLevel)  
-    local invSpace=RepLibrary:GetInventorySpace(LocalPlayer,invLevel)  
-    local invCount=RepLibrary:GetLengthOfInventory(inv)  
-
-    if invCount>=invSpace and carrySpace<=0 then return end  
-
-    for i=1,#items do  
-        local item=items[i]  
-        pcall(function()  
-            Shop.InsertFurniture:InvokeServer({  
-                GUID=item.GUID,  
-                Type="Decor",  
-                Floor=1,  
-                Id=item.Id,  
-                CFrame=CFrame.new(Vector3.new(0,50,0))  
-            })  
-        end)  
-    end
-end
-
-local function scanGarage(garage)
-    local items=garage and garage:FindFirstChild("Items")
-    if not items then return false end
-    
-    for _,obj in ipairs(items:GetChildren()) do
-        local itemId = obj.Name
-        if isTarget(itemId) then
-            targetGarage = garage
-            
-            -- Send webhook if not sent for this item in current auction
-            if not sentWebhooks[itemId] then
-                sentWebhooks[itemId] = true
-                local itemData = ItemsModule[itemId]
-                local playerName = LocalPlayer.Name
-                sendWebhook(itemId, itemData, playerName)
-            end
-            
-            return true
-        end
-    end
-    return false
-end
-
-local function handleWon()
-    local data=getData()
-    if not data or not data.ItemsWon then return end
-    local keep={}
-    for guid,item in pairs(data.ItemsWon) do
-        if isTarget(item.itemId) then
-            keep[#keep+1]=guid
-        end
-    end
-    if #keep>0 then
-        pcall(function()
-            SellAllItems:InvokeServer("Default",keep)
         end)
+    end)
+end
+
+local function cleanupGarage(garageId)
+    if garageConnections[garageId] then
+        for _, conn in ipairs(garageConnections[garageId]) do
+            pcall(function() conn:Disconnect() end)
+        end
+        garageConnections[garageId] = nil
     end
 end
 
-UpdateCurrentBid.OnClientEvent:Connect(function(d)
-    if d then
-        currentNextBid=d.nextBid
-        currentBidder=d.player
+local function handleGarage(garage)
+    if currentGarageId then
+        cleanupGarage(currentGarageId)
+    end
+    
+    currentGarage = garage
+    currentGarageId = garage and garage.Name
+    targetFound = false
+    
+    print("[SCAN] GARAGE " .. currentGarageId .. " LOADED")
+    
+    local thisGarageId = currentGarageId
+    local itemsFolder = garage:FindFirstChild("Items")
+    if not itemsFolder then 
+        print("[ERROR] NO ITEMS FOLDER")
+        return 
+    end
+    
+    garageConnections[thisGarageId] = {}
+    
+    local children = itemsFolder:GetChildren()
+    for i = 1, #children do
+        if targetItemIds[children[i].Name] then
+            targetFound = true
+            print("[HIT] TARGET FOUND: " .. children[i].Name .. " IN GARAGE " .. thisGarageId)
+            local itemId = children[i].Name
+            task.spawn(sendWebhook, itemId, ItemsModule[itemId], LocalPlayer.Name)
+            break
+        end
+    end
+    
+    if not targetFound then
+        print("[SKIP] NO TARGET IN GARAGE " .. thisGarageId)
+    end
+    
+    local childAddedConn = itemsFolder.ChildAdded:Connect(function(item)
+        if currentGarageId ~= thisGarageId then return end
+        if targetItemIds[item.Name] then
+            targetFound = true
+            print("[BID] TARGET SPAWNED: " .. item.Name .. " IN GARAGE " .. thisGarageId)
+            task.spawn(sendWebhook, item.Name, ItemsModule[item.Name], LocalPlayer.Name)
+            if currentNextBid and currentBidder and currentBidder ~= LocalPlayer then
+                print("[ACTION] PLACING BID: " .. tostring(currentNextBid))
+                pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
+            end
+        end
+    end)
+    table.insert(garageConnections[thisGarageId], childAddedConn)
+    
+    task.spawn(function()
+        taskWait(0.3)
+        if currentGarageId ~= thisGarageId then return end
+        if not targetFound then
+            print("[SKIP] EXECUTING SKIP FOR GARAGE " .. thisGarageId)
+            pcall(function() SkipCountdown:InvokeServer() end)
+            taskWait(0.05)
+            pcall(function() Skip:InvokeServer() end)
+        else
+            print("[HOLD] TARGET CONFIRMED, WAITING FOR BIDS")
+        end
+    end)
+end
+
+UpdateCurrentBid.OnClientEvent:Connect(function(data)
+    if not data then return end
+    currentNextBid = data.nextBid
+    currentBidder = data.player
+    
+    if currentBidder == LocalPlayer then
+        print("[BID] HIGHEST BIDDER: " .. LocalPlayer.Name .. " | NEXT: " .. tostring(currentNextBid))
+    else
+        print("[BID] CURRENT LEADER: " .. tostring(currentBidder) .. " | NEXT BID: " .. tostring(currentNextBid))
+    end
+    
+    if targetFound and currentGarage and currentBidder and currentBidder ~= LocalPlayer then
+        print("[ACTION] COUNTER BID: " .. tostring(currentNextBid))
+        pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
     end
 end)
 
-AuctionsFolder.ChildAdded:Connect(function(g)
-    inAuction=true
-    currentGarage=g
-    targetGarage=nil
-    sentWebhooks = {} -- Reset for new auction
+AuctionsFolder.ChildAdded:Connect(handleGarage)
+
+AuctionsFolder.ChildRemoved:Connect(function(garage)
+    local garageId = garage and garage.Name
+    if garageId then
+        print("[CLEAN] GARAGE " .. garageId .. " REMOVED")
+        cleanupGarage(garageId)
+    end
+    if currentGarage == garage then
+        currentGarage = nil
+        currentGarageId = nil
+        targetFound = false
+        print("[RESET] STATE CLEARED")
+    end
 end)
 
-AuctionsFolder.ChildRemoved:Connect(function()
-    if #AuctionsFolder:GetChildren()==0 then
-        inAuction=false
-        currentGarage=nil
-        targetGarage=nil
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+for _, gui in ipairs(PlayerGui:GetChildren()) do
+    if gui.Name == "ItemsWon" or gui.Name == "CircleAnimationUI" then
+        gui:Destroy()
+        print("[KILL] DESTROYED: " .. gui.Name)
+    end
+end
+
+PlayerGui.ChildAdded:Connect(function(child)
+    if child.Name == "ItemsWon" or child.Name == "CircleAnimationUI" then
+        child:Destroy()
+        print("[KILL] INTERCEPTED AND DESTROYED: " .. child.Name)
+        if child.Name == "ItemsWon" then
+            task.spawn(function()
+                local data = getPlayerData()
+                if data and data.ItemsWon then
+                    local keepGuids = {}
+                    for guid, itemData in pairs(data.ItemsWon) do
+                        if isTargetItem(itemData.itemId) then
+                            table.insert(keepGuids, guid)
+                            print("[CLAIM] TARGET ITEM WON: " .. tostring(itemData.itemId))
+                        end
+                    end
+                    if #keepGuids > 0 then
+                        pcall(function() SellAllItems:InvokeServer("Default", keepGuids) end)
+                        print("[SOLD] " .. #keepGuids .. " ITEMS CLAIMED")
+                    end
+                end
+            end)
+        end
     end
 end)
 
 task.spawn(function()
     while true do
-        placeTargets()
-        task.wait(300)
+        pcall(function() EnterQueue:InvokeServer("85") end)
+        print("[QUEUE] ENTERING AUCTION QUEUE")
+        taskWait(0.6)
     end
 end)
 
-while true do
-    pcall(function()
-        EnterQueue:InvokeServer("85")
-    end)
-
-    local t=tick()  
-    repeat task.wait() until inAuction or tick()-t>10  
-    if not inAuction then continue end  
-
-    while inAuction do  
-        if not targetGarage then  
-            local found=scanGarage(currentGarage)  
-            if not found and tick()-lastSkip>1 then  
-                pcall(function()  
-                    SkipCountdown:InvokeServer()  
-                    Skip:InvokeServer()  
-                end)  
-                lastSkip=tick()  
-            end  
-        else  
-            if currentNextBid and currentBidder~=LocalPlayer then  
-                pcall(function()  
-                    PlaceBid:InvokeServer(currentNextBid)  
-                end)  
-            end  
-        end  
-        task.wait(0.1)  
-    end  
-
-    handleWon()  
-    task.wait(1)
+local function placeInventoryItems()
+    local playerData = getPlayerData()
+    if not playerData then return end
+    
+    local itemsToPlace = {}
+    if playerData.Inventory then
+        for guid, itemData in pairs(playerData.Inventory) do
+            if isTargetItem(itemData.Id) then
+                itemsToPlace[#itemsToPlace + 1] = {GUID = guid, Id = itemData.Id}
+            end
+        end
+    end
+    
+    if #itemsToPlace == 0 then return end
+    
+    print("[STORE] PLACING " .. #itemsToPlace .. " TARGET ITEMS")
+    
+    local currentFurniture = 0
+    if playerData.Furniture then
+        for _ in pairs(playerData.Furniture) do currentFurniture = currentFurniture + 1 end
+    end
+    
+    local maxSpace = playerData.ShopSpace or 100
+    local availableSpace = maxSpace - currentFurniture
+    local maxPlace = math.min(availableSpace, #itemsToPlace)
+    
+    local placedPositions = {}
+    
+    for i = 1, maxPlace do
+        local item = itemsToPlace[i]
+        local placed = false
+        local attempts = 0
+        
+        while not placed and attempts < 5 do
+            local xOffset = (math.random() - 0.5) * (canvas.Size.X - 8)
+            local zOffset = (math.random() - 0.5) * (canvas.Size.Z - 8)
+            
+            local pos = Vector3.new(
+                canvas.Position.X + xOffset,
+                canvas.Position.Y + canvas.Size.Y/2 + math.random(5, 40),
+                canvas.Position.Z + zOffset
+            )
+            
+            local overlapping = false
+            for _, existingPos in ipairs(placedPositions) do
+                if (existingPos - pos).Magnitude < 6 then
+                    overlapping = true
+                    break
+                end
+            end
+            
+            if not overlapping then
+                local success = pcall(function()
+                    Shop.InsertFurniture:InvokeServer({
+                        GUID = item.GUID,
+                        Type = "Decor",
+                        Floor = 1,
+                        Id = item.Id,
+                        CFrame = CFrame.new(pos)
+                    })
+                end)
+                
+                if success then
+                    table.insert(placedPositions, pos)
+                    placed = true
+                    print("[PLACE] ITEM " .. item.Id .. " PLACED SUCCESSFULLY")
+                end
+            end
+            attempts = attempts + 1
+            taskWait(0.1)
+        end
+        taskWait(0.05)
+    end
 end
+
+task.spawn(function()
+    while true do
+        placeInventoryItems()
+        taskWait(300)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        taskWait(60)
+        for garageId, connections in pairs(garageConnections) do
+            if not workspace.Debris.Auctions:FindFirstChild(garageId) then
+                cleanupGarage(garageId)
+                print("[GC] CLEANED UP GARAGE: " .. garageId)
+            end
+        end
+    end
+end)
+
+print("[SYSTEM] FULLY OPERATIONAL | FPS CAP: 5 | TARGET MODE: ACTIVE")
