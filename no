@@ -45,6 +45,11 @@ local targetGarage = nil
 local processingItemsWon = false
 local isBiddingActive = false
 
+-- Webhook spam protection
+local webhookSentForCurrentAuction = false
+local lastWebhookItemId = nil
+local lastWebhookGarageId = nil
+
 local lastSkipTime = 0
 local SKIP_COOLDOWN = 0.5
 
@@ -154,7 +159,20 @@ local function formatNumber(n)
 end
 
 local function sendWebhook(itemId, itemData, playerName)
+	-- Spam protection: only send once per item per auction
+	if webhookSentForCurrentAuction then
+		debugPrint("Webhook already sent for this auction, skipping duplicate")
+		return
+	end
+	
+	-- Also check if same item was sent recently in same garage
+	if lastWebhookItemId == itemId and lastWebhookGarageId == GARAGE_ID then
+		debugPrint("Same item already webhook'd recently, skipping")
+		return
+	end
+	
 	debugPrint("Sending webhook for item:", itemId)
+	
 	local playerData
 	pcall(function() playerData = DataEvent:InvokeServer() end)
 	
@@ -268,6 +286,11 @@ local function sendWebhook(itemId, itemData, playerName)
 			})
 		})
 	end)
+	
+	-- Mark as sent for this auction
+	webhookSentForCurrentAuction = true
+	lastWebhookItemId = itemId
+	lastWebhookGarageId = GARAGE_ID
 end
 
 local function getFurnitureCount(playerData)
@@ -368,6 +391,8 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
 	currentGarage = garage
 	targetGarage = nil
 	isBiddingActive = false
+	-- Reset webhook protection for new auction
+	webhookSentForCurrentAuction = false
 end)
 
 AuctionsFolder.ChildRemoved:Connect(function(child)
