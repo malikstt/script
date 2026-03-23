@@ -1,267 +1,179 @@
-setfpscap(5)
-task.wait(1)
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
+local player = game.Players.LocalPlayer
+local camera = workspace.CurrentCamera
+local mouse = player:GetMouse()
+local runService = game:GetService("RunService")
+local players = game:GetService("Players")
 
-local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
-local ItemsModule = require(ReplicatedStorage.Modules.Items)
-local GaragesModule = require(ReplicatedStorage.Modules["Garages-experiment1"])
-local Auctions = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
-local EnterQueue = Auctions:WaitForChild("EnterQueue")
-local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
-local PlaceBid = Auctions:WaitForChild("PlaceBid")
-local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
+local screenGui = Instance.new("ScreenGui")
+screenGui.Parent = player.PlayerGui
 
-local currentBidData = nil
-local MIN_PROFIT = 6
-local inAuction = false
-local myCash = 0
-local currentGarageValue = 0
-local bidPlaced = false
-local processingItemsWon = false
-local currentGarageBudget = 0
+local circle = Instance.new("Frame")
+circle.Size = UDim2.new(0, 10, 0, 10)
+circle.Position = UDim2.new(0.5, -5, 0.5, -5)
+circle.BackgroundColor3 = Color3.new(1, 0, 0)
+circle.BackgroundTransparency = 0.5
+circle.BorderSizePixel = 0
+circle.Parent = screenGui
 
-local function getEntryCost(garageData)
-    return garageData.CashNeededToEnter or garageData.AuctionBudget or 0
-end
+local drawingLines = {}
 
-local function updateCash()
-    local success, data = pcall(function() return DataEvent:InvokeServer() end)
-    if success and data and data.Cash then
-        myCash = tonumber(data.Cash) or 0
-    end
-end
-
-local function tryClick(obj)
-    if not obj then return end
-    pcall(function() obj:Activate() end)
-    if getconnections then
-        for _, v in pairs(getconnections(obj.MouseButton1Click)) do
-            pcall(function() v:Fire() end)
+local function getNearestPlayer()
+    local nearest = nil
+    local shortestDist = math.huge
+    local origin = camera.CFrame.Position
+    
+    for _, plr in ipairs(players:GetPlayers()) do
+        if plr ~= player and plr.Character and plr.Character:FindFirstChild("Head") then
+            local head = plr.Character.Head
+            local screenPoint, onScreen = camera:WorldToScreenPoint(head.Position)
+            if onScreen then
+                local dist = (camera.CFrame.Position - head.Position).magnitude
+                if dist < shortestDist then
+                    shortestDist = dist
+                    nearest = plr
+                end
+            end
         end
     end
+    return nearest
 end
 
-local function checkForButton()
-    local itemsWon = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
-    if itemsWon then
-        local button = itemsWon:FindFirstChild("Button", true)
-        if button then
-            tryClick(button)
-        end
+local function createLine(playerName, startPos, endPos)
+    if drawingLines[playerName] then
+        drawingLines[playerName]:Remove()
     end
+    
+    local line = Instance.new("Frame")
+    line.BackgroundColor3 = Color3.new(1, 0, 0)
+    line.BackgroundTransparency = 0.3
+    line.BorderSizePixel = 0
+    line.Parent = screenGui
+    
+    local length = (endPos - startPos).magnitude
+    local angle = math.atan2(endPos.Y - startPos.Y, endPos.X - startPos.X)
+    
+    line.Size = UDim2.new(0, length, 0, 2)
+    line.Position = UDim2.new(0, startPos.X, 0, startPos.Y)
+    line.Rotation = math.deg(angle)
+    
+    drawingLines[playerName] = line
 end
 
-local function handleItemsWon()
-    processingItemsWon = true
-    local gui = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon")
-    if not gui then 
-        processingItemsWon = false
-        return 
-    end
+local function updateESP()
+    local centerX = camera.ViewportSize.X / 2
+    local centerY = camera.ViewportSize.Y / 2
     
-    print("📦 ItemsWon detected")
-    
-    local frame = gui:FindFirstChild("ItemsFrame") and gui.ItemsFrame:FindFirstChild("Frame")
-    if not frame then 
-        processingItemsWon = false
-        return 
-    end
-    
-    local confirmButton = gui:FindFirstChild("ItemsFrame") and gui.ItemsFrame:FindFirstChild("ConfirmButton")
-    if confirmButton then
-        repeat task.wait() until confirmButton.Visible
-        print("✅ Clicking Confirm")
-        tryClick(confirmButton)
-    end
-    
-    task.wait(1)
-    
-    local sellButton = gui:FindFirstChild("SellItems") and 
-                      gui.SellItems:FindFirstChild("Frame") and 
-                      gui.SellItems.Frame:FindFirstChild("Normal") and 
-                      gui.SellItems.Frame.Normal:FindFirstChild("Button")
-    
-    if sellButton then
-        repeat task.wait() until sellButton.Visible
-        print("💰 Selling all")
-        tryClick(sellButton)
-        task.wait(0.5)
-        checkForButton()
-    end
-    
-    task.wait(2)
-    processingItemsWon = false
-end
-
-LocalPlayer.PlayerGui.DescendantAdded:Connect(function(obj)
-    if obj.Name == "Button" then
-        task.wait()
-        tryClick(obj)
-    end
-end)
-
-UpdateCurrentBid.OnClientEvent:Connect(function(data)
-    if data then
-        currentBidData = data
-        if inAuction and currentGarageValue > 0 then
-            print("💰 Bid Update: $" .. tostring(data.nextBid) .. " | " .. tostring(data.player and (data.player.Name or "NPC") or "None"))
+    for _, plr in ipairs(players:GetPlayers()) do
+        if plr ~= player and plr.Character and plr.Character:FindFirstChild("Head") then
+            local headPos = plr.Character.Head.Position
+            local screenPoint, onScreen = camera:WorldToScreenPoint(headPos)
             
-            if data.player ~= LocalPlayer and bidPlaced then
-                local nextBid = data.nextBid
-                local profit = currentGarageValue - nextBid
-                local profitPercent = (profit / currentGarageValue) * 100
+            if onScreen then
+                local lineStart = Vector2.new(centerX, centerY)
+                local lineEnd = Vector2.new(screenPoint.X, screenPoint.Y)
+                createLine(plr.Name, lineStart, lineEnd)
                 
-                if profitPercent >= MIN_PROFIT and nextBid <= myCash then
-                    print("⚡ Counter-bidding: $" .. nextBid)
-                    pcall(function() PlaceBid:InvokeServer(nextBid) end)
+                local distance = (camera.CFrame.Position - headPos).magnitude
+                local health = plr.Character:FindFirstChild("Humanoid") and plr.Character.Humanoid.Health or 0
+                
+                local nameLabel = drawingLines[plr.Name .. "_name"]
+                if nameLabel then nameLabel:Destroy() end
+                
+                local newLabel = Instance.new("TextLabel")
+                newLabel.Size = UDim2.new(0, 100, 0, 20)
+                newLabel.Position = UDim2.new(0, screenPoint.X - 50, 0, screenPoint.Y - 30)
+                newLabel.BackgroundTransparency = 1
+                newLabel.TextColor3 = Color3.new(1, 1, 1)
+                newLabel.TextStrokeTransparency = 0.5
+                newLabel.Text = string.format("%s | %.1fm | %d HP", plr.Name, distance, health)
+                newLabel.Parent = screenGui
+                drawingLines[plr.Name .. "_name"] = newLabel
+            else
+                if drawingLines[plr.Name] then
+                    drawingLines[plr.Name]:Destroy()
+                    drawingLines[plr.Name] = nil
+                end
+                if drawingLines[plr.Name .. "_name"] then
+                    drawingLines[plr.Name .. "_name"]:Destroy()
+                    drawingLines[plr.Name .. "_name"] = nil
                 end
             end
         end
     end
+end
+
+local function fireWeapon(target)
+    if not target or not target.Character or not target.Character:FindFirstChild("Head") then
+        return
+    end
+    
+    local revolver = player.Backpack:FindFirstChild("Revolver")
+    if not revolver then
+        revolver = player.Character:FindFirstChild("Revolver")
+    end
+    
+    if not revolver then
+        return
+    end
+    
+    local clientEvent = revolver:FindFirstChild("ClientEvent")
+    if not clientEvent then
+        return
+    end
+    
+    local character = player.Character
+    if not character then
+        return
+    end
+    
+    local headPos = target.Character.Head.Position
+    local startPos = character.Head.Position
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    
+    local effectData = {}
+    
+    if rootPart then
+        local rootCFrame = rootPart.CFrame
+        local fireOffset = rootCFrame:inverse() * CFrame.new(startPos)
+        effectData.fireOffset = fireOffset.Position
+    end
+    
+    clientEvent:FireServer("WeaponFired", {
+        startPos,
+        headPos,
+        effectData,
+        math.random(1, 999999)
+    })
+end
+
+runService.RenderStepped:Connect(function()
+    updateESP()
 end)
 
-local function getGarageEstimatedValue(garageData)
-    return garageData.AuctionBudget or 0
-end
+local lastFire = 0
+local fireDelay = 0.2
 
-local function getBestAffordableGarage()
-    updateCash()
-    local bestId = "51"
-    local bestValue = 0
-    
-    for id, data in pairs(GaragesModule) do
-        if data.Type == "Cash" then
-            local entryCost = getEntryCost(data)
-            if entryCost > 0 and myCash >= entryCost then
-                local estimatedValue = getGarageEstimatedValue(data)
-                if estimatedValue > bestValue then
-                    bestValue = estimatedValue
-                    bestId = id
-                end
-            end
-        end
-    end
-    
-    return bestId
-end
-
-local function joinAuction()
-    while true do
-        if not processingItemsWon and not inAuction then
-            local garageId = getBestAffordableGarage()
-            local garageData = GaragesModule[garageId]
-            if garageData then
-                print("🎯 Entering: " .. garageData.Name .. " (Need: $" .. getEntryCost(garageData) .. ", Est: $" .. getGarageEstimatedValue(garageData) .. ")")
-                pcall(function() EnterQueue:InvokeServer(garageId) end)
-            end
-        end
-        task.wait(1)
-    end
-end
-
-coroutine.wrap(joinAuction)()
-
-AuctionsFolder.ChildAdded:Connect(function(garage)
-    if processingItemsWon then return end
-    
-    inAuction = true
-    currentBidData = nil
-    bidPlaced = false
-    currentGarageBudget = 0
-    local garageName = garage.Name
-    local garageId = nil
-    
-    for id, data in pairs(GaragesModule) do
-        if data.Name == garageName then
-            garageId = id
-            currentGarageBudget = getEntryCost(data)
-            break
-        end
-    end
-    
-    print("\n=== " .. garageName .. " (Need: $" .. currentGarageBudget .. ") ===")
-    
-    local itemsFolder = garage:WaitForChild("Items", 5)
-    if not itemsFolder then
-        print("❌ No items")
-        return
-    end
-    
-    task.wait(3)
-    
-    currentGarageValue = 0
-    local items = itemsFolder:GetChildren()
-    
-    for _, itemInstance in ipairs(items) do
-        local itemId = itemInstance.Name
-        local itemData = ItemsModule[itemId] or ItemsModule[tonumber(itemId)]
-        
-        if itemData and type(itemData) == "table" and itemData.Price then
-            currentGarageValue = currentGarageValue + (tonumber(itemData.Price) or 0)
-        end
-    end
-    
-    if currentGarageValue == 0 then
-        print("❌ Value: $0")
-        return
-    end
-    
-    print("💰 Value: $" .. currentGarageValue)
-    
-    local timeout = 0
-    while not currentBidData and timeout < 8 do
-        task.wait(0.5)
-        timeout = timeout + 0.5
-    end
-    
-    if not currentBidData then
-        print("❌ No bid data")
-        return
-    end
-    
-    local nextBid = currentBidData.nextBid
-    local profit = currentGarageValue - nextBid
-    local profitPercent = (profit / currentGarageValue) * 100
-    local worth = profitPercent >= MIN_PROFIT
-    local canAfford = nextBid <= myCash
-    
-    print("💰 Next: $" .. nextBid)
-    print("📊 Profit: $" .. profit .. " (" .. string.format("%.2f", profitPercent) .. "%)")
-    print(worth and "✅ WORTH" or "❌ NOT WORTH")
-    print(canAfford and "✅ Can afford" or "❌ Can't afford")
-    
-    if currentBidData.player == LocalPlayer then
-        print("👑 Highest bidder")
-        bidPlaced = true
-        return
-    end
-    
-    if worth and canAfford then
-        print("⚡ Bidding...")
-        local success = pcall(function()
-            return PlaceBid:InvokeServer(nextBid)
-        end)
-        if success then
-            print("✅ Bid placed")
-            bidPlaced = true
-        else
-            print("❌ Bid failed")
+mouse.Button1Down:Connect(function()
+    local currentTime = tick()
+    if currentTime - lastFire >= fireDelay then
+        local target = getNearestPlayer()
+        if target then
+            fireWeapon(target)
+            lastFire = currentTime
         end
     end
 end)
 
-AuctionsFolder.ChildRemoved:Connect(function()
-    if #AuctionsFolder:GetChildren() == 0 then
-        print("\n=== Left ===\n")
-        inAuction = false
-        currentBidData = nil
-        currentGarageValue = 0
-        bidPlaced = false
-        task.wait(2)
-        handleItemsWon()
+local function ensureWeaponEquipped()
+    local revolver = player.Backpack:FindFirstChild("Revolver")
+    if revolver and not player.Character:FindFirstChild("Revolver") then
+        revolver.Parent = player.Character
     end
-end)
+end
 
-print("🚀 Started - " .. MIN_PROFIT .. "% profit")
+ensureWeaponEquipped()
+
+player.CharacterAdded:Connect(function()
+    wait(1)
+    ensureWeaponEquipped()
+end)
