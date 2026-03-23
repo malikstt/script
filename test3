@@ -3,39 +3,180 @@ local camera = workspace.CurrentCamera
 local mouse = player:GetMouse()
 local runService = game:GetService("RunService")
 local players = game:GetService("Players")
+local userInputService = game:GetService("UserInputService")
+local touchEnabled = userInputService.TouchEnabled
 
 local screenGui = Instance.new("ScreenGui")
 screenGui.Parent = player.PlayerGui
 
-local circle = Instance.new("Frame")
-circle.Size = UDim2.new(0, 10, 0, 10)
-circle.Position = UDim2.new(0.5, -5, 0.5, -5)
-circle.BackgroundColor3 = Color3.new(1, 0, 0)
-circle.BackgroundTransparency = 0.5
-circle.BorderSizePixel = 0
-circle.Parent = screenGui
+local Rayfield = loadstring(game:HttpGet("https://raw.githubusercontent.com/shlexware/Rayfield/main/source"))()
+
+local Window = Rayfield:CreateWindow({
+    Name = "Revolver Cheat",
+    LoadingTitle = "Loading...",
+    LoadingSubtitle = "by script",
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = "RevolverCheat",
+        FileName = "Settings"
+    }
+})
+
+local AimbotTab = Window:CreateTab("Aimbot")
+local VisualsTab = Window:CreateTab("Visuals")
+local WeaponTab = Window:CreateTab("Weapon")
+local SettingsTab = Window:CreateTab("Settings")
+
+local settings = {
+    aimbotEnabled = true,
+    silentAimEnabled = true,
+    triggerbotEnabled = false,
+    fovSize = 150,
+    smoothness = 0.3,
+    fovColor = Color3.new(1, 0, 0),
+    fovVisible = true,
+    espEnabled = true,
+    wallbangEnabled = false,
+    autoFire = false,
+    visibleCheck = false,
+    aimPart = "Head"
+}
+
+local fovCircle = Instance.new("Frame")
+fovCircle.Size = UDim2.new(0, settings.fovSize * 2, 0, settings.fovSize * 2)
+fovCircle.Position = UDim2.new(0.5, -settings.fovSize, 0.5, -settings.fovSize)
+fovCircle.BackgroundColor3 = settings.fovColor
+fovCircle.BackgroundTransparency = 0.9
+fovCircle.BorderSizePixel = 2
+fovCircle.BorderColor3 = settings.fovColor
+fovCircle.Parent = screenGui
+fovCircle.Visible = settings.fovVisible
+
+local crosshair = Instance.new("Frame")
+crosshair.Size = UDim2.new(0, 4, 0, 4)
+crosshair.Position = UDim2.new(0.5, -2, 0.5, -2)
+crosshair.BackgroundColor3 = Color3.new(1, 1, 1)
+crosshair.BackgroundTransparency = 0.3
+crosshair.BorderSizePixel = 0
+crosshair.Parent = screenGui
 
 local drawingLines = {}
+local currentTarget = nil
+local originalFireWeapon = nil
 
-local function getNearestPlayer()
-    local nearest = nil
-    local shortestDist = math.huge
+local function isVisible(targetPart)
+    if not settings.visibleCheck then return true end
+    
     local origin = camera.CFrame.Position
+    local direction = (targetPart.Position - origin).Unit * 1000
+    local ray = Ray.new(origin, direction)
+    local hit, position = workspace:FindPartOnRay(ray, player.Character)
+    
+    local targetPos = targetPart.Position
+    local hitPos = position or hit
+    if hitPos and typeof(hitPos) == "Vector3" then
+        return (hitPos - targetPos).Magnitude < 1
+    end
+    return false
+end
+
+local function getPlayersInFOV()
+    local centerX = camera.ViewportSize.X / 2
+    local centerY = camera.ViewportSize.Y / 2
+    local playersInFOV = {}
     
     for _, plr in ipairs(players:GetPlayers()) do
-        if plr ~= player and plr.Character and plr.Character:FindFirstChild("Head") then
-            local head = plr.Character.Head
-            local screenPoint, onScreen = camera:WorldToScreenPoint(head.Position)
-            if onScreen then
-                local dist = (camera.CFrame.Position - head.Position).magnitude
-                if dist < shortestDist then
-                    shortestDist = dist
-                    nearest = plr
+        if plr ~= player and plr.Character then
+            local targetPart = plr.Character:FindFirstChild(settings.aimPart)
+            if targetPart then
+                local screenPoint, onScreen = camera:WorldToScreenPoint(targetPart.Position)
+                
+                if onScreen and isVisible(targetPart) then
+                    local dx = screenPoint.X - centerX
+                    local dy = screenPoint.Y - centerY
+                    local distFromCenter = math.sqrt(dx * dx + dy * dy)
+                    
+                    if distFromCenter <= settings.fovSize then
+                        local distance = (camera.CFrame.Position - targetPart.Position).Magnitude
+                        local health = plr.Character:FindFirstChild("Humanoid") and plr.Character.Humanoid.Health or 0
+                        table.insert(playersInFOV, {
+                            player = plr,
+                            part = targetPart,
+                            screenPos = Vector2.new(screenPoint.X, screenPoint.Y),
+                            distance = distance,
+                            health = health,
+                            screenDist = distFromCenter
+                        })
+                    end
                 end
             end
         end
     end
-    return nearest
+    
+    return playersInFOV
+end
+
+local function getBestTarget()
+    local targets = getPlayersInFOV()
+    if #targets == 0 then return nil end
+    
+    table.sort(targets, function(a, b)
+        if a.health <= 0 and b.health > 0 then return true end
+        if a.health > 0 and b.health <= 0 then return false end
+        return a.screenDist < b.screenDist
+    end)
+    
+    return targets[1]
+end
+
+local function getCrosshairTarget()
+    local centerX = camera.ViewportSize.X / 2
+    local centerY = camera.ViewportSize.Y / 2
+    
+    for _, plr in ipairs(players:GetPlayers()) do
+        if plr ~= player and plr.Character then
+            local targetPart = plr.Character:FindFirstChild(settings.aimPart)
+            if targetPart then
+                local screenPoint, onScreen = camera:WorldToScreenPoint(targetPart.Position)
+                
+                if onScreen then
+                    local dx = math.abs(screenPoint.X - centerX)
+                    local dy = math.abs(screenPoint.Y - centerY)
+                    
+                    if dx < 15 and dy < 15 then
+                        return plr
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function smoothAim(current, target, smoothness)
+    return current + (target - current) * smoothness
+end
+
+local function updateAimbot()
+    if not settings.aimbotEnabled then return end
+    
+    local targetData = getBestTarget()
+    if not targetData then return end
+    
+    currentTarget = targetData.player
+    
+    local screenPoint = targetData.screenPos
+    
+    local targetX = screenPoint.X
+    local targetY = screenPoint.Y
+    
+    local currentX = mouse.X
+    local currentY = mouse.Y
+    
+    local newX = smoothAim(currentX, targetX, settings.smoothness)
+    local newY = smoothAim(currentY, targetY, settings.smoothness)
+    
+    mouse.Move(newX, newY)
 end
 
 local function createLine(playerName, startPos, endPos)
@@ -60,42 +201,71 @@ local function createLine(playerName, startPos, endPos)
 end
 
 local function updateESP()
+    if not settings.espEnabled then return end
+    
     local centerX = camera.ViewportSize.X / 2
     local centerY = camera.ViewportSize.Y / 2
     
     for _, plr in ipairs(players:GetPlayers()) do
-        if plr ~= player and plr.Character and plr.Character:FindFirstChild("Head") then
-            local headPos = plr.Character.Head.Position
-            local screenPoint, onScreen = camera:WorldToScreenPoint(headPos)
-            
-            if onScreen then
-                local lineStart = Vector2.new(centerX, centerY)
-                local lineEnd = Vector2.new(screenPoint.X, screenPoint.Y)
-                createLine(plr.Name, lineStart, lineEnd)
+        if plr ~= player and plr.Character then
+            local targetPart = plr.Character:FindFirstChild(settings.aimPart)
+            if targetPart then
+                local screenPoint, onScreen = camera:WorldToScreenPoint(targetPart.Position)
                 
-                local distance = (camera.CFrame.Position - headPos).magnitude
-                local health = plr.Character:FindFirstChild("Humanoid") and plr.Character.Humanoid.Health or 0
-                
-                local nameLabel = drawingLines[plr.Name .. "_name"]
-                if nameLabel then nameLabel:Destroy() end
-                
-                local newLabel = Instance.new("TextLabel")
-                newLabel.Size = UDim2.new(0, 100, 0, 20)
-                newLabel.Position = UDim2.new(0, screenPoint.X - 50, 0, screenPoint.Y - 30)
-                newLabel.BackgroundTransparency = 1
-                newLabel.TextColor3 = Color3.new(1, 1, 1)
-                newLabel.TextStrokeTransparency = 0.5
-                newLabel.Text = string.format("%s | %.1fm | %d HP", plr.Name, distance, health)
-                newLabel.Parent = screenGui
-                drawingLines[plr.Name .. "_name"] = newLabel
-            else
-                if drawingLines[plr.Name] then
-                    drawingLines[plr.Name]:Destroy()
-                    drawingLines[plr.Name] = nil
-                end
-                if drawingLines[plr.Name .. "_name"] then
-                    drawingLines[plr.Name .. "_name"]:Destroy()
-                    drawingLines[plr.Name .. "_name"] = nil
+                if onScreen then
+                    local lineStart = Vector2.new(centerX, centerY)
+                    local lineEnd = Vector2.new(screenPoint.X, screenPoint.Y)
+                    createLine(plr.Name, lineStart, lineEnd)
+                    
+                    local distance = (camera.CFrame.Position - targetPart.Position).Magnitude
+                    local health = plr.Character:FindFirstChild("Humanoid") and plr.Character.Humanoid.Health or 0
+                    
+                    local nameLabel = drawingLines[plr.Name .. "_name"]
+                    if nameLabel then nameLabel:Destroy() end
+                    
+                    local newLabel = Instance.new("TextLabel")
+                    newLabel.Size = UDim2.new(0, 120, 0, 20)
+                    newLabel.Position = UDim2.new(0, screenPoint.X - 60, 0, screenPoint.Y - 35)
+                    newLabel.BackgroundTransparency = 1
+                    newLabel.TextColor3 = currentTarget == plr and Color3.new(1, 0, 0) or Color3.new(1, 1, 1)
+                    newLabel.TextStrokeTransparency = 0.5
+                    newLabel.TextSize = 12
+                    newLabel.Text = string.format("%s | %.1fm | %d HP", plr.Name, distance, health)
+                    newLabel.Parent = screenGui
+                    drawingLines[plr.Name .. "_name"] = newLabel
+                    
+                    local healthBar = drawingLines[plr.Name .. "_health"]
+                    if healthBar then healthBar:Destroy() end
+                    
+                    local barBg = Instance.new("Frame")
+                    barBg.Size = UDim2.new(0, 50, 0, 4)
+                    barBg.Position = UDim2.new(0, screenPoint.X - 25, 0, screenPoint.Y - 20)
+                    barBg.BackgroundColor3 = Color3.new(0, 0, 0)
+                    barBg.BackgroundTransparency = 0.5
+                    barBg.BorderSizePixel = 0
+                    barBg.Parent = screenGui
+                    
+                    local barFill = Instance.new("Frame")
+                    barFill.Size = UDim2.new(math.clamp(health / 100, 0, 1), 0, 1, 0)
+                    barFill.BackgroundColor3 = Color3.new(0, 1, 0)
+                    barFill.BackgroundTransparency = 0.3
+                    barFill.BorderSizePixel = 0
+                    barFill.Parent = barBg
+                    
+                    drawingLines[plr.Name .. "_health"] = barBg
+                else
+                    if drawingLines[plr.Name] then
+                        drawingLines[plr.Name]:Remove()
+                        drawingLines[plr.Name] = nil
+                    end
+                    if drawingLines[plr.Name .. "_name"] then
+                        drawingLines[plr.Name .. "_name"]:Remove()
+                        drawingLines[plr.Name .. "_name"] = nil
+                    end
+                    if drawingLines[plr.Name .. "_health"] then
+                        drawingLines[plr.Name .. "_health"]:Remove()
+                        drawingLines[plr.Name .. "_health"] = nil
+                    end
                 end
             end
         end
@@ -103,31 +273,22 @@ local function updateESP()
 end
 
 local function fireWeapon(target)
-    if not target or not target.Character or not target.Character:FindFirstChild("Head") then
-        return
-    end
+    if not target or not target.Character then return end
     
-    local revolver = player.Backpack:FindFirstChild("Revolver")
-    if not revolver then
-        revolver = player.Character:FindFirstChild("Revolver")
-    end
+    local targetPart = target.Character:FindFirstChild(settings.aimPart)
+    if not targetPart then return end
     
-    if not revolver then
-        return
-    end
+    local revolver = player.Backpack:FindFirstChild("Revolver") or player.Character:FindFirstChild("Revolver")
+    if not revolver then return end
     
     local clientEvent = revolver:FindFirstChild("ClientEvent")
-    if not clientEvent then
-        return
-    end
+    if not clientEvent then return end
     
     local character = player.Character
-    if not character then
-        return
-    end
+    if not character then return end
     
-    local headPos = target.Character.Head.Position
-    local startPos = character.Head.Position
+    local targetPos = targetPart.Position
+    local startPos = character:FindFirstChild("Head") and character.Head.Position or camera.CFrame.Position
     local rootPart = character:FindFirstChild("HumanoidRootPart")
     
     local effectData = {}
@@ -140,34 +301,207 @@ local function fireWeapon(target)
     
     clientEvent:FireServer("WeaponFired", {
         startPos,
-        headPos,
+        targetPos,
         effectData,
-        math.random(1, 999999)
+        math.random(1, 9999999)
     })
 end
 
-runService.RenderStepped:Connect(function()
-    updateESP()
-end)
+local function hookWeaponModule()
+    local revolver = player.Backpack:FindFirstChild("Revolver") or player.Character:FindFirstChild("Revolver")
+    if not revolver then return false end
+    
+    local clientEvent = revolver:FindFirstChild("ClientEvent")
+    if not clientEvent then return false end
+    
+    local character = player.Character
+    if not character then return false end
+    
+    if not originalFireWeapon then
+        originalFireWeapon = fireWeapon
+    end
+    
+    return true
+end
 
 local lastFire = 0
-local fireDelay = 0.2
 
-mouse.Button1Down:Connect(function()
-    local currentTime = tick()
-    if currentTime - lastFire >= fireDelay then
-        local target = getNearestPlayer()
-        if target then
+runService.RenderStepped:Connect(function()
+    updateESP()
+    updateAimbot()
+    
+    if settings.fovVisible then
+        fovCircle.Visible = true
+        fovCircle.Size = UDim2.new(0, settings.fovSize * 2, 0, settings.fovSize * 2)
+        fovCircle.Position = UDim2.new(0.5, -settings.fovSize, 0.5, -settings.fovSize)
+    else
+        fovCircle.Visible = false
+    end
+    
+    local hasTarget = getBestTarget() ~= nil
+    crosshair.BackgroundColor3 = hasTarget and Color3.new(0, 1, 0) or Color3.new(1, 1, 1)
+    
+    if settings.triggerbotEnabled then
+        local target = getCrosshairTarget()
+        if target and tick() - lastFire > 0.15 then
             fireWeapon(target)
-            lastFire = currentTime
+            lastFire = tick()
         end
     end
 end)
+
+AimbotTab:CreateToggle({
+    Name = "Enable Aimbot",
+    CurrentValue = settings.aimbotEnabled,
+    Flag = "AimbotEnabled",
+    Callback = function(v)
+        settings.aimbotEnabled = v
+    end
+})
+
+AimbotTab:CreateToggle({
+    Name = "Silent Aim",
+    CurrentValue = settings.silentAimEnabled,
+    Flag = "SilentAim",
+    Callback = function(v)
+        settings.silentAimEnabled = v
+    end
+})
+
+AimbotTab:CreateToggle({
+    Name = "Triggerbot",
+    CurrentValue = settings.triggerbotEnabled,
+    Flag = "Triggerbot",
+    Callback = function(v)
+        settings.triggerbotEnabled = v
+    end
+})
+
+AimbotTab:CreateToggle({
+    Name = "Visible Check",
+    CurrentValue = settings.visibleCheck,
+    Flag = "VisibleCheck",
+    Callback = function(v)
+        settings.visibleCheck = v
+    end
+})
+
+AimbotTab:CreateSlider({
+    Name = "FOV Size",
+    Range = {50, 300},
+    Increment = 5,
+    Suffix = "px",
+    CurrentValue = settings.fovSize,
+    Flag = "FOVSize",
+    Callback = function(v)
+        settings.fovSize = v
+    end
+})
+
+AimbotTab:CreateSlider({
+    Name = "Smoothness",
+    Range = {0.05, 0.95},
+    Increment = 0.05,
+    Suffix = "",
+    CurrentValue = settings.smoothness,
+    Flag = "Smoothness",
+    Callback = function(v)
+        settings.smoothness = v
+    end
+})
+
+AimbotTab:CreateDropdown({
+    Name = "Aim Part",
+    Options = {"Head", "Torso", "HumanoidRootPart"},
+    CurrentOption = "Head",
+    Flag = "AimPart",
+    Callback = function(v)
+        settings.aimPart = v
+    end
+})
+
+VisualsTab:CreateToggle({
+    Name = "Enable ESP",
+    CurrentValue = settings.espEnabled,
+    Flag = "ESPEnabled",
+    Callback = function(v)
+        settings.espEnabled = v
+    end
+})
+
+VisualsTab:CreateToggle({
+    Name = "Show FOV Circle",
+    CurrentValue = settings.fovVisible,
+    Flag = "FOVVisible",
+    Callback = function(v)
+        settings.fovVisible = v
+        fovCircle.Visible = v
+    end
+})
+
+VisualsTab:CreateColorPicker({
+    Name = "FOV Color",
+    Color = settings.fovColor,
+    Flag = "FOVColor",
+    Callback = function(v)
+        settings.fovColor = v
+        fovCircle.BackgroundColor3 = v
+        fovCircle.BorderColor3 = v
+    end
+})
+
+WeaponTab:CreateButton({
+    Name = "Equip Revolver",
+    Callback = function()
+        local revolver = player.Backpack:FindFirstChild("Revolver")
+        if revolver then
+            revolver.Parent = player.Character
+            wait(0.5)
+            hookWeaponModule()
+            Rayfield:Notify({
+                Title = "Weapon",
+                Content = "Revolver equipped",
+                Duration = 2
+            })
+        else
+            Rayfield:Notify({
+                Title = "Weapon",
+                Content = "Revolver not found",
+                Duration = 2
+            })
+        end
+    end
+})
+
+WeaponTab:CreateButton({
+    Name = "Force Fire",
+    Callback = function()
+        local target = getBestTarget()
+        if target then
+            fireWeapon(target.player)
+            Rayfield:Notify({
+                Title = "Fired",
+                Content = "Shot at " .. target.player.Name,
+                Duration = 1
+            })
+        else
+            Rayfield:Notify({
+                Title = "No Target",
+                Content = "No players in FOV",
+                Duration = 1
+            })
+        end
+    end
+})
 
 local function ensureWeaponEquipped()
     local revolver = player.Backpack:FindFirstChild("Revolver")
     if revolver and not player.Character:FindFirstChild("Revolver") then
         revolver.Parent = player.Character
+        wait(0.5)
+        hookWeaponModule()
+    elseif revolver and player.Character:FindFirstChild("Revolver") then
+        hookWeaponModule()
     end
 end
 
@@ -177,3 +511,9 @@ player.CharacterAdded:Connect(function()
     wait(1)
     ensureWeaponEquipped()
 end)
+
+Rayfield:Notify({
+    Title = "Loaded",
+    Content = "Revolver cheat ready!",
+    Duration = 3
+})
