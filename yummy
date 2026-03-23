@@ -1,82 +1,4 @@
---// 🔥 STRONG ANTI-AFK SYSTEM
-
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
-local VirtualUser = game:GetService("VirtualUser")
-local VirtualInputManager = game:GetService("VirtualInputManager")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
--- 1. Basic Anti Idle (Roblox default idle kick bypass)
-LocalPlayer.Idled:Connect(function()
-    VirtualUser:CaptureController()
-    VirtualUser:ClickButton2(Vector2.new())
-end)
-
--- 2. Kill ALL idle connections (stronger)
-local function killIdleConnections()
-    pcall(function()
-        for _, v in pairs(getconnections(LocalPlayer.Idled)) do
-            v:Disable()
-        end
-    end)
-end
-
--- 3. Block server AFK events
-local function blockIdleEvents()
-    pcall(function()
-        local folders = {
-            ReplicatedStorage:FindFirstChild("Events"),
-            ReplicatedStorage:FindFirstChild("Framework"),
-            ReplicatedStorage:FindFirstChild("Misc")
-        }
-
-        for _, folder in pairs(folders) do
-            if folder then
-                for _, obj in pairs(folder:GetDescendants()) do
-                    if obj:IsA("RemoteEvent") and string.find(obj.Name:lower(), "idle") then
-                        obj.FireServer = function() end
-                    end
-                end
-            end
-        end
-    end)
-end
-
--- 4. Simulate real player activity every few minutes
-local function simulateActivity()
-    task.spawn(function()
-        while true do
-            task.wait(120)
-
-            pcall(function()
-                -- Fake key press
-                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
-                task.wait(0.1)
-                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
-
-                -- Random mouse move
-                VirtualInputManager:SendMouseMoveEvent(math.random(100,800), math.random(100,600), game)
-            end)
-        end
-    end)
-end
-
--- 5. Loop protection (reapply bypass)
-task.spawn(function()
-    while true do
-        task.wait(180)
-        killIdleConnections()
-        blockIdleEvents()
-    end
-end)
-
-killIdleConnections()
-blockIdleEvents()
-simulateActivity()
-
---// 🔽 YOUR ORIGINAL SCRIPT (UNCHANGED BELOW)
-
-task.spawn(function()
+ task.spawn(function()
 pcall(function()
 loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/amgs"))()
 end)
@@ -107,12 +29,10 @@ local UsePotion = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Potions
 local Items = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Items"))
 local data = GetAll:InvokeServer()
 local inventory = data.Inventory
-local count = 0
 for guid, item in pairs(inventory) do
 local info = Items[item.Id]
 if info and info.PotionId then
-count += 1
-local success = pcall(function()
+pcall(function()
 UsePotion:InvokeServer(guid)
 end)
 task.wait(0.15)
@@ -120,4 +40,132 @@ end
 end
 end)
 
--- rest of your script continues exactly the same...
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+local LocalPlayer = Players.LocalPlayer
+
+local Events = ReplicatedStorage:WaitForChild("Events"):WaitForChild("UI")
+local ShopData = Events.Data.GetPotionShopData
+local GetAll = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
+
+local LUCK_I = "1"
+local LUCK_II = "2"
+local LUCK_III = "3"
+
+local MAX_COUNT = 6
+local active = true
+
+task.spawn(function()
+while true do
+task.wait(60)
+pcall(function()
+VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+task.wait(0.1)
+VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+VirtualInputManager:SendMouseMoveEvent(math.random(100,800), math.random(100,600), game)
+VirtualInputManager:SendMouseButtonEvent(0,0,0,true,game,0)
+task.wait(0.05)
+VirtualInputManager:SendMouseButtonEvent(0,0,0,false,game,0)
+end)
+end
+end)
+
+local function getCounts()
+local success, data = pcall(function()
+return GetAll:InvokeServer()
+end)
+if not success or not data then return nil end
+local counts = {["2328"] = 0, ["2329"] = 0, ["2330"] = 0}
+local function scan(container)
+if not container then return end
+for _, item in pairs(container) do
+local id = tostring(item.Id)
+if counts[id] then
+counts[id] = counts[id] + 1
+end
+end
+end
+scan(data.Inventory)
+scan(data.Furniture)
+return counts
+end
+
+local function needsMore(counts)
+if not counts then return true end
+return counts["2328"] < MAX_COUNT or counts["2329"] < MAX_COUNT or counts["2330"] < MAX_COUNT
+end
+
+local lastStock = nil
+local buying = false
+local queue = {}
+
+local function buy(id)
+if not active then return end
+if buying then
+table.insert(queue, id)
+return
+end
+buying = true
+pcall(function()
+Events.BuyPotion:InvokeServer(id)
+end)
+buying = false
+if #queue > 0 and active then
+task.wait(0.5)
+buy(table.remove(queue, 1))
+end
+end
+
+local function check(data)
+if not active then return end
+local counts = getCounts()
+if not needsMore(counts) then
+active = false
+return
+end
+if not data or not data.Potions then return end
+local luckI = data.Potions[LUCK_I]
+local luckII = data.Potions[LUCK_II]
+local luckIII = data.Potions[LUCK_III]
+local lastI = lastStock and lastStock.Potions and lastStock.Potions[LUCK_I] or 0
+local lastII = lastStock and lastStock.Potions and lastStock.Potions[LUCK_II] or 0
+local lastIII = lastStock and lastStock.Potions and lastStock.Potions[LUCK_III] or 0
+if luckI and luckI > 0 and luckI ~= lastI and counts["2328"] < MAX_COUNT then
+buy(LUCK_I)
+end
+if luckII and luckII > 0 and luckII ~= lastII and counts["2329"] < MAX_COUNT then
+buy(LUCK_II)
+end
+if luckIII and luckIII > 0 and luckIII ~= lastIII and counts["2330"] < MAX_COUNT then
+buy(LUCK_III)
+end
+lastStock = data
+end
+
+local function fetch()
+if not active then return end
+local success, data = pcall(function()
+return ShopData:InvokeServer()
+end)
+if success and data then
+check(data)
+end
+end
+
+pcall(function()
+Events.RestockedPotions.OnClientEvent:Connect(function()
+task.wait(0.5)
+fetch()
+end)
+end)
+
+task.spawn(function()
+while active do
+task.wait(30)
+fetch()
+end
+end)
+
+fetch()
