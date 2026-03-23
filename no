@@ -78,6 +78,15 @@ local GRID_CONFIG = {
 
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
+local DEBUG = false
+local DEBUG_LEVEL = 1
+
+local function log(level, ...)
+    if DEBUG and DEBUG_LEVEL >= level then
+        print("[AUCTION]", ...)
+    end
+end
+
 local function cleanupAllGarageConnections()
     for _, conn in pairs(activeGarageConnections) do
         pcall(function() conn:Disconnect() end)
@@ -215,6 +224,8 @@ end
 
 local function sendWebhookAsync(itemId, itemData, playerName)
     task.spawn(function()
+        log(1, "Webhook triggered for item:", itemId)
+        
         local playerData = getCachedData()
         
         local cash = 0
@@ -357,6 +368,7 @@ local function sendWebhookAsync(itemId, itemData, playerName)
                     }}
                 })
             })
+            log(2, "Webhook sent successfully for:", itemId)
         end)
     end)
 end
@@ -461,6 +473,7 @@ local function processItem(item)
     local isTarget, itemData = isTargetItem(itemId)
     
     if isTarget then
+        log(1, "TARGET FOUND - Item:", itemId, "Garage:", currentGarage)
         currentTargetData = itemData
         targetGarage = currentGarage
         totalTargetsFound = totalTargetsFound + 1
@@ -471,13 +484,17 @@ local function processItem(item)
         end
         
         return true, itemId, itemData
+    else
+        log(2, "Item detected (not target):", itemId)
     end
     
     return false
 end
 
 local function watchGarage(garage)
+    log(2, "Watching garage:", garage)
     local itemsFolder = garage:FindFirstChild("Items") or garage:WaitForChild("Items")
+    log(2, "Items folder found, scanning existing items")
     
     for _, item in pairs(itemsFolder:GetChildren()) do
         processItem(item)
@@ -491,10 +508,12 @@ UpdateCurrentBid.OnClientEvent:Connect(function(data)
     if data then
         currentNextBid = data.nextBid
         currentBidder = data.player
+        log(2, "Bid update - Next bid:", currentNextBid, "Current bidder:", currentBidder and currentBidder.Name or "None")
     end
 end)
 
 AuctionsFolder.ChildAdded:Connect(function(garage)
+    log(1, "Garage added to auction folder")
     inAuction = true
     auctionEnded = false
     currentGarage = garage
@@ -508,6 +527,7 @@ end)
 
 AuctionsFolder.ChildRemoved:Connect(function(child)
     if child == currentGarage then
+        log(2, "Current garage removed")
         auctionEnded = true
         local conn = garageItemsConnections[child]
         if conn then
@@ -517,6 +537,7 @@ AuctionsFolder.ChildRemoved:Connect(function(child)
     end
     
     if #AuctionsFolder:GetChildren() == 0 then
+        log(1, "All auctions ended")
         inAuction = false
         currentGarage = nil
         currentTargetData = nil
@@ -543,22 +564,28 @@ local function storageFull()
 end
 
 local function bidOnItem()
+    log(1, "Starting bid process for target item")
     local bidStartTime = tick()
     local BID_TIMEOUT = 30
     
     while not obtainedTarget and inAuction and currentGarage == targetGarage and not auctionEnded do
         if currentNextBid and currentBidder ~= LocalPlayer then
+            log(2, "Placing bid:", currentNextBid)
             pcall(function() 
                 PlaceBid:InvokeServer(currentNextBid) 
             end)
         end
         
         if currentBidder == LocalPlayer then
+            log(1, "Successfully won bid on target item!")
             obtainedTarget = true
             break
         end
         
-        if tick() - bidStartTime > BID_TIMEOUT then break end
+        if tick() - bidStartTime > BID_TIMEOUT then 
+            log(2, "Bid timeout reached")
+            break 
+        end
         
         RunService.Heartbeat:Wait()
     end
@@ -566,6 +593,7 @@ end
 
 local function handleItemsWon()
     processingItemsWon = true
+    log(2, "Processing items won")
     
     local data = getCachedData()
     if not data or not data.ItemsWon then
@@ -581,11 +609,13 @@ local function handleItemsWon()
         local isTarget, _ = isTargetItem(itemId)
         
         if isTarget then
+            log(2, "Keeping target item in ItemsWon:", itemId)
             table.insert(keepGuids, guid)
         end
     end
     
     if #keepGuids > 0 then
+        log(1, "Selling", #keepGuids, "target items from ItemsWon")
         local sellSuccess = SellAllItems:InvokeServer("Default", keepGuids)
         totalTargetsObtained = totalTargetsObtained + #keepGuids
     end
@@ -603,16 +633,21 @@ task.spawn(function()
     end
 end)
 
+log(1, "Auction script started - Target items:", table.concat({"681","2294","1162"}, ", "))
+log(1, "DEBUG mode:", DEBUG, "Level:", DEBUG_LEVEL)
+
 while not halted do
     while processingItemsWon do
         task.wait(0.1)
     end
     
     if storageFull() then
+        log(1, "Storage full - halting script")
         halted = true
         break
     end
     
+    log(2, "Entering queue for garage:", GARAGE_ID)
     pcall(function() EnterQueue:InvokeServer(GARAGE_ID) end)
     
     local auctionStartTime = tick()
@@ -622,7 +657,10 @@ while not halted do
         RunService.Heartbeat:Wait()
     until inAuction or tick() - auctionStartTime > 5
     
-    if not inAuction then continue end
+    if not inAuction then 
+        log(2, "Failed to enter auction after 5 seconds")
+        continue 
+    end
     
     obtainedTarget = false
     garagesSkipped = 0
@@ -636,14 +674,17 @@ while not halted do
             else
                 if not targetGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
                     garagesSkipped = garagesSkipped + 1
+                    log(2, "No target in garage", garagesSkipped, "/", MAX_GARAGES)
                     
                     if garagesSkipped >= MAX_GARAGES then
+                        log(1, "Max garages reached with no target - passing auction")
                         pcall(function()
                             Pass:InvokeServer()
                         end)
                         auctionEnded = true
                         break
                     else
+                        log(2, "Skipping garage")
                         pcall(function()
                             SkipCountdown:InvokeServer()
                         end)
@@ -664,6 +705,7 @@ while not halted do
     task.wait(1)
     
     if targetFoundInThisAuction then
+        log(1, "Target found in auction - processing items won")
         handleItemsWon()
     end
     
@@ -672,3 +714,4 @@ end
 
 cleanupAllGarageConnections()
 inputHandlerRunning = false
+log(1, "Script halted - Total targets found:", totalTargetsFound, "Obtained:", totalTargetsObtained)
