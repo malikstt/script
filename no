@@ -1,143 +1,241 @@
 local UIModule = require(game.ReplicatedStorage.Modules.UIModule)
-local Events = game:GetService("ReplicatedStorage"):WaitForChild("Events")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Events = ReplicatedStorage:WaitForChild("Events")
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
+
 local LocalPlayer = Players.LocalPlayer
 
-local TARGET_ID = 1162
-local TARGET_PLAYER = "xWesged"
+local Shop = Events:WaitForChild("Shop")
+local Data = Events:WaitForChild("Data")
 
-local RemoveFurniture = Events:WaitForChild("Shop"):WaitForChild("RemoveFurniture")
+local InsertFurniture = Shop:WaitForChild("InsertFurniture")
+local RemoveFurniture = Shop:WaitForChild("RemoveFurniture")
+local GetAll = Data:WaitForChild("GetAll")
 
-local inTrade = false
+_G.AutoTrade = {Enabled = true, TargetPlayers = {"xWesged"}, CurrentTargetIndex = 1, AutoSend = true, AutoAccept = false, AutoAdd = true, MinItems = 1, StopWhenCash = 20000000000000, SendDelay = 5, LastSend = 0}
 
-Events.Trading.AcceptTradeFromServer.OnClientEvent:Connect(function()
-    inTrade = true
-end)
+local FLOOR = 1
 
-Events.Trading.DeclineTrade.OnClientEvent:Connect(function()
-    inTrade = false
-end)
-
-Events.Trading.Disconnect.OnClientEvent:Connect(function()
-    inTrade = false
-end)
-
-local function getFurnitureFolder()
-    local nsv = LocalPlayer:WaitForChild("NonSaveVars")
-    local plotId = nsv:WaitForChild("OwnsPlot").Value
-    return Workspace:WaitForChild("Plots"):WaitForChild(tostring(plotId)):WaitForChild("Furniture")
+local function getPlot()
+    local own = LocalPlayer:WaitForChild("NonSaveVars"):WaitForChild("OwnsPlot")
+    repeat task.wait() until own.Value ~= 0
+    return Workspace.Plots:WaitForChild(tostring(own.Value))
 end
+
+local plot = getPlot()
+local canvas = plot.Interior.Shop1.Canvas
+
+local function getCurrentTarget()
+    return _G.AutoTrade.TargetPlayers[_G.AutoTrade.CurrentTargetIndex]
+end
+
+local function checkPlayerCash(playerName)
+    local player = Players:FindFirstChild(playerName)
+    if player and player:FindFirstChild("SaveVars") and player.SaveVars:FindFirstChild("Cash") then
+        return player.SaveVars.Cash.Value
+    end
+    return nil
+end
+
+local function switchToNextTarget()
+    if #_G.AutoTrade.TargetPlayers > 0 then
+        _G.AutoTrade.CurrentTargetIndex = (_G.AutoTrade.CurrentTargetIndex % #_G.AutoTrade.TargetPlayers) + 1
+        local newTarget = getCurrentTarget()
+        UIModule:Notify(LocalPlayer, "Switched target to: " .. newTarget)
+    end
+end
+
+local function remove1162()
+    local folder = plot:WaitForChild("Furniture")
+    for _, v in ipairs(folder:GetChildren()) do
+        if v:IsA("Model") then
+            local itemId = v:GetAttribute("ItemId")
+            if itemId and tostring(itemId) == "1162" then
+                pcall(function()
+                    RemoveFurniture:InvokeServer(v)
+                end)
+                task.wait(0.1)
+            end
+        end
+    end
+end
+
+local function getInventoryNo1162()
+    local success, data = pcall(function()
+        return GetAll:InvokeServer()
+    end)
+
+    if not success or not data or not data.Inventory then
+        return {}
+    end
+
+    local items = {}
+
+    for guid, item in pairs(data.Inventory) do
+        if tostring(item.Id) ~= "1162" then
+            table.insert(items, {GUID = guid, Id = item.Id})
+        end
+    end
+
+    return items
+end
+
+math.randomseed(tick())
+
+local cx, cy, cz = canvas.Position.X, canvas.Position.Y, canvas.Position.Z
+local sx, sy, sz = canvas.Size.X/2, canvas.Size.Y/2, canvas.Size.Z/2
 
 task.spawn(function()
     while true do
-        local folder = getFurnitureFolder()
-        for _, v in ipairs(folder:GetChildren()) do
-            if v:IsA("Model") then
-                local itemId = v:GetAttribute("ItemId")
-                if itemId and tostring(itemId) == tostring(TARGET_ID) then
-                    pcall(function()
-                        RemoveFurniture:InvokeServer(v)
-                    end)
+        remove1162()
+
+        local inventory = getInventoryNo1162()
+
+        for _, item in ipairs(inventory) do
+            local rx = cx + math.random(-sx*100, sx*100)/100
+            local rz = cz + math.random(-sz*100, sz*100)/100
+            local ry = cy + sy + math.random(5,40)
+
+            pcall(function()
+                InsertFurniture:InvokeServer({
+                    {
+                        GUID = item.GUID,
+                        Type = "Decor",
+                        Floor = FLOOR,
+                        Id = item.Id,
+                        CFrame = CFrame.new(rx, ry, rz)
+                    }
+                })
+            end)
+
+            task.wait(0.05)
+        end
+
+        task.wait(2)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+        if _G.AutoTrade.Enabled and _G.AutoTrade.AutoSend and getCurrentTarget() and tick() - _G.AutoTrade.LastSend >= _G.AutoTrade.SendDelay then
+            
+            local currentTarget = getCurrentTarget()
+            local targetCash = checkPlayerCash(currentTarget)
+            
+            if targetCash and targetCash >= _G.AutoTrade.StopWhenCash then
+                UIModule:Notify(LocalPlayer, currentTarget .. " has $" .. targetCash .. " - Switching target")
+                switchToNextTarget()
+            else
+                local data = Events.Data.Get:InvokeServer("Inventory")
+                local inventory = data.Inventory or data
+                local availableCount = 0
+                
+                for guid, itemData in pairs(inventory) do
+                    if not (itemData.ItemPlaced or itemData.NextOfferDue) and tostring(itemData.Id) ~= "1162" then
+                        availableCount = availableCount + 1
+                    end
+                end
+                
+                if availableCount >= _G.AutoTrade.MinItems then
+                    local success = Events.Trading.SendInvite:InvokeServer(currentTarget)
+                    if success then
+                        UIModule:Notify(LocalPlayer, "Sent trade to " .. currentTarget .. " (" .. availableCount .. " items)")
+                        _G.AutoTrade.LastSend = tick()
+                    end
+                else
+                    UIModule:Notify(LocalPlayer, "Not enough items: " .. availableCount .. "/" .. _G.AutoTrade.MinItems)
+                end
+            end
+        end
+    end
+end)
+
+Events.Trading.AcceptTradeFromServer.OnClientEvent:Connect(function()
+    if _G.AutoTrade.Enabled and _G.AutoTrade.AutoAccept then
+        task.wait(0.5)
+        Events.Trading.AcceptTrade:InvokeServer()
+        UIModule:Notify(LocalPlayer, "Trade Accepted")
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(2)
+        if _G.AutoTrade.Enabled and _G.AutoTrade.AutoAdd then
+            local data = Events.Data.Get:InvokeServer("Inventory")
+            local inventory = data.Inventory or data
+            local addedCount = 0
+            
+            for guid, itemData in pairs(inventory) do
+                if addedCount >= 16 then break end
+                
+                if not (itemData.ItemPlaced or itemData.NextOfferDue) and tostring(itemData.Id) ~= "1162" then
+                    local success = Events.Trading.AddItem:InvokeServer({
+                        GUID = guid,
+                        Type = "Item"
+                    })
+                    
+                    if success then
+                        addedCount = addedCount + 1
+                    end
+                    
                     task.wait(0.1)
                 end
             end
+            
+            if addedCount > 0 then
+                UIModule:Notify(LocalPlayer, "Added " .. addedCount .. " items")
+                task.wait(0.5)
+                Events.Trading.AcceptTrade:InvokeServer()
+                UIModule:Notify(LocalPlayer, "Trade Accepted")
+            end
         end
-        task.wait(1)
     end
 end)
 
-local function getAllTargetItems(inventory)
-    local list = {}
-    for guid, itemData in pairs(inventory) do
-        if itemData.Id == TARGET_ID and not (itemData.ItemPlaced or itemData.NextOfferDue) then
-            table.insert(list, guid)
-        end
+_G.SetTargets = function(...)
+    local targets = {...}
+    if #targets > 0 then
+        _G.AutoTrade.TargetPlayers = targets
+        _G.AutoTrade.CurrentTargetIndex = 1
+        UIModule:Notify(LocalPlayer, "Targets set to: " .. table.concat(targets, ", "))
     end
-    return list
 end
 
-task.spawn(function()
-    while true do
-        task.wait(1)
+_G.NextTarget = function()
+    switchToNextTarget()
+end
 
-        if not inTrade then
-            local data = Events.Data.Get:InvokeServer("Inventory")
-            local inventory = data.Inventory or data
+_G.ToggleAutoSend = function(state)
+    _G.AutoTrade.AutoSend = state
+    UIModule:Notify(LocalPlayer, "Auto Send: " .. (state and "ON" or "OFF"))
+end
 
-            local items = getAllTargetItems(inventory)
+_G.ToggleAutoAccept = function(state)
+    _G.AutoTrade.AutoAccept = state
+    UIModule:Notify(LocalPlayer, "Auto Accept: " .. (state and "ON" or "OFF"))
+end
 
-            if #items > 0 then
-                local success = Events.Trading.SendInvite:InvokeServer(TARGET_PLAYER)
-                if success then
-                    UIModule:Notify(LocalPlayer, "Sent trade to " .. TARGET_PLAYER)
-                end
-            end
-        end
-    end
-end)
+_G.ToggleAutoAdd = function(state)
+    _G.AutoTrade.AutoAdd = state
+    UIModule:Notify(LocalPlayer, "Auto Add: " .. (state and "ON" or "OFF"))
+end
 
-task.spawn(function()
-    while true do
-        task.wait(0.5)
+_G.ToggleTrade = function(state)
+    _G.AutoTrade.Enabled = state
+    UIModule:Notify(LocalPlayer, "Auto Trade: " .. (state and "ON" or "OFF"))
+end
 
-        if inTrade then
-            local data = Events.Data.Get:InvokeServer("Inventory")
-            local inventory = data.Inventory or data
+_G.SetMinItems = function(amount)
+    _G.AutoTrade.MinItems = amount
+    UIModule:Notify(LocalPlayer, "Min items required: " .. amount)
+end
 
-            local items = getAllTargetItems(inventory)
-            local targetCount = math.min(#items, 16)
+_G.SetStopCash = function(amount)
+    _G.AutoTrade.StopWhenCash = amount
+    UIModule:Notify(LocalPlayer, "Stop when target has: $" .. amount)
+end
 
-            local added = 0
-
-            -- add items
-            for _, guid in ipairs(items) do
-                if added >= targetCount then break end
-
-                local success = Events.Trading.AddItem:InvokeServer({
-                    GUID = guid,
-                    Type = "Item"
-                })
-
-                if success then
-                    added += 1
-                end
-
-                task.wait(0.05)
-            end
-
-            -- wait until stable
-            if added > 0 then
-                local lastCount = -1
-                local stableTicks = 0
-
-                while inTrade do
-                    task.wait(0.25)
-
-                    local data2 = Events.Data.Get:InvokeServer("Inventory")
-                    local inv2 = data2.Inventory or data2
-                    local itemsNow = getAllTargetItems(inv2)
-
-                    local currentCount = math.min(#itemsNow, 16)
-
-                    if currentCount == lastCount then
-                        stableTicks += 1
-                    else
-                        stableTicks = 0
-                    end
-
-                    lastCount = currentCount
-
-                    if stableTicks >= 2 then
-                        break
-                    end
-                end
-
-                -- accept immediately after stable
-                if inTrade then
-                    Events.Trading.AcceptTrade:InvokeServer()
-                end
-            end
-        end
-    end
-end)
+UIModule:Notify(LocalPlayer, "Auto Trade + Auto Place Loaded")
