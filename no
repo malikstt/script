@@ -1,282 +1,570 @@
-local UIModule = require(game.ReplicatedStorage.Modules.UIModule)
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Events = ReplicatedStorage:WaitForChild("Events")
 local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
-
+local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 
+local nonSaveVars = LocalPlayer:FindFirstChild("NonSaveVars")
+local ownsPlot = nonSaveVars and nonSaveVars:FindFirstChild("OwnsPlot")
+local currentPlot = ownsPlot and ownsPlot:IsA("ValueBase") and ownsPlot.Value or "7"
+local canvas = workspace.Plots[tostring(currentPlot)].Interior.Shop1.Canvas
+
+local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
+local ItemsModule = require(ReplicatedStorage.Modules.Items)
+local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
+
+local Auctions = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
+local EnterQueue = Auctions:WaitForChild("EnterQueue")
+local Skip = Auctions:WaitForChild("Skip")
+local SkipCountdown = Auctions:WaitForChild("SkipCountdown")
+local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
+local PlaceBid = Auctions:WaitForChild("PlaceBid")
+local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
+local SellAllItems = Auctions:WaitForChild("SellAllItems")
+
+local Events = ReplicatedStorage:WaitForChild("Events")
 local Shop = Events:WaitForChild("Shop")
-local Data = Events:WaitForChild("Data")
 
-local InsertFurniture = Shop:WaitForChild("InsertFurniture")
-local RemoveFurniture = Shop:WaitForChild("RemoveFurniture")
-local GetAll = Data:WaitForChild("GetAll")
+local SCAN_DURATION = 1
+local GARAGE_ID = "85"
+local BID_CHECK_INTERVAL = 0.1
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
+local PET_SAFE_WEBHOOK_URL = "https://discord.com/api/webhooks/1483023142653005914/F7ZnzfoI-CFKMdUiFLSW68VTDk29KH6D_baLERftS9q8wjRdU062SzMLD50qdb-kWDYV"
+local targetItemIds = {"681","2294","1162"}
 
-_G.AutoTrade = {
-    Enabled = true,
-    TargetPlayers = {"super_yty"},
-    CurrentTargetIndex = 1,
-    AutoSend = true,
-    AutoAccept = true,
-    AutoAdd = true,
-    MinItems = 1,
-    StopWhenCash = 20000000000,
-    SendDelay = 5,
-    LastSend = 0
+local sessionStartTime = tick()
+
+local inAuction = false
+local obtainedTarget = false
+local auctionEnded = false
+local halted = false
+local currentNextBid = nil
+local currentBidder = nil
+local currentGarage = nil
+local targetGarage = nil
+local processingItemsWon = false
+local isBiddingActive = false
+
+-- Webhook spam protection
+local webhookSentForCurrentAuction = false
+local lastWebhookItemId = nil
+local lastWebhookGarageId = nil
+
+local lastSkipTime = 0
+local SKIP_COOLDOWN = 0.5
+
+local GRID_CONFIG = {
+startPos = canvas.Position + Vector3.new(-canvas.Size.X/2 + 4, canvas.Size.Y/2 + 1, -canvas.Size.Z/2 + 4),
+spacing = 6,
+itemsPerRow = math.floor(canvas.Size.X / 6) - 1,
+rowsPerFloor = math.floor(canvas.Size.Z / 6) - 1,
 }
 
-local FLOOR = 1
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
-local function getPlot()
-    local own = LocalPlayer:WaitForChild("NonSaveVars"):WaitForChild("OwnsPlot")
-    repeat task.wait() until own.Value ~= 0
-    return Workspace.Plots:WaitForChild(tostring(own.Value))
+local function debugPrint(...)
+	print("[AuctionBot]", ...)
 end
 
-local plot = getPlot()
-local canvas = plot.Interior.Shop1.Canvas
-
-local function getCurrentTarget()
-    return _G.AutoTrade.TargetPlayers[_G.AutoTrade.CurrentTargetIndex]
+local function destroySpecificGuis()
+	local items = PlayerGui:FindFirstChild("ItemsWon")
+	if items then items:Destroy() end
+	local circle = PlayerGui:FindFirstChild("CircleAnimationUI")
+	if circle then circle:Destroy() end
 end
 
-local function checkPlayerCash(playerName)
-    local player = Players:FindFirstChild(playerName)
-    if player and player:FindFirstChild("SaveVars") and player.SaveVars:FindFirstChild("Cash") then
-        return player.SaveVars.Cash.Value
-    end
-    return nil
+destroySpecificGuis()
+
+PlayerGui.ChildAdded:Connect(function(child)
+	if child.Name == "ItemsWon" or child.Name == "CircleAnimationUI" then
+		child:Destroy()
+	end
+end)
+
+local function tryClick(obj)
+	if obj and (obj:IsA("TextButton") or obj:IsA("ImageButton")) then
+		pcall(function() obj:Activate() end)
+		if getconnections then
+			for _, v in pairs(getconnections(obj.MouseButton1Click)) do
+				pcall(function() v:Fire() end)
+			end
+		end
+	end
 end
 
-local function switchToNextTarget()
-    if #_G.AutoTrade.TargetPlayers > 0 then
-        _G.AutoTrade.CurrentTargetIndex = (_G.AutoTrade.CurrentTargetIndex % #_G.AutoTrade.TargetPlayers) + 1
-        local newTarget = getCurrentTarget()
-        UIModule:Notify(LocalPlayer, "Switched target to: " .. newTarget)
-    end
+local function checkForButton()
+	local itemsWon = PlayerGui:FindFirstChild("ItemsWon", true)
+	if itemsWon then
+		local button = itemsWon:FindFirstChild("Button", true)
+		if button then
+			tryClick(button)
+		end
+	end
 end
 
-local function remove1162()
-    local folder = plot:WaitForChild("Furniture")
-    for _, v in ipairs(folder:GetChildren()) do
-        if v:IsA("Model") then
-            local itemId = v:GetAttribute("ItemId")
-            if itemId and tostring(itemId) == "1162" then
-                pcall(function()
-                    RemoveFurniture:InvokeServer(v)
-                end)
-                task.wait(0.1)
-            end
-        end
-    end
-end
+checkForButton()
 
-local function getInventoryNo1162()
-    local success, data = pcall(function()
-        return GetAll:InvokeServer()
-    end)
+PlayerGui.DescendantAdded:Connect(function(obj)
+	if obj.Name == "Button" then
+		task.wait(0.5)
+		tryClick(obj)
+	end
+end)
 
-    if not success or not data or not data.Inventory then
-        return {}
-    end
-
-    local items = {}
-
-    for guid, item in pairs(data.Inventory) do
-        if tostring(item.Id) ~= "1162" then
-            table.insert(items, {GUID = guid, Id = item.Id})
-        end
-    end
-
-    return items
-end
-
-local function getItemsById(itemId)
-    local success, data = pcall(function()
-        return GetAll:InvokeServer()
-    end)
-
-    if not success or not data or not data.Inventory then
-        return {}
-    end
-
-    local items = {}
-
-    for guid, item in pairs(data.Inventory) do
-        if tostring(item.Id) == tostring(itemId) and not (item.ItemPlaced or item.NextOfferDue) then
-            table.insert(items, {GUID = guid, Id = item.Id})
-        end
-    end
-
-    return items
-end
-
-math.randomseed(tick())
-
-local cx, cy, cz = canvas.Position.X, canvas.Position.Y, canvas.Position.Z
-local sx, sy, sz = canvas.Size.X/2, canvas.Size.Y/2, canvas.Size.Z/2
-
--- Auto place furniture (items that are NOT 1162)
 task.spawn(function()
-    while true do
-        remove1162()
-        local inventory = getInventoryNo1162()
-
-        for _, item in ipairs(inventory) do
-            local rx = cx + math.random(-sx*100, sx*100)/100
-            local rz = cz + math.random(-sz*100, sz*100)/100
-            local ry = cy + sy + math.random(5,40)
-
-            pcall(function()
-                InsertFurniture:InvokeServer({
-                    {
-                        GUID = item.GUID,
-                        Type = "Decor",
-                        Floor = FLOOR,
-                        Id = item.Id,
-                        CFrame = CFrame.new(rx, ry, rz)
-                    }
-                })
-            end)
-
-            task.wait(0.05)
-        end
-
-        task.wait(2)
-    end
+	while true do
+		task.wait(0.25)
+		checkForButton()
+	end
 end)
 
--- Auto send trade invites
+local function isTargetItem(itemId)
+	local itemData = ItemsModule[itemId]
+	if not itemData then return false end
+	for _, targetId in ipairs(targetItemIds) do
+		if tostring(itemId) == tostring(targetId) then
+			return true, itemData
+		end
+	end
+	return false, itemData
+end
+
+local function getEmbedColor(itemId)
+	itemId = tostring(itemId)
+	if itemId == "681" then return 8388736
+	elseif itemId == "2294" then return 16753920
+	elseif itemId == "1162" then return 255
+	else return 65280 end
+end
+
+local function formatTimePlayed(seconds)
+	local days = math.floor(seconds / 86400)
+	local hours = math.floor((seconds % 86400) / 3600)
+	local minutes = math.floor((seconds % 3600) / 60)
+	
+	if days > 0 then
+		return string.format("%dD %dH %dM", days, hours, minutes)
+	elseif hours > 0 then
+		return string.format("%dH %dM", hours, minutes)
+	else
+		return string.format("%dM", minutes)
+	end
+end
+
+local function formatNumber(n)
+	if n >= 1e9 then return string.format("%.1fB", n/1e9)
+	elseif n >= 1e6 then return string.format("%.1fM", n/1e6)
+	elseif n >= 1e3 then return string.format("%.1fK", n/1e3)
+	else return tostring(n) end
+end
+
+local function sendWebhook(itemId, itemData, playerName)
+	-- Spam protection: only send once per item per auction
+	if webhookSentForCurrentAuction then
+		debugPrint("Webhook already sent for this auction, skipping duplicate")
+		return
+	end
+	
+	-- Also check if same item was sent recently in same garage
+	if lastWebhookItemId == itemId and lastWebhookGarageId == GARAGE_ID then
+		debugPrint("Same item already webhook'd recently, skipping")
+		return
+	end
+	
+	debugPrint("Sending webhook for item:", itemId)
+	
+	local playerData
+	pcall(function() playerData = DataEvent:InvokeServer() end)
+	
+	local cash, gems, count = 0, 0, 0
+	local totalAuctions, garageAuctions, timePlayed = 0, 0, 0
+	
+	if playerData then
+		cash = playerData.Cash or 0
+		gems = playerData.Gems or 0
+		
+		if playerData.PlayerStats then
+			totalAuctions = playerData.PlayerStats.AuctionsPlayed or 0
+			timePlayed = playerData.PlayerStats.TimePlayed or 0
+			if playerData.PlayerStats.Auctions then
+				garageAuctions = playerData.PlayerStats.Auctions[GARAGE_ID] or 0
+			end
+		end
+		
+		local function countItems(container)
+			if not container then return end
+			for _, item in pairs(container) do
+				if tostring(item.Id) == tostring(itemId) then
+					count = count + 1
+				end
+			end
+		end
+		countItems(playerData.Furniture)
+		countItems(playerData.Inventory)
+	end
+	count = count + 1
+	
+	local GaragesModule = require(ReplicatedStorage.Modules.Garages)
+	local garageName = "Unknown"
+	local garageData = GaragesModule[GARAGE_ID]
+	if garageData and garageData.Name then garageName = garageData.Name end
+	
+	local emoji_cash = "<:cash:1480932250060329141>"
+	local emoji_gems = "<:gems:1480932306628907080>"
+	local emoji_gs = "<:gs:1480932184402428105>"
+	local emoji_mgs = "<:mgs:1480930779314913393>"
+	local emoji_1 = "<:emoji_1:1480930651342508142>"
+	
+	local fields = {
+		{name="Item", value=itemData.Name or "Unknown", inline=false},
+		{name="⭐ Rarity", value=itemData.Rarity or "Unknown", inline=false},
+		{name=emoji_cash .. " Cash", value=formatNumber(cash), inline=true},
+		{name=emoji_gems .. " Gems", value=formatNumber(gems), inline=true},
+		{name="Total Auctions", value=formatNumber(totalAuctions), inline=true},
+		{name=garageName .. " Auctions", value=formatNumber(garageAuctions), inline=true},
+		{name="Time Played", value=formatTimePlayed(timePlayed), inline=true},
+	}
+	
+	if tostring(itemId) == "681" then
+		local upgrading, remaining
+		pcall(function()
+			upgrading, remaining = ReplicatedStorage.Events.UI.GetUpgradingItem:InvokeServer("UpgradingItem")
+		end)
+		local craftTimerText = ""
+		if upgrading and remaining and remaining > 0 then
+			craftTimerText = " (⏳ " .. string.format("%dM %dS", math.floor(remaining/60), remaining%60) .. ")"
+		end
+		
+		local megaGemSafeCount, gemSafeCount = 0, 0
+		if playerData then
+			local function countSpecial(container)
+				if not container then return end
+				for _, item in pairs(container) do
+					local id = tostring(item.Id)
+					if id == "1162" then megaGemSafeCount = megaGemSafeCount + 1 end
+					if id == "681" then gemSafeCount = gemSafeCount + 1 end
+				end
+			end
+			countSpecial(playerData.Furniture)
+			countSpecial(playerData.Inventory)
+		end
+		gemSafeCount = gemSafeCount + 1
+		
+		table.insert(fields, {
+			name="Total Owned",
+			value=emoji_mgs .. " MGS: " .. tostring(megaGemSafeCount) .. craftTimerText .. " | " .. emoji_gs .. " GS: " .. tostring(gemSafeCount),
+			inline=false
+		})
+	elseif tostring(itemId) == "2294" then
+		local petSafeCount = 0
+		if playerData then
+			for _, item in pairs(playerData.Furniture or {}) do
+				if tostring(item.Id) == "2294" then petSafeCount = petSafeCount + 1 end
+			end
+			for _, item in pairs(playerData.Inventory or {}) do
+				if tostring(item.Id) == "2294" then petSafeCount = petSafeCount + 1 end
+			end
+		end
+		petSafeCount = petSafeCount + 1
+		table.insert(fields, {name="Total Owned", value=emoji_1 .. " " .. tostring(petSafeCount), inline=false})
+	else
+		table.insert(fields, {name="Total Owned", value=tostring(count), inline=false})
+	end
+	
+	local webhookUrl = tostring(itemId) == "2294" and PET_SAFE_WEBHOOK_URL or WEBHOOK_URL
+	pcall(function()
+		HttpService:RequestAsync({
+			Url = webhookUrl,
+			Method = "POST",
+			Headers = {["Content-Type"] = "application/json"},
+			Body = HttpService:JSONEncode({
+				embeds = {{
+					title = playerName .. " Got an Item",
+					color = getEmbedColor(itemId),
+					fields = fields
+				}}
+			})
+		})
+	end)
+	
+	-- Mark as sent for this auction
+	webhookSentForCurrentAuction = true
+	lastWebhookItemId = itemId
+	lastWebhookGarageId = GARAGE_ID
+end
+
+local function getFurnitureCount(playerData)
+	local count = 0
+	if playerData and playerData.Furniture then
+		for _ in pairs(playerData.Furniture) do count = count + 1 end
+	end
+	return count
+end
+
+local function findTargetItemsInInventory(playerData)
+	local items = {}
+	if playerData and playerData.Inventory then
+		for guid, itemData in pairs(playerData.Inventory) do
+			local isTarget, _ = isTargetItem(tostring(itemData.Id))
+			if isTarget then
+				table.insert(items, {GUID=guid, Id=itemData.Id, Data=itemData})
+			end
+		end
+	end
+	return items
+end
+
+local function verifyItemRemoved(guid)
+	local playerData = DataEvent:InvokeServer()
+	if playerData and playerData.Inventory then
+		return playerData.Inventory[guid] == nil
+	end
+	return false
+end
+
+local function generateAirPosition()
+	local cx, cy, cz = canvas.Position.X, canvas.Position.Y, canvas.Position.Z
+	local sx, sy, sz = canvas.Size.X/2, canvas.Size.Y/2, canvas.Size.Z/2
+	local rx = cx + math.random(-sx*100, sx*100)/100
+	local rz = cz + math.random(-sz*100, sz*100)/100
+	local ry = cy + sy + math.random(5,40)
+	return Vector3.new(rx, ry, rz)
+end
+
+local function PlaceTargetInventoryItems()
+	local playerData = DataEvent:InvokeServer()
+	if not playerData then return false end
+	local itemsToPlace = findTargetItemsInInventory(playerData)
+	if #itemsToPlace == 0 then return true end
+	
+	local currentFurniture = getFurnitureCount(playerData)
+	local maxShopSpace = playerData.ShopSpace or 100
+	local availableSpace = maxShopSpace - currentFurniture
+	local maxPositions = GRID_CONFIG.itemsPerRow * GRID_CONFIG.rowsPerFloor
+	local canPlaceCount = math.min(availableSpace, maxPositions, #itemsToPlace)
+	if canPlaceCount == 0 then return false end
+	
+	local placedCount = 0
+	for _, item in ipairs(itemsToPlace) do
+		if placedCount >= canPlaceCount then break end
+		local placed = false
+		local retryCount = 0
+		local maxRetries = 5
+		
+		while not placed and retryCount < maxRetries do
+			local itemPos = generateAirPosition()
+			if not itemPos then break end
+			local args = {{
+				GUID = item.GUID,
+				Type = "Decor",
+				Floor = 1,
+				Id = item.Id,
+				CFrame = CFrame.new(itemPos)
+			}}
+			local success = pcall(function()
+				return Shop.InsertFurniture:InvokeServer(unpack(args))
+			end)
+			if success and verifyItemRemoved(item.GUID) then
+				placed = true
+				placedCount = placedCount + 1
+				debugPrint("Placed target item in shop:", item.Id)
+			else
+				retryCount = retryCount + 1
+			end
+			task.wait(0.1)
+		end
+	end
+	return true
+end
+
+UpdateCurrentBid.OnClientEvent:Connect(function(data)
+	if data then
+		currentNextBid = data.nextBid
+		currentBidder = data.player
+	end
+end)
+
+AuctionsFolder.ChildAdded:Connect(function(garage)
+	debugPrint("Auction started for garage:", garage.Name)
+	inAuction = true
+	auctionEnded = false
+	currentGarage = garage
+	targetGarage = nil
+	isBiddingActive = false
+	-- Reset webhook protection for new auction
+	webhookSentForCurrentAuction = false
+end)
+
+AuctionsFolder.ChildRemoved:Connect(function(child)
+	if child == currentGarage then
+		debugPrint("Auction ended for garage:", child and child.Name)
+		auctionEnded = true
+		isBiddingActive = false
+	end
+	if #AuctionsFolder:GetChildren() == 0 then
+		debugPrint("All auctions finished")
+		inAuction = false
+		currentGarage = nil
+		targetGarage = nil
+		obtainedTarget = false
+	end
+end)
+
+local function storageFull()
+	local success, data = pcall(function() return DataEvent:InvokeServer() end)
+	if not success or not data then return false end
+	local inv = data.Inventory or {}
+	local invLevel = data.InventoryLevel
+	local carryLevel = data.CarryLevel
+	local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
+	local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
+	local invCount = RepLibrary:GetLengthOfInventory(inv)
+	return invCount >= invSpace and carrySpace <= 0
+end
+
+local function scanCurrentGarageForTarget()
+	if not currentGarage then return false end
+	local itemsFolder = currentGarage:FindFirstChild("Items")
+	if not itemsFolder then return false end
+	
+	local startTime = tick()
+	while tick() - startTime < SCAN_DURATION and currentGarage and currentGarage.Parent do
+		for _, itemInstance in pairs(itemsFolder:GetChildren()) do
+			local itemId = itemInstance.Name
+			local isTarget, itemData = isTargetItem(itemId)
+			if isTarget then
+				debugPrint("Found target item in garage:", itemId, itemData and itemData.Name)
+				targetGarage = currentGarage
+				sendWebhook(itemId, itemData, LocalPlayer.Name)
+				return true, itemId, itemData
+			end
+		end
+		task.wait(0.1)
+	end
+	return false
+end
+
+local function handleItemsWon()
+	processingItemsWon = true
+	debugPrint("Handling items won...")
+	
+	local success, data = pcall(function() return DataEvent:InvokeServer() end)
+	if not success or not data or not data.ItemsWon then
+		processingItemsWon = false
+		return false
+	end
+	
+	local itemsWon = data.ItemsWon
+	local keepGuids = {}
+	
+	for guid, itemData in pairs(itemsWon) do
+		local itemId = tostring(itemData.itemId)
+		local isTarget, _ = isTargetItem(itemId)
+		if isTarget then
+			debugPrint("Keeping target item:", itemId)
+			table.insert(keepGuids, guid)
+		end
+	end
+	
+	if #keepGuids > 0 then
+		SellAllItems:InvokeServer("Default", keepGuids)
+		debugPrint("Sold", #keepGuids, "target items")
+	end
+	
+	processingItemsWon = false
+	return true
+end
+
+local function waitForCondition(condition, timeout, checkInterval)
+	local start = tick()
+	while tick() - start < timeout do
+		if condition() then return true end
+		task.wait(checkInterval or 0.1)
+	end
+	return false
+end
+
 task.spawn(function()
-    while true do
-        task.wait(1)
-        if _G.AutoTrade.Enabled and _G.AutoTrade.AutoSend and getCurrentTarget() and tick() - _G.AutoTrade.LastSend >= _G.AutoTrade.SendDelay then
-            
-            local currentTarget = getCurrentTarget()
-            local targetCash = checkPlayerCash(currentTarget)
-            
-            if targetCash and targetCash >= _G.AutoTrade.StopWhenCash then
-                UIModule:Notify(LocalPlayer, currentTarget .. " has $" .. targetCash .. " - Switching target")
-                switchToNextTarget()
-            else
-                local items1162 = getItemsById(1162)
-                local availableCount = #items1162
-                
-                if availableCount >= _G.AutoTrade.MinItems then
-                    local success = Events.Trading.SendInvite:InvokeServer(currentTarget)
-                    if success then
-                        UIModule:Notify(LocalPlayer, "Sent trade to " .. currentTarget .. " (" .. availableCount .. " items of ID 1162)")
-                        _G.AutoTrade.LastSend = tick()
-                    end
-                else
-                    UIModule:Notify(LocalPlayer, "Not enough 1162 items: " .. availableCount .. "/" .. _G.AutoTrade.MinItems)
-                end
-            end
-        end
-    end
+	while true do
+		PlaceTargetInventoryItems()
+		task.wait(300)
+	end
 end)
 
--- Listen for when the other player accepts
-Events.Trading.AcceptTradeFromServer.OnClientEvent:Connect(function()
-    UIModule:Notify(LocalPlayer, "Other player accepted the trade!")
-end)
+debugPrint("Auction bot started - monitoring for garage", GARAGE_ID)
 
--- Auto add items (ONLY ID 1162) and accept after adding
-task.spawn(function()
-    while true do
-        task.wait(2)
-        if _G.AutoTrade.Enabled and _G.AutoTrade.AutoAdd then
-            local items1162 = getItemsById(1162)
-            local addedCount = 0
-
-            if #items1162 == 0 then
-                UIModule:Notify(LocalPlayer, "No items with ID 1162 found in inventory")
-                task.wait(5)
-            else
-                local totalToAdd = math.min(#items1162, 16)
-                UIModule:Notify(LocalPlayer, "Found " .. #items1162 .. " items with ID 1162 - Will add up to " .. totalToAdd)
-
-                for _, item in ipairs(items1162) do
-                    if addedCount >= 16 then break end
-
-                    local success, result = pcall(function()
-                        return Events.Trading.AddItem:InvokeServer({GUID = item.GUID, Type = "Item"})
-                    end)
-
-                    if success and result then
-                        addedCount = addedCount + 1
-                        UIModule:Notify(LocalPlayer, "Added item " .. addedCount .. "/" .. totalToAdd)
-                    else
-                        UIModule:Notify(LocalPlayer, "Failed to add item: " .. tostring(result))
-                    end
-
-                    task.wait(0.1)
-                end
-
-                -- Accept trade after adding items (even if less than 16)
-                if addedCount > 0 then
-                    UIModule:Notify(LocalPlayer, "Added " .. addedCount .. " items! Accepting trade...")
-                    task.wait(1)
-
-                    local acceptSuccess, acceptResult = pcall(function()
-                        return Events.Trading.AcceptTrade:InvokeServer()
-                    end)
-
-                    if acceptSuccess then
-                        UIModule:Notify(LocalPlayer, "Trade Accepted!")
-                    else
-                        UIModule:Notify(LocalPlayer, "Failed to accept: " .. tostring(acceptResult))
-                    end
-                end
-            end
-        end
-        task.wait(5)
-    end
-end)
-
--- Functions to control the script
-_G.SetTargets = function(...)
-    local targets = {...}
-    if #targets > 0 then
-        _G.AutoTrade.TargetPlayers = targets
-        _G.AutoTrade.CurrentTargetIndex = 1
-        UIModule:Notify(LocalPlayer, "Targets set to: " .. table.concat(targets, ", "))
-    end
+while not halted do
+	while processingItemsWon do
+		task.wait(0.25)
+	end
+	
+	if storageFull() then
+		debugPrint("Storage full, halting")
+		halted = true
+		break
+	end
+	
+	debugPrint("Entering queue for garage:", GARAGE_ID)
+	pcall(function() EnterQueue:InvokeServer(GARAGE_ID) end)
+	
+	local entered = waitForCondition(function() return inAuction end, 10, 0.05)
+	if not entered then
+		debugPrint("Failed to enter auction, retrying")
+		continue
+	end
+	
+	debugPrint("Successfully entered auction")
+	obtainedTarget = false
+	local targetFound = false
+	
+	while inAuction and not auctionEnded do
+		if not targetGarage or targetGarage == currentGarage then
+			local found = scanCurrentGarageForTarget()
+			if found and not targetFound then
+				targetFound = true
+				debugPrint("Target found, starting bid process")
+				isBiddingActive = true
+				
+				local bidStartTime = tick()
+				while not obtainedTarget and inAuction and currentGarage == targetGarage and not auctionEnded do
+					if currentNextBid and currentBidder ~= LocalPlayer then
+						debugPrint("Placing bid:", currentNextBid)
+						pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
+					end
+					
+					if currentBidder == LocalPlayer then
+						debugPrint("Won the bid for target item!")
+						obtainedTarget = true
+						break
+					end
+					
+					if tick() - bidStartTime > 30 then
+						debugPrint("Bid timeout, stopping")
+						break
+					end
+					task.wait(BID_CHECK_INTERVAL)
+				end
+				isBiddingActive = false
+			elseif not targetGarage then
+				if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
+					debugPrint("No target, skipping garage")
+					pcall(function() SkipCountdown:InvokeServer() end)
+					task.wait(0.05)
+					pcall(function() Skip:InvokeServer() end)
+					lastSkipTime = tick()
+				end
+			end
+		end
+		task.wait(0.25)
+	end
+	
+	if targetFound then
+		debugPrint("Auction ended, processing items won")
+		handleItemsWon()
+	end
+	
+	task.wait(1.5)
+	debugPrint("Ready for next auction")
 end
 
-_G.NextTarget = function()
-    switchToNextTarget()
-end
-
-_G.ToggleAutoSend = function(state)
-    _G.AutoTrade.AutoSend = state
-    UIModule:Notify(LocalPlayer, "Auto Send: " .. (state and "ON" or "OFF"))
-end
-
-_G.ToggleAutoAccept = function(state)
-    _G.AutoTrade.AutoAccept = state
-    UIModule:Notify(LocalPlayer, "Auto Accept: " .. (state and "ON" or "OFF"))
-end
-
-_G.ToggleAutoAdd = function(state)
-    _G.AutoTrade.AutoAdd = state
-    UIModule:Notify(LocalPlayer, "Auto Add: " .. (state and "ON" or "OFF"))
-end
-
-_G.ToggleTrade = function(state)
-    _G.AutoTrade.Enabled = state
-    UIModule:Notify(LocalPlayer, "Auto Trade: " .. (state and "ON" or "OFF"))
-end
-
-_G.SetMinItems = function(amount)
-    _G.AutoTrade.MinItems = amount
-    UIModule:Notify(LocalPlayer, "Min items required: " .. amount)
-end
-
-_G.SetStopCash = function(amount)
-    _G.AutoTrade.StopWhenCash = amount
-    UIModule:Notify(LocalPlayer, "Stop when target has: $" .. amount)
-end
-
-UIModule:Notify(LocalPlayer, "Auto Trade + Auto Place Loaded - Trading ID 1162 items only!")
+debugPrint("Auction bot stopped")
