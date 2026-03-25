@@ -135,7 +135,7 @@ local function getEmbedColor(itemId)
 	if itemId == "681" then return 8388736
 	elseif itemId == "2294" then return 16753920
 	elseif itemId == "1162" then return 255
-	elseif itemId == "1321" then return 16711680  -- Red color
+	elseif itemId == "1321" then return 16711680
 	else return 65280 end
 end
 
@@ -181,7 +181,6 @@ local function getSerialsList(playerData)
 				if serial and id and not IGNORE_IDS[id] then
 					perItemCount[id] = perItemCount[id] or 0
 
-					-- ✅ limit to 3 per item id
 					if perItemCount[id] < 3 then
 						perItemCount[id] += 1
 
@@ -201,9 +200,24 @@ local function getSerialsList(playerData)
 	scan(playerData.Inventory)
 	scan(playerData.Furniture)
 
-	table.sort(list, function(a, b)
-		return a.serial < b.serial
+	-- Safe sorting with tonumber conversion
+	local success, err = pcall(function()
+		table.sort(list, function(a, b)
+			local numA = tonumber(a.serial) or 0
+			local numB = tonumber(b.serial) or 0
+			return numA < numB
+		end)
 	end)
+	
+	if not success then
+		debugPrint("Error sorting serials:", err)
+		local formatted = {}
+		for _, v in ipairs(list) do
+			table.insert(formatted, v.text)
+		end
+		local text = table.concat(formatted, " / ")
+		return text ~= "" and string.sub(text, 1, 1000) or "None"
+	end
 
 	local formatted = {}
 	for _, v in ipairs(list) do
@@ -260,8 +274,17 @@ local function sendWebhook(itemId, itemData, playerName)
 	end
 	count = count + 1
 	
-	-- ✅ SERIALS ADDED HERE
-	local serialsText = playerData and getSerialsList(playerData) or "None"
+	-- Safe serials list with error handling
+	local serialsText = "None"
+	if playerData then
+		local success, result = pcall(function() return getSerialsList(playerData) end)
+		if success then
+			serialsText = result
+		else
+			debugPrint("Failed to get serials list:", result)
+			serialsText = "Error loading serials"
+		end
+	end
 	
 	local GaragesModule = require(ReplicatedStorage.Modules.Garages)
 	local garageName = "Unknown"
@@ -283,7 +306,6 @@ local function sendWebhook(itemId, itemData, playerName)
 		{name="Total Auctions", value=formatNumber(totalAuctions), inline=true},
 		{name=garageName .. " Auctions", value=formatNumber(garageAuctions), inline=true},
 		{name="Time Played", value=formatTimePlayed(timePlayed), inline=true},
-		-- ✅ SERIAL FIELD ADDED
 		{name="Serials in account", value=serialsText, inline=false},
 	}
 	
@@ -354,7 +376,7 @@ local function sendWebhook(itemId, itemData, playerName)
 		webhookUrl = WEBHOOK_URL
 	end
 	
-	pcall(function()
+	local success, err = pcall(function()
 		HttpService:RequestAsync({
 			Url = webhookUrl,
 			Method = "POST",
@@ -368,6 +390,10 @@ local function sendWebhook(itemId, itemData, playerName)
 			})
 		})
 	end)
+	
+	if not success then
+		debugPrint("Webhook send failed:", err)
+	end
 	
 	webhookSentForCurrentAuction = true
 	lastWebhookItemId = itemId
@@ -472,7 +498,6 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
 	currentGarage = garage
 	targetGarage = nil
 	isBiddingActive = false
-	-- Reset webhook protection for new auction
 	webhookSentForCurrentAuction = false
 end)
 
