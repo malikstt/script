@@ -1,234 +1,287 @@
+local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
-
 local LocalPlayer = Players.LocalPlayer
-
--- Remote events
-local InsertFurniture = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Shop"):WaitForChild("InsertFurniture")
-local SellRemote = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Shop"):WaitForChild("SellItemInShop")
-local GetAll = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
-local AcceptRemote = ReplicatedStorage.Events.Shop.AcceptOfferServer
-local DeclineRemote = ReplicatedStorage.Events.Shop.DeclineOfferServer
-
--- Modules
-local ItemsModule = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Items"))
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ItemsModule = require(ReplicatedStorage.Modules.Items)
+local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
 
--- Configuration
-local SHELVES = {
-    {Id = "4", SizeX = 14, SizeZ = 11, Max = math.huge},
-    {Id = "5", SizeX = 18, SizeZ = 21, Max = 3}
+-- Your webhook URLs
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
+local PET_SAFE_WEBHOOK_URL = "https://discord.com/api/webhooks/1483023142653005914/F7ZnzfoI-CFKMdUiFLSW68VTDk29KH6D_baLERftS9q8wjRdU062SzMLD50qdb-kWDYV"
+local SPIN_WEBHOOK_URL = "https://discord.com/api/webhooks/1486016437918367866/Yxe21WPlTWk37b9Pgazrw6NjRK3GKbcynKPociVbyv_hb2eke396nH991ye1HnF_WOcL"
+
+-- Test item ID
+local TEST_ITEM_ID = "1321"
+local GARAGE_ID = "85"
+
+-- Emojis
+local emoji_cash = "<:cash:1480932250060329141>"
+local emoji_gems = "<:gems:1480932306628907080>"
+local emoji_gs = "<:gs:1480932184402428105>"
+local emoji_mgs = "<:mgs:1480930779314913393>"
+local emoji_1 = "<:emoji_1:1480930651342508142>"
+local emoji_spin = "<:spin:1486328089398083614>"
+
+local function formatNumber(n)
+	if n >= 1e9 then return string.format("%.1fB", n/1e9)
+	elseif n >= 1e6 then return string.format("%.1fM", n/1e6)
+	elseif n >= 1e3 then return string.format("%.1fK", n/1e3)
+	else return tostring(n) end
+end
+
+local function formatTimePlayed(seconds)
+	local days = math.floor(seconds / 86400)
+	local hours = math.floor((seconds % 86400) / 3600)
+	local minutes = math.floor((seconds % 3600) / 60)
+	
+	if days > 0 then
+		return string.format("%dD %dH %dM", days, hours, minutes)
+	elseif hours > 0 then
+		return string.format("%dH %dM", hours, minutes)
+	else
+		return string.format("%dM", minutes)
+	end
+end
+
+local IGNORE_IDS = {
+	["1162"] = true,
+	["2294"] = true,
+	["681"] = true,
+	["1321"] = true
 }
-local FLOOR = 1
 
--- Wait for plot ownership
-local nsv = LocalPlayer:WaitForChild("NonSaveVars")
-local own = nsv:WaitForChild("OwnsPlot")
-repeat task.wait() until own.Value and own.Value ~= 0
+local function getSerialsList(playerData)
+	local list = {}
+	local perItemCount = {}
 
-local plot = Workspace:WaitForChild("Plots"):WaitForChild(tostring(own.Value))
-local canvas = plot:WaitForChild("Interior"):WaitForChild("Shop1"):WaitForChild("Canvas")
+	local function scan(container)
+		if not container then return end
+		for _, item in pairs(container) do
+			if item then
+				local serial = item.SerialId or (item.ItemTags and item.ItemTags.SerialId)
+				local id = item.Id and tostring(item.Id)
 
--- ==================== SHELF PLACEMENT FUNCTIONS ====================
+				if serial and id and not IGNORE_IDS[id] then
+					perItemCount[id] = perItemCount[id] or 0
 
-local function generateGridPositions(shelf)
-    local positions = {}
-    local fitX = math.floor(canvas.Size.X / shelf.SizeX)
-    local fitZ = math.floor(canvas.Size.Z / shelf.SizeZ)
-    local startX = canvas.Position.X - canvas.Size.X/2 + shelf.SizeX/2
-    local startZ = canvas.Position.Z - canvas.Size.Z/2 + shelf.SizeZ/2
-    local y = canvas.Position.Y + canvas.Size.Y/2 + 1
-    for x = 0, fitX - 1 do
-        for z = 0, fitZ - 1 do
-            table.insert(positions, Vector3.new(startX + x*shelf.SizeX, y, startZ + z*shelf.SizeZ))
-        end
-    end
-    return positions
+					if perItemCount[id] < 3 then
+						perItemCount[id] += 1
+
+						local itemInfo = ItemsModule[id]
+						local name = itemInfo and itemInfo.Name or ("ID " .. id)
+
+						table.insert(list, {
+							serial = serial,
+							text = "#" .. tostring(serial) .. " " .. name
+						})
+					end
+				end
+			end
+		end
+	end
+
+	scan(playerData.Inventory)
+	scan(playerData.Furniture)
+
+	table.sort(list, function(a, b)
+		return a.serial < b.serial
+	end)
+
+	local formatted = {}
+	for _, v in ipairs(list) do
+		table.insert(formatted, v.text)
+	end
+
+	local text = table.concat(formatted, " / ")
+	return text ~= "" and string.sub(text, 1, 1000) or "None"
 end
 
-local function placeShelvesPrioritized(shelves, floor)
-    local placed = {}
-    table.sort(shelves, function(a,b) return a.Max < b.Max end)
-    for _, shelf in ipairs(shelves) do
-        local positions = generateGridPositions(shelf)
-        local placedCount = 0
-        for _, pos in ipairs(positions) do
-            if placedCount >= shelf.Max then break end
-            local success = false
-            for attempt = 1, 3 do
-                success = pcall(function()
-                    InsertFurniture:InvokeServer({Id = shelf.Id, CFrame = CFrame.new(pos), Floor = floor})
-                end)
-                if success then
-                    placedCount += 1
-                    table.insert(placed, {Id = shelf.Id, Position = pos})
-                    task.wait(0.15)
-                    break
-                else
-                    task.wait(0.1)
-                end
-            end
-        end
-    end
-    return placed
+local function getEmbedColor(itemId)
+	itemId = tostring(itemId)
+	if itemId == "681" then return 8388736
+	elseif itemId == "2294" then return 16753920
+	elseif itemId == "1162" then return 255
+	elseif itemId == "1321" then return 16711680
+	else return 65280 end
 end
 
--- ==================== GET SHELVES FUNCTION ====================
-
-local function getMyShelves()
-    local plotVal = LocalPlayer.NonSaveVars and LocalPlayer.NonSaveVars.OwnsPlot
-    if not plotVal or not plotVal.Value then return {} end
-
-    local shelves = {}
-    local furniture = plotVal.Value:FindFirstChild("Furniture")
-    if not furniture then return shelves end
-
-    for _, v in ipairs(furniture:GetDescendants()) do
-        if v.Name == "Shelves" then
-            for _, shelf in ipairs(v:GetChildren()) do
-                table.insert(shelves, shelf)
-            end
-        end
-    end
-
-    return shelves
+local function sendTestWebhook()
+	print("=== TESTING WEBHOOK WITH ACTUAL ACCOUNT DATA ===")
+	print("Account:", LocalPlayer.Name)
+	print("Item ID:", TEST_ITEM_ID)
+	
+	-- Get real player data
+	local playerData
+	pcall(function() playerData = DataEvent:InvokeServer() end)
+	
+	if not playerData then
+		print("❌ Failed to get player data!")
+		return
+	end
+	
+	local itemData = ItemsModule[TEST_ITEM_ID]
+	if not itemData then
+		print("❌ Item not found in ItemsModule!")
+		return
+	end
+	
+	print("Item Name:", itemData.Name)
+	print("Item Rarity:", itemData.Rarity)
+	
+	-- Get real stats
+	local cash = playerData.Cash or 0
+	local gems = playerData.Gems or 0
+	local count = 0
+	local totalAuctions = 0
+	local garageAuctions = 0
+	local timePlayed = 0
+	
+	if playerData.PlayerStats then
+		totalAuctions = playerData.PlayerStats.AuctionsPlayed or 0
+		timePlayed = playerData.PlayerStats.TimePlayed or 0
+		if playerData.PlayerStats.Auctions then
+			garageAuctions = playerData.PlayerStats.Auctions[GARAGE_ID] or 0
+		end
+	end
+	
+	-- Count how many of this item the account has
+	local function countItems(container)
+		if not container then return end
+		for _, item in pairs(container) do
+			if tostring(item.Id) == tostring(TEST_ITEM_ID) then
+				count = count + 1
+			end
+		end
+	end
+	countItems(playerData.Furniture)
+	countItems(playerData.Inventory)
+	count = count + 1 -- Add the one they're about to get
+	
+	-- Get serials
+	local serialsText = getSerialsList(playerData)
+	
+	-- Get garage name
+	local GaragesModule = require(ReplicatedStorage.Modules.Garages)
+	local garageName = "Unknown"
+	local garageData = GaragesModule[GARAGE_ID]
+	if garageData and garageData.Name then garageName = garageData.Name end
+	
+	-- Build fields with REAL data
+	local fields = {
+		{name="Item", value=itemData.Name, inline=false},
+		{name="⭐ Rarity", value=itemData.Rarity, inline=false},
+		{name=emoji_cash .. " Cash", value=formatNumber(cash), inline=true},
+		{name=emoji_gems .. " Gems", value=formatNumber(gems), inline=true},
+		{name="Total Auctions", value=formatNumber(totalAuctions), inline=true},
+		{name=garageName .. " Auctions", value=formatNumber(garageAuctions), inline=true},
+		{name="Time Played", value=formatTimePlayed(timePlayed), inline=true},
+		{name="Serials in account", value=serialsText, inline=false},
+	}
+	
+	-- Add special handling for the item
+	if TEST_ITEM_ID == "681" then
+		local upgrading, remaining
+		pcall(function()
+			upgrading, remaining = ReplicatedStorage.Events.UI.GetUpgradingItem:InvokeServer("UpgradingItem")
+		end)
+		local craftTimerText = ""
+		if upgrading and remaining and remaining > 0 then
+			craftTimerText = " (⏳ " .. string.format("%dM %dS", math.floor(remaining/60), remaining%60) .. ")"
+		end
+		
+		local megaGemSafeCount, gemSafeCount = 0, 0
+		if playerData then
+			local function countSpecial(container)
+				if not container then return end
+				for _, item in pairs(container) do
+					local id = tostring(item.Id)
+					if id == "1162" then megaGemSafeCount = megaGemSafeCount + 1 end
+					if id == "681" then gemSafeCount = gemSafeCount + 1 end
+				end
+			end
+			countSpecial(playerData.Furniture)
+			countSpecial(playerData.Inventory)
+		end
+		gemSafeCount = gemSafeCount + 1
+		
+		table.insert(fields, {
+			name="Total Owned",
+			value=emoji_mgs .. " MGS: " .. tostring(megaGemSafeCount) .. craftTimerText .. " | " .. emoji_gs .. " GS: " .. tostring(gemSafeCount),
+			inline=false
+		})
+	elseif TEST_ITEM_ID == "2294" then
+		local petSafeCount = 0
+		if playerData then
+			for _, item in pairs(playerData.Furniture or {}) do
+				if tostring(item.Id) == "2294" then petSafeCount = petSafeCount + 1 end
+			end
+			for _, item in pairs(playerData.Inventory or {}) do
+				if tostring(item.Id) == "2294" then petSafeCount = petSafeCount + 1 end
+			end
+		end
+		petSafeCount = petSafeCount + 1
+		table.insert(fields, {name="Total Owned", value=emoji_1 .. " " .. tostring(petSafeCount), inline=false})
+	elseif TEST_ITEM_ID == "1321" then
+		local spinSafeCount = 0
+		if playerData then
+			for _, item in pairs(playerData.Furniture or {}) do
+				if tostring(item.Id) == "1321" then spinSafeCount = spinSafeCount + 1 end
+			end
+			for _, item in pairs(playerData.Inventory or {}) do
+				if tostring(item.Id) == "1321" then spinSafeCount = spinSafeCount + 1 end
+			end
+		end
+		spinSafeCount = spinSafeCount + 1
+		table.insert(fields, {name="Total Owned", value=emoji_spin .. " " .. tostring(spinSafeCount), inline=false})
+	else
+		table.insert(fields, {name="Total Owned", value=tostring(count), inline=false})
+	end
+	
+	-- Determine webhook URL
+	local webhookUrl = ""
+	if TEST_ITEM_ID == "2294" then
+		webhookUrl = PET_SAFE_WEBHOOK_URL
+	elseif TEST_ITEM_ID == "1321" then
+		webhookUrl = SPIN_WEBHOOK_URL
+	else
+		webhookUrl = WEBHOOK_URL
+	end
+	
+	print("Using webhook URL:", webhookUrl)
+	print("Sending HTTP request with REAL account data...")
+	
+	-- Send webhook
+	local success, result = pcall(function()
+		return HttpService:RequestAsync({
+			Url = webhookUrl,
+			Method = "POST",
+			Headers = {["Content-Type"] = "application/json"},
+			Body = HttpService:JSONEncode({
+				embeds = {{
+					title = LocalPlayer.Name .. " Got an Item",
+					color = getEmbedColor(TEST_ITEM_ID),
+					fields = fields
+				}}
+			})
+		})
+	end)
+	
+	if success then
+		print("✅ WEBHOOK SENT SUCCESSFULLY!")
+		print("Status Code:", result.StatusCode)
+		if result.StatusCode == 204 then
+			print("Discord accepted the webhook")
+		else
+			print("Response:", result.Body)
+		end
+	else
+		print("❌ WEBHOOK FAILED!")
+		print("Error:", result)
+	end
+	
+	print("=== TEST COMPLETE ===")
 end
 
--- ==================== SELL ITEMS FUNCTION ====================
-
-local function sellItems()
-    pcall(function()
-        local data = GetAll:InvokeServer()
-        
-        local plotName = LocalPlayer.NonSaveVars.OwnsPlot.Value.Name
-        local plot = workspace:WaitForChild("Plots"):WaitForChild(plotName)
-        
-        local shelves = {}
-        for _, furniture in ipairs(plot:WaitForChild("Furniture"):GetChildren()) do
-            local s = furniture:FindFirstChild("Shelves")
-            if s then
-                for _, shelf in ipairs(s:GetChildren()) do
-                    table.insert(shelves, shelf)
-                end
-            end
-        end
-        
-        local guids = {}
-        for guid, info in pairs(data.Inventory) do
-            local id = tonumber(info.Id)
-            local itemData = ItemsModule[id]
-            local name = itemData and string.lower(itemData.Name or "") or ""
-            if id ~= 281 and id ~= 2294 and not string.find(name, "safe") then
-                table.insert(guids, guid)
-            end
-        end
-        
-        print(string.format("[SELL] Found %d items to sell, %d shelves available", #guids, #shelves))
-        
-        local count = math.min(#shelves, #guids)
-        for i = 1, count do
-            local success = pcall(function()
-                SellRemote:FireServer(guids[i], shelves[i], true)
-            end)
-            if success then
-                print("[SELL] Sold item to shelf:", shelves[i]:GetFullName())
-            end
-            task.wait(0.1)
-        end
-    end)
-end
-
--- ==================== ACCEPT/DECLINE OFFERS FUNCTION ====================
-
-local function processOffers()
-    pcall(function()
-        local processed = 0
-        for _, shelf in ipairs(getMyShelves()) do
-            local offer = shelf:GetAttribute("Offer")
-            if not offer then continue end
-            
-            local itemFolder = shelf:FindFirstChild("Item")
-            if not itemFolder then continue end
-            
-            local item = itemFolder:GetChildren()[1]
-            if not item then continue end
-            
-            local id = item:GetAttribute("Id")
-            if not id then continue end
-            
-            local basePrice = RepLibrary:GetItemPrice({Id = id})
-            if not basePrice or basePrice <= 0 then continue end
-            
-            local percent = ((offer - basePrice) / basePrice) * 100
-            
-            if percent >= 10 then
-                local success = pcall(function()
-                    AcceptRemote:FireServer(shelf)
-                end)
-                if success then
-                    print(string.format("[OFFER] ACCEPTED - Shelf: %s | Offer: $%d | Base: $%d | +%.1f%%", 
-                        shelf.Name, offer, basePrice, percent))
-                end
-            else
-                local success = pcall(function()
-                    DeclineRemote:FireServer(shelf)
-                end)
-                if success then
-                    -- Only print declines if it's a significant difference or for debugging
-                    if percent <= -10 or percent < 0 then
-                        print(string.format("[OFFER] DECLINED - Shelf: %s | Offer: $%d | Base: $%d | %.1f%%", 
-                            shelf.Name, offer, basePrice, percent))
-                    end
-                end
-            end
-            processed += 1
-        end
-        if processed > 0 then
-            print(string.format("[OFFER] Processed %d offers", processed))
-        end
-    end)
-end
-
--- ==================== SHELF PLACEMENT LOOP FUNCTION ====================
-
-local function runShelfPlacement()
-    pcall(function()
-        local placedShelves = placeShelvesPrioritized(SHELVES, FLOOR)
-        if #placedShelves > 0 then
-            print(string.format("[PLACEMENT] Placed %d new shelves", #placedShelves))
-        end
-    end)
-end
-
--- ==================== MAIN LOOP ====================
-
-print("[SYSTEM] Starting automated shop manager...")
-print(string.format("[SYSTEM] Shelf placement: every 10 minutes | Selling: every 5 minutes | Offers: every 1 minute"))
-
--- Run initial cycles
-task.spawn(function()
-    task.wait(2) -- Small delay to ensure everything loads
-    runShelfPlacement()
-    sellItems()
-    processOffers()
-end)
-
--- Main loop with different timers
-while true do
-    -- Process offers every minute
-    task.wait(60) -- 1 minute
-    processOffers()
-    
-    -- Sell items every 5 minutes
-    if tick() % 300 < 60 then -- Check if we're in the 5-minute window
-        task.wait(2) -- Small delay to avoid conflicts
-        sellItems()
-    end
-    
-    -- Place shelves every 10 minutes
-    if tick() % 600 < 60 then -- Check if we're in the 10-minute window
-        task.wait(4) -- Small delay to avoid conflicts
-        runShelfPlacement()
-    end
-end
+-- Run the test
+sendTestWebhook()
