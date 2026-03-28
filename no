@@ -2,11 +2,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
-local nonSaveVars = LocalPlayer:FindFirstChild("NonSaveVars")
-local ownsPlot = nonSaveVars and nonSaveVars:FindFirstChild("OwnsPlot")
-local currentPlot = ownsPlot and ownsPlot:IsA("ValueBase") and ownsPlot.Value or "7"
-local canvas = workspace.Plots[tostring(currentPlot)].Interior.Shop1.Canvas
-
 local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
 local ItemsModule = require(ReplicatedStorage.Modules.Items)
 local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
@@ -21,7 +16,7 @@ local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):
 local SellAllItems = Auctions:WaitForChild("SellAllItems")
 
 local BID_CHECK_INTERVAL = 0.1
-local GARAGE_ID = "1"
+local GARAGE_ID = "62"
 
 local inAuction = false
 local auctionEnded = false
@@ -30,7 +25,6 @@ local currentNextBid = nil
 local currentBidder = nil
 local currentGarage = nil
 local processingItemsWon = false
-local isBiddingActive = false
 local firstGarageProcessed = false
 
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
@@ -91,32 +85,13 @@ task.spawn(function()
     end
 end)
 
--- Function to get item price from ItemsModule
+-- Get item price from ItemsModule
 local function getItemPrice(itemId)
     local itemData = ItemsModule[tostring(itemId)]
     if itemData and itemData.Price then
         return itemData.Price
     end
     return 0
-end
-
--- Function to sort items by price (most expensive first)
-local function sortItemsByPrice(items)
-    local itemList = {}
-    for guid, itemData in pairs(items) do
-        local price = getItemPrice(itemData.itemId or itemData.Id)
-        table.insert(itemList, {
-            guid = guid,
-            itemId = itemData.itemId or itemData.Id,
-            price = price
-        })
-    end
-    
-    table.sort(itemList, function(a, b)
-        return a.price > b.price
-    end)
-    
-    return itemList
 end
 
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
@@ -131,14 +106,12 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     inAuction = true
     auctionEnded = false
     currentGarage = garage
-    isBiddingActive = false
 end)
 
 AuctionsFolder.ChildRemoved:Connect(function(child)
     if child == currentGarage then
         debugPrint("Auction ended for garage:", child and child.Name)
         auctionEnded = true
-        isBiddingActive = false
     end
     if #AuctionsFolder:GetChildren() == 0 then
         debugPrint("All auctions finished")
@@ -163,8 +136,7 @@ end
 local function bidOnCurrentGarage()
     if not currentGarage then return false end
     
-    debugPrint("Starting bid process on garage:", currentGarage.Name)
-    isBiddingActive = true
+    debugPrint("Bidding on garage:", currentGarage.Name)
     
     local bidStartTime = tick()
     while inAuction and currentGarage and not auctionEnded do
@@ -179,13 +151,12 @@ local function bidOnCurrentGarage()
         end
         
         if tick() - bidStartTime > 60 then
-            debugPrint("Bid timeout, stopping")
+            debugPrint("Bid timeout")
             break
         end
         task.wait(BID_CHECK_INTERVAL)
     end
     
-    isBiddingActive = false
     return true
 end
 
@@ -206,32 +177,30 @@ local function handleItemsWon()
     end
     
     -- Sort items by price (most expensive first)
-    local sortedItems = sortItemsByPrice(itemsWon)
-    
-    debugPrint("Items won sorted by price:")
-    for i, item in ipairs(sortedItems) do
-        local itemName = ItemsModule[tostring(item.itemId)] and ItemsModule[tostring(item.itemId)].Name or "Unknown"
-        debugPrint(string.format("  %d. %s - Price: %d", i, itemName, item.price))
+    local sortedItems = {}
+    for guid, itemData in pairs(itemsWon) do
+        local price = getItemPrice(itemData.itemId)
+        table.insert(sortedItems, {
+            guid = guid,
+            price = price
+        })
     end
     
-    -- Keep only the most expensive item
-    local keepGuids = {}
+    table.sort(sortedItems, function(a, b)
+        return a.price > b.price
+    end)
+    
+    -- Keep the most expensive item, sell the rest
     if #sortedItems > 0 then
-        local mostExpensive = sortedItems[1]
-        debugPrint("Keeping most expensive item:", ItemsModule[tostring(mostExpensive.itemId)].Name, "with price:", mostExpensive.price)
-        table.insert(keepGuids, mostExpensive.guid)
+        local keepGuids = {sortedItems[1].guid}
         
-        -- Sell all other items
         if #sortedItems > 1 then
             local sellGuids = {}
             for i = 2, #sortedItems do
                 table.insert(sellGuids, sortedItems[i].guid)
             end
-            
-            if #sellGuids > 0 then
-                debugPrint("Selling", #sellGuids, "less valuable items")
-                SellAllItems:InvokeServer("Default", sellGuids)
-            end
+            SellAllItems:InvokeServer("Default", sellGuids)
+            debugPrint("Sold", #sellGuids, "items, kept the most expensive one")
         end
     end
     
@@ -248,29 +217,7 @@ local function waitForCondition(condition, timeout, checkInterval)
     return false
 end
 
-local function skipAllExceptFirst()
-    if not currentGarage or firstGarageProcessed then
-        return
-    end
-    
-    -- Mark first garage as processed
-    firstGarageProcessed = true
-    
-    -- Skip all remaining garages in queue
-    task.spawn(function()
-        while inAuction and not auctionEnded do
-            if currentGarage and firstGarageProcessed then
-                debugPrint("Skipping garage:", currentGarage.Name)
-                pcall(function() SkipCountdown:InvokeServer() end)
-                task.wait(0.05)
-                pcall(function() Skip:InvokeServer() end)
-            end
-            task.wait(0.25)
-        end
-    end)
-end
-
-debugPrint("Auction bot started - will bid on first garage and skip all others")
+debugPrint("Auction bot started")
 
 while not halted do
     while processingItemsWon do
@@ -294,10 +241,7 @@ while not halted do
     
     debugPrint("Successfully entered auction")
     
-    -- Start skipping all garages except the first one
-    skipAllExceptFirst()
-    
-    -- Bid on the current garage
+    -- Bid on the first garage
     bidOnCurrentGarage()
     
     -- Wait for auction to end
@@ -309,7 +253,6 @@ while not halted do
     handleItemsWon()
     
     task.wait(1.5)
-    debugPrint("Ready for next auction")
 end
 
 debugPrint("Auction bot stopped")
