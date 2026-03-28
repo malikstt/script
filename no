@@ -40,7 +40,6 @@ local currentNextBid = nil
 local currentBidder = nil
 local processingItemsWon = false
 local lastSkipTime = 0
-local hasBidOnFirst = false
 
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
@@ -122,23 +121,10 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     currentGarage = garage
     
     if currentState == State.WAITING_FOR_AUCTION then
-        -- Only bid on garage "1"
-        if garage.Name == GARAGE_ID and not hasBidOnFirst then
+        if not firstGarage then
             firstGarage = garage
-            hasBidOnFirst = true
             currentState = State.BIDDING
-            debugPrint("Garage 1 detected, transitioning to BIDDING")
-        else
-            debugPrint("Garage", garage.Name, "detected - will be skipped")
-            -- Immediately skip non-garage-1 auctions
-            task.spawn(function()
-                task.wait(0.5)
-                if currentGarage == garage and inAuction then
-                    pcall(function() SkipCountdown:InvokeServer() end)
-                    task.wait(0.05)
-                    pcall(function() Skip:InvokeServer() end)
-                end
-            end)
+            debugPrint("First garage detected, transitioning to BIDDING")
         end
     end
 end)
@@ -150,7 +136,7 @@ AuctionsFolder.ChildRemoved:Connect(function(child)
         inAuction = false
         
         if currentState == State.BIDDING and child == firstGarage then
-            debugPrint("Garage 1 auction ended, transitioning to PROCESSING_ITEMS")
+            debugPrint("First garage auction ended, transitioning to PROCESSING_ITEMS")
             currentState = State.PROCESSING_ITEMS
         end
         
@@ -163,7 +149,6 @@ AuctionsFolder.ChildRemoved:Connect(function(child)
             debugPrint("Skipping complete, returning to IDLE")
             currentState = State.IDLE
             firstGarage = nil
-            hasBidOnFirst = false
         end
     end
 end)
@@ -187,7 +172,7 @@ local function handleEnteringQueue()
 end
 
 local function handleBidding()
-    -- Only bid if this is still garage 1
+    -- Only bid if this is still the first garage
     if currentGarage ~= firstGarage then
         debugPrint("Garage changed, stopping bid")
         currentState = State.WAITING_FOR_AUCTION_END
@@ -255,19 +240,22 @@ local function handleProcessingItems()
         debugPrint(string.format("  %d. %s - Price: %d", i, itemName, item.price))
     end
     
-    -- Keep the most expensive item, sell all others
+    -- Keep the most expensive item (DO NOT sell it)
+    -- Sell all other items
     if #sortedItems > 0 then
         local keepGuid = sortedItems[1].guid
         local keepName = ItemsModule[tostring(sortedItems[1].itemId)] and ItemsModule[tostring(sortedItems[1].itemId)].Name or "Unknown"
         debugPrint("Keeping most expensive item:", keepName, "Price:", sortedItems[1].price)
         
         if #sortedItems > 1 then
+            -- Collect GUIDs of items to sell (all except the most expensive)
             local sellGuids = {}
             for i = 2, #sortedItems do
                 table.insert(sellGuids, sortedItems[i].guid)
             end
             
             debugPrint("Selling", #sellGuids, "less valuable items")
+            -- Sell the less valuable items, keep the most expensive one
             SellAllItems:InvokeServer("Default", sellGuids)
         else
             debugPrint("Only one item won, keeping it")
@@ -287,19 +275,16 @@ local function handleSkippingGarages()
         debugPrint("No more garages to skip, returning to IDLE")
         currentState = State.IDLE
         firstGarage = nil
-        hasBidOnFirst = false
         return
     end
     
-    -- Skip any remaining garages
-    for _, garage in pairs(garages) do
-        if garage ~= firstGarage and tick() - lastSkipTime >= SKIP_COOLDOWN then
-            debugPrint("Skipping garage:", garage.Name)
-            pcall(function() SkipCountdown:InvokeServer() end)
-            task.wait(0.05)
-            pcall(function() Skip:InvokeServer() end)
-            lastSkipTime = tick()
-        end
+    -- Skip current garage if exists
+    if currentGarage and tick() - lastSkipTime >= SKIP_COOLDOWN then
+        debugPrint("Skipping garage:", currentGarage.Name)
+        pcall(function() SkipCountdown:InvokeServer() end)
+        task.wait(0.05)
+        pcall(function() Skip:InvokeServer() end)
+        lastSkipTime = tick()
     end
     
     -- Continue skipping
@@ -329,7 +314,7 @@ local function stateMachine()
         handleBidding()
         
     elseif currentState == State.WAITING_FOR_AUCTION_END then
-        -- Wait for auction to end
+        -- Wait for auction to end (ChildRemoved event will handle transition)
         task.wait(0.1)
         if currentState == State.WAITING_FOR_AUCTION_END then
             stateMachine()
@@ -344,7 +329,7 @@ local function stateMachine()
 end
 
 -- Start the state machine
-debugPrint("Auction bot started - Will only bid on Garage 1, skip all others")
+debugPrint("Auction bot started - State-driven mode (keeps most expensive item)")
 
 task.spawn(function()
     while true do
@@ -355,12 +340,15 @@ task.spawn(function()
         elseif currentState == State.WAITING_FOR_AUCTION then
             stateMachine()
         elseif currentState == State.BIDDING then
+            -- Already running in handleBidding loop
             task.wait(0.1)
         elseif currentState == State.WAITING_FOR_AUCTION_END then
             stateMachine()
         elseif currentState == State.PROCESSING_ITEMS then
+            -- Already running in handleProcessingItems
             task.wait(0.1)
         elseif currentState == State.SKIPPING_GARAGES then
+            -- Already running in handleSkippingGarages
             task.wait(0.1)
         end
         task.wait(0.1)
