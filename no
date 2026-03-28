@@ -2,365 +2,293 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
-local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
+local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
 local ItemsModule = require(ReplicatedStorage.Modules.Items)
-local GaragesModule = require(ReplicatedStorage.Modules.Garages)
-
+local GaragesModule = require(ReplicatedStorage.Modules["Garages-experiment1"])
+local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
 local Auctions = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
 local EnterQueue = Auctions:WaitForChild("EnterQueue")
 local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
 local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 local SellAllItems = Auctions:WaitForChild("SellAllItems")
-local Pass = Auctions:WaitForChild("Pass")
 
-local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
-
-local BID_CHECK_INTERVAL = 0.1
-
-local currentNextBid = nil
-local currentBidder = nil
+local currentBidData = nil
+local MIN_PROFIT = 6
+local inAuction = false
+local myCash = 0
+local currentGarageValue = 0
+local bidPlaced = false
 local processingItemsWon = false
-local currentGarageId = nil
-local garagesWon = 0
-local auctionComplete = false
+local currentGarageBudget = 0
 
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-
-local function debugPrint(...)
-    print("[AuctionBot]", ...)
+local function getEntryCost(garageData)
+    return garageData.CashNeededToEnter or garageData.AuctionBudget or 0
 end
 
-local function destroySpecificGuis()
-    local items = PlayerGui:FindFirstChild("ItemsWon")
-    if items then items:Destroy() end
-    local circle = PlayerGui:FindFirstChild("CircleAnimationUI")
-    if circle then circle:Destroy() end
-end
-
-destroySpecificGuis()
-
-PlayerGui.ChildAdded:Connect(function(child)
-    if child.Name == "ItemsWon" or child.Name == "CircleAnimationUI" then
-        child:Destroy()
-    end
-end)
-
-local function tryClick(obj)
-    if obj and (obj:IsA("TextButton") or obj:IsA("ImageButton")) then
-        pcall(function() obj:Activate() end)
-        if getconnections then
-            for _, v in pairs(getconnections(obj.MouseButton1Click)) do
-                pcall(function() v:Fire() end)
-            end
-        end
+local function updateCash()
+    local success, data = pcall(function() return DataEvent:InvokeServer() end)
+    if success and data and data.Cash then
+        myCash = tonumber(data.Cash) or 0
     end
 end
 
-local function checkForButton()
-    local itemsWon = PlayerGui:FindFirstChild("ItemsWon", true)
-    if itemsWon then
-        local button = itemsWon:FindFirstChild("Button", true)
-        if button then
-            tryClick(button)
-        end
+local function getItemPrice(itemId)
+    local itemData = ItemsModule[itemId] or ItemsModule[tonumber(itemId)]
+    if itemData and type(itemData) == "table" and itemData.Price then
+        return tonumber(itemData.Price) or 0
     end
-end
-
-checkForButton()
-
-PlayerGui.DescendantAdded:Connect(function(obj)
-    if obj.Name == "Button" then
-        task.wait(0.5)
-        tryClick(obj)
-    end
-end)
-
-task.spawn(function()
-    while true do
-        task.wait(0.25)
-        checkForButton()
-    end
-end)
-
-UpdateCurrentBid.OnClientEvent:Connect(function(data)
-    if data then
-        currentNextBid = data.nextBid
-        currentBidder = data.player
-    end
-end)
-
-local function canAffordAuction(auction, playerCash, playerS2Cash)
-    if auction.Type == "Cash" then
-        if playerCash < auction.CostToEnter then
-            return false
-        end
-    elseif auction.Type == "S2Cash" then
-        if playerS2Cash < auction.CostToEnter then
-            return false
-        end
-    else
-        return false
-    end
-    
-    local requiredBudget = auction.CashNeededToEnter or auction.AuctionBudget or 0
-    if requiredBudget > 0 and playerCash < requiredBudget then
-        return false
-    end
-    
-    return true
-end
-
-local function findBestAffordableAuction()
-    local playerCash = LocalPlayer.SaveVars.Cash.Value
-    local playerS2Cash = LocalPlayer.SaveVars.S2Cash and LocalPlayer.SaveVars.S2Cash.Value or 0
-    
-    local bestAuction = nil
-    local bestScore = -1
-    
-    debugPrint("Player Balance - Cash:", playerCash, "S2Cash:", playerS2Cash)
-    
-    for auctionId, auctionData in pairs(GaragesModule) do
-        if auctionData.Finished then
-            continue
-        end
-        
-        if auctionData.Limited or auctionData.SerialRotation or auctionData.AirportLevel then
-            continue
-        end
-        
-        if auctionData.Type ~= "Cash" and auctionData.Type ~= "S2Cash" then
-            continue
-        end
-        
-        if canAffordAuction(auctionData, playerCash, playerS2Cash) then
-            local auctionScore = (auctionData.AuctionBudget or 0)
-            
-            if auctionData.CostToEnter > 0 then
-                auctionScore = auctionScore + (auctionData.CostToEnter * 10)
-            end
-            
-            if auctionData.Type == "S2Cash" then
-                auctionScore = auctionScore + 100000
-            end
-            
-            if auctionScore > bestScore then
-                bestScore = auctionScore
-                bestAuction = {
-                    id = auctionId,
-                    data = auctionData
-                }
-            end
-            
-            debugPrint("Can afford:", auctionData.Name, "Budget:", auctionData.AuctionBudget)
-        end
-    end
-    
-    return bestAuction
+    return 0
 end
 
 local function getPlayerData()
     local success, data = pcall(function() return DataEvent:InvokeServer() end)
-    if not success then return nil end
-    return data
+    if success and data then
+        return data
+    end
+    return nil
 end
 
-local function getInventorySpace()
-    local data = getPlayerData()
-    if not data then return 0, 0 end
-    local invLevel = data.InventoryLevel or 0
-    local carryLevel = data.CarryLevel or 0
-    local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
+local function processItemsWon()
+    processingItemsWon = true
+    
+    local playerData = getPlayerData()
+    if not playerData or not playerData.ItemsWon then
+        processingItemsWon = false
+        return
+    end
+    
+    local itemsWon = playerData.ItemsWon
+    if not itemsWon or next(itemsWon) == nil then
+        processingItemsWon = false
+        return
+    end
+    
+    print("📦 Processing ItemsWon...")
+    
+    -- Get inventory and carry space
+    local inventory = playerData.Inventory or {}
+    local carryLevel = playerData.CarryLevel or 0
+    local invLevel = playerData.InventoryLevel or 0
+    
     local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
-    local invCount = RepLibrary:GetLengthOfInventory(data.Inventory or {})
-    return invSpace - invCount, carrySpace
-end
-
-local function sortItemsByValue(items)
+    local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
+    local currentInvCount = RepLibrary:GetLengthOfInventory(inventory)
+    local availableInvSpace = invSpace - currentInvCount
+    
+    local maxCanKeep = math.min(carrySpace, availableInvSpace)
+    
+    print("Carry Space: " .. carrySpace .. " | Inv Space: " .. availableInvSpace .. " | Can Keep: " .. maxCanKeep)
+    
+    -- Sort items by price (highest first)
     local itemList = {}
-    for guid, itemData in pairs(items) do
+    for guid, itemData in pairs(itemsWon) do
         local itemId = tostring(itemData.itemId)
-        local itemInfo = ItemsModule[itemId]
-        local price = 0
-        if itemInfo then
-            price = itemInfo.Price or itemInfo.S2Price or 0
-        end
+        local price = getItemPrice(itemId)
         table.insert(itemList, {
             guid = guid,
             itemId = itemId,
             price = price
         })
     end
-    table.sort(itemList, function(a, b) return a.price > b.price end)
-    return itemList
-end
-
-local function handleItemsWon()
-    if processingItemsWon then return false end
-    processingItemsWon = true
-    debugPrint("Handling items won...")
     
-    local data = getPlayerData()
-    if not data or not data.ItemsWon then
-        processingItemsWon = false
-        return false
-    end
+    table.sort(itemList, function(a, b)
+        return a.price > b.price
+    end)
     
-    local itemsWon = data.ItemsWon
-    if not itemsWon or next(itemsWon) == nil then
-        debugPrint("No items won")
-        processingItemsWon = false
-        return false
-    end
-    
-    local invSpace, carrySpace = getInventorySpace()
-    debugPrint("Inventory space:", invSpace, "Carry space:", carrySpace)
-    
-    local sortedItems = sortItemsByValue(itemsWon)
+    -- Separate keep and sell
     local keepGuids = {}
-    local keepCount = 0
-    local maxKeep = invSpace + carrySpace
+    local sellGuids = {}
     
-    if maxKeep <= 0 then
-        debugPrint("No space, selling all")
-        pcall(function() SellAllItems:InvokeServer("Default", {}) end)
-        processingItemsWon = false
-        return false
-    end
-    
-    for _, item in ipairs(sortedItems) do
-        if keepCount < maxKeep then
+    for i, item in ipairs(itemList) do
+        if i <= maxCanKeep then
             table.insert(keepGuids, item.guid)
-            keepCount = keepCount + 1
-            debugPrint("Keeping:", item.itemId, "Value:", item.price)
+            print("✅ Keeping: " .. item.itemId .. " ($" .. item.price .. ")")
         else
-            debugPrint("Selling:", item.itemId, "Value:", item.price)
+            table.insert(sellGuids, item.guid)
+            print("💰 Selling: " .. item.itemId .. " ($" .. item.price .. ")")
         end
     end
     
-    if #keepGuids > 0 then
-        debugPrint("Keeping", #keepGuids, "items")
-        pcall(function() SellAllItems:InvokeServer("Default", keepGuids) end)
+    -- Sell the rest using remote
+    if #sellGuids > 0 then
+        print("💸 Selling " .. #sellGuids .. " items...")
+        local success, result = pcall(function()
+            return SellAllItems:InvokeServer("Default", sellGuids)
+        end)
+        if success then
+            print("✅ Sold " .. #sellGuids .. " items")
+        else
+            print("❌ Failed to sell items")
+        end
     else
-        debugPrint("No space, selling all")
-        pcall(function() SellAllItems:InvokeServer("Default", {}) end)
+        print("📦 No items to sell (keeping all " .. #keepGuids .. ")")
     end
     
+    print("📦 ItemsWon processing complete")
     processingItemsWon = false
-    return true
 end
 
-local function bidOnGarage(garageName)
-    debugPrint("Bidding on garage:", garageName)
-    
-    local bidStartTime = tick()
-    local won = false
-    
-    while not won do
-        if currentNextBid and currentBidder ~= LocalPlayer then
-            debugPrint("Placing bid:", currentNextBid)
-            pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
+UpdateCurrentBid.OnClientEvent:Connect(function(data)
+    if data then
+        currentBidData = data
+        if inAuction and currentGarageValue > 0 then
+            print("💰 Bid Update: $" .. tostring(data.nextBid) .. " | " .. tostring(data.player and (data.player.Name or "NPC") or "None"))
+            
+            if data.player ~= LocalPlayer and bidPlaced then
+                local nextBid = data.nextBid
+                local profit = currentGarageValue - nextBid
+                local profitPercent = (profit / currentGarageValue) * 100
+                
+                if profitPercent >= MIN_PROFIT and nextBid <= myCash then
+                    print("⚡ Counter-bidding: $" .. nextBid)
+                    pcall(function() PlaceBid:InvokeServer(nextBid) end)
+                end
+            end
         end
-        
-        if currentBidder == LocalPlayer then
-            debugPrint("Won garage:", garageName)
-            won = true
+    end
+end)
+
+local function getGarageEstimatedValue(garageData)
+    return garageData.AuctionBudget or 0
+end
+
+local function getBestAffordableGarage()
+    updateCash()
+    local bestId = "51"
+    local bestValue = 0
+    
+    for id, data in pairs(GaragesModule) do
+        if data.Type == "Cash" then
+            local entryCost = getEntryCost(data)
+            if entryCost > 0 and myCash >= entryCost then
+                local estimatedValue = getGarageEstimatedValue(data)
+                if estimatedValue > bestValue then
+                    bestValue = estimatedValue
+                    bestId = id
+                end
+            end
+        end
+    end
+    
+    return bestId
+end
+
+local function joinAuction()
+    while true do
+        if not processingItemsWon and not inAuction then
+            local garageId = getBestAffordableGarage()
+            local garageData = GaragesModule[garageId]
+            if garageData then
+                print("🎯 Entering: " .. garageData.Name .. " (Need: $" .. getEntryCost(garageData) .. ", Est: $" .. getGarageEstimatedValue(garageData) .. ")")
+                pcall(function() EnterQueue:InvokeServer(garageId) end)
+            end
+        end
+        task.wait(1)
+    end
+end
+
+coroutine.wrap(joinAuction)()
+
+AuctionsFolder.ChildAdded:Connect(function(garage)
+    if processingItemsWon then return end
+    
+    inAuction = true
+    currentBidData = nil
+    bidPlaced = false
+    currentGarageBudget = 0
+    local garageName = garage.Name
+    local garageId = nil
+    
+    for id, data in pairs(GaragesModule) do
+        if data.Name == garageName then
+            garageId = id
+            currentGarageBudget = getEntryCost(data)
             break
         end
-        
-        if tick() - bidStartTime > 45 then
-            debugPrint("Bid timeout on garage:", garageName)
-            break
-        end
-        task.wait(BID_CHECK_INTERVAL)
     end
     
-    return won
-end
-
-local function waitForGarage(garageNumber, timeout)
-    local start = tick()
-    while tick() - start < timeout do
-        local garage = AuctionsFolder:FindFirstChild(tostring(garageNumber))
-        if garage then
-            debugPrint("Garage", garageNumber, "spawned")
-            return garage
-        end
-        task.wait(0.1)
-    end
-    return nil
-end
-
-local function waitForGarageToEnd(garage, timeout)
-    local start = tick()
-    while tick() - start < timeout do
-        if not garage.Parent then
-            debugPrint("Garage", garage.Name, "ended")
-            return true
-        end
-        task.wait(0.1)
-    end
-    return false
-end
-
-debugPrint("Auction bot started")
-
-while true do
-    while processingItemsWon do
-        task.wait(0.25)
+    print("\n=== " .. garageName .. " (Need: $" .. currentGarageBudget .. ") ===")
+    
+    local itemsFolder = garage:WaitForChild("Items", 5)
+    if not itemsFolder then
+        print("❌ No items")
+        return
     end
     
-    local bestAuction = findBestAffordableAuction()
-    
-    if not bestAuction then
-        debugPrint("No affordable auction found, waiting 30 seconds")
-        task.wait(30)
-        continue
-    end
-    
-    debugPrint("Best auction:", bestAuction.data.Name, "ID:", bestAuction.id)
-    currentGarageId = bestAuction.id
-    garagesWon = 0
-    auctionComplete = false
-    
-    debugPrint("Entering queue for:", bestAuction.id)
-    pcall(function() EnterQueue:InvokeServer(bestAuction.id) end)
-    
-    -- Bid on garage 1
-    local garage1 = waitForGarage(1, 15)
-    if garage1 then
-        if bidOnGarage("1") then
-            garagesWon = garagesWon + 1
-        end
-        waitForGarageToEnd(garage1, 60)
-    end
-    
-    -- Bid on garage 2
-    local garage2 = waitForGarage(2, 15)
-    if garage2 then
-        if bidOnGarage("2") then
-            garagesWon = garagesWon + 1
-        end
-        waitForGarageToEnd(garage2, 60)
-    end
-    
-    -- Bid on garage 3
-    local garage3 = waitForGarage(3, 15)
-    if garage3 then
-        if bidOnGarage("3") then
-            garagesWon = garagesWon + 1
-        end
-        waitForGarageToEnd(garage3, 60)
-    end
-    
-    debugPrint("All garages done. Won", garagesWon, "out of 3")
-    
-    -- Wait for items to be awarded
     task.wait(3)
     
-    -- Process items won
-    handleItemsWon()
+    currentGarageValue = 0
+    local items = itemsFolder:GetChildren()
     
-    debugPrint("Ready for next auction")
-    task.wait(2)
-end
+    for _, itemInstance in ipairs(items) do
+        local itemId = itemInstance.Name
+        local itemData = ItemsModule[itemId] or ItemsModule[tonumber(itemId)]
+        
+        if itemData and type(itemData) == "table" and itemData.Price then
+            currentGarageValue = currentGarageValue + (tonumber(itemData.Price) or 0)
+        end
+    end
+    
+    if currentGarageValue == 0 then
+        print("❌ Value: $0")
+        return
+    end
+    
+    print("💰 Value: $" .. currentGarageValue)
+    
+    local timeout = 0
+    while not currentBidData and timeout < 8 do
+        task.wait(0.5)
+        timeout = timeout + 0.5
+    end
+    
+    if not currentBidData then
+        print("❌ No bid data")
+        return
+    end
+    
+    local nextBid = currentBidData.nextBid
+    local profit = currentGarageValue - nextBid
+    local profitPercent = (profit / currentGarageValue) * 100
+    local worth = profitPercent >= MIN_PROFIT
+    local canAfford = nextBid <= myCash
+    
+    print("💰 Next: $" .. nextBid)
+    print("📊 Profit: $" .. profit .. " (" .. string.format("%.2f", profitPercent) .. "%)")
+    print(worth and "✅ WORTH" or "❌ NOT WORTH")
+    print(canAfford and "✅ Can afford" or "❌ Can't afford")
+    
+    if currentBidData.player == LocalPlayer then
+        print("👑 Highest bidder")
+        bidPlaced = true
+        return
+    end
+    
+    if worth and canAfford then
+        print("⚡ Bidding...")
+        local success = pcall(function()
+            return PlaceBid:InvokeServer(nextBid)
+        end)
+        if success then
+            print("✅ Bid placed")
+            bidPlaced = true
+        else
+            print("❌ Bid failed")
+        end
+    end
+end)
+
+AuctionsFolder.ChildRemoved:Connect(function()
+    if #AuctionsFolder:GetChildren() == 0 then
+        print("\n=== Left ===\n")
+        inAuction = false
+        currentBidData = nil
+        currentGarageValue = 0
+        bidPlaced = false
+        task.wait(2)
+        processItemsWon()
+    end
+end)
+
+print("🚀 Started - " .. MIN_PROFIT .. "% profit")
