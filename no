@@ -15,8 +15,9 @@ local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 local SellAllItems = Auctions:WaitForChild("SellAllItems")
 
-local GARAGE_ID = "1"
+local GARAGE_ID = "62"
 local SKIP_COOLDOWN = 0.5
+local BID_CHECK_INTERVAL = 0.1
 
 -- State Machine States
 local State = {
@@ -42,7 +43,6 @@ local lastSkipTime = 0
 
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
--- Utility Functions
 local function debugPrint(...)
     print("[AuctionBot]", "[" .. currentState .. "]", ...)
 end
@@ -107,19 +107,6 @@ local function getItemPrice(itemId)
     return 0
 end
 
-local function storageFull()
-    local success, data = pcall(function() return DataEvent:InvokeServer() end)
-    if not success or not data then return false end
-    local inv = data.Inventory or {}
-    local invLevel = data.InventoryLevel
-    local carryLevel = data.CarryLevel
-    local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
-    local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
-    local invCount = RepLibrary:GetLengthOfInventory(inv)
-    return invCount >= invSpace and carrySpace <= 0
-end
-
--- Event Handlers
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
     if data then
         currentNextBid = data.nextBid
@@ -133,16 +120,11 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     auctionEnded = false
     currentGarage = garage
     
-    -- If we're waiting for an auction, transition to appropriate state
     if currentState == State.WAITING_FOR_AUCTION then
         if not firstGarage then
-            -- This is the first garage
             firstGarage = garage
             currentState = State.BIDDING
             debugPrint("First garage detected, transitioning to BIDDING")
-        elseif currentState == State.SKIPPING_GARAGES then
-            -- We're in skipping mode, just ignore
-            debugPrint("Garage appeared during skipping mode, will be skipped")
         end
     end
 end)
@@ -153,7 +135,6 @@ AuctionsFolder.ChildRemoved:Connect(function(child)
         auctionEnded = true
         inAuction = false
         
-        -- If we were bidding and this garage ended
         if currentState == State.BIDDING and child == firstGarage then
             debugPrint("First garage auction ended, transitioning to PROCESSING_ITEMS")
             currentState = State.PROCESSING_ITEMS
@@ -162,7 +143,6 @@ AuctionsFolder.ChildRemoved:Connect(function(child)
         currentGarage = nil
     end
     
-    -- Check if all auctions are done
     if #AuctionsFolder:GetChildren() == 0 then
         debugPrint("All auctions finished")
         if currentState == State.SKIPPING_GARAGES then
@@ -173,7 +153,18 @@ AuctionsFolder.ChildRemoved:Connect(function(child)
     end
 end)
 
--- Core State Functions
+local function storageFull()
+    local success, data = pcall(function() return DataEvent:InvokeServer() end)
+    if not success or not data then return false end
+    local inv = data.Inventory or {}
+    local invLevel = data.InventoryLevel
+    local carryLevel = data.CarryLevel
+    local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
+    local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
+    local invCount = RepLibrary:GetLengthOfInventory(inv)
+    return invCount >= invSpace and carrySpace <= 0
+end
+
 local function handleEnteringQueue()
     debugPrint("Entering queue for garage:", GARAGE_ID)
     pcall(function() EnterQueue:InvokeServer(GARAGE_ID) end)
@@ -190,7 +181,6 @@ local function handleBidding()
     
     -- Check if auction ended
     if auctionEnded then
-        debugPrint("Auction ended during bidding")
         return
     end
     
@@ -201,7 +191,7 @@ local function handleBidding()
     end
     
     -- Continue bidding
-    task.wait(0.1)
+    task.wait(BID_CHECK_INTERVAL)
     if currentState == State.BIDDING and inAuction and currentGarage == firstGarage and not auctionEnded then
         handleBidding()
     end
@@ -229,7 +219,7 @@ local function handleProcessingItems()
         return
     end
     
-    -- Sort items by price
+    -- Sort items by price (most expensive first)
     local sortedItems = {}
     for guid, itemData in pairs(itemsWon) do
         local price = getItemPrice(itemData.itemId)
@@ -250,19 +240,25 @@ local function handleProcessingItems()
         debugPrint(string.format("  %d. %s - Price: %d", i, itemName, item.price))
     end
     
-    -- Keep most expensive, sell rest
+    -- Keep the most expensive item (DO NOT sell it)
+    -- Sell all other items
     if #sortedItems > 0 then
-        local keepGuids = {sortedItems[1].guid}
+        local keepGuid = sortedItems[1].guid
         local keepName = ItemsModule[tostring(sortedItems[1].itemId)] and ItemsModule[tostring(sortedItems[1].itemId)].Name or "Unknown"
         debugPrint("Keeping most expensive item:", keepName, "Price:", sortedItems[1].price)
         
         if #sortedItems > 1 then
+            -- Collect GUIDs of items to sell (all except the most expensive)
             local sellGuids = {}
             for i = 2, #sortedItems do
                 table.insert(sellGuids, sortedItems[i].guid)
             end
+            
+            debugPrint("Selling", #sellGuids, "less valuable items")
+            -- Sell the less valuable items, keep the most expensive one
             SellAllItems:InvokeServer("Default", sellGuids)
-            debugPrint("Sold", #sellGuids, "less valuable items")
+        else
+            debugPrint("Only one item won, keeping it")
         end
     end
     
@@ -305,7 +301,6 @@ local function stateMachine()
             debugPrint("Storage full, halting")
             return
         end
-        currentState = State.ENTERING_QUEUE
         handleEnteringQueue()
         
     elseif currentState == State.WAITING_FOR_AUCTION then
@@ -334,7 +329,7 @@ local function stateMachine()
 end
 
 -- Start the state machine
-debugPrint("Auction bot started - State-driven mode")
+debugPrint("Auction bot started - State-driven mode (keeps most expensive item)")
 
 task.spawn(function()
     while true do
