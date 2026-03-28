@@ -25,7 +25,7 @@ local currentNextBid = nil
 local currentBidder = nil
 local currentGarage = nil
 local processingItemsWon = false
-local firstGarageProcessed = false
+local firstGarageBid = false
 
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
@@ -85,7 +85,6 @@ task.spawn(function()
     end
 end)
 
--- Get item price from ItemsModule
 local function getItemPrice(itemId)
     local itemData = ItemsModule[tostring(itemId)]
     if itemData and itemData.Price then
@@ -117,7 +116,7 @@ AuctionsFolder.ChildRemoved:Connect(function(child)
         debugPrint("All auctions finished")
         inAuction = false
         currentGarage = nil
-        firstGarageProcessed = false
+        firstGarageBid = false
     end
 end)
 
@@ -134,8 +133,6 @@ local function storageFull()
 end
 
 local function bidOnCurrentGarage()
-    if not currentGarage then return false end
-    
     debugPrint("Bidding on garage:", currentGarage.Name)
     
     local bidStartTime = tick()
@@ -171,7 +168,8 @@ local function handleItemsWon()
     end
     
     local itemsWon = data.ItemsWon
-    if #itemsWon == 0 then
+    if not itemsWon or next(itemsWon) == nil then
+        debugPrint("No items won")
         processingItemsWon = false
         return true
     end
@@ -182,7 +180,8 @@ local function handleItemsWon()
         local price = getItemPrice(itemData.itemId)
         table.insert(sortedItems, {
             guid = guid,
-            price = price
+            price = price,
+            itemId = itemData.itemId
         })
     end
     
@@ -190,9 +189,16 @@ local function handleItemsWon()
         return a.price > b.price
     end)
     
+    debugPrint("Items sorted by price:")
+    for i, item in ipairs(sortedItems) do
+        local itemName = ItemsModule[tostring(item.itemId)] and ItemsModule[tostring(item.itemId)].Name or "Unknown"
+        debugPrint(string.format("  %d. %s - Price: %d", i, itemName, item.price))
+    end
+    
     -- Keep the most expensive item, sell the rest
     if #sortedItems > 0 then
         local keepGuids = {sortedItems[1].guid}
+        debugPrint("Keeping most expensive item (Price:", sortedItems[1].price, ")")
         
         if #sortedItems > 1 then
             local sellGuids = {}
@@ -200,7 +206,7 @@ local function handleItemsWon()
                 table.insert(sellGuids, sortedItems[i].guid)
             end
             SellAllItems:InvokeServer("Default", sellGuids)
-            debugPrint("Sold", #sellGuids, "items, kept the most expensive one")
+            debugPrint("Sold", #sellGuids, "less valuable items")
         end
     end
     
@@ -217,7 +223,7 @@ local function waitForCondition(condition, timeout, checkInterval)
     return false
 end
 
-debugPrint("Auction bot started")
+debugPrint("Auction bot started - will bid on first garage, skip the rest")
 
 while not halted do
     while processingItemsWon do
@@ -239,19 +245,36 @@ while not halted do
         continue
     end
     
-    debugPrint("Successfully entered auction")
+    -- Reset for new auction cycle
+    firstGarageBid = false
     
-    -- Bid on the first garage
+    -- This is the first garage - BID ON IT
+    debugPrint("This is the first garage - BIDDING")
     bidOnCurrentGarage()
+    firstGarageBid = true
     
-    -- Wait for auction to end
+    -- Wait for first auction to end
     while inAuction and not auctionEnded do
         task.wait(0.25)
     end
     
-    debugPrint("Auction ended, processing items won")
+    debugPrint("First auction ended, processing items won")
     handleItemsWon()
     
+    -- Now skip all remaining garages until queue is empty
+    debugPrint("Skipping remaining garages...")
+    while #AuctionsFolder:GetChildren() > 0 do
+        if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
+            debugPrint("Skipping garage:", currentGarage and currentGarage.Name)
+            pcall(function() SkipCountdown:InvokeServer() end)
+            task.wait(0.05)
+            pcall(function() Skip:InvokeServer() end)
+            lastSkipTime = tick()
+        end
+        task.wait(0.25)
+    end
+    
+    debugPrint("Queue cleared, ready for next cycle")
     task.wait(1.5)
 end
 
