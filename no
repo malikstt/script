@@ -15,22 +15,36 @@ local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 local SellAllItems = Auctions:WaitForChild("SellAllItems")
 
-local BID_CHECK_INTERVAL = 0.1
-local GARAGE_ID = "1"
+local GARAGE_ID = "62"
+local SKIP_COOLDOWN = 0.5
 
+-- State Machine States
+local State = {
+    IDLE = "IDLE",
+    ENTERING_QUEUE = "ENTERING_QUEUE",
+    WAITING_FOR_AUCTION = "WAITING_FOR_AUCTION",
+    BIDDING = "BIDDING",
+    WAITING_FOR_AUCTION_END = "WAITING_FOR_AUCTION_END",
+    PROCESSING_ITEMS = "PROCESSING_ITEMS",
+    SKIPPING_GARAGES = "SKIPPING_GARAGES"
+}
+
+-- State Variables
+local currentState = State.IDLE
 local inAuction = false
 local auctionEnded = false
-local halted = false
+local currentGarage = nil
+local firstGarage = nil
 local currentNextBid = nil
 local currentBidder = nil
-local currentGarage = nil
 local processingItemsWon = false
-local firstGarageBid = false
+local lastSkipTime = 0
 
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
+-- Utility Functions
 local function debugPrint(...)
-    print("[AuctionBot]", ...)
+    print("[AuctionBot]", "[" .. currentState .. "]", ...)
 end
 
 local function destroySpecificGuis()
@@ -93,33 +107,6 @@ local function getItemPrice(itemId)
     return 0
 end
 
-UpdateCurrentBid.OnClientEvent:Connect(function(data)
-    if data then
-        currentNextBid = data.nextBid
-        currentBidder = data.player
-    end
-end)
-
-AuctionsFolder.ChildAdded:Connect(function(garage)
-    debugPrint("Auction started for garage:", garage.Name)
-    inAuction = true
-    auctionEnded = false
-    currentGarage = garage
-end)
-
-AuctionsFolder.ChildRemoved:Connect(function(child)
-    if child == currentGarage then
-        debugPrint("Auction ended for garage:", child and child.Name)
-        auctionEnded = true
-    end
-    if #AuctionsFolder:GetChildren() == 0 then
-        debugPrint("All auctions finished")
-        inAuction = false
-        currentGarage = nil
-        firstGarageBid = false
-    end
-end)
-
 local function storageFull()
     local success, data = pcall(function() return DataEvent:InvokeServer() end)
     if not success or not data then return false end
@@ -132,49 +119,117 @@ local function storageFull()
     return invCount >= invSpace and carrySpace <= 0
 end
 
-local function bidOnCurrentGarage()
-    debugPrint("Bidding on garage:", currentGarage.Name)
+-- Event Handlers
+UpdateCurrentBid.OnClientEvent:Connect(function(data)
+    if data then
+        currentNextBid = data.nextBid
+        currentBidder = data.player
+    end
+end)
+
+AuctionsFolder.ChildAdded:Connect(function(garage)
+    debugPrint("Auction started for garage:", garage.Name)
+    inAuction = true
+    auctionEnded = false
+    currentGarage = garage
     
-    local bidStartTime = tick()
-    while inAuction and currentGarage and not auctionEnded do
-        if currentNextBid and currentBidder ~= LocalPlayer then
-            debugPrint("Placing bid:", currentNextBid)
-            pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
+    -- If we're waiting for an auction, transition to appropriate state
+    if currentState == State.WAITING_FOR_AUCTION then
+        if not firstGarage then
+            -- This is the first garage
+            firstGarage = garage
+            currentState = State.BIDDING
+            debugPrint("First garage detected, transitioning to BIDDING")
+        elseif currentState == State.SKIPPING_GARAGES then
+            -- We're in skipping mode, just ignore
+            debugPrint("Garage appeared during skipping mode, will be skipped")
+        end
+    end
+end)
+
+AuctionsFolder.ChildRemoved:Connect(function(child)
+    if child == currentGarage then
+        debugPrint("Auction ended for garage:", child and child.Name)
+        auctionEnded = true
+        inAuction = false
+        
+        -- If we were bidding and this garage ended
+        if currentState == State.BIDDING and child == firstGarage then
+            debugPrint("First garage auction ended, transitioning to PROCESSING_ITEMS")
+            currentState = State.PROCESSING_ITEMS
         end
         
-        if currentBidder == LocalPlayer then
-            debugPrint("Won the bid!")
-            break
-        end
-        
-        if tick() - bidStartTime > 60 then
-            debugPrint("Bid timeout")
-            break
-        end
-        task.wait(BID_CHECK_INTERVAL)
+        currentGarage = nil
     end
     
-    return true
+    -- Check if all auctions are done
+    if #AuctionsFolder:GetChildren() == 0 then
+        debugPrint("All auctions finished")
+        if currentState == State.SKIPPING_GARAGES then
+            debugPrint("Skipping complete, returning to IDLE")
+            currentState = State.IDLE
+            firstGarage = nil
+        end
+    end
+end)
+
+-- Core State Functions
+local function handleEnteringQueue()
+    debugPrint("Entering queue for garage:", GARAGE_ID)
+    pcall(function() EnterQueue:InvokeServer(GARAGE_ID) end)
+    currentState = State.WAITING_FOR_AUCTION
 end
 
-local function handleItemsWon()
+local function handleBidding()
+    -- Only bid if this is still the first garage
+    if currentGarage ~= firstGarage then
+        debugPrint("Garage changed, stopping bid")
+        currentState = State.WAITING_FOR_AUCTION_END
+        return
+    end
+    
+    -- Check if auction ended
+    if auctionEnded then
+        debugPrint("Auction ended during bidding")
+        return
+    end
+    
+    -- Bid if we're not the highest bidder
+    if currentNextBid and currentBidder ~= LocalPlayer then
+        debugPrint("Placing bid:", currentNextBid)
+        pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
+    end
+    
+    -- Continue bidding
+    task.wait(0.1)
+    if currentState == State.BIDDING and inAuction and currentGarage == firstGarage and not auctionEnded then
+        handleBidding()
+    end
+end
+
+local function handleProcessingItems()
+    if processingItemsWon then return end
+    
     processingItemsWon = true
-    debugPrint("Handling items won...")
+    debugPrint("Processing items won...")
     
     local success, data = pcall(function() return DataEvent:InvokeServer() end)
     if not success or not data or not data.ItemsWon then
         processingItemsWon = false
-        return false
+        debugPrint("Failed to get items won")
+        currentState = State.SKIPPING_GARAGES
+        return
     end
     
     local itemsWon = data.ItemsWon
     if not itemsWon or next(itemsWon) == nil then
         debugPrint("No items won")
         processingItemsWon = false
-        return true
+        currentState = State.SKIPPING_GARAGES
+        return
     end
     
-    -- Sort items by price (most expensive first)
+    -- Sort items by price
     local sortedItems = {}
     for guid, itemData in pairs(itemsWon) do
         local price = getItemPrice(itemData.itemId)
@@ -195,10 +250,11 @@ local function handleItemsWon()
         debugPrint(string.format("  %d. %s - Price: %d", i, itemName, item.price))
     end
     
-    -- Keep the most expensive item, sell the rest
+    -- Keep most expensive, sell rest
     if #sortedItems > 0 then
         local keepGuids = {sortedItems[1].guid}
-        debugPrint("Keeping most expensive item (Price:", sortedItems[1].price, ")")
+        local keepName = ItemsModule[tostring(sortedItems[1].itemId)] and ItemsModule[tostring(sortedItems[1].itemId)].Name or "Unknown"
+        debugPrint("Keeping most expensive item:", keepName, "Price:", sortedItems[1].price)
         
         if #sortedItems > 1 then
             local sellGuids = {}
@@ -211,71 +267,95 @@ local function handleItemsWon()
     end
     
     processingItemsWon = false
-    return true
+    currentState = State.SKIPPING_GARAGES
+    debugPrint("Items processed, transitioning to SKIPPING_GARAGES")
 end
 
-local function waitForCondition(condition, timeout, checkInterval)
-    local start = tick()
-    while tick() - start < timeout do
-        if condition() then return true end
-        task.wait(checkInterval or 0.1)
+local function handleSkippingGarages()
+    -- Check if there are any garages left
+    local garages = AuctionsFolder:GetChildren()
+    
+    if #garages == 0 then
+        debugPrint("No more garages to skip, returning to IDLE")
+        currentState = State.IDLE
+        firstGarage = nil
+        return
     end
-    return false
+    
+    -- Skip current garage if exists
+    if currentGarage and tick() - lastSkipTime >= SKIP_COOLDOWN then
+        debugPrint("Skipping garage:", currentGarage.Name)
+        pcall(function() SkipCountdown:InvokeServer() end)
+        task.wait(0.05)
+        pcall(function() Skip:InvokeServer() end)
+        lastSkipTime = tick()
+    end
+    
+    -- Continue skipping
+    task.wait(0.25)
+    if currentState == State.SKIPPING_GARAGES then
+        handleSkippingGarages()
+    end
 end
 
-debugPrint("Auction bot started - will bid on first garage, skip the rest")
-
-while not halted do
-    while processingItemsWon do
-        task.wait(0.25)
-    end
-    
-    if storageFull() then
-        debugPrint("Storage full, halting")
-        halted = true
-        break
-    end
-    
-    debugPrint("Entering queue for garage:", GARAGE_ID)
-    pcall(function() EnterQueue:InvokeServer(GARAGE_ID) end)
-    
-    local entered = waitForCondition(function() return inAuction end, 10, 0.05)
-    if not entered then
-        debugPrint("Failed to enter auction, retrying")
-        continue
-    end
-    
-    -- Reset for new auction cycle
-    firstGarageBid = false
-    
-    -- This is the first garage - BID ON IT
-    debugPrint("This is the first garage - BIDDING")
-    bidOnCurrentGarage()
-    firstGarageBid = true
-    
-    -- Wait for first auction to end
-    while inAuction and not auctionEnded do
-        task.wait(0.25)
-    end
-    
-    debugPrint("First auction ended, processing items won")
-    handleItemsWon()
-    
-    -- Now skip all remaining garages until queue is empty
-    debugPrint("Skipping remaining garages...")
-    while #AuctionsFolder:GetChildren() > 0 do
-        if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
-            debugPrint("Skipping garage:", currentGarage and currentGarage.Name)
-            pcall(function() SkipCountdown:InvokeServer() end)
-            task.wait(0.05)
-            pcall(function() Skip:InvokeServer() end)
-            lastSkipTime = tick()
+-- Main State Machine
+local function stateMachine()
+    if currentState == State.IDLE then
+        if storageFull() then
+            debugPrint("Storage full, halting")
+            return
         end
-        task.wait(0.25)
+        currentState = State.ENTERING_QUEUE
+        handleEnteringQueue()
+        
+    elseif currentState == State.WAITING_FOR_AUCTION then
+        -- Just wait for ChildAdded event to transition
+        task.wait(0.1)
+        if currentState == State.WAITING_FOR_AUCTION then
+            stateMachine()
+        end
+        
+    elseif currentState == State.BIDDING then
+        handleBidding()
+        
+    elseif currentState == State.WAITING_FOR_AUCTION_END then
+        -- Wait for auction to end (ChildRemoved event will handle transition)
+        task.wait(0.1)
+        if currentState == State.WAITING_FOR_AUCTION_END then
+            stateMachine()
+        end
+        
+    elseif currentState == State.PROCESSING_ITEMS then
+        handleProcessingItems()
+        
+    elseif currentState == State.SKIPPING_GARAGES then
+        handleSkippingGarages()
     end
-    
-    debugPrint("Queue cleared, ready for next cycle")
-    task.wait(1.5)
 end
 
-debugPrint("Auction bot stopped")
+-- Start the state machine
+debugPrint("Auction bot started - State-driven mode")
+
+task.spawn(function()
+    while true do
+        if currentState == State.IDLE then
+            stateMachine()
+        elseif currentState == State.ENTERING_QUEUE then
+            stateMachine()
+        elseif currentState == State.WAITING_FOR_AUCTION then
+            stateMachine()
+        elseif currentState == State.BIDDING then
+            -- Already running in handleBidding loop
+            task.wait(0.1)
+        elseif currentState == State.WAITING_FOR_AUCTION_END then
+            stateMachine()
+        elseif currentState == State.PROCESSING_ITEMS then
+            -- Already running in handleProcessingItems
+            task.wait(0.1)
+        elseif currentState == State.SKIPPING_GARAGES then
+            -- Already running in handleSkippingGarages
+            task.wait(0.1)
+        end
+        task.wait(0.1)
+    end
+end)
