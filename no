@@ -18,14 +18,12 @@ local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
 
 local BID_CHECK_INTERVAL = 0.1
 
-local inAuction = false
-local auctionEnded = false
-local currentGarage = nil
 local currentNextBid = nil
 local currentBidder = nil
 local processingItemsWon = false
 local currentGarageId = nil
-local roundOneCompleted = false
+local garagesWon = 0
+local auctionComplete = false
 
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
@@ -89,28 +87,6 @@ UpdateCurrentBid.OnClientEvent:Connect(function(data)
     if data then
         currentNextBid = data.nextBid
         currentBidder = data.player
-    end
-end)
-
-AuctionsFolder.ChildAdded:Connect(function(garage)
-    debugPrint("Garage spawned:", garage.Name)
-    
-    -- Only care about round 1
-    if garage.Name == "1" then
-        debugPrint("Round 1 garage detected, starting bid process")
-        inAuction = true
-        auctionEnded = false
-        currentGarage = garage
-        roundOneCompleted = false
-    end
-end)
-
-AuctionsFolder.ChildRemoved:Connect(function(child)
-    if child == currentGarage then
-        debugPrint("Round 1 garage ended")
-        auctionEnded = true
-        inAuction = false
-        currentGarage = nil
     end
 end)
 
@@ -274,20 +250,55 @@ local function handleItemsWon()
     return true
 end
 
-local function leaveAuction()
-    debugPrint("Leaving auction via Pass")
-    pcall(function() Pass:InvokeServer() end)
-    inAuction = false
-    auctionEnded = true
-    currentGarage = nil
-    roundOneCompleted = true
+local function bidOnGarage(garageName)
+    debugPrint("Bidding on garage:", garageName)
+    
+    local bidStartTime = tick()
+    local won = false
+    
+    while not won do
+        if currentNextBid and currentBidder ~= LocalPlayer then
+            debugPrint("Placing bid:", currentNextBid)
+            pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
+        end
+        
+        if currentBidder == LocalPlayer then
+            debugPrint("Won garage:", garageName)
+            won = true
+            break
+        end
+        
+        if tick() - bidStartTime > 45 then
+            debugPrint("Bid timeout on garage:", garageName)
+            break
+        end
+        task.wait(BID_CHECK_INTERVAL)
+    end
+    
+    return won
 end
 
-local function waitForCondition(condition, timeout, checkInterval)
+local function waitForGarage(garageNumber, timeout)
     local start = tick()
     while tick() - start < timeout do
-        if condition() then return true end
-        task.wait(checkInterval or 0.1)
+        local garage = AuctionsFolder:FindFirstChild(tostring(garageNumber))
+        if garage then
+            debugPrint("Garage", garageNumber, "spawned")
+            return garage
+        end
+        task.wait(0.1)
+    end
+    return nil
+end
+
+local function waitForGarageToEnd(garage, timeout)
+    local start = tick()
+    while tick() - start < timeout do
+        if not garage.Parent then
+            debugPrint("Garage", garage.Name, "ended")
+            return true
+        end
+        task.wait(0.1)
     end
     return false
 end
@@ -309,41 +320,45 @@ while true do
     
     debugPrint("Best auction:", bestAuction.data.Name, "ID:", bestAuction.id)
     currentGarageId = bestAuction.id
-    roundOneCompleted = false
+    garagesWon = 0
+    auctionComplete = false
     
     debugPrint("Entering queue for:", bestAuction.id)
     pcall(function() EnterQueue:InvokeServer(bestAuction.id) end)
     
-    local entered = waitForCondition(function() return inAuction end, 15, 0.05)
-    if not entered then
-        debugPrint("Failed to enter auction, retrying")
-        continue
+    -- Bid on garage 1
+    local garage1 = waitForGarage(1, 15)
+    if garage1 then
+        if bidOnGarage("1") then
+            garagesWon = garagesWon + 1
+        end
+        waitForGarageToEnd(garage1, 60)
     end
     
-    debugPrint("Round 1 started, bidding...")
-    local bidStartTime = tick()
-    
-    while inAuction and not auctionEnded and not roundOneCompleted do
-        if currentNextBid and currentBidder ~= LocalPlayer then
-            debugPrint("Placing bid:", currentNextBid)
-            pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
+    -- Bid on garage 2
+    local garage2 = waitForGarage(2, 15)
+    if garage2 then
+        if bidOnGarage("2") then
+            garagesWon = garagesWon + 1
         end
-        
-        if currentBidder == LocalPlayer then
-            debugPrint("Won round 1!")
-            leaveAuction()
-            break
-        end
-        
-        if tick() - bidStartTime > 45 then
-            debugPrint("Bid timeout, leaving")
-            leaveAuction()
-            break
-        end
-        task.wait(BID_CHECK_INTERVAL)
+        waitForGarageToEnd(garage2, 60)
     end
     
-    task.wait(2)
+    -- Bid on garage 3
+    local garage3 = waitForGarage(3, 15)
+    if garage3 then
+        if bidOnGarage("3") then
+            garagesWon = garagesWon + 1
+        end
+        waitForGarageToEnd(garage3, 60)
+    end
+    
+    debugPrint("All garages done. Won", garagesWon, "out of 3")
+    
+    -- Wait for items to be awarded
+    task.wait(3)
+    
+    -- Process items won
     handleItemsWon()
     
     debugPrint("Ready for next auction")
