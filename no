@@ -8,7 +8,6 @@ local GaragesModule = require(ReplicatedStorage.Modules.Garages)
 
 local Auctions = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
 local EnterQueue = Auctions:WaitForChild("EnterQueue")
-local SkipCountdown = Auctions:WaitForChild("SkipCountdown")
 local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
 local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
@@ -24,9 +23,9 @@ local auctionEnded = false
 local currentGarage = nil
 local currentNextBid = nil
 local currentBidder = nil
-local isBiddingActive = false
 local processingItemsWon = false
 local currentGarageId = nil
+local roundOneCompleted = false
 
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
@@ -94,24 +93,24 @@ UpdateCurrentBid.OnClientEvent:Connect(function(data)
 end)
 
 AuctionsFolder.ChildAdded:Connect(function(garage)
-    debugPrint("Auction started for garage:", garage.Name)
-    inAuction = true
-    auctionEnded = false
-    currentGarage = garage
-    isBiddingActive = false
+    debugPrint("Garage spawned:", garage.Name)
+    
+    -- Only care about round 1
+    if garage.Name == "1" then
+        debugPrint("Round 1 garage detected, starting bid process")
+        inAuction = true
+        auctionEnded = false
+        currentGarage = garage
+        roundOneCompleted = false
+    end
 end)
 
 AuctionsFolder.ChildRemoved:Connect(function(child)
     if child == currentGarage then
-        debugPrint("Auction ended for garage:", child and child.Name)
+        debugPrint("Round 1 garage ended")
         auctionEnded = true
-        isBiddingActive = false
-    end
-    if #AuctionsFolder:GetChildren() == 0 then
-        debugPrint("All auctions finished")
         inAuction = false
         currentGarage = nil
-        currentGarageId = nil
     end
 end)
 
@@ -177,7 +176,7 @@ local function findBestAffordableAuction()
                 }
             end
             
-            debugPrint("Can afford:", auctionData.Name, "Type:", auctionData.Type, "Budget:", auctionData.AuctionBudget)
+            debugPrint("Can afford:", auctionData.Name, "Budget:", auctionData.AuctionBudget)
         end
     end
     
@@ -213,8 +212,7 @@ local function sortItemsByValue(items)
         table.insert(itemList, {
             guid = guid,
             itemId = itemId,
-            price = price,
-            data = itemData
+            price = price
         })
     end
     table.sort(itemList, function(a, b) return a.price > b.price end)
@@ -234,6 +232,7 @@ local function handleItemsWon()
     
     local itemsWon = data.ItemsWon
     if not itemsWon or next(itemsWon) == nil then
+        debugPrint("No items won")
         processingItemsWon = false
         return false
     end
@@ -244,10 +243,10 @@ local function handleItemsWon()
     local sortedItems = sortItemsByValue(itemsWon)
     local keepGuids = {}
     local keepCount = 0
-    
     local maxKeep = invSpace + carrySpace
+    
     if maxKeep <= 0 then
-        debugPrint("No space to keep any items, selling all")
+        debugPrint("No space, selling all")
         pcall(function() SellAllItems:InvokeServer("Default", {}) end)
         processingItemsWon = false
         return false
@@ -259,15 +258,15 @@ local function handleItemsWon()
             keepCount = keepCount + 1
             debugPrint("Keeping:", item.itemId, "Value:", item.price)
         else
-            debugPrint("Selling (no space):", item.itemId, "Value:", item.price)
+            debugPrint("Selling:", item.itemId, "Value:", item.price)
         end
     end
     
     if #keepGuids > 0 then
-        debugPrint("Keeping", #keepGuids, "items, selling", #sortedItems - #keepGuids, "items")
+        debugPrint("Keeping", #keepGuids, "items")
         pcall(function() SellAllItems:InvokeServer("Default", keepGuids) end)
     else
-        debugPrint("No space to keep items, selling all")
+        debugPrint("No space, selling all")
         pcall(function() SellAllItems:InvokeServer("Default", {}) end)
     end
     
@@ -276,13 +275,12 @@ local function handleItemsWon()
 end
 
 local function leaveAuction()
-    debugPrint("Leaving auction via Pass:InvokeServer()")
+    debugPrint("Leaving auction via Pass")
     pcall(function() Pass:InvokeServer() end)
     inAuction = false
     auctionEnded = true
     currentGarage = nil
-    currentGarageId = nil
-    isBiddingActive = false
+    roundOneCompleted = true
 end
 
 local function waitForCondition(condition, timeout, checkInterval)
@@ -294,7 +292,7 @@ local function waitForCondition(condition, timeout, checkInterval)
     return false
 end
 
-debugPrint("Auction bot started - finding best affordable auction")
+debugPrint("Auction bot started")
 
 while true do
     while processingItemsWon do
@@ -304,56 +302,49 @@ while true do
     local bestAuction = findBestAffordableAuction()
     
     if not bestAuction then
-        debugPrint("No affordable auction found, waiting 30 seconds before retry")
+        debugPrint("No affordable auction found, waiting 30 seconds")
         task.wait(30)
         continue
     end
     
     debugPrint("Best auction:", bestAuction.data.Name, "ID:", bestAuction.id)
     currentGarageId = bestAuction.id
+    roundOneCompleted = false
     
-    debugPrint("Entering queue for garage:", bestAuction.id)
+    debugPrint("Entering queue for:", bestAuction.id)
     pcall(function() EnterQueue:InvokeServer(bestAuction.id) end)
     
-    local entered = waitForCondition(function() return inAuction end, 10, 0.05)
+    local entered = waitForCondition(function() return inAuction end, 15, 0.05)
     if not entered then
         debugPrint("Failed to enter auction, retrying")
         continue
     end
     
-    debugPrint("Successfully entered", bestAuction.data.Name, ", starting bid process")
-    isBiddingActive = true
-    
+    debugPrint("Round 1 started, bidding...")
     local bidStartTime = tick()
-    while inAuction and not auctionEnded do
+    
+    while inAuction and not auctionEnded and not roundOneCompleted do
         if currentNextBid and currentBidder ~= LocalPlayer then
             debugPrint("Placing bid:", currentNextBid)
             pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
         end
         
         if currentBidder == LocalPlayer then
-            debugPrint("Won the bid!")
+            debugPrint("Won round 1!")
+            leaveAuction()
             break
         end
         
         if tick() - bidStartTime > 45 then
-            debugPrint("Bid timeout, leaving auction")
+            debugPrint("Bid timeout, leaving")
+            leaveAuction()
             break
         end
         task.wait(BID_CHECK_INTERVAL)
     end
     
-    isBiddingActive = false
-    
-    if inAuction and not auctionEnded then
-        debugPrint("Auction ended, leaving and processing items")
-        leaveAuction()
-        task.wait(1)
-        handleItemsWon()
-    else
-        debugPrint("Auction already ended")
-        handleItemsWon()
-    end
+    task.wait(2)
+    handleItemsWon()
     
     debugPrint("Ready for next auction")
     task.wait(2)
