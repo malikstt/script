@@ -8,17 +8,15 @@ local GaragesModule = require(ReplicatedStorage.Modules.Garages)
 
 local Auctions = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
 local EnterQueue = Auctions:WaitForChild("EnterQueue")
-local Skip = Auctions:WaitForChild("Skip")
 local SkipCountdown = Auctions:WaitForChild("SkipCountdown")
 local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
 local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 local SellAllItems = Auctions:WaitForChild("SellAllItems")
-local PassLocal = Auctions:WaitForChild("PassLocal")
+local Pass = Auctions:WaitForChild("Pass")
 
 local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
 
-local GARAGE_ID = "1"
 local BID_CHECK_INTERVAL = 0.1
 
 local inAuction = false
@@ -28,8 +26,7 @@ local currentNextBid = nil
 local currentBidder = nil
 local isBiddingActive = false
 local processingItemsWon = false
-local lastSkipTime = 0
-local SKIP_COOLDOWN = 0.5
+local currentGarageId = nil
 
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
@@ -114,8 +111,78 @@ AuctionsFolder.ChildRemoved:Connect(function(child)
         debugPrint("All auctions finished")
         inAuction = false
         currentGarage = nil
+        currentGarageId = nil
     end
 end)
+
+local function canAffordAuction(auction, playerCash, playerS2Cash)
+    if auction.Type == "Cash" then
+        if playerCash < auction.CostToEnter then
+            return false
+        end
+    elseif auction.Type == "S2Cash" then
+        if playerS2Cash < auction.CostToEnter then
+            return false
+        end
+    else
+        return false
+    end
+    
+    local requiredBudget = auction.CashNeededToEnter or auction.AuctionBudget or 0
+    if requiredBudget > 0 and playerCash < requiredBudget then
+        return false
+    end
+    
+    return true
+end
+
+local function findBestAffordableAuction()
+    local playerCash = LocalPlayer.SaveVars.Cash.Value
+    local playerS2Cash = LocalPlayer.SaveVars.S2Cash and LocalPlayer.SaveVars.S2Cash.Value or 0
+    
+    local bestAuction = nil
+    local bestScore = -1
+    
+    debugPrint("Player Balance - Cash:", playerCash, "S2Cash:", playerS2Cash)
+    
+    for auctionId, auctionData in pairs(GaragesModule) do
+        if auctionData.Finished then
+            continue
+        end
+        
+        if auctionData.Limited or auctionData.SerialRotation or auctionData.AirportLevel then
+            continue
+        end
+        
+        if auctionData.Type ~= "Cash" and auctionData.Type ~= "S2Cash" then
+            continue
+        end
+        
+        if canAffordAuction(auctionData, playerCash, playerS2Cash) then
+            local auctionScore = (auctionData.AuctionBudget or 0)
+            
+            if auctionData.CostToEnter > 0 then
+                auctionScore = auctionScore + (auctionData.CostToEnter * 10)
+            end
+            
+            if auctionData.Type == "S2Cash" then
+                auctionScore = auctionScore + 100000
+            end
+            
+            if auctionScore > bestScore then
+                bestScore = auctionScore
+                bestAuction = {
+                    id = auctionId,
+                    data = auctionData
+                }
+            end
+            
+            debugPrint("Can afford:", auctionData.Name, "Type:", auctionData.Type, "Budget:", auctionData.AuctionBudget)
+        end
+    end
+    
+    return bestAuction
+end
 
 local function getPlayerData()
     local success, data = pcall(function() return DataEvent:InvokeServer() end)
@@ -180,7 +247,8 @@ local function handleItemsWon()
     
     local maxKeep = invSpace + carrySpace
     if maxKeep <= 0 then
-        debugPrint("No space to keep any items")
+        debugPrint("No space to keep any items, selling all")
+        pcall(function() SellAllItems:InvokeServer("Default", {}) end)
         processingItemsWon = false
         return false
     end
@@ -197,19 +265,10 @@ local function handleItemsWon()
     
     if #keepGuids > 0 then
         debugPrint("Keeping", #keepGuids, "items, selling", #sortedItems - #keepGuids, "items")
-        local success = pcall(function()
-            return SellAllItems:InvokeServer("Default", keepGuids)
-        end)
-        if success then
-            debugPrint("Successfully processed items")
-        else
-            debugPrint("Failed to process items")
-        end
+        pcall(function() SellAllItems:InvokeServer("Default", keepGuids) end)
     else
-        debugPrint("No items to keep, selling all")
-        pcall(function()
-            SellAllItems:InvokeServer("Default", {})
-        end)
+        debugPrint("No space to keep items, selling all")
+        pcall(function() SellAllItems:InvokeServer("Default", {}) end)
     end
     
     processingItemsWon = false
@@ -217,13 +276,12 @@ local function handleItemsWon()
 end
 
 local function leaveAuction()
-    debugPrint("Leaving auction via PassLocal")
-    pcall(function()
-        PassLocal:FireServer()
-    end)
+    debugPrint("Leaving auction via Pass:InvokeServer()")
+    pcall(function() Pass:InvokeServer() end)
     inAuction = false
     auctionEnded = true
     currentGarage = nil
+    currentGarageId = nil
     isBiddingActive = false
 end
 
@@ -236,15 +294,26 @@ local function waitForCondition(condition, timeout, checkInterval)
     return false
 end
 
-debugPrint("Auction bot started - monitoring for garage", GARAGE_ID)
+debugPrint("Auction bot started - finding best affordable auction")
 
 while true do
     while processingItemsWon do
         task.wait(0.25)
     end
     
-    debugPrint("Entering queue for garage:", GARAGE_ID)
-    pcall(function() EnterQueue:InvokeServer(GARAGE_ID) end)
+    local bestAuction = findBestAffordableAuction()
+    
+    if not bestAuction then
+        debugPrint("No affordable auction found, waiting 30 seconds before retry")
+        task.wait(30)
+        continue
+    end
+    
+    debugPrint("Best auction:", bestAuction.data.Name, "ID:", bestAuction.id)
+    currentGarageId = bestAuction.id
+    
+    debugPrint("Entering queue for garage:", bestAuction.id)
+    pcall(function() EnterQueue:InvokeServer(bestAuction.id) end)
     
     local entered = waitForCondition(function() return inAuction end, 10, 0.05)
     if not entered then
@@ -252,7 +321,7 @@ while true do
         continue
     end
     
-    debugPrint("Successfully entered garage 1, starting bid process")
+    debugPrint("Successfully entered", bestAuction.data.Name, ", starting bid process")
     isBiddingActive = true
     
     local bidStartTime = tick()
@@ -277,7 +346,7 @@ while true do
     isBiddingActive = false
     
     if inAuction and not auctionEnded then
-        debugPrint("Auction ended or bid won, processing items")
+        debugPrint("Auction ended, leaving and processing items")
         leaveAuction()
         task.wait(1)
         handleItemsWon()
