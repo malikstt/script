@@ -22,9 +22,6 @@ local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 local SellAllItems = Auctions:WaitForChild("SellAllItems")
 
-local Events = ReplicatedStorage:WaitForChild("Events")
-local Shop = Events:WaitForChild("Shop")
-
 local SCAN_DURATION = 1
 local GARAGE_ID = "1"
 local BID_CHECK_INTERVAL = 0.1
@@ -227,18 +224,6 @@ local function collectGarageItems()
     end
 end
 
-local function getInventory()
-    local success, data = pcall(function()
-        return DataEvent:InvokeServer()
-    end)
-    
-    if not success or not data or not data.Inventory then
-        return {}
-    end
-    
-    return data.Inventory
-end
-
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
     if data then
         currentNextBid = data.nextBid
@@ -247,13 +232,14 @@ UpdateCurrentBid.OnClientEvent:Connect(function(data)
 end)
 
 AuctionsFolder.ChildAdded:Connect(function(garage)
-    debugPrint("Auction started for garage:", garage.Name)
+    local garageName = garage.Name
+    debugPrint("Auction started for garage:", garageName)
     inAuction = true
     auctionEnded = false
     currentGarage = garage
     processingItemsWon = false
     isBiddingActive = false
-    currentGarageId = garage.Name
+    currentGarageId = garageName
 end)
 
 AuctionsFolder.ChildRemoved:Connect(function(child)
@@ -284,23 +270,6 @@ local function storageFull()
     return invCount >= invSpace and carrySpace <= 0
 end
 
-local function scanCurrentGarage()
-    if not currentGarage then return false end
-    local itemsFolder = currentGarage:FindFirstChild("Items")
-    if not itemsFolder then return false end
-    
-    local startTime = tick()
-    while tick() - startTime < SCAN_DURATION and currentGarage and currentGarage.Parent do
-        for _, itemInstance in pairs(itemsFolder:GetChildren()) do
-            local itemId = itemInstance.Name
-            debugPrint("Found item in garage:", itemId)
-            return true
-        end
-        task.wait(0.1)
-    end
-    return false
-end
-
 local function handleItemsWon()
     processingItemsWon = true
     debugPrint("Handling items won...")
@@ -312,23 +281,20 @@ local function handleItemsWon()
     end
     
     local itemsWon = data.ItemsWon
-    local sellGuids = {} -- Items to SELL (low value ones)
-    local keepGuids = {} -- Items to KEEP (high value ones)
+    local sellGuids = {}
+    local keepGuids = {}
     
     for guid, itemData in pairs(itemsWon) do
         local itemId = tostring(itemData.itemId)
         if shouldCollectItem(itemId) then
-            -- High value item - KEEP it
             debugPrint("KEEPING high value item:", itemId)
             table.insert(keepGuids, guid)
         else
-            -- Low value item - SELL it
             debugPrint("SELLING low value item:", itemId)
             table.insert(sellGuids, guid)
         end
     end
     
-    -- Sell the low value items (the ones we don't want)
     if #sellGuids > 0 then
         SellAllItems:InvokeServer("Default", sellGuids)
         debugPrint("Sold", #sellGuids, "low value items")
@@ -382,7 +348,6 @@ while not halted do
         garage1Processed = true
         
         -- Bid on everything in garage 1
-        local auctionActive = true
         while inAuction and currentGarageId == GARAGE_ID and not auctionEnded do
             if currentNextBid and currentBidder ~= LocalPlayer then
                 debugPrint("Placing bid:", currentNextBid)
@@ -392,19 +357,22 @@ while not halted do
             if currentBidder == LocalPlayer then
                 debugPrint("Won the bid!")
                 obtainedTarget = true
-                break
             end
             
             task.wait(BID_CHECK_INTERVAL)
         end
     else
         -- This is garage 2 or higher - don't bid, just skip
-        debugPrint("This is garage", currentGarageId, "- skipping, no bidding")
+        debugPrint("This is garage", currentGarageId, "- skipping immediately")
         
-        -- Skip immediately
-        pcall(function() SkipCountdown:InvokeServer() end)
-        task.wait(0.05)
-        pcall(function() Skip:InvokeServer() end)
+        -- Skip the auction immediately
+        if tick() - lastSkipTime > SKIP_COOLDOWN then
+            pcall(function() SkipCountdown:InvokeServer() end)
+            task.wait(0.05)
+            pcall(function() Skip:InvokeServer() end)
+            lastSkipTime = tick()
+            debugPrint("Skipped garage", currentGarageId)
+        end
     end
     
     -- Wait for auction to end
