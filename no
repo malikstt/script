@@ -23,10 +23,9 @@ local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):
 local SellAllItems = Auctions:WaitForChild("SellAllItems")
 
 local SCAN_DURATION = 1
-local GARAGE_ID = "1"  -- Changed to garage 1
+local GARAGE_ID = "1"
 local BID_CHECK_INTERVAL = 0.1
 
--- Store IDs from garage 1
 local garage1ItemIds = {}
 local sortedHighValueItems = {}
 
@@ -103,7 +102,6 @@ task.spawn(function()
     end
 end)
 
--- Function to check if item should be collected (based on sorted high value items from garage 1)
 local function shouldCollectItem(itemId)
     for _, id in ipairs(sortedHighValueItems) do
         if tostring(itemId) == tostring(id) then
@@ -113,7 +111,6 @@ local function shouldCollectItem(itemId)
     return false
 end
 
--- Function to get inventory space info
 local function getSpaceInfo()
     local success, data = pcall(function() return DataEvent:InvokeServer() end)
     if not success or not data then return nil end
@@ -132,14 +129,12 @@ local function getSpaceInfo()
     }
 end
 
--- Function to sort items by price and determine what to keep based on available space
 local function updateHighValueItems()
     if #garage1ItemIds == 0 then
         debugPrint("No items found in garage 1 to sort")
         return
     end
     
-    -- Create array of items with their prices
     local itemsWithPrice = {}
     for _, itemId in ipairs(garage1ItemIds) do
         local itemData = ItemsModule[itemId]
@@ -152,15 +147,12 @@ local function updateHighValueItems()
         end
     end
     
-    -- Sort by price (highest first)
     table.sort(itemsWithPrice, function(a, b)
         return a.price > b.price
     end)
     
-    -- Get available space
     local spaceInfo = getSpaceInfo()
     if not spaceInfo then
-        debugPrint("Could not get space info, using all items")
         sortedHighValueItems = {}
         for _, item in ipairs(itemsWithPrice) do
             table.insert(sortedHighValueItems, item.id)
@@ -170,7 +162,6 @@ local function updateHighValueItems()
     
     debugPrint("Available inventory space:", spaceInfo.invAvailable)
     
-    -- Calculate how many items we can keep
     local maxItemsToKeep = spaceInfo.invAvailable
     if maxItemsToKeep <= 0 then
         debugPrint("No inventory space available, cannot keep any items")
@@ -178,7 +169,6 @@ local function updateHighValueItems()
         return
     end
     
-    -- Take the highest priced items up to available space
     sortedHighValueItems = {}
     for i = 1, math.min(#itemsWithPrice, maxItemsToKeep) do
         table.insert(sortedHighValueItems, itemsWithPrice[i].id)
@@ -188,14 +178,13 @@ local function updateHighValueItems()
     debugPrint("Will keep", #sortedHighValueItems, "out of", #itemsWithPrice, "items")
 end
 
--- Function to collect items from current garage (store ALL IDs)
 local function collectGarageItems()
     if not currentGarage then return end
     local itemsFolder = currentGarage:FindFirstChild("Items")
     if not itemsFolder then return end
     
     local itemsFound = {}
-    garage1ItemIds = {} -- Reset for new garage 1 auction
+    garage1ItemIds = {}
     for _, itemInstance in pairs(itemsFolder:GetChildren()) do
         local itemId = itemInstance.Name
         local itemData = ItemsModule[itemId]
@@ -207,7 +196,6 @@ local function collectGarageItems()
     
     if #itemsFound > 0 then
         debugPrint("Collected", #itemsFound, "items from garage", currentGarageId, ":", table.concat(itemsFound, ", "))
-        -- Sort and determine what to keep
         updateHighValueItems()
     end
 end
@@ -270,16 +258,14 @@ local function handleItemsWon()
     
     local itemsWon = data.ItemsWon
     local sellGuids = {}
-    local keepGuids = {}
     
     for guid, itemData in pairs(itemsWon) do
         local itemId = tostring(itemData.itemId)
-        if shouldCollectItem(itemId) then
-            debugPrint("KEEPING high value item:", itemId)
-            table.insert(keepGuids, guid)
-        else
+        if not shouldCollectItem(itemId) then
             debugPrint("SELLING low value item:", itemId)
             table.insert(sellGuids, guid)
+        else
+            debugPrint("KEEPING high value item:", itemId)
         end
     end
     
@@ -287,8 +273,6 @@ local function handleItemsWon()
         SellAllItems:InvokeServer("Default", sellGuids)
         debugPrint("Sold", #sellGuids, "low value items")
     end
-    
-    debugPrint("Kept", #keepGuids, "high value items")
     
     processingItemsWon = false
     return true
@@ -327,15 +311,12 @@ while not halted do
     
     debugPrint("Successfully entered auction for garage", currentGarageId)
     
-    -- Check if this is garage 1
     if currentGarageId == GARAGE_ID then
         debugPrint("This is garage 1 - collecting items and bidding on everything")
         
-        -- Collect all item IDs from garage 1
         collectGarageItems()
         garage1Processed = true
         
-        -- Bid on everything in garage 1 (no target filtering)
         while inAuction and currentGarageId == GARAGE_ID and not auctionEnded do
             if currentNextBid and currentBidder ~= LocalPlayer then
                 debugPrint("Placing bid:", currentNextBid)
@@ -350,10 +331,8 @@ while not halted do
             task.wait(BID_CHECK_INTERVAL)
         end
     else
-        -- This is garage 2 or higher - don't bid, just skip
         debugPrint("This is garage", currentGarageId, "- skipping immediately (no bidding)")
         
-        -- Skip the auction immediately
         if tick() - lastSkipTime > SKIP_COOLDOWN then
             pcall(function() SkipCountdown:InvokeServer() end)
             task.wait(0.05)
@@ -363,7 +342,6 @@ while not halted do
         end
     end
     
-    -- Wait for auction to end
     while inAuction and not auctionEnded do
         task.wait(0.25)
     end
@@ -372,7 +350,6 @@ while not halted do
         debugPrint("Auction ended, processing items won from garage 1")
         handleItemsWon()
         garage1Processed = false
-        -- Reset for next garage 1 auction
         garage1ItemIds = {}
         sortedHighValueItems = {}
     end
