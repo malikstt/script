@@ -140,7 +140,7 @@ local function updateHighValueItems()
         local itemData = ItemsModule[itemId]
         if itemData and itemData.Price then
             table.insert(itemsWithPrice, {
-                id = itemId,
+                id = tostring(itemId),
                 price = itemData.Price,
                 name = itemData.Name
             })
@@ -183,21 +183,36 @@ local function collectGarageItems()
     local itemsFolder = currentGarage:FindFirstChild("Items")
     if not itemsFolder then return end
     
-    local itemsFound = {}
     garage1ItemIds = {}
-    for _, itemInstance in pairs(itemsFolder:GetChildren()) do
-        local itemId = itemInstance.Name
-        local itemData = ItemsModule[itemId]
-        if itemData and itemData.Price then
-            table.insert(garage1ItemIds, itemId)
-            table.insert(itemsFound, itemData.Name .. " (ID:" .. itemId .. ", Price:" .. itemData.Price .. ")")
+    local itemsFound = {}
+    local startTime = tick()
+    
+    while tick() - startTime < SCAN_DURATION and currentGarage and currentGarage.Parent do
+        for _, itemInstance in pairs(itemsFolder:GetChildren()) do
+            local itemId = itemInstance.Name
+            local itemData = ItemsModule[itemId]
+            if itemData and itemData.Price then
+                local alreadyExists = false
+                for _, id in ipairs(garage1ItemIds) do
+                    if tostring(id) == tostring(itemId) then
+                        alreadyExists = true
+                        break
+                    end
+                end
+                if not alreadyExists then
+                    table.insert(garage1ItemIds, itemId)
+                    table.insert(itemsFound, itemData.Name .. " (ID:" .. itemId .. ", Price:" .. itemData.Price .. ")")
+                end
+            end
         end
+        task.wait(0.1)
     end
     
     if #itemsFound > 0 then
         debugPrint("Collected", #itemsFound, "items from garage", currentGarageId, ":", table.concat(itemsFound, ", "))
         updateHighValueItems()
     end
+    debugPrint("Keep list size:", #sortedHighValueItems)
 end
 
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
@@ -257,21 +272,25 @@ local function handleItemsWon()
     end
     
     local itemsWon = data.ItemsWon
-    local sellGuids = {}
+    local keepGuids = {}
     
     for guid, itemData in pairs(itemsWon) do
         local itemId = tostring(itemData.itemId)
-        if not shouldCollectItem(itemId) then
-            debugPrint("SELLING low value item:", itemId)
-            table.insert(sellGuids, guid)
-        else
+        if shouldCollectItem(itemId) then
             debugPrint("KEEPING high value item:", itemId)
+            table.insert(keepGuids, guid)
+        else
+            debugPrint("SELLING low value item:", itemId)
         end
     end
     
-    if #sellGuids > 0 then
-        SellAllItems:InvokeServer("Default", sellGuids)
-        debugPrint("Sold", #sellGuids, "low value items")
+    debugPrint("Keep list size:", #keepGuids)
+    
+    if #keepGuids > 0 then
+        SellAllItems:InvokeServer("Default", keepGuids)
+        debugPrint("Kept", #keepGuids, "high value items (others sold)")
+    else
+        debugPrint("No items to keep, selling nothing")
     end
     
     processingItemsWon = false
