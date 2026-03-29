@@ -1,429 +1,108 @@
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local HttpService = game:GetService("HttpService")
-local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
 local LocalPlayer = Players.LocalPlayer
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local Humanoid = Character:WaitForChild("Humanoid")
 
-local nonSaveVars = LocalPlayer:FindFirstChild("NonSaveVars")
-local ownsPlot = nonSaveVars and nonSaveVars:FindFirstChild("OwnsPlot")
-local currentPlot = ownsPlot and ownsPlot:IsA("ValueBase") and ownsPlot.Value or "7"
-local canvas = workspace.Plots[tostring(currentPlot)].Interior.Shop1.Canvas
+-- Set walk speed
+Humanoid.WalkSpeed = 80
 
-local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
-local ItemsModule = require(ReplicatedStorage.Modules.Items)
-local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
+local Events = ReplicatedStorage:WaitForChild("Events")
+local Shop = Events:WaitForChild("Shop")
+local Data = Events:WaitForChild("Data")
+local InsertFurniture = Shop:WaitForChild("InsertFurniture")
+local RemoveFurniture = Shop:WaitForChild("RemoveFurniture")
+local GetAll = Data:WaitForChild("GetAll")
 
-local Auctions = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
-local EnterQueue = Auctions:WaitForChild("EnterQueue")
-local Skip = Auctions:WaitForChild("Skip")
-local SkipCountdown = Auctions:WaitForChild("SkipCountdown")
-local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
-local PlaceBid = Auctions:WaitForChild("PlaceBid")
-local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
-local SellAllItems = Auctions:WaitForChild("SellAllItems")
+local BLOCK_IDS = {"2294","1162"} -- Items to remove / not place
+local FLOOR = 1
 
-local SCAN_DURATION = 1
-local GARAGE_ID = "1"
-local BID_CHECK_INTERVAL = 0.1
-
-local garage1ItemIds = {}
-local sortedHighValueItems = {}
-
-local inAuction = false
-local obtainedTarget = false
-local auctionEnded = false
-local halted = false
-local currentNextBid = nil
-local currentBidder = nil
-local currentGarage = nil
-local processingItemsWon = false
-local isBiddingActive = false
-local currentGarageId = nil
-local garage1Processed = false
-
-local lastSkipTime = 0
-local SKIP_COOLDOWN = 0.5
-
-local function itemsUpdated()
-    local ok, data = pcall(function()
-        return DataEvent:InvokeServer()
-    end)
-
-    if ok and data and data.ItemsWon then
-        return next(data.ItemsWon) ~= nil
-    end
-
-    return false
+-- Wait for plot
+local function getPlot()
+    local own = LocalPlayer:WaitForChild("NonSaveVars"):WaitForChild("OwnsPlot")
+    repeat task.wait() until own.Value ~= 0
+    return Workspace.Plots:WaitForChild(tostring(own.Value))
 end
 
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-
-local function debugPrint(...)
-    print("[AuctionBot]", ...)
+-- Get furniture folder in plot
+local function getFurnitureFolder()
+    local plot = getPlot()
+    return plot:WaitForChild("Furniture")
 end
 
-local function destroySpecificGuis()
-    local items = PlayerGui:FindFirstChild("ItemsWon")
-    if items then items:Destroy() end
-    local circle = PlayerGui:FindFirstChild("CircleAnimationUI")
-    if circle then circle:Destroy() end
-end
-
-destroySpecificGuis()
-
-PlayerGui.ChildAdded:Connect(function(child)
-    if child.Name == "ItemsWon" or child.Name == "CircleAnimationUI" then
-        child:Destroy()
-    end
-end)
-
-local function tryClick(obj)
-    if obj and (obj:IsA("TextButton") or obj:IsA("ImageButton")) then
-        pcall(function() obj:Activate() end)
-        if getconnections then
-            for _, v in pairs(getconnections(obj.MouseButton1Click)) do
-                pcall(function() v:Fire() end)
+-- Remove placed furniture with BLOCK_IDS
+local function removePlacedFurniture()
+    local folder = getFurnitureFolder()
+    local removed = 0
+    for _, model in ipairs(folder:GetChildren()) do
+        if model:IsA("Model") then
+            local itemId = model:GetAttribute("ItemId")
+            if itemId and table.find(BLOCK_IDS, tostring(itemId)) then
+                pcall(function() RemoveFurniture:InvokeServer(model) end)
+                removed += 1
+                task.wait(0.1)
             end
         end
     end
+    return removed
 end
 
-local function checkForButton()
-    local itemsWon = PlayerGui:FindFirstChild("ItemsWon", true)
-    if itemsWon then
-        local button = itemsWon:FindFirstChild("Button", true)
-        if button then
-            tryClick(button)
+-- Get inventory items that are NOT BLOCK_IDS
+local function getInventory()
+    local success, data = pcall(function() return GetAll:InvokeServer() end)
+    if not success or not data or not data.Inventory then return {} end
+
+    local items = {}
+    for guid, item in pairs(data.Inventory) do
+        if not table.find(BLOCK_IDS, tostring(item.Id)) then
+            table.insert(items, {GUID=guid, Id=item.Id})
         end
     end
+    return items
 end
 
-checkForButton()
+-- Place items from inventory
+local function placeItems()
+    local plot = getPlot()
+    local canvas = plot.Interior.Shop1.Canvas
+    local inventory = getInventory()
+    if #inventory == 0 then return 0 end
 
-PlayerGui.DescendantAdded:Connect(function(obj)
-    if obj.Name == "Button" then
-        task.wait(0.5)
-        tryClick(obj)
-    end
-end)
+    math.randomseed(tick())
+    local cx, cy, cz = canvas.Position.X, canvas.Position.Y, canvas.Position.Z
+    local sx, sy, sz = canvas.Size.X/2, canvas.Size.Y/2, canvas.Size.Z/2
 
-task.spawn(function()
-    while true do
-        task.wait(0.25)
-        checkForButton()
-    end
-end)
+    local inserted = 0
+    for _, item in ipairs(inventory) do
+        local rx = cx + math.random(-sx*100, sx*100)/100
+        local rz = cz + math.random(-sz*100, sz*100)/100
+        local ry = cy + sy + math.random(5,40)
 
-local function shouldCollectItem(itemId)
-    for _, id in ipairs(sortedHighValueItems) do
-        if tostring(itemId) == tostring(id) then
-            return true
-        end
-    end
-    return false
-end
+        local args = {
+            {
+                GUID = item.GUID,
+                Type = "Decor",
+                Floor = FLOOR,
+                Id = item.Id,
+                CFrame = CFrame.new(rx, ry, rz)
+            }
+        }
 
-local function getSpaceInfo()
-    local success, data = pcall(function() return DataEvent:InvokeServer() end)
-    if not success or not data then return nil end
-    
-    local inv = data.Inventory or {}
-    local invLevel = data.InventoryLevel or 0
-    
-    local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
-    local invCount = 0
-    for _ in pairs(inv) do invCount = invCount + 1 end
-    
-    return {
-        invTotal = invSpace,
-        invUsed = invCount,
-        invAvailable = invSpace - invCount
-    }
-end
-
-local function updateHighValueItems()
-    if #garage1ItemIds == 0 then
-        debugPrint("No items found in garage 1 to sort")
-        return
-    end
-    
-    local itemsWithPrice = {}
-    for _, itemId in ipairs(garage1ItemIds) do
-        local itemData = ItemsModule[itemId]
-        if itemData and itemData.Price then
-            table.insert(itemsWithPrice, {
-                id = tostring(itemId),
-                price = itemData.Price,
-                name = itemData.Name
-            })
-        end
-    end
-    
-    table.sort(itemsWithPrice, function(a, b)
-        return a.price > b.price
-    end)
-    
-    local spaceInfo = getSpaceInfo()
-    if not spaceInfo then
-        sortedHighValueItems = {}
-        for _, item in ipairs(itemsWithPrice) do
-            table.insert(sortedHighValueItems, item.id)
-        end
-        return
-    end
-    
-    debugPrint("Available inventory space:", spaceInfo.invAvailable)
-    
-    local maxItemsToKeep = spaceInfo.invAvailable
-    if maxItemsToKeep <= 0 then
-        debugPrint("No inventory space available, cannot keep any items")
-        sortedHighValueItems = {}
-        return
-    end
-    
-    sortedHighValueItems = {}
-    for i = 1, math.min(#itemsWithPrice, maxItemsToKeep) do
-        table.insert(sortedHighValueItems, itemsWithPrice[i].id)
-        debugPrint("Will keep item:", itemsWithPrice[i].name, "Price:", itemsWithPrice[i].price)
-    end
-    
-    debugPrint("Will keep", #sortedHighValueItems, "out of", #itemsWithPrice, "items")
-end
-
-local function collectGarageItems()
-    if not currentGarage then return end
-    local itemsFolder = currentGarage:FindFirstChild("Items")
-    if not itemsFolder then return end
-    
-    garage1ItemIds = {}
-    local itemsFound = {}
-    local startTime = tick()
-    
-    while tick() - startTime < SCAN_DURATION and currentGarage and currentGarage.Parent do
-        for _, itemInstance in pairs(itemsFolder:GetChildren()) do
-            local itemId = itemInstance.Name
-            local itemData = ItemsModule[itemId]
-            if itemData and itemData.Price then
-                table.insert(garage1ItemIds, itemId)
-                table.insert(itemsFound, itemData.Name .. " (ID:" .. itemId .. ", Price:" .. itemData.Price .. ")")
-            end
-        end
+        local success = pcall(function()
+            InsertFurniture:InvokeServer(unpack(args))
+        end)
+        if success then inserted += 1 end
         task.wait(0.1)
     end
-    
-    if #itemsFound > 0 then
-        debugPrint("Collected", #itemsFound, "items from garage", currentGarageId, ":", table.concat(itemsFound, ", "))
-        updateHighValueItems()
-    end
-    debugPrint("Keep list size:", #sortedHighValueItems)
+    return inserted
 end
 
-UpdateCurrentBid.OnClientEvent:Connect(function(data)
-    if data then
-        currentNextBid = data.nextBid
-        currentBidder = data.player
-    end
-end)
-
-AuctionsFolder.ChildAdded:Connect(function(garage)
-    local garageName = garage.Name
-    debugPrint("Auction started for garage:", garageName)
-    inAuction = true
-    auctionEnded = false
-    currentGarage = garage
-    processingItemsWon = false
-    isBiddingActive = false
-    currentGarageId = garageName
-end)
-
-AuctionsFolder.ChildRemoved:Connect(function(child)
-    if child == currentGarage then
-        debugPrint("Auction ended for garage:", child and child.Name)
-        auctionEnded = true
-        isBiddingActive = false
-    end
-    if #AuctionsFolder:GetChildren() == 0 then
-        debugPrint("All auctions finished")
-        inAuction = false
-        currentGarage = nil
-        obtainedTarget = false
-        currentGarageId = nil
-        garage1Processed = false
-    end
-end)
-
-local function storageFull()
-    local success, data = pcall(function() return DataEvent:InvokeServer() end)
-    if not success or not data then return false end
-    local inv = data.Inventory or {}
-    local invLevel = data.InventoryLevel
-    local carryLevel = data.CarryLevel
-    local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
-    local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
-    local invCount = RepLibrary:GetLengthOfInventory(inv)
-    return invCount >= invSpace and carrySpace <= 0
+-- Main loop every 1 second
+while true do
+    local removed = removePlacedFurniture()
+    local placed = placeItems()
+    print("Removed:", removed, "Placed:", placed)
+    task.wait(1) -- loop every 1 second
 end
-
-local function waitForCondition(condition, timeout, checkInterval)
-    local start = tick()
-    while tick() - start < timeout do
-        if condition() then return true end
-        task.wait(checkInterval or 0.1)
-    end
-    return false
-end
-
-local function waitForItemsWon(timeout)
-    return waitForCondition(function()
-        local ok, data = pcall(function()
-            return DataEvent:InvokeServer()
-        end)
-
-        return ok
-            and data
-            and data.ItemsWon
-            and next(data.ItemsWon) ~= nil
-    end, timeout or 5, 0.1)
-end
-
-local function sellItems(mode, keepGuids)
-    for i = 1, 5 do
-        local ok, result = pcall(function()
-            return SellAllItems:InvokeServer(mode, keepGuids)
-        end)
-
-        if ok and result then
-            debugPrint("SellAllItems SUCCESS on attempt", i)
-            return true
-        end
-
-        debugPrint("SellAllItems FAILED attempt", i, ok, result)
-        task.wait(0.5)
-    end
-
-    return false
-end
-
-local function handleItemsWon()
-    processingItemsWon = true
-    debugPrint("Handling items won...")
-
-    local ready = waitForItemsWon(5)
-    if not ready then
-        debugPrint("ItemsWon not ready, aborting")
-        processingItemsWon = false
-        return false
-    end
-
-    local success, data = pcall(function()
-        return DataEvent:InvokeServer()
-    end)
-
-    if not success or not data or not data.ItemsWon then
-        processingItemsWon = false
-        return false
-    end
-
-    local itemsWon = data.ItemsWon
-    local keepGuids = {}
-
-    for guid, itemData in pairs(itemsWon) do
-        local itemId = tostring(itemData.itemId)
-
-        if shouldCollectItem(itemId) then
-            debugPrint("KEEPING:", itemId)
-            table.insert(keepGuids, guid)
-        else
-            debugPrint("SELLING:", itemId)
-        end
-    end
-
-    debugPrint("Keep list size:", #keepGuids)
-
-    local successSell = sellItems("Default", keepGuids)
-
-    if not successSell then
-        debugPrint("FINAL SELL FAILED")
-    end
-
-    processingItemsWon = false
-    return successSell
-end
-
-debugPrint("Auction bot started - monitoring for garage", GARAGE_ID)
-
-while not halted do
-    while processingItemsWon do
-        task.wait(0.25)
-    end
-    
-    if storageFull() then
-        debugPrint("Storage full, halting")
-        halted = true
-        break
-    end
-    
-    debugPrint("Entering queue for garage:", GARAGE_ID)
-    pcall(function() EnterQueue:InvokeServer(GARAGE_ID) end)
-    
-    local entered = waitForCondition(function() return inAuction end, 10, 0.05)
-    if not entered then
-        debugPrint("Failed to enter auction, retrying")
-        continue
-    end
-    
-    debugPrint("Successfully entered auction for garage", currentGarageId)
-    
-    if currentGarageId == GARAGE_ID then
-        debugPrint("This is garage 1 - collecting items and bidding on everything")
-        
-        collectGarageItems()
-        garage1Processed = true
-        
-        while inAuction and currentGarageId == GARAGE_ID and not auctionEnded do
-            if currentNextBid and currentBidder ~= LocalPlayer then
-                debugPrint("Placing bid:", currentNextBid)
-                pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
-            end
-            
-            if currentBidder == LocalPlayer then
-                debugPrint("Won the bid!")
-                obtainedTarget = true
-            end
-            
-            task.wait(BID_CHECK_INTERVAL)
-        end
-    else
-        debugPrint("This is garage", currentGarageId, "- skipping immediately (no bidding)")
-        
-        if tick() - lastSkipTime > SKIP_COOLDOWN then
-            pcall(function() SkipCountdown:InvokeServer() end)
-            task.wait(0.05)
-            pcall(function() Skip:InvokeServer() end)
-            lastSkipTime = tick()
-            debugPrint("Skipped garage", currentGarageId)
-        end
-    end
-    
-    while inAuction and not auctionEnded do
-        task.wait(0.25)
-    end
-    
-    if garage1Processed then
-        debugPrint("Auction ended, waiting for items update...")
-        
-        waitForCondition(itemsUpdated, 5, 0.1)
-        task.wait(0.2) -- sync buffer
-        
-        debugPrint("Items updated, processing...")
-        handleItemsWon()
-        garage1Processed = false
-        garage1ItemIds = {}
-        sortedHighValueItems = {}
-    end
-    
-    task.wait(1.5)
-    debugPrint("Ready for next auction")
-end
-
-debugPrint("Auction bot stopped")
