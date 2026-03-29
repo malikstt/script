@@ -1,6 +1,13 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
+
+local nonSaveVars = LocalPlayer:FindFirstChild("NonSaveVars")
+local ownsPlot = nonSaveVars and nonSaveVars:FindFirstChild("OwnsPlot")
+local currentPlot = ownsPlot and ownsPlot:IsA("ValueBase") and ownsPlot.Value or "7"
+local canvas = workspace.Plots[tostring(currentPlot)].Interior.Shop1.Canvas
 
 local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
 local ItemsModule = require(ReplicatedStorage.Modules.Items)
@@ -15,36 +22,36 @@ local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 local SellAllItems = Auctions:WaitForChild("SellAllItems")
 
+local Events = ReplicatedStorage:WaitForChild("Events")
+local Shop = Events:WaitForChild("Shop")
+
+local SCAN_DURATION = 1
 local GARAGE_ID = "1"
-local SKIP_COOLDOWN = 0.5
 local BID_CHECK_INTERVAL = 0.1
 
--- State Machine States
-local State = {
-    IDLE = "IDLE",
-    ENTERING_QUEUE = "ENTERING_QUEUE",
-    WAITING_FOR_AUCTION = "WAITING_FOR_AUCTION",
-    BIDDING = "BIDDING",
-    WAITING_FOR_AUCTION_END = "WAITING_FOR_AUCTION_END",
-    PROCESSING_ITEMS = "PROCESSING_ITEMS",
-    SKIPPING_GARAGES = "SKIPPING_GARAGES"
-}
+-- Store IDs from garage 1
+local garage1ItemIds = {}
+local sortedHighValueItems = {}
 
--- State Variables
-local currentState = State.IDLE
 local inAuction = false
+local obtainedTarget = false
 local auctionEnded = false
-local currentGarage = nil
-local firstGarage = nil
+local halted = false
 local currentNextBid = nil
 local currentBidder = nil
+local currentGarage = nil
 local processingItemsWon = false
+local isBiddingActive = false
+local currentGarageId = nil
+local garage1Processed = false
+
 local lastSkipTime = 0
+local SKIP_COOLDOWN = 0.5
 
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 local function debugPrint(...)
-    print("[AuctionBot]", "[" .. currentState .. "]", ...)
+    print("[AuctionBot]", ...)
 end
 
 local function destroySpecificGuis()
@@ -99,12 +106,137 @@ task.spawn(function()
     end
 end)
 
-local function getItemPrice(itemId)
-    local itemData = ItemsModule[tostring(itemId)]
-    if itemData and itemData.Price then
-        return itemData.Price
+-- Function to check if item should be collected (based on sorted high value items from garage 1)
+local function shouldCollectItem(itemId)
+    for _, id in ipairs(sortedHighValueItems) do
+        if tostring(itemId) == tostring(id) then
+            return true
+        end
     end
-    return 0
+    return false
+end
+
+-- Function to get inventory and carry space info
+local function getSpaceInfo()
+    local success, data = pcall(function() return DataEvent:InvokeServer() end)
+    if not success or not data then return nil end
+    
+    local inv = data.Inventory or {}
+    local invLevel = data.InventoryLevel or 0
+    local carryLevel = data.CarryLevel or 0
+    
+    local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
+    local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
+    local invCount = 0
+    for _ in pairs(inv) do invCount = invCount + 1 end
+    
+    return {
+        carrySpace = carrySpace,
+        invTotal = invSpace,
+        invUsed = invCount,
+        invAvailable = invSpace - invCount
+    }
+end
+
+-- Function to sort items by price and determine what to keep based on available space
+local function updateHighValueItems()
+    if #garage1ItemIds == 0 then
+        debugPrint("No items found in garage 1 to sort")
+        return
+    end
+    
+    -- Create array of items with their prices
+    local itemsWithPrice = {}
+    for _, itemId in ipairs(garage1ItemIds) do
+        local itemData = ItemsModule[itemId]
+        if itemData and itemData.Price then
+            table.insert(itemsWithPrice, {
+                id = itemId,
+                price = itemData.Price,
+                name = itemData.Name
+            })
+        end
+    end
+    
+    -- Sort by price (highest first)
+    table.sort(itemsWithPrice, function(a, b)
+        return a.price > b.price
+    end)
+    
+    -- Get available space
+    local spaceInfo = getSpaceInfo()
+    if not spaceInfo then
+        debugPrint("Could not get space info, using all items")
+        sortedHighValueItems = {}
+        for _, item in ipairs(itemsWithPrice) do
+            table.insert(sortedHighValueItems, item.id)
+        end
+        return
+    end
+    
+    debugPrint("Available space - Inventory:", spaceInfo.invAvailable, "Carry:", spaceInfo.carrySpace)
+    
+    -- Calculate how many items we can keep (use inventory available space)
+    local maxItemsToKeep = spaceInfo.invAvailable
+    if maxItemsToKeep <= 0 then
+        debugPrint("No inventory space available, cannot keep any items")
+        sortedHighValueItems = {}
+        return
+    end
+    
+    -- Take the highest priced items up to available space
+    sortedHighValueItems = {}
+    for i = 1, math.min(#itemsWithPrice, maxItemsToKeep) do
+        table.insert(sortedHighValueItems, itemsWithPrice[i].id)
+        debugPrint("Will keep item:", itemsWithPrice[i].name, "Price:", itemsWithPrice[i].price)
+    end
+    
+    debugPrint("Will keep", #sortedHighValueItems, "out of", #itemsWithPrice, "items")
+end
+
+-- Function to collect items from current garage (store IDs)
+local function collectGarageItems()
+    if not currentGarage then return end
+    local itemsFolder = currentGarage:FindFirstChild("Items")
+    if not itemsFolder then return end
+    
+    local itemsFound = {}
+    for _, itemInstance in pairs(itemsFolder:GetChildren()) do
+        local itemId = itemInstance.Name
+        local itemData = ItemsModule[itemId]
+        if itemData and itemData.Price then
+            -- Add to garage1ItemIds if not already there
+            local alreadyExists = false
+            for _, id in ipairs(garage1ItemIds) do
+                if tostring(id) == tostring(itemId) then
+                    alreadyExists = true
+                    break
+                end
+            end
+            if not alreadyExists then
+                table.insert(garage1ItemIds, itemId)
+                table.insert(itemsFound, itemData.Name .. " (ID:" .. itemId .. ", Price:" .. itemData.Price .. ")")
+            end
+        end
+    end
+    
+    if #itemsFound > 0 then
+        debugPrint("Collected", #itemsFound, "items from garage", currentGarageId, ":", table.concat(itemsFound, ", "))
+        -- Resort high value items after new additions
+        updateHighValueItems()
+    end
+end
+
+local function getInventory()
+    local success, data = pcall(function()
+        return DataEvent:InvokeServer()
+    end)
+    
+    if not success or not data or not data.Inventory then
+        return {}
+    end
+    
+    return data.Inventory
 end
 
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
@@ -119,37 +251,24 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     inAuction = true
     auctionEnded = false
     currentGarage = garage
-    
-    if currentState == State.WAITING_FOR_AUCTION then
-        if not firstGarage then
-            firstGarage = garage
-            currentState = State.BIDDING
-            debugPrint("First garage detected, transitioning to BIDDING")
-        end
-    end
+    processingItemsWon = false
+    isBiddingActive = false
+    currentGarageId = garage.Name
 end)
 
 AuctionsFolder.ChildRemoved:Connect(function(child)
     if child == currentGarage then
         debugPrint("Auction ended for garage:", child and child.Name)
         auctionEnded = true
-        inAuction = false
-        
-        if currentState == State.BIDDING and child == firstGarage then
-            debugPrint("First garage auction ended, transitioning to PROCESSING_ITEMS")
-            currentState = State.PROCESSING_ITEMS
-        end
-        
-        currentGarage = nil
+        isBiddingActive = false
     end
-    
     if #AuctionsFolder:GetChildren() == 0 then
         debugPrint("All auctions finished")
-        if currentState == State.SKIPPING_GARAGES then
-            debugPrint("Skipping complete, returning to IDLE")
-            currentState = State.IDLE
-            firstGarage = nil
-        end
+        inAuction = false
+        currentGarage = nil
+        obtainedTarget = false
+        currentGarageId = nil
+        garage1Processed = false
     end
 end)
 
@@ -165,192 +284,142 @@ local function storageFull()
     return invCount >= invSpace and carrySpace <= 0
 end
 
-local function handleEnteringQueue()
-    debugPrint("Entering queue for garage:", GARAGE_ID)
-    pcall(function() EnterQueue:InvokeServer(GARAGE_ID) end)
-    currentState = State.WAITING_FOR_AUCTION
+local function scanCurrentGarage()
+    if not currentGarage then return false end
+    local itemsFolder = currentGarage:FindFirstChild("Items")
+    if not itemsFolder then return false end
+    
+    local startTime = tick()
+    while tick() - startTime < SCAN_DURATION and currentGarage and currentGarage.Parent do
+        for _, itemInstance in pairs(itemsFolder:GetChildren()) do
+            local itemId = itemInstance.Name
+            debugPrint("Found item in garage:", itemId)
+            return true
+        end
+        task.wait(0.1)
+    end
+    return false
 end
 
-local function handleBidding()
-    -- Only bid if this is still the first garage
-    if currentGarage ~= firstGarage then
-        debugPrint("Garage changed, stopping bid")
-        currentState = State.WAITING_FOR_AUCTION_END
-        return
-    end
-    
-    -- Check if auction ended
-    if auctionEnded then
-        return
-    end
-    
-    -- Bid if we're not the highest bidder
-    if currentNextBid and currentBidder ~= LocalPlayer then
-        debugPrint("Placing bid:", currentNextBid)
-        pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
-    end
-    
-    -- Continue bidding
-    task.wait(BID_CHECK_INTERVAL)
-    if currentState == State.BIDDING and inAuction and currentGarage == firstGarage and not auctionEnded then
-        handleBidding()
-    end
-end
-
-local function handleProcessingItems()
-    if processingItemsWon then return end
-    
+local function handleItemsWon()
     processingItemsWon = true
-    debugPrint("Processing items won...")
+    debugPrint("Handling items won...")
     
     local success, data = pcall(function() return DataEvent:InvokeServer() end)
     if not success or not data or not data.ItemsWon then
         processingItemsWon = false
-        debugPrint("Failed to get items won")
-        currentState = State.SKIPPING_GARAGES
-        return
+        return false
     end
     
     local itemsWon = data.ItemsWon
-    if not itemsWon or next(itemsWon) == nil then
-        debugPrint("No items won")
-        processingItemsWon = false
-        currentState = State.SKIPPING_GARAGES
-        return
-    end
+    local sellGuids = {} -- Items to SELL (low value ones)
+    local keepGuids = {} -- Items to KEEP (high value ones)
     
-    -- Sort items by price (most expensive first)
-    local sortedItems = {}
     for guid, itemData in pairs(itemsWon) do
-        local price = getItemPrice(itemData.itemId)
-        table.insert(sortedItems, {
-            guid = guid,
-            price = price,
-            itemId = itemData.itemId
-        })
-    end
-    
-    table.sort(sortedItems, function(a, b)
-        return a.price > b.price
-    end)
-    
-    debugPrint("Items sorted by price:")
-    for i, item in ipairs(sortedItems) do
-        local itemName = ItemsModule[tostring(item.itemId)] and ItemsModule[tostring(item.itemId)].Name or "Unknown"
-        debugPrint(string.format("  %d. %s - Price: %d", i, itemName, item.price))
-    end
-    
-    -- Keep the most expensive item (DO NOT sell it)
-    -- Sell all other items
-    if #sortedItems > 0 then
-        local keepGuid = sortedItems[1].guid
-        local keepName = ItemsModule[tostring(sortedItems[1].itemId)] and ItemsModule[tostring(sortedItems[1].itemId)].Name or "Unknown"
-        debugPrint("Keeping most expensive item:", keepName, "Price:", sortedItems[1].price)
-        
-        if #sortedItems > 1 then
-            -- Collect GUIDs of items to sell (all except the most expensive)
-            local sellGuids = {}
-            for i = 2, #sortedItems do
-                table.insert(sellGuids, sortedItems[i].guid)
-            end
-            
-            debugPrint("Selling", #sellGuids, "less valuable items")
-            -- Sell the less valuable items, keep the most expensive one
-            SellAllItems:InvokeServer("Default", sellGuids)
+        local itemId = tostring(itemData.itemId)
+        if shouldCollectItem(itemId) then
+            -- High value item - KEEP it
+            debugPrint("KEEPING high value item:", itemId)
+            table.insert(keepGuids, guid)
         else
-            debugPrint("Only one item won, keeping it")
+            -- Low value item - SELL it
+            debugPrint("SELLING low value item:", itemId)
+            table.insert(sellGuids, guid)
         end
     end
     
-    processingItemsWon = false
-    currentState = State.SKIPPING_GARAGES
-    debugPrint("Items processed, transitioning to SKIPPING_GARAGES")
-end
-
-local function handleSkippingGarages()
-    -- Check if there are any garages left
-    local garages = AuctionsFolder:GetChildren()
-    
-    if #garages == 0 then
-        debugPrint("No more garages to skip, returning to IDLE")
-        currentState = State.IDLE
-        firstGarage = nil
-        return
+    -- Sell the low value items (the ones we don't want)
+    if #sellGuids > 0 then
+        SellAllItems:InvokeServer("Default", sellGuids)
+        debugPrint("Sold", #sellGuids, "low value items")
     end
     
-    -- Skip current garage if exists
-    if currentGarage and tick() - lastSkipTime >= SKIP_COOLDOWN then
-        debugPrint("Skipping garage:", currentGarage.Name)
+    debugPrint("Kept", #keepGuids, "high value items")
+    
+    processingItemsWon = false
+    return true
+end
+
+local function waitForCondition(condition, timeout, checkInterval)
+    local start = tick()
+    while tick() - start < timeout do
+        if condition() then return true end
+        task.wait(checkInterval or 0.1)
+    end
+    return false
+end
+
+debugPrint("Auction bot started - monitoring for garage", GARAGE_ID)
+
+while not halted do
+    while processingItemsWon do
+        task.wait(0.25)
+    end
+    
+    if storageFull() then
+        debugPrint("Storage full, halting")
+        halted = true
+        break
+    end
+    
+    debugPrint("Entering queue for garage:", GARAGE_ID)
+    pcall(function() EnterQueue:InvokeServer(GARAGE_ID) end)
+    
+    local entered = waitForCondition(function() return inAuction end, 10, 0.05)
+    if not entered then
+        debugPrint("Failed to enter auction, retrying")
+        continue
+    end
+    
+    debugPrint("Successfully entered auction for garage", currentGarageId)
+    
+    -- Check if this is garage 1
+    if currentGarageId == GARAGE_ID then
+        debugPrint("This is garage 1 - collecting items and bidding")
+        
+        -- Collect all item IDs from garage 1
+        collectGarageItems()
+        garage1Processed = true
+        
+        -- Bid on everything in garage 1
+        local auctionActive = true
+        while inAuction and currentGarageId == GARAGE_ID and not auctionEnded do
+            if currentNextBid and currentBidder ~= LocalPlayer then
+                debugPrint("Placing bid:", currentNextBid)
+                pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
+            end
+            
+            if currentBidder == LocalPlayer then
+                debugPrint("Won the bid!")
+                obtainedTarget = true
+                break
+            end
+            
+            task.wait(BID_CHECK_INTERVAL)
+        end
+    else
+        -- This is garage 2 or higher - don't bid, just skip
+        debugPrint("This is garage", currentGarageId, "- skipping, no bidding")
+        
+        -- Skip immediately
         pcall(function() SkipCountdown:InvokeServer() end)
         task.wait(0.05)
         pcall(function() Skip:InvokeServer() end)
-        lastSkipTime = tick()
     end
     
-    -- Continue skipping
-    task.wait(0.25)
-    if currentState == State.SKIPPING_GARAGES then
-        handleSkippingGarages()
+    -- Wait for auction to end
+    while inAuction and not auctionEnded do
+        task.wait(0.25)
     end
+    
+    if garage1Processed then
+        debugPrint("Auction ended, processing items won from garage 1")
+        handleItemsWon()
+        garage1Processed = false
+    end
+    
+    task.wait(1.5)
+    debugPrint("Ready for next auction")
 end
 
--- Main State Machine
-local function stateMachine()
-    if currentState == State.IDLE then
-        if storageFull() then
-            debugPrint("Storage full, halting")
-            return
-        end
-        handleEnteringQueue()
-        
-    elseif currentState == State.WAITING_FOR_AUCTION then
-        -- Just wait for ChildAdded event to transition
-        task.wait(0.1)
-        if currentState == State.WAITING_FOR_AUCTION then
-            stateMachine()
-        end
-        
-    elseif currentState == State.BIDDING then
-        handleBidding()
-        
-    elseif currentState == State.WAITING_FOR_AUCTION_END then
-        -- Wait for auction to end (ChildRemoved event will handle transition)
-        task.wait(0.1)
-        if currentState == State.WAITING_FOR_AUCTION_END then
-            stateMachine()
-        end
-        
-    elseif currentState == State.PROCESSING_ITEMS then
-        handleProcessingItems()
-        
-    elseif currentState == State.SKIPPING_GARAGES then
-        handleSkippingGarages()
-    end
-end
-
--- Start the state machine
-debugPrint("Auction bot started - State-driven mode (keeps most expensive item)")
-
-task.spawn(function()
-    while true do
-        if currentState == State.IDLE then
-            stateMachine()
-        elseif currentState == State.ENTERING_QUEUE then
-            stateMachine()
-        elseif currentState == State.WAITING_FOR_AUCTION then
-            stateMachine()
-        elseif currentState == State.BIDDING then
-            -- Already running in handleBidding loop
-            task.wait(0.1)
-        elseif currentState == State.WAITING_FOR_AUCTION_END then
-            stateMachine()
-        elseif currentState == State.PROCESSING_ITEMS then
-            -- Already running in handleProcessingItems
-            task.wait(0.1)
-        elseif currentState == State.SKIPPING_GARAGES then
-            -- Already running in handleSkippingGarages
-            task.wait(0.1)
-        end
-        task.wait(0.1)
-    end
-end)
+debugPrint("Auction bot stopped")
