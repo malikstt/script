@@ -23,7 +23,7 @@ local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):
 local SellAllItems = Auctions:WaitForChild("SellAllItems")
 
 local SCAN_DURATION = 1
-local GARAGE_ID = "1"
+local GARAGE_ID = "1"  -- Changed to garage 1
 local BID_CHECK_INTERVAL = 0.1
 
 -- Store IDs from garage 1
@@ -113,22 +113,19 @@ local function shouldCollectItem(itemId)
     return false
 end
 
--- Function to get inventory and carry space info
+-- Function to get inventory space info
 local function getSpaceInfo()
     local success, data = pcall(function() return DataEvent:InvokeServer() end)
     if not success or not data then return nil end
     
     local inv = data.Inventory or {}
     local invLevel = data.InventoryLevel or 0
-    local carryLevel = data.CarryLevel or 0
     
-    local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
     local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
     local invCount = 0
     for _ in pairs(inv) do invCount = invCount + 1 end
     
     return {
-        carrySpace = carrySpace,
         invTotal = invSpace,
         invUsed = invCount,
         invAvailable = invSpace - invCount
@@ -171,9 +168,9 @@ local function updateHighValueItems()
         return
     end
     
-    debugPrint("Available space - Inventory:", spaceInfo.invAvailable, "Carry:", spaceInfo.carrySpace)
+    debugPrint("Available inventory space:", spaceInfo.invAvailable)
     
-    -- Calculate how many items we can keep (use inventory available space)
+    -- Calculate how many items we can keep
     local maxItemsToKeep = spaceInfo.invAvailable
     if maxItemsToKeep <= 0 then
         debugPrint("No inventory space available, cannot keep any items")
@@ -191,35 +188,26 @@ local function updateHighValueItems()
     debugPrint("Will keep", #sortedHighValueItems, "out of", #itemsWithPrice, "items")
 end
 
--- Function to collect items from current garage (store IDs)
+-- Function to collect items from current garage (store ALL IDs)
 local function collectGarageItems()
     if not currentGarage then return end
     local itemsFolder = currentGarage:FindFirstChild("Items")
     if not itemsFolder then return end
     
     local itemsFound = {}
+    garage1ItemIds = {} -- Reset for new garage 1 auction
     for _, itemInstance in pairs(itemsFolder:GetChildren()) do
         local itemId = itemInstance.Name
         local itemData = ItemsModule[itemId]
         if itemData and itemData.Price then
-            -- Add to garage1ItemIds if not already there
-            local alreadyExists = false
-            for _, id in ipairs(garage1ItemIds) do
-                if tostring(id) == tostring(itemId) then
-                    alreadyExists = true
-                    break
-                end
-            end
-            if not alreadyExists then
-                table.insert(garage1ItemIds, itemId)
-                table.insert(itemsFound, itemData.Name .. " (ID:" .. itemId .. ", Price:" .. itemData.Price .. ")")
-            end
+            table.insert(garage1ItemIds, itemId)
+            table.insert(itemsFound, itemData.Name .. " (ID:" .. itemId .. ", Price:" .. itemData.Price .. ")")
         end
     end
     
     if #itemsFound > 0 then
         debugPrint("Collected", #itemsFound, "items from garage", currentGarageId, ":", table.concat(itemsFound, ", "))
-        -- Resort high value items after new additions
+        -- Sort and determine what to keep
         updateHighValueItems()
     end
 end
@@ -341,13 +329,13 @@ while not halted do
     
     -- Check if this is garage 1
     if currentGarageId == GARAGE_ID then
-        debugPrint("This is garage 1 - collecting items and bidding")
+        debugPrint("This is garage 1 - collecting items and bidding on everything")
         
         -- Collect all item IDs from garage 1
         collectGarageItems()
         garage1Processed = true
         
-        -- Bid on everything in garage 1
+        -- Bid on everything in garage 1 (no target filtering)
         while inAuction and currentGarageId == GARAGE_ID and not auctionEnded do
             if currentNextBid and currentBidder ~= LocalPlayer then
                 debugPrint("Placing bid:", currentNextBid)
@@ -363,7 +351,7 @@ while not halted do
         end
     else
         -- This is garage 2 or higher - don't bid, just skip
-        debugPrint("This is garage", currentGarageId, "- skipping immediately")
+        debugPrint("This is garage", currentGarageId, "- skipping immediately (no bidding)")
         
         -- Skip the auction immediately
         if tick() - lastSkipTime > SKIP_COOLDOWN then
@@ -384,6 +372,9 @@ while not halted do
         debugPrint("Auction ended, processing items won from garage 1")
         handleItemsWon()
         garage1Processed = false
+        -- Reset for next garage 1 auction
+        garage1ItemIds = {}
+        sortedHighValueItems = {}
     end
     
     task.wait(1.5)
