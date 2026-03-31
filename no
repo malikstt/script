@@ -16,12 +16,10 @@ local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 local SellAllItems = Auctions:WaitForChild("SellAllItems")
 
-local SCAN_DURATION = 5  -- Increased to 5 seconds to catch delayed mutations
-local GARAGE_ID = "85"
+local SCAN_DURATION = 5
+local GARAGE_ID = "62"  -- CHANGED TO 62
 local BID_CHECK_INTERVAL = 0.1
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
-
-local sessionStartTime = tick()
 
 local inAuction = false
 local obtainedTarget = false
@@ -38,7 +36,6 @@ local currentShinyItemData = nil
 local shinyDetected = false
 local itemsFolderConnection = nil
 
--- Webhook spam protection
 local webhookSentForCurrentAuction = false
 local lastWebhookItemId = nil
 local lastWebhookGarageId = nil
@@ -49,9 +46,116 @@ local SKIP_COOLDOWN = 0.5
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 local function debugPrint(...)
-	print("[ShinyAuctionBot]", ...)
+	print("[ShinyBot]", ...)
 end
 
+-- ==================== WEBHOOK FUNCTION (MUST BE FIRST) ====================
+local function sendWebhook(itemId, itemData, playerName)
+	print("sendWebhook called for:", itemId)
+	
+	if webhookSentForCurrentAuction then
+		debugPrint("Webhook already sent")
+		return
+	end
+	
+	if lastWebhookItemId == itemId and lastWebhookGarageId == GARAGE_ID then
+		debugPrint("Duplicate webhook blocked")
+		return
+	end
+	
+	-- Get player data
+	local playerData
+	pcall(function() playerData = DataEvent:InvokeServer() end)
+	
+	local cash, gems, count = 0, 0, 0
+	local totalAuctions, garageAuctions, timePlayed = 0, 0, 0
+	
+	if playerData then
+		cash = playerData.Cash or 0
+		gems = playerData.Gems or 0
+		
+		if playerData.PlayerStats then
+			totalAuctions = playerData.PlayerStats.AuctionsPlayed or 0
+			timePlayed = playerData.PlayerStats.TimePlayed or 0
+			if playerData.PlayerStats.Auctions then
+				garageAuctions = playerData.PlayerStats.Auctions[GARAGE_ID] or 0
+			end
+		end
+		
+		local function countItems(container)
+			if not container then return end
+			for _, item in pairs(container) do
+				if tostring(item.Id) == tostring(itemId) then
+					count = count + 1
+				end
+			end
+		end
+		countItems(playerData.Furniture)
+		countItems(playerData.Inventory)
+	end
+	count = count + 1
+	
+	local function formatNumber(n)
+		if n >= 1e9 then return string.format("%.1fB", n/1e9)
+		elseif n >= 1e6 then return string.format("%.1fM", n/1e6)
+		elseif n >= 1e3 then return string.format("%.1fK", n/1e3)
+		else return tostring(n) end
+	end
+	
+	local function formatTimePlayed(seconds)
+		local days = math.floor(seconds / 86400)
+		local hours = math.floor((seconds % 86400) / 3600)
+		local minutes = math.floor((seconds % 3600) / 60)
+		if days > 0 then return string.format("%dD %dH %dM", days, hours, minutes)
+		elseif hours > 0 then return string.format("%dH %dM", hours, minutes)
+		else return string.format("%dM", minutes) end
+	end
+	
+	local GaragesModule = require(ReplicatedStorage.Modules.Garages)
+	local garageName = "Unknown"
+	local garageData = GaragesModule[GARAGE_ID]
+	if garageData and garageData.Name then garageName = garageData.Name end
+	
+	local fields = {
+		{name="Item", value=itemData.Name or "Unknown", inline=false},
+		{name="Rarity", value=itemData.Rarity or "Unknown", inline=false},
+		{name="Cash", value=formatNumber(cash), inline=true},
+		{name="Gems", value=formatNumber(gems), inline=true},
+		{name="Total Auctions", value=formatNumber(totalAuctions), inline=true},
+		{name=garageName .. " Auctions", value=formatNumber(garageAuctions), inline=true},
+		{name="Time Played", value=formatTimePlayed(timePlayed), inline=true},
+		{name="SHINY", value="YES", inline=false},
+		{name="Total Owned", value=tostring(count), inline=false},
+	}
+	
+	local success, response = pcall(function()
+		return HttpService:RequestAsync({
+			Url = WEBHOOK_URL,
+			Method = "POST",
+			Headers = {["Content-Type"] = "application/json"},
+			Body = HttpService:JSONEncode({
+				embeds = {{
+					title = playerName .. " Got a SHINY Item!",
+					color = 16766720,
+					fields = fields
+				}}
+			})
+		})
+	end)
+	
+	if success then
+		print("Webhook sent successfully! Status:", response and response.StatusCode)
+	else
+		print("Webhook failed:", response)
+	end
+	
+	webhookSentForCurrentAuction = true
+	lastWebhookItemId = itemId
+	lastWebhookGarageId = GARAGE_ID
+end
+-- ==================== END WEBHOOK ====================
+
+-- ==================== UI HELPERS ====================
 local function destroySpecificGuis()
 	local items = PlayerGui:FindFirstChild("ItemsWon")
 	if items then items:Destroy() end
@@ -103,195 +207,121 @@ task.spawn(function()
 		checkForButton()
 	end
 end)
+-- ==================== END UI HELPERS ====================
 
--- Improved shiny detection that waits for particles to appear
-local function checkItemForShiny(itemInstance)
-	-- Check instantly
+-- ==================== SHINY DETECTION (IMPROVED) ====================
+local function isShinyItem(itemInstance)
+	if not itemInstance then return false end
+	
+	-- Method 1: Check for ANY particle emitter (most reliable)
+	for _, child in pairs(itemInstance:GetDescendants()) do
+		if child:IsA("ParticleEmitter") then
+			print("Found particle on:", itemInstance.Name, "Emitter:", child.Name)
+			return true
+		end
+	end
+	
+	-- Method 2: Check for ShinyParticles specifically
 	if itemInstance:FindFirstChild("ShinyParticles", true) then
+		print("Found ShinyParticles on:", itemInstance.Name)
 		return true
 	end
 	
-	-- Also check if there's a Shiny mutator attribute (unlikely but keep for safety)
-	local mutators = itemInstance:GetAttribute("Mutators")
-	if mutators and type(mutators) == "table" then
-		for mutatorName, _ in pairs(mutators) do
-			if mutatorName == "Shiny" then
-				return true
-			end
-		end
+	-- Method 3: Check for shiny in name (fallback)
+	if string.lower(itemInstance.Name):find("shiny") then
+		print("Found 'shiny' in name:", itemInstance.Name)
+		return true
 	end
 	
 	return false
 end
 
--- Function to handle shiny detection
 local function onShinyDetected(itemInstance, itemId)
-	if shinyDetected or obtainedTarget then return end
+	if shinyDetected or obtainedTarget then
+		print("Already detected shiny, skipping")
+		return
+	end
+	
+	print("⚡⚡⚡ SHINY DETECTED! ⚡⚡⚡", itemId)
 	
 	local itemData = ItemsModule[itemId]
 	if not itemData then
 		itemData = {Name = "Unknown", Rarity = "Unknown"}
 	end
 	
-	debugPrint("SHINY DETECTED!", itemId, itemData.Name)
 	targetGarage = currentGarage
 	currentShinyItemId = itemId
 	currentShinyItemData = itemData
 	shinyDetected = true
 	
-	-- Send webhook
+	-- Send webhook (function is now defined above)
 	sendWebhook(itemId, itemData, LocalPlayer.Name)
 end
 
--- Monitor items folder for new items and track existing ones
-local function setupShinyMonitoring(garage)
+local function monitorGarageItems(garage)
 	local itemsFolder = garage:FindFirstChild("Items")
-	if not itemsFolder then return end
+	if not itemsFolder then 
+		print("No Items folder found")
+		return 
+	end
 	
-	-- Disconnect previous connection if exists
+	-- Clean up old connection
 	if itemsFolderConnection then
 		itemsFolderConnection:Disconnect()
 		itemsFolderConnection = nil
 	end
 	
-	-- Scan existing items with delay to catch delayed shiny application
+	print("Monitoring items folder for garage")
+	
+	-- Check existing items
 	task.spawn(function()
-		local existingItems = itemsFolder:GetChildren()
-		for _, item in pairs(existingItems) do
-			local itemId = item.Name
-			
-			-- Check instantly
-			if checkItemForShiny(item) then
-				onShinyDetected(item, itemId)
+		local existing = itemsFolder:GetChildren()
+		print("Checking", #existing, "existing items")
+		
+		for _, item in pairs(existing) do
+			if isShinyItem(item) then
+				onShinyDetected(item, item.Name)
 				return
 			end
-			
-			-- Also check after delays (1s, 2s, 3s) for delayed shiny application
-			for delayTime = 1, 3 do
-				task.wait(1)
-				if not inAuction or auctionEnded or shinyDetected then break end
-				if checkItemForShiny(item) then
-					onShinyDetected(item, itemId)
+		end
+		
+		-- Check again after 2 seconds (for delayed shiny)
+		task.wait(2)
+		if not shinyDetected then
+			for _, item in pairs(existing) do
+				if isShinyItem(item) then
+					onShinyDetected(item, item.Name)
+					return
+				end
+			end
+		end
+		
+		-- Check again after 4 seconds
+		task.wait(2)
+		if not shinyDetected then
+			for _, item in pairs(existing) do
+				if isShinyItem(item) then
+					onShinyDetected(item, item.Name)
 					return
 				end
 			end
 		end
 	end)
 	
-	-- Monitor for new items being added
+	-- Monitor new items
 	itemsFolderConnection = itemsFolder.ChildAdded:Connect(function(item)
-		task.wait(0.5) -- Wait a bit for shiny particles to be added
+		task.wait(0.5)
 		if not inAuction or auctionEnded or shinyDetected then return end
 		
-		local itemId = item.Name
-		if checkItemForShiny(item) then
-			onShinyDetected(item, itemId)
+		print("New item added:", item.Name)
+		if isShinyItem(item) then
+			onShinyDetected(item, item.Name)
 		end
 	end)
 end
+-- ==================== END SHINY DETECTION ====================
 
-local function formatTimePlayed(seconds)
-	local days = math.floor(seconds / 86400)
-	local hours = math.floor((seconds % 86400) / 3600)
-	local minutes = math.floor((seconds % 3600) / 60)
-	
-	if days > 0 then
-		return string.format("%dD %dH %dM", days, hours, minutes)
-	elseif hours > 0 then
-		return string.format("%dH %dM", hours, minutes)
-	else
-		return string.format("%dM", minutes)
-	end
-end
-
-local function formatNumber(n)
-	if n >= 1e9 then return string.format("%.1fB", n/1e9)
-	elseif n >= 1e6 then return string.format("%.1fM", n/1e6)
-	elseif n >= 1e3 then return string.format("%.1fK", n/1e3)
-	else return tostring(n) end
-end
-
-local function sendWebhook(itemId, itemData, playerName)
-	if webhookSentForCurrentAuction then
-		debugPrint("Webhook already sent for this auction, skipping duplicate")
-		return
-	end
-	
-	if lastWebhookItemId == itemId and lastWebhookGarageId == GARAGE_ID then
-		debugPrint("Same item already webhook'd recently, skipping")
-		return
-	end
-	
-	debugPrint("Sending webhook for shiny item:", itemId)
-	
-	local playerData
-	pcall(function() playerData = DataEvent:InvokeServer() end)
-	
-	local cash, gems, count = 0, 0, 0
-	local totalAuctions, garageAuctions, timePlayed = 0, 0, 0
-	
-	if playerData then
-		cash = playerData.Cash or 0
-		gems = playerData.Gems or 0
-		
-		if playerData.PlayerStats then
-			totalAuctions = playerData.PlayerStats.AuctionsPlayed or 0
-			timePlayed = playerData.PlayerStats.TimePlayed or 0
-			if playerData.PlayerStats.Auctions then
-				garageAuctions = playerData.PlayerStats.Auctions[GARAGE_ID] or 0
-			end
-		end
-		
-		local function countItems(container)
-			if not container then return end
-			for _, item in pairs(container) do
-				if tostring(item.Id) == tostring(itemId) then
-					count = count + 1
-				end
-			end
-		end
-		countItems(playerData.Furniture)
-		countItems(playerData.Inventory)
-	end
-	count = count + 1
-	
-	local GaragesModule = require(ReplicatedStorage.Modules.Garages)
-	local garageName = "Unknown"
-	local garageData = GaragesModule[GARAGE_ID]
-	if garageData and garageData.Name then garageName = garageData.Name end
-	
-	local fields = {
-		{name="Item", value=itemData.Name or "Unknown", inline=false},
-		{name="⭐ Rarity", value=itemData.Rarity or "Unknown", inline=false},
-		{name="Cash", value=formatNumber(cash), inline=true},
-		{name="Gems", value=formatNumber(gems), inline=true},
-		{name="Total Auctions", value=formatNumber(totalAuctions), inline=true},
-		{name=garageName .. " Auctions", value=formatNumber(garageAuctions), inline=true},
-		{name="Time Played", value=formatTimePlayed(timePlayed), inline=true},
-		{name="✨ SHINY ✨", value="YES", inline=false},
-		{name="Total Owned", value=tostring(count), inline=false},
-	}
-	
-	pcall(function()
-		HttpService:RequestAsync({
-			Url = WEBHOOK_URL,
-			Method = "POST",
-			Headers = {["Content-Type"] = "application/json"},
-			Body = HttpService:JSONEncode({
-				embeds = {{
-					title = playerName .. " Got a SHINY Item!",
-					color = 16766720,
-					fields = fields
-				}}
-			})
-		})
-	end)
-	
-	webhookSentForCurrentAuction = true
-	lastWebhookItemId = itemId
-	lastWebhookGarageId = GARAGE_ID
-end
-
+-- ==================== AUCTION HANDLING ====================
 local function storageFull()
 	local success, data = pcall(function() return DataEvent:InvokeServer() end)
 	if not success or not data then return false end
@@ -316,34 +346,24 @@ local function handleItemsWon()
 	end
 	
 	local itemsWon = data.ItemsWon
-	local keepGuids = {}
 	local sellGuids = {}
 	
 	for guid, itemData in pairs(itemsWon) do
 		local itemId = tostring(itemData.itemId)
 		if currentShinyItemId and itemId == currentShinyItemId then
-			debugPrint("Keeping shiny item:", itemId, itemData.Name or "Unknown")
-			table.insert(keepGuids, guid)
+			debugPrint("KEEPING shiny:", itemId)
 		else
-			debugPrint("Will sell non-shiny item:", itemId, itemData.Name or "Unknown")
+			debugPrint("SELLING:", itemId)
 			table.insert(sellGuids, guid)
 		end
 	end
 	
 	if #sellGuids > 0 then
-		local success = pcall(function()
+		pcall(function()
 			SellAllItems:InvokeServer("Default", sellGuids)
 		end)
-		if success then
-			debugPrint("Successfully sold", #sellGuids, "non-shiny items")
-		else
-			debugPrint("Failed to sell non-shiny items")
-		end
-	else
-		debugPrint("No non-shiny items to sell")
+		debugPrint("Sold", #sellGuids, "non-shiny items")
 	end
-	
-	debugPrint("Kept", #keepGuids, "shiny item(s)")
 	
 	processingItemsWon = false
 	return true
@@ -366,7 +386,7 @@ UpdateCurrentBid.OnClientEvent:Connect(function(data)
 end)
 
 AuctionsFolder.ChildAdded:Connect(function(garage)
-	debugPrint("Auction started for garage:", garage.Name)
+	print("Auction started for garage:", garage.Name)
 	inAuction = true
 	auctionEnded = false
 	currentGarage = garage
@@ -377,17 +397,15 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
 	currentShinyItemId = nil
 	currentShinyItemData = nil
 	
-	-- Start monitoring this garage for shiny items
-	setupShinyMonitoring(garage)
+	monitorGarageItems(garage)
 end)
 
 AuctionsFolder.ChildRemoved:Connect(function(child)
 	if child == currentGarage then
-		debugPrint("Auction ended for garage:", child and child.Name)
+		print("Auction ended for garage:", child and child.Name)
 		auctionEnded = true
 		isBiddingActive = false
 		
-		-- Clean up connection
 		if itemsFolderConnection then
 			itemsFolderConnection:Disconnect()
 			itemsFolderConnection = nil
@@ -395,7 +413,7 @@ AuctionsFolder.ChildRemoved:Connect(function(child)
 	end
 	
 	if #AuctionsFolder:GetChildren() == 0 then
-		debugPrint("All auctions finished")
+		print("All auctions finished")
 		inAuction = false
 		currentGarage = nil
 		targetGarage = nil
@@ -404,7 +422,7 @@ AuctionsFolder.ChildRemoved:Connect(function(child)
 	end
 end)
 
-debugPrint("Shiny Auction Bot Started - Monitoring for shiny items in garage", GARAGE_ID)
+debugPrint("Shiny Auction Bot Started - Monitoring garage", GARAGE_ID)
 
 while not halted do
 	while processingItemsWon do
@@ -430,7 +448,6 @@ while not halted do
 	obtainedTarget = false
 	local waitStartTime = tick()
 	
-	-- Wait for shiny detection with timeout
 	while inAuction and not auctionEnded and not shinyDetected do
 		if tick() - waitStartTime > SCAN_DURATION then
 			debugPrint("No shiny found after", SCAN_DURATION, "seconds")
@@ -440,7 +457,7 @@ while not halted do
 	end
 	
 	if shinyDetected and not obtainedTarget then
-		debugPrint("Shiny item found! Starting bid process for item:", currentShinyItemId)
+		debugPrint("Shiny found! Bidding on:", currentShinyItemId)
 		isBiddingActive = true
 		
 		local bidStartTime = tick()
@@ -451,22 +468,21 @@ while not halted do
 			end
 			
 			if currentBidder == LocalPlayer then
-				debugPrint("Won the bid for shiny item!")
+				debugPrint("Won the shiny item!")
 				obtainedTarget = true
 				break
 			end
 			
 			if tick() - bidStartTime > 30 then
-				debugPrint("Bid timeout, stopping")
+				debugPrint("Bid timeout")
 				break
 			end
 			task.wait(BID_CHECK_INTERVAL)
 		end
 		isBiddingActive = false
 	elseif not shinyDetected then
-		-- Skip if no shiny found
 		if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
-			debugPrint("No shiny item found, skipping garage")
+			debugPrint("No shiny, skipping")
 			pcall(function() SkipCountdown:InvokeServer() end)
 			task.wait(0.05)
 			pcall(function() Skip:InvokeServer() end)
@@ -474,18 +490,16 @@ while not halted do
 		end
 	end
 	
-	-- Wait for auction to end
 	while inAuction and not auctionEnded do
 		task.wait(0.25)
 	end
 	
 	if shinyDetected then
-		debugPrint("Auction ended, processing items won")
+		debugPrint("Processing items won")
 		handleItemsWon()
 	end
 	
 	task.wait(1.5)
-	debugPrint("Ready for next auction")
 end
 
 debugPrint("Shiny Auction Bot stopped")
