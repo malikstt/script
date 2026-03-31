@@ -1,13 +1,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
-local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
-
-local nonSaveVars = LocalPlayer:FindFirstChild("NonSaveVars")
-local ownsPlot = nonSaveVars and nonSaveVars:FindFirstChild("OwnsPlot")
-local currentPlot = ownsPlot and ownsPlot:IsA("ValueBase") and ownsPlot.Value or "7"
-local canvas = workspace.Plots[tostring(currentPlot)].Interior.Shop1.Canvas
 
 local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
 local ItemsModule = require(ReplicatedStorage.Modules.Items)
@@ -22,11 +16,8 @@ local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 local SellAllItems = Auctions:WaitForChild("SellAllItems")
 
-local Events = ReplicatedStorage:WaitForChild("Events")
-local Shop = Events:WaitForChild("Shop")
-
 local SCAN_DURATION = 1
-local GARAGE_ID = "62"
+local GARAGE_ID = "85"
 local BID_CHECK_INTERVAL = 0.1
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
 
@@ -210,7 +201,7 @@ local function sendWebhook(itemId, itemData, playerName)
 		{name="Total Auctions", value=formatNumber(totalAuctions), inline=true},
 		{name=garageName .. " Auctions", value=formatNumber(garageAuctions), inline=true},
 		{name="Time Played", value=formatTimePlayed(timePlayed), inline=true},
-		{name="Shiny", value="✨ YES ✨", inline=false},
+		{name="✨ SHINY ✨", value="YES", inline=false},
 	}
 	
 	table.insert(fields, {name="Total Owned", value=tostring(count), inline=false})
@@ -289,56 +280,46 @@ local function handleItemsWon()
 	
 	local success, data = pcall(function() return DataEvent:InvokeServer() end)
 	if not success or not data or not data.ItemsWon then
+		debugPrint("Failed to get ItemsWon data")
 		processingItemsWon = false
 		return false
 	end
 	
 	local itemsWon = data.ItemsWon
 	local keepGuids = {}
+	local sellGuids = {}
 	
-	-- Keep the shiny item we just won
+	-- Separate items into keep and sell lists
 	for guid, itemData in pairs(itemsWon) do
 		local itemId = tostring(itemData.itemId)
-		if itemId == currentShinyItemId then
-			debugPrint("Keeping shiny item:", itemId)
+		-- Check if this is the shiny item we want to keep
+		if currentShinyItemId and itemId == currentShinyItemId then
+			debugPrint("Keeping shiny item:", itemId, itemData.Name or "Unknown")
 			table.insert(keepGuids, guid)
+		else
+			debugPrint("Will sell non-shiny item:", itemId, itemData.Name or "Unknown")
+			table.insert(sellGuids, guid)
 		end
 	end
 	
-	-- Sell everything else
-	if #keepGuids > 0 then
-		-- Sell all items except the kept ones
-		local allGuids = {}
-		for guid, _ in pairs(itemsWon) do
-			table.insert(allGuids, guid)
-		end
-		
-		-- Remove kept items from sell list
-		local sellGuids = {}
-		for _, guid in ipairs(allGuids) do
-			local shouldKeep = false
-			for _, keepGuid in ipairs(keepGuids) do
-				if guid == keepGuid then
-					shouldKeep = true
-					break
-				end
-			end
-			if not shouldKeep then
-				table.insert(sellGuids, guid)
-			end
-		end
-		
-		if #sellGuids > 0 then
+	-- Sell all non-shiny items (this is correct - we sell the items we DON'T want)
+	if #sellGuids > 0 then
+		local success = pcall(function()
 			SellAllItems:InvokeServer("Default", sellGuids)
-			debugPrint("Sold", #sellGuids, "non-shiny items")
+		end)
+		if success then
+			debugPrint("Successfully sold", #sellGuids, "non-shiny items")
+		else
+			debugPrint("Failed to sell non-shiny items")
 		end
 	else
-		-- No shiny item found? This shouldn't happen, but just in case
-		debugPrint("Warning: No shiny item found in ItemsWon")
+		debugPrint("No non-shiny items to sell")
 	end
 	
+	debugPrint("Kept", #keepGuids, "shiny item(s)")
+	
 	processingItemsWon = false
-	currentShinyItemId = nil
+	currentShinyItemId = nil -- Clear after processing
 	currentShinyItemData = nil
 	return true
 end
