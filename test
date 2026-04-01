@@ -23,10 +23,11 @@ local halted = false
 local currentNextBid = nil
 local currentBidder = nil
 local currentGarage = nil
-local currentRoundNumber = 1
+local currentRoundNumber = 0
 
 local lastSkipTime = 0
 local SKIP_COOLDOWN = 0.5
+local lastBidPrint = nil
 
 local function debugPrint(...)
 	print("[AuctionBot]", ...)
@@ -59,17 +60,14 @@ local function skipWithCountdown()
 		return
 	end
 	
-	debugPrint("Attempting to skip using countdown button")
+	debugPrint("Using SkipCountdown button")
 	local success = pcall(function() 
 		SkipCountdown:InvokeServer() 
 	end)
 	
 	if success then
-		debugPrint("SkipCountdown invoked")
 		lastSkipTime = tick()
 		task.wait(0.1)
-	else
-		debugPrint("SkipCountdown failed")
 	end
 end
 
@@ -79,31 +77,22 @@ local function skipNormal()
 		return
 	end
 	
-	debugPrint("Attempting normal skip")
+	debugPrint("Using normal skip")
 	local success = pcall(function() 
 		Skip:InvokeServer() 
 	end)
 	
 	if success then
-		debugPrint("Normal skip invoked")
 		lastSkipTime = tick()
-	else
-		debugPrint("Normal skip failed")
 	end
 end
 
 -- Function to pass the auction (for garage 2 and 3)
 local function passAuction()
-	debugPrint("Attempting to pass auction")
-	local success = pcall(function() 
+	debugPrint("Passing auction")
+	pcall(function() 
 		PassAuction:InvokeServer() 
 	end)
-	
-	if success then
-		debugPrint("Pass invoked successfully")
-	else
-		debugPrint("Pass failed")
-	end
 end
 
 -- Monitor for SkipCountdown button visibility in PlayerGui
@@ -114,10 +103,28 @@ local function checkForSkipCountdownButton()
 	if biddingGui then
 		local skipCountdownButton = biddingGui:FindFirstChild("SkipCountdownButton")
 		if skipCountdownButton and skipCountdownButton.Visible then
-			debugPrint("SkipCountdown button detected, skipping!")
 			skipWithCountdown()
 		end
 	end
+end
+
+-- Get round number from garage name or attribute
+local function getRoundNumber(garage)
+	if garage then
+		-- Check if garage has a round number attribute
+		local roundAttr = garage:GetAttribute("RoundNumber")
+		if roundAttr then
+			return roundAttr
+		end
+		
+		-- Try to get from garage name (garage is named with round number)
+		local name = garage.Name
+		local num = tonumber(name)
+		if num and num >= 1 and num <= 3 then
+			return num
+		end
+	end
+	return 0
 end
 
 -- Start monitoring for SkipCountdown button
@@ -140,25 +147,22 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
 	inAuction = true
 	auctionEnded = false
 	currentGarage = garage
-	
-	-- Try to get round number from garage
-	local roundNumber = garage:GetAttribute("RoundNumber")
-	if roundNumber then
-		currentRoundNumber = roundNumber
-		debugPrint("Round number:", currentRoundNumber)
-	end
+	currentRoundNumber = getRoundNumber(garage)
+	debugPrint("Round number:", currentRoundNumber)
 end)
 
 AuctionsFolder.ChildRemoved:Connect(function(child)
 	if child == currentGarage then
 		debugPrint("Auction ended for garage:", child and child.Name)
 		auctionEnded = true
-	end
-	if #AuctionsFolder:GetChildren() == 0 then
-		debugPrint("All auctions finished")
-		inAuction = false
 		currentGarage = nil
-		currentRoundNumber = 1
+	end
+	
+	-- When all garages are gone, reset for next auction session
+	if #AuctionsFolder:GetChildren() == 0 then
+		debugPrint("All auctions finished - resetting")
+		inAuction = false
+		currentRoundNumber = 0
 	end
 end)
 
@@ -180,15 +184,18 @@ while not halted do
 		continue
 	end
 	
-	debugPrint("Successfully entered auction")
+	debugPrint("Successfully entered auction session")
 	
 	while inAuction and not auctionEnded do
 		if currentGarage then
 			-- Garage 1: Bid normally on all items
 			if currentRoundNumber == 1 then
-				debugPrint("Garage 1 - Bidding on all items")
 				if currentNextBid and currentBidder ~= LocalPlayer then
-					debugPrint("Placing bid:", currentNextBid)
+					-- Only print when actually placing a bid
+					if lastBidPrint ~= currentNextBid then
+						debugPrint("Placing bid:", currentNextBid)
+						lastBidPrint = currentNextBid
+					end
 					pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
 				end
 			-- Garage 2: Skip and pass
@@ -197,21 +204,27 @@ while not halted do
 				skipNormal()
 				passAuction()
 				task.wait(1)
-				break
+				-- Wait for garage to be removed before continuing
+				while currentGarage and currentGarage == currentGarage do
+					task.wait(0.1)
+				end
 			-- Garage 3: Skip and pass
 			elseif currentRoundNumber == 3 then
 				debugPrint("Garage 3 - Skipping")
 				skipNormal()
 				passAuction()
 				task.wait(1)
-				break
+				-- Wait for garage to be removed before continuing
+				while currentGarage and currentGarage == currentGarage do
+					task.wait(0.1)
+				end
 			end
 		end
 		task.wait(BID_CHECK_INTERVAL)
 	end
 	
 	task.wait(1.5)
-	debugPrint("Ready for next auction")
+	debugPrint("Ready for next auction session")
 end
 
 debugPrint("Auction bot stopped")
