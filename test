@@ -24,6 +24,7 @@ local currentNextBid = nil
 local currentBidder = nil
 local currentGarage = nil
 local currentRoundNumber = 0
+local skipTriggeredForRound = false
 
 local lastSkipTime = 0
 local SKIP_COOLDOWN = 0.5
@@ -54,27 +55,10 @@ local function waitForCondition(condition, timeout, checkInterval)
 	return false
 end
 
--- Function to skip using the 5-second countdown button (applies to all garages)
-local function skipWithCountdown()
-	if tick() - lastSkipTime < SKIP_COOLDOWN then
-		return
-	end
-	
-	debugPrint("Using SkipCountdown button")
-	local success = pcall(function() 
-		SkipCountdown:InvokeServer() 
-	end)
-	
-	if success then
-		lastSkipTime = tick()
-		task.wait(0.1)
-	end
-end
-
--- Function to skip using normal skip (for garage 2 and 3)
+-- Function to skip using normal skip (primary method for garage 2 and 3)
 local function skipNormal()
 	if tick() - lastSkipTime < SKIP_COOLDOWN then
-		return
+		return false
 	end
 	
 	debugPrint("Using normal skip")
@@ -84,10 +68,31 @@ local function skipNormal()
 	
 	if success then
 		lastSkipTime = tick()
+		return true
 	end
+	return false
 end
 
--- Function to pass the auction (for garage 2 and 3)
+-- Function to skip using the 5-second countdown button (fallback method)
+local function skipWithCountdown()
+	if tick() - lastSkipTime < SKIP_COOLDOWN then
+		return false
+	end
+	
+	debugPrint("Using SkipCountdown button (fallback)")
+	local success = pcall(function() 
+		SkipCountdown:InvokeServer() 
+	end)
+	
+	if success then
+		lastSkipTime = tick()
+		task.wait(0.1)
+		return true
+	end
+	return false
+end
+
+-- Function to pass the auction
 local function passAuction()
 	debugPrint("Passing auction")
 	pcall(function() 
@@ -95,7 +100,7 @@ local function passAuction()
 	end)
 end
 
--- Monitor for SkipCountdown button visibility in PlayerGui
+-- Monitor for SkipCountdown button visibility in PlayerGui (fallback trigger)
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 local function checkForSkipCountdownButton()
@@ -103,6 +108,7 @@ local function checkForSkipCountdownButton()
 	if biddingGui then
 		local skipCountdownButton = biddingGui:FindFirstChild("SkipCountdownButton")
 		if skipCountdownButton and skipCountdownButton.Visible then
+			debugPrint("SkipCountdown button detected, using fallback")
 			skipWithCountdown()
 		end
 	end
@@ -111,13 +117,11 @@ end
 -- Get round number from garage name or attribute
 local function getRoundNumber(garage)
 	if garage then
-		-- Check if garage has a round number attribute
 		local roundAttr = garage:GetAttribute("RoundNumber")
 		if roundAttr then
 			return roundAttr
 		end
 		
-		-- Try to get from garage name (garage is named with round number)
 		local name = garage.Name
 		local num = tonumber(name)
 		if num and num >= 1 and num <= 3 then
@@ -127,7 +131,7 @@ local function getRoundNumber(garage)
 	return 0
 end
 
--- Start monitoring for SkipCountdown button
+-- Start monitoring for SkipCountdown button (fallback)
 task.spawn(function()
 	while not halted do
 		checkForSkipCountdownButton()
@@ -148,6 +152,7 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
 	auctionEnded = false
 	currentGarage = garage
 	currentRoundNumber = getRoundNumber(garage)
+	skipTriggeredForRound = false
 	debugPrint("Round number:", currentRoundNumber)
 end)
 
@@ -156,9 +161,9 @@ AuctionsFolder.ChildRemoved:Connect(function(child)
 		debugPrint("Auction ended for garage:", child and child.Name)
 		auctionEnded = true
 		currentGarage = nil
+		skipTriggeredForRound = false
 	end
 	
-	-- When all garages are gone, reset for next auction session
 	if #AuctionsFolder:GetChildren() == 0 then
 		debugPrint("All auctions finished - resetting")
 		inAuction = false
@@ -191,32 +196,39 @@ while not halted do
 			-- Garage 1: Bid normally on all items
 			if currentRoundNumber == 1 then
 				if currentNextBid and currentBidder ~= LocalPlayer then
-					-- Only print when actually placing a bid
 					if lastBidPrint ~= currentNextBid then
 						debugPrint("Placing bid:", currentNextBid)
 						lastBidPrint = currentNextBid
 					end
 					pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
 				end
-			-- Garage 2: Skip and pass
-			elseif currentRoundNumber == 2 then
-				debugPrint("Garage 2 - Skipping")
-				skipNormal()
-				passAuction()
-				task.wait(1)
-				-- Wait for garage to be removed before continuing
-				while currentGarage and currentGarage == currentGarage do
-					task.wait(0.1)
+			-- Garage 2 and 3: Skip and pass
+			elseif (currentRoundNumber == 2 or currentRoundNumber == 3) and not skipTriggeredForRound then
+				debugPrint("Garage", currentRoundNumber, "- Skipping")
+				skipTriggeredForRound = true
+				
+				-- Try normal skip first
+				local skipSuccess = skipNormal()
+				
+				-- If normal skip fails, try countdown skip as fallback
+				if not skipSuccess then
+					debugPrint("Normal skip failed, trying countdown skip")
+					task.wait(0.5)
+					skipWithCountdown()
 				end
-			-- Garage 3: Skip and pass
-			elseif currentRoundNumber == 3 then
-				debugPrint("Garage 3 - Skipping")
-				skipNormal()
+				
+				-- Pass the auction
+				task.wait(0.2)
 				passAuction()
-				task.wait(1)
-				-- Wait for garage to be removed before continuing
-				while currentGarage and currentGarage == currentGarage do
+				
+				-- Wait for garage to change (garage will be removed)
+				local startWait = tick()
+				while currentGarage and currentGarage == currentGarage and tick() - startWait < 5 do
 					task.wait(0.1)
+					-- If garage changed, break
+					if not currentGarage or currentGarage ~= currentGarage then
+						break
+					end
 				end
 			end
 		end
