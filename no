@@ -232,49 +232,48 @@ local function getRoundNumber(garage)
 	return 0
 end
 
--- Function to find best affordable garage (ignore free ones except 1 and 2)
-local function getBestGarage()
-	local success, data = pcall(function() return DataEvent:InvokeServer() end)
-	if not success or not data then
-		debugPrint("Failed to get player data, using garage 1")
-		return "1"
-	end
-	
-	local cash = data.Cash or 0
-	local bestGarage = "1"
-	local highestCost = 0
-	
-	debugPrint("Checking garages with cash: $" .. RepLibrary:GetNumberPrefixValue(cash))
-	
-	for garageId, garageData in pairs(Garages) do
-		local cost = garageData.CostToEnter or 0
-		local garageType = garageData.Type or "Cash"
-		
-		-- Skip free garages except garage 1 and 2
-		if cost == 0 and garageId ~= "1" and garageId ~= "2" then
-			-- Skip free garages
-		else
-			-- Check if we can afford this garage
-			if garageType == "Cash" and cost <= cash then
-				if cost > highestCost then
-					highestCost = cost
-					bestGarage = garageId
-				end
-			elseif garageType ~= "Cash" then
-				-- Non-cash garages (like S2Cash) - include them
-				if garageId ~= "1" and garageId ~= "2" then
-					-- Only include if it's a valid option
-					if cost > highestCost then
-						highestCost = cost
-						bestGarage = garageId
-					end
-				end
-			end
-		end
-	end
-	
-	debugPrint("Selected garage:", bestGarage, "with cost:", highestCost)
-	return bestGarage
+-- Get how much cash the player has
+local function GetPlayerCash()
+    return LocalPlayer.Data.Cash.Value
+end
+
+-- Returns the cash entry cost of a garage or nil if invalid
+local function GetCashEntryCost(garageId)
+    local garage = Garages[garageId]
+    if not garage then return nil end
+
+    if garageId == "1" or garageId == "2" or garageId == 1 or garageId == 2 then
+        return 0 -- only these are truly free
+    end
+
+    local cost = garage.CostToEnter or garage.CashNeededToEnter
+    if not cost or cost <= 0 then
+        return nil -- fake garage, skip
+    end
+
+    return cost
+end
+
+-- Find the best affordable garage
+local function GetBestAffordableGarage()
+    local playerCash = GetPlayerCash()
+    local bestGarageId = nil
+    local bestCost = -1
+
+    debugPrint("Player cash: $" .. RepLibrary:GetNumberPrefixValue(playerCash))
+
+    for garageId, garageData in pairs(Garages) do
+        local cost = GetCashEntryCost(garageId)
+        if cost and cost <= playerCash then
+            -- pick the garage with highest entry we can afford
+            if cost > bestCost then
+                bestCost = cost
+                bestGarageId = garageId
+            end
+        end
+    end
+
+    return bestGarageId, bestCost
 end
 
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
@@ -318,8 +317,15 @@ task.spawn(function()
 			break
 		end
 		
-		local selectedGarage = getBestGarage()
-		debugPrint("Entering queue for garage:", selectedGarage)
+		local selectedGarage, entryCost = GetBestAffordableGarage()
+		
+		if not selectedGarage then
+			debugPrint("No affordable garage available, using garage 1 as fallback")
+			selectedGarage = "1"
+			entryCost = 0
+		end
+		
+		debugPrint("Entering queue for garage:", selectedGarage, "Cost:", entryCost)
 		pcall(function() EnterQueue:InvokeServer(selectedGarage) end)
 		
 		local entered = waitForCondition(function() return inAuction end, 10, 0.05)
