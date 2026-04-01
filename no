@@ -19,7 +19,7 @@ local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 local SellAllItems = Auctions:WaitForChild("SellAllItems")
 
-local SCAN_DURATION = 1
+local SCAN_DURATION = 3 -- Increased from 1 to catch slow-spawning items
 local TARGET_GARAGE = "1"
 local BID_CHECK_INTERVAL = 0.1
 local targetGarages = {"1", "2", "3"}
@@ -38,9 +38,16 @@ local selectedItemIds = {} -- Store the IDs we want to KEEP
 local currentAuctionGarage = nil
 
 local lastSkipTime = 0
-local SKIP_COOLDOWN = 0.5
+local SKIP_COOLDOWN = 1.5 -- Increased cooldown
 
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+-- FIX #1: Normalize IDs to handle "01", "1 ", etc.
+local function normalizeId(id)
+	if not id then return nil end
+	local normalized = tostring(id):gsub("^0+", ""):gsub("%s+", "")
+	return normalized
+end
 
 local function debugPrint(...)
 	print("[AuctionBot]", ...)
@@ -132,9 +139,23 @@ local function scanGarageItems(garage)
 	
 	while tick() - startTime < SCAN_DURATION and garage and garage.Parent do
 		for _, itemInstance in pairs(itemsFolder:GetChildren()) do
-			local itemId = itemInstance.Name
+			local rawItemId = itemInstance.Name
+			local itemId = normalizeId(rawItemId)
+			
+			if not itemId then
+				debugPrint("Invalid item ID:", rawItemId)
+				continue
+			end
+			
 			local itemData = ItemsModule[itemId]
-			if itemData and itemData.Price then
+			
+			-- FIX #2: Check if item exists in module
+			if not itemData then
+				debugPrint("Missing item in module:", itemId, "(raw:", rawItemId, ")")
+				continue
+			end
+			
+			if itemData.Price then
 				table.insert(availableItems, {
 					id = itemId,
 					price = itemData.Price,
@@ -146,6 +167,7 @@ local function scanGarageItems(garage)
 		task.wait(0.1)
 	end
 	
+	debugPrint("Total items found in garage:", #availableItems)
 	return availableItems
 end
 
@@ -205,10 +227,14 @@ local function updateTargetItems(garage)
 end
 
 local function isTargetItem(itemId)
+	-- Normalize the item ID
+	local normalizedId = normalizeId(itemId)
+	if not normalizedId then return false, nil end
+	
 	-- Check if item is in our KEEP list
 	for _, selectedId in ipairs(selectedItemIds) do
-		if tostring(itemId) == tostring(selectedId) then
-			local itemData = ItemsModule[itemId]
+		if normalizedId == selectedId then
+			local itemData = ItemsModule[normalizedId]
 			return true, itemData
 		end
 	end
@@ -241,7 +267,7 @@ local function onGarageAdded(garage)
 				currentAuctionGarage = garage
 				
 				debugPrint("Target garage detected, scanning for best items...")
-				task.wait(1) -- Wait for items to load
+				task.wait(1.5) -- Wait longer for items to load
 				updateTargetItems(garage)
 			else
 				-- This is garage 2 or 3, we want to skip it
@@ -306,7 +332,7 @@ local function scanCurrentGarageForTarget()
 	
 	-- Only scan if we have selected items to KEEP
 	if #selectedItemIds == 0 then
-		debugPrint("No items selected to keep")
+		debugPrint("No selected items to keep")
 		return false
 	end
 	
@@ -316,7 +342,11 @@ local function scanCurrentGarageForTarget()
 	local startTime = tick()
 	while tick() - startTime < SCAN_DURATION and currentGarage and currentGarage.Parent do
 		for _, itemInstance in pairs(itemsFolder:GetChildren()) do
-			local itemId = itemInstance.Name
+			local rawItemId = itemInstance.Name
+			local itemId = normalizeId(rawItemId)
+			
+			if not itemId then continue end
+			
 			local isTarget, itemData = isTargetItem(itemId)
 			if isTarget then
 				debugPrint("Found item to KEEP in garage:", itemId, itemData and itemData.Name)
@@ -329,47 +359,78 @@ local function scanCurrentGarageForTarget()
 	return false
 end
 
--- Loop to handle ItemsWon every 10 seconds
--- FIXED: Now we SELL the junk items and KEEP the target items
+-- FIX #3: Proper ItemsWon handling with debug
 task.spawn(function()
 	while not halted do
 		task.wait(10)
 		
 		if not processingItemsWon then
 			debugPrint("Checking items won...")
+			
 			local success, data = pcall(function() return DataEvent:InvokeServer() end)
-			if success and data and data.ItemsWon then
+			if not success then
+				debugPrint("Failed to get data")
+				continue
+			end
+			
+			if not data then
+				debugPrint("Data is nil")
+				continue
+			end
+			
+			debugPrint("Data.ItemsWon exists:", data.ItemsWon ~= nil)
+			
+			if data.ItemsWon then
 				local itemsWon = data.ItemsWon
-				local guidsToSell = {} -- Items we want to SELL (junk)
-				local guidsToKeep = {} -- Items we want to KEEP (target items)
+				local itemCount = 0
+				for _ in pairs(itemsWon) do itemCount = itemCount + 1 end
+				debugPrint("ItemsWon count:", itemCount)
 				
-				for guid, itemData in pairs(itemsWon) do
-					local itemId = tostring(itemData.itemId)
-					local isTarget, _ = isTargetItem(itemId)
+				if itemCount > 0 then
+					local guidsToSell = {}
+					local guidsToKeep = {}
 					
-					if isTarget then
-						-- This is a target item we want to KEEP
-						table.insert(guidsToKeep, guid)
-						debugPrint("KEEPING target item:", itemId)
-					else
-						-- This is junk we want to SELL
-						table.insert(guidsToSell, guid)
-						debugPrint("SELLING junk item:", itemId)
+					for guid, itemData in pairs(itemsWon) do
+						local rawItemId = itemData.itemId
+						local itemId = normalizeId(rawItemId)
+						debugPrint("Item in ItemsWon - GUID:", guid, "ItemID:", itemId)
+						
+						local isTarget, _ = isTargetItem(itemId)
+						
+						if isTarget then
+							table.insert(guidsToKeep, guid)
+							debugPrint("KEEPING target item:", itemId)
+						else
+							table.insert(guidsToSell, guid)
+							debugPrint("SELLING junk item:", itemId)
+						end
+					end
+					
+					-- FIX #4: Sell only the junk items, remove "Default"
+					if #guidsToSell > 0 then
+						processingItemsWon = true
+						debugPrint("Attempting to sell", #guidsToSell, "junk items")
+						
+						local sellSuccess, err = pcall(function()
+							-- Remove "Default" parameter - just send the GUIDs
+							return SellAllItems:InvokeServer(guidsToSell)
+						end)
+						
+						if sellSuccess then
+							debugPrint("Sold", #guidsToSell, "junk items")
+						else
+							debugPrint("Failed to sell items:", err)
+						end
+						
+						processingItemsWon = false
+					end
+					
+					if #guidsToKeep > 0 then
+						debugPrint("Keeping", #guidsToKeep, "target items")
 					end
 				end
-				
-				-- Sell the junk items (if any)
-				if #guidsToSell > 0 then
-					processingItemsWon = true
-					SellAllItems:InvokeServer("Default", guidsToSell)
-					debugPrint("Sold", #guidsToSell, "junk items")
-					processingItemsWon = false
-				end
-				
-				-- Log what we're keeping
-				if #guidsToKeep > 0 then
-					debugPrint("Keeping", #guidsToKeep, "target items")
-				end
+			else
+				debugPrint("data.ItemsWon is nil")
 			end
 		end
 	end
@@ -408,12 +469,21 @@ while not halted do
 	
 	debugPrint("Successfully entered auction")
 	
-	-- If we entered a non-target garage (2 or 3), skip it
+	-- FIX #5: Proper skip with cooldown
 	if currentAuctionGarage and currentAuctionGarage.Name ~= TARGET_GARAGE then
 		debugPrint("Entered non-target garage:", currentAuctionGarage.Name, "- skipping")
-		pcall(function() SkipCountdown:InvokeServer() end)
-		task.wait(0.05)
-		pcall(function() Skip:InvokeServer() end)
+		
+		local now = tick()
+		if now - lastSkipTime > SKIP_COOLDOWN then
+			lastSkipTime = now
+			
+			pcall(function() SkipCountdown:InvokeServer() end)
+			task.wait(0.5)
+			pcall(function() Skip:InvokeServer() end)
+		else
+			debugPrint("Skip on cooldown, waiting...")
+			task.wait(1)
+		end
 		task.wait(1.5)
 		continue
 	end
