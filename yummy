@@ -1,18 +1,132 @@
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 local VirtualUser = game:GetService("VirtualUser")
+local LocalPlayer = Players.LocalPlayer
 
-local lp = Players.LocalPlayer
+local SHELVES = {
+    {Id = "4", SizeX = 14, SizeZ = 11, Max = math.huge}
+}
+local FLOOR = 1
+local InsertFurniture = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Shop"):WaitForChild("InsertFurniture")
+local SellRemote = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Shop"):WaitForChild("SellItemInShop")
+local GetAll = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
+local ItemsModule = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Items"))
+local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
+local AcceptRemote = ReplicatedStorage.Events.Shop.AcceptOfferServer
+local DeclineRemote = ReplicatedStorage.Events.Shop.DeclineOfferServer
 
-task.wait(1)
+local nsv = LocalPlayer:WaitForChild("NonSaveVars")
+local own = nsv:WaitForChild("OwnsPlot")
+repeat task.wait() until own.Value and own.Value ~= 0
 
-for _, x in pairs(getconnections(lp.Idled)) do
-    x:Disable()
+local plot = Workspace:WaitForChild("Plots"):WaitForChild(tostring(own.Value))
+local canvas = plot:WaitForChild("Interior"):WaitForChild("Shop1"):WaitForChild("Canvas")
+
+local function generateGridPositions(shelf)
+    local positions = {}
+    local fitX = math.floor(canvas.Size.X / shelf.SizeX)
+    local fitZ = math.floor(canvas.Size.Z / shelf.SizeZ)
+    local startX = canvas.Position.X - canvas.Size.X/2 + shelf.SizeX/2
+    local startZ = canvas.Position.Z - canvas.Size.Z/2 + shelf.SizeZ/2
+    local y = canvas.Position.Y + canvas.Size.Y/2
+    for x = 0, fitX - 1 do
+        for z = 0, fitZ - 1 do
+            table.insert(positions, Vector3.new(startX + x * shelf.SizeX, y, startZ + z * shelf.SizeZ))
+        end
+    end
+    return positions
 end
 
-lp.Idled:Connect(function()
-    VirtualUser:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+local function placeShelves(shelf, floor)
+    local positions = generateGridPositions(shelf)
+    local placedCount = 0
+    for _, pos in ipairs(positions) do
+        local success = false
+        for attempt = 1, 3 do
+            success = pcall(function()
+                InsertFurniture:InvokeServer({Id = shelf.Id, CFrame = CFrame.new(pos), Floor = floor})
+            end)
+            if success then
+                placedCount = placedCount + 1
+                task.wait(0.1)
+                break
+            else
+                task.wait(0.1)
+            end
+        end
+    end
+    return placedCount
+end
+
+local function sellItems()
+    local data = GetAll:InvokeServer()
+    
+    local plotName = LocalPlayer:WaitForChild("NonSaveVars"):WaitForChild("OwnsPlot").Value.Name
+    local plot = workspace:WaitForChild("Plots"):WaitForChild(plotName)
+    
+    local shelves = {}
+    for _, furniture in ipairs(plot:WaitForChild("Furniture"):GetChildren()) do
+        local s = furniture:FindFirstChild("Shelves")
+        if s then
+            for _, shelf in ipairs(s:GetChildren()) do
+                table.insert(shelves, shelf)
+            end
+        end
+    end
+    
+    local guids = {}
+    for guid, info in pairs(data.Inventory) do
+        local id = tonumber(info.Id)
+        local itemData = ItemsModule[id]
+        local name = itemData and string.lower(itemData.Name or "") or ""
+        if id ~= 681 and id ~= 2294 and not string.find(name, "safe") then
+            table.insert(guids, guid)
+        end
+    end
+    
+    if #guids == 0 then
+        return 0
+    end
+    
+    local count = math.min(#shelves, #guids)
+    for i = 1, count do
+        SellRemote:FireServer(guids[i], shelves[i], true)
+        task.wait(0.1)
+    end
+    
+    return count
+end
+
+local function getMyShelves()
+    local plotVal = LocalPlayer.NonSaveVars and LocalPlayer.NonSaveVars.OwnsPlot
+    if not plotVal or not plotVal.Value then return {} end
+
+    local shelves = {}
+    local furniture = plotVal.Value:FindFirstChild("Furniture")
+    if not furniture then return shelves end
+
+    for _, v in ipairs(furniture:GetDescendants()) do
+        if v.Name == "Shelves" then
+            for _, shelf in ipairs(v:GetChildren()) do
+                table.insert(shelves, shelf)
+            end
+        end
+    end
+
+    return shelves
+end
+
+task.spawn(function()
     task.wait(1)
-    VirtualUser:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+    for _, x in pairs(getconnections(LocalPlayer.Idled)) do
+        x:Disable()
+    end
+    LocalPlayer.Idled:Connect(function()
+        VirtualUser:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+        task.wait(1)
+        VirtualUser:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+    end)
 end)
 
 task.spawn(function()
@@ -37,4 +151,69 @@ task.spawn(function()
     pcall(function()
         loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))()
     end)
+end)
+
+task.spawn(function()
+    while true do
+        task.spawn(function()
+            pcall(function()
+                for _, shelf in ipairs(getMyShelves()) do
+                    local offer = shelf:GetAttribute("Offer")
+                    if not offer then continue end
+
+                    local itemFolder = shelf:FindFirstChild("Item")
+                    if not itemFolder then continue end
+
+                    local item = itemFolder:GetChildren()[1]
+                    if not item then continue end
+
+                    local id = item:GetAttribute("Id")
+                    if not id then continue end
+
+                    local basePrice = RepLibrary:GetItemPrice({Id = id})
+                    if not basePrice or basePrice <= 0 then continue end
+
+                    local percent = ((offer - basePrice) / basePrice) * 100
+
+                    if percent >= 50 then
+                        task.spawn(function()
+                            for i = 1, 3 do
+                                AcceptRemote:FireServer(shelf)
+                                task.wait(1)
+                            end
+                            task.wait(3)
+                            DeclineRemote:FireServer(shelf)
+                        end)
+                    elseif percent >= 10 then
+                        AcceptRemote:FireServer(shelf)
+                    else
+                        DeclineRemote:FireServer(shelf)
+                    end
+                end
+            end)
+        end)
+        task.wait(0.5)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.spawn(function()
+            local placed = placeShelves(SHELVES[1], FLOOR)
+            print("Placed " .. placed .. " shelves")
+        end)
+        task.wait(60)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.spawn(function()
+            local sold = sellItems()
+            if sold > 0 then
+                print("Sold " .. sold .. " items")
+            end
+        end)
+        task.wait(60)
+    end
 end)
