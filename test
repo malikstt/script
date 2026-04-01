@@ -1,21 +1,171 @@
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
 local LocalPlayer = Players.LocalPlayer
-
-local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local Events = ReplicatedStorage:WaitForChild("Events")
+local ItemsModule = require(ReplicatedStorage.Modules.Items)
 local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
+local Garages = require(ReplicatedStorage.Modules.Garages)
 
+print("Script Started v 1.0.1")
+
+-- ========== ITEMS WON HANDLER ==========
+local function destroySpecificGuis()
+	local items = PlayerGui:FindFirstChild("ItemsWon")
+	if items then items:Destroy() end
+	local circle = PlayerGui:FindFirstChild("CircleAnimationUI")
+	if circle then circle:Destroy() end
+end
+
+destroySpecificGuis()
+
+PlayerGui.ChildAdded:Connect(function(child)
+	if child.Name == "ItemsWon" or child.Name == "CircleAnimationUI" then
+		child:Destroy()
+	end
+end)
+
+local function tryClick(obj)
+	if obj and (obj:IsA("TextButton") or obj:IsA("ImageButton")) then
+		pcall(function() obj:Activate() end)
+		if getconnections then
+			for _, v in pairs(getconnections(obj.MouseButton1Click)) do
+				pcall(function() v:Fire() end)
+			end
+		end
+	end
+end
+
+local function checkForButton()
+	local itemsWon = PlayerGui:FindFirstChild("ItemsWon", true)
+	if itemsWon then
+		local button = itemsWon:FindFirstChild("Button", true)
+		if button then
+			tryClick(button)
+		end
+	end
+end
+
+checkForButton()
+
+PlayerGui.DescendantAdded:Connect(function(obj)
+	if obj.Name == "Button" then
+		task.wait(0.5)
+		tryClick(obj)
+	end
+end)
+
+task.spawn(function()
+	while true do
+		task.wait(0.25)
+		checkForButton()
+	end
+end)
+
+local function processItemsWon()
+    task.wait(1)
+    
+    local success, data = pcall(function()
+        return Events.Data.GetAll:InvokeServer()
+    end)
+    
+    if not success or not data then
+        print("GetAll failed")
+        return
+    end
+    
+    print("GetAll returned:")
+    
+    local itemsWon = data.ItemsWon
+    if not itemsWon or next(itemsWon) == nil then
+        print("No items won")
+        return
+    end
+    
+    task.wait(1)
+    
+    local sortedItems = {}
+    for guid, itemData in pairs(itemsWon) do
+        local itemInfo = ItemsModule[itemData.itemId]
+        if itemInfo then
+            table.insert(sortedItems, {
+                guid = guid,
+                itemId = itemData.itemId,
+                price = itemInfo.Price,
+                name = itemInfo.Name
+            })
+            print(itemInfo.Name .. " $" .. itemInfo.Price)
+        end
+    end
+    
+    table.sort(sortedItems, function(a, b)
+        return a.price > b.price
+    end)
+    
+    task.wait(1)
+    
+    local carryLevel = data.CarryLevel
+    local totalCarrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
+    
+    local inventoryCount = 0
+    if data.Inventory then
+        for _ in pairs(data.Inventory) do
+            inventoryCount = inventoryCount + 1
+        end
+    end
+    
+    local inventoryTotal = RepLibrary:GetInventorySpace(LocalPlayer, data.InventoryLevel)
+    local inventoryAvailable = inventoryTotal - inventoryCount
+    
+    local canTake = math.min(totalCarrySpace, inventoryAvailable, #sortedItems)
+    
+    print("Carry space: " .. totalCarrySpace .. " / Inventory space: " .. inventoryAvailable .. " available")
+    print("Can take: " .. canTake .. " items")
+    
+    task.wait(1)
+    
+    if canTake > 0 and #sortedItems > 0 then
+        local guidsToKeep = {}
+        for i = 1, math.min(canTake, #sortedItems) do
+            table.insert(guidsToKeep, sortedItems[i].guid)
+        end
+        
+        local claimSuccess, claimResult = pcall(function()
+            return Events.Auctions.SellAllItems:InvokeServer("Default", guidsToKeep)
+        end)
+        
+        if claimSuccess and claimResult then
+            print("Remote fired - Kept " .. #guidsToKeep .. " best items")
+        else
+            print("Remote failed")
+        end
+    else
+        print("No space to take items")
+    end
+    
+    print("Done")
+end
+
+-- ItemsWon loop (runs independently)
+task.spawn(function()
+    while true do
+        processItemsWon()
+        task.wait(60)
+    end
+end)
+
+-- ========== AUCTION BOT ==========
+local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
 local Auctions = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
 local EnterQueue = Auctions:WaitForChild("EnterQueue")
 local Skip = Auctions:WaitForChild("Skip")
 local SkipCountdown = Auctions:WaitForChild("SkipCountdown")
 local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
 local PlaceBid = Auctions:WaitForChild("PlaceBid")
-local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
+local DataEvent = Events.Data:WaitForChild("GetAll")
 
 local BID_CHECK_INTERVAL = 0.1
-local GARAGE_ID = "1"
-
 local inAuction = false
 local auctionEnded = false
 local halted = false
@@ -53,7 +203,6 @@ local function waitForCondition(condition, timeout, checkInterval)
 	return false
 end
 
--- Function to fire SkipCountdown
 local function fireSkipCountdown()
 	if tick() - lastSkipTime < SKIP_COOLDOWN then
 		return
@@ -67,7 +216,6 @@ local function fireSkipCountdown()
 	task.wait(0.1)
 end
 
--- Get round number from garage name or attribute
 local function getRoundNumber(garage)
 	if garage then
 		local roundAttr = garage:GetAttribute("RoundNumber")
@@ -82,6 +230,51 @@ local function getRoundNumber(garage)
 		end
 	end
 	return 0
+end
+
+-- Function to find best affordable garage (ignore free ones except 1 and 2)
+local function getBestGarage()
+	local success, data = pcall(function() return DataEvent:InvokeServer() end)
+	if not success or not data then
+		debugPrint("Failed to get player data, using garage 1")
+		return "1"
+	end
+	
+	local cash = data.Cash or 0
+	local bestGarage = "1"
+	local highestCost = 0
+	
+	debugPrint("Checking garages with cash: $" .. RepLibrary:GetNumberPrefixValue(cash))
+	
+	for garageId, garageData in pairs(Garages) do
+		local cost = garageData.CostToEnter or 0
+		local garageType = garageData.Type or "Cash"
+		
+		-- Skip free garages except garage 1 and 2
+		if cost == 0 and garageId ~= "1" and garageId ~= "2" then
+			-- Skip free garages
+		else
+			-- Check if we can afford this garage
+			if garageType == "Cash" and cost <= cash then
+				if cost > highestCost then
+					highestCost = cost
+					bestGarage = garageId
+				end
+			elseif garageType ~= "Cash" then
+				-- Non-cash garages (like S2Cash) - include them
+				if garageId ~= "1" and garageId ~= "2" then
+					-- Only include if it's a valid option
+					if cost > highestCost then
+						highestCost = cost
+						bestGarage = garageId
+					end
+				end
+			end
+		end
+	end
+	
+	debugPrint("Selected garage:", bestGarage, "with cost:", highestCost)
+	return bestGarage
 end
 
 UpdateCurrentBid.OnClientEvent:Connect(function(data)
@@ -114,60 +307,63 @@ AuctionsFolder.ChildRemoved:Connect(function(child)
 	end
 end)
 
-debugPrint("Auction bot started - monitoring for garage", GARAGE_ID)
-
-while not halted do
-	if storageFull() then
-		debugPrint("Storage full, halting")
-		halted = true
-		break
-	end
+-- Auction bot main loop (runs independently)
+task.spawn(function()
+	debugPrint("Auction bot started")
 	
-	debugPrint("Entering queue for garage:", GARAGE_ID)
-	pcall(function() EnterQueue:InvokeServer(GARAGE_ID) end)
-	
-	local entered = waitForCondition(function() return inAuction end, 10, 0.05)
-	if not entered then
-		debugPrint("Failed to enter auction, retrying")
-		continue
-	end
-	
-	debugPrint("Successfully entered auction session")
-	
-	while inAuction and not auctionEnded do
-		if currentGarage then
-			-- Garage 1: Bid normally
-			if currentRoundNumber == 1 then
-				if currentNextBid and currentBidder ~= LocalPlayer then
-					if lastBidPrint ~= currentNextBid then
-						debugPrint("Placing bid:", currentNextBid)
-						lastBidPrint = currentNextBid
-					end
-					pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
-				end
-			-- Garage 2: Fire SkipCountdown then use normal Skip
-			elseif currentRoundNumber == 2 then
-				debugPrint("Garage 2 - Firing SkipCountdown")
-				fireSkipCountdown()
-				task.wait(0.5)
-				debugPrint("Garage 2 - Using normal Skip")
-				pcall(function() Skip:InvokeServer() end)
-				task.wait(1)
-			-- Garage 3: Fire SkipCountdown then use normal Skip
-			elseif currentRoundNumber == 3 then
-				debugPrint("Garage 3 - Firing SkipCountdown")
-				fireSkipCountdown()
-				task.wait(0.5)
-				debugPrint("Garage 3 - Using normal Skip")
-				pcall(function() Skip:InvokeServer() end)
-				task.wait(1)
-			end
+	while not halted do
+		if storageFull() then
+			debugPrint("Storage full, halting")
+			halted = true
+			break
 		end
-		task.wait(BID_CHECK_INTERVAL)
+		
+		local selectedGarage = getBestGarage()
+		debugPrint("Entering queue for garage:", selectedGarage)
+		pcall(function() EnterQueue:InvokeServer(selectedGarage) end)
+		
+		local entered = waitForCondition(function() return inAuction end, 10, 0.05)
+		if not entered then
+			debugPrint("Failed to enter auction, retrying")
+			continue
+		end
+		
+		debugPrint("Successfully entered auction session")
+		
+		while inAuction and not auctionEnded do
+			if currentGarage then
+				if currentRoundNumber == 1 then
+					if currentNextBid and currentBidder ~= LocalPlayer then
+						if lastBidPrint ~= currentNextBid then
+							debugPrint("Placing bid:", currentNextBid)
+							lastBidPrint = currentNextBid
+						end
+						pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
+					end
+				elseif currentRoundNumber == 2 then
+					debugPrint("Garage 2 - Firing SkipCountdown")
+					fireSkipCountdown()
+					task.wait(0.5)
+					debugPrint("Garage 2 - Using normal Skip")
+					pcall(function() Skip:InvokeServer() end)
+					task.wait(1)
+				elseif currentRoundNumber == 3 then
+					debugPrint("Garage 3 - Firing SkipCountdown")
+					fireSkipCountdown()
+					task.wait(0.5)
+					debugPrint("Garage 3 - Using normal Skip")
+					pcall(function() Skip:InvokeServer() end)
+					task.wait(1)
+				end
+			end
+			task.wait(BID_CHECK_INTERVAL)
+		end
+		
+		task.wait(1.5)
+		debugPrint("Ready for next auction session")
 	end
 	
-	task.wait(1.5)
-	debugPrint("Ready for next auction session")
-end
+	debugPrint("Auction bot stopped")
+end)
 
-debugPrint("Auction bot stopped")
+print("Both systems running independently")
