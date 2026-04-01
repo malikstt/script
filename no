@@ -5,7 +5,6 @@ local LocalPlayer = Players.LocalPlayer
 local nonSaveVars = LocalPlayer:FindFirstChild("NonSaveVars")
 local ownsPlot = nonSaveVars and nonSaveVars:FindFirstChild("OwnsPlot")
 local currentPlot = ownsPlot and ownsPlot:IsA("ValueBase") and ownsPlot.Value or "7"
-local canvas = workspace.Plots[tostring(currentPlot)].Interior.Shop1.Canvas
 
 local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
 local ItemsModule = require(ReplicatedStorage.Modules.Items)
@@ -21,10 +20,9 @@ local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):
 local SellAllItems = Auctions:WaitForChild("SellAllItems")
 
 local SCAN_DURATION = 1
-local GARAGE_ID = "1"
+local TARGET_GARAGE = "1"
 local BID_CHECK_INTERVAL = 0.1
-
-local sessionStartTime = tick()
+local targetGarages = {"1", "2", "3"}
 
 local inAuction = false
 local obtainedTarget = false
@@ -36,7 +34,8 @@ local currentGarage = nil
 local targetGarage = nil
 local processingItemsWon = false
 local isBiddingActive = false
-local selectedItemIds = {} -- Store the IDs we want to bid on
+local selectedItemIds = {} -- Store the IDs we want to KEEP
+local currentAuctionGarage = nil
 
 local lastSkipTime = 0
 local SKIP_COOLDOWN = 0.5
@@ -122,16 +121,16 @@ local function getInventorySpaceInfo()
 end
 
 -- Function to scan garage and get all available items with their prices
-local function scanGarageItems()
-	if not currentGarage then return {} end
+local function scanGarageItems(garage)
+	if not garage then return {} end
 	
-	local itemsFolder = currentGarage:FindFirstChild("Items")
+	local itemsFolder = garage:FindFirstChild("Items")
 	if not itemsFolder then return {} end
 	
 	local availableItems = {}
 	local startTime = tick()
 	
-	while tick() - startTime < SCAN_DURATION and currentGarage and currentGarage.Parent do
+	while tick() - startTime < SCAN_DURATION and garage and garage.Parent do
 		for _, itemInstance in pairs(itemsFolder:GetChildren()) do
 			local itemId = itemInstance.Name
 			local itemData = ItemsModule[itemId]
@@ -141,7 +140,7 @@ local function scanGarageItems()
 					price = itemData.Price,
 					name = itemData.Name
 				})
-				debugPrint("Found item:", itemId, itemData.Name, "Price:", itemData.Price)
+				debugPrint("Found item in garage", garage.Name, ":", itemId, itemData.Name, "Price:", itemData.Price)
 			end
 		end
 		task.wait(0.1)
@@ -150,33 +149,33 @@ local function scanGarageItems()
 	return availableItems
 end
 
--- Function to select best items based on price and available space
-local function selectBestItems(itemList, availableSpace)
+-- Function to select best items based on price and available space (these are the ones we want to KEEP)
+local function selectBestItemsToKeep(itemList, availableSpace)
 	if not itemList or #itemList == 0 then return {} end
 	
 	-- Sort items by price (highest first)
 	table.sort(itemList, function(a, b) return a.price > b.price end)
 	
-	-- Select as many as space allows
-	local selected = {}
+	-- Select as many as space allows (these are the ones we'll keep)
+	local toKeep = {}
 	local spaceUsed = 0
 	
 	for _, item in ipairs(itemList) do
 		if spaceUsed < availableSpace then
-			table.insert(selected, item.id)
+			table.insert(toKeep, item.id)
 			spaceUsed = spaceUsed + 1
-			debugPrint("Selected item:", item.id, item.name, "Price:", item.price)
+			debugPrint("Will KEEP item:", item.id, item.name, "Price:", item.price)
 		else
-			break
+			debugPrint("Will SELL item (no space):", item.id, item.name, "Price:", item.price)
 		end
 	end
 	
-	return selected
+	return toKeep
 end
 
--- Function to update target items based on current garage and inventory space
-local function updateTargetItems()
-	debugPrint("Updating target items based on inventory space...")
+-- Function to update target items based on garage and inventory space
+local function updateTargetItems(garage)
+	debugPrint("Updating target items for garage:", garage.Name)
 	
 	local spaceInfo = getInventorySpaceInfo()
 	if not spaceInfo then
@@ -191,22 +190,22 @@ local function updateTargetItems()
 		return false
 	end
 	
-	-- Scan current garage for items
-	local availableItems = scanGarageItems()
+	-- Scan garage for items
+	local availableItems = scanGarageItems(garage)
 	if #availableItems == 0 then
-		debugPrint("No items found in current garage")
+		debugPrint("No items found in garage", garage.Name)
 		return false
 	end
 	
-	-- Select best items based on available space
-	selectedItemIds = selectBestItems(availableItems, spaceInfo.available)
+	-- Select best items to KEEP based on available space
+	selectedItemIds = selectBestItemsToKeep(availableItems, spaceInfo.available)
 	
-	debugPrint("Selected", #selectedItemIds, "items to bid on:", table.concat(selectedItemIds, ", "))
+	debugPrint("Will KEEP", #selectedItemIds, "items:", table.concat(selectedItemIds, ", "))
 	return #selectedItemIds > 0
 end
 
 local function isTargetItem(itemId)
-	-- Check if item is in our selected list
+	-- Check if item is in our KEEP list
 	for _, selectedId in ipairs(selectedItemIds) do
 		if tostring(itemId) == tostring(selectedId) then
 			local itemData = ItemsModule[itemId]
@@ -223,36 +222,72 @@ UpdateCurrentBid.OnClientEvent:Connect(function(data)
 	end
 end)
 
-AuctionsFolder.ChildAdded:Connect(function(garage)
-	debugPrint("Auction started for garage:", garage.Name)
-	inAuction = true
-	auctionEnded = false
-	currentGarage = garage
-	targetGarage = nil
-	isBiddingActive = false
+-- Handle when a garage is added (spawns)
+local function onGarageAdded(garage)
+	local garageName = garage.Name
+	debugPrint("Garage detected:", garageName)
 	
-	-- If this is garage 1, update target items based on what's in it
-	if garage.Name == GARAGE_ID then
-		debugPrint("Target garage detected, scanning for best items...")
-		task.wait(1) -- Wait for items to load
-		updateTargetItems()
+	for _, target in ipairs(targetGarages) do
+		if garageName == target then
+			debugPrint(string.format("[Detected] Garage %s started!", garageName))
+			
+			if garageName == TARGET_GARAGE then
+				-- This is our target garage (1), we want to bid on it
+				currentGarage = garage
+				inAuction = true
+				auctionEnded = false
+				targetGarage = nil
+				isBiddingActive = false
+				currentAuctionGarage = garage
+				
+				debugPrint("Target garage detected, scanning for best items...")
+				task.wait(1) -- Wait for items to load
+				updateTargetItems(garage)
+			else
+				-- This is garage 2 or 3, we want to skip it
+				debugPrint("Non-target garage detected, will skip:", garageName)
+				currentAuctionGarage = garage
+			end
+		end
 	end
-end)
+end
 
-AuctionsFolder.ChildRemoved:Connect(function(child)
-	if child == currentGarage then
-		debugPrint("Auction ended for garage:", child and child.Name)
-		auctionEnded = true
-		isBiddingActive = false
+-- Handle when a garage is removed (ends)
+local function onGarageRemoved(garage)
+	local garageName = garage.Name
+	debugPrint("Garage ended:", garageName)
+	
+	for _, target in ipairs(targetGarages) do
+		if garageName == target then
+			debugPrint(string.format("[Detected] Garage %s ended!", garageName))
+			
+			if garage == currentGarage then
+				auctionEnded = true
+				isBiddingActive = false
+			end
+			
+			if #AuctionsFolder:GetChildren() == 0 then
+				debugPrint("All auctions finished")
+				inAuction = false
+				currentGarage = nil
+				targetGarage = nil
+				obtainedTarget = false
+				currentAuctionGarage = nil
+			end
+		end
 	end
-	if #AuctionsFolder:GetChildren() == 0 then
-		debugPrint("All auctions finished")
-		inAuction = false
-		currentGarage = nil
-		targetGarage = nil
-		obtainedTarget = false
-	end
-end)
+end
+
+-- Connect the garage detectors
+AuctionsFolder.ChildAdded:Connect(onGarageAdded)
+AuctionsFolder.ChildRemoved:Connect(onGarageRemoved)
+
+-- Process existing garages
+for _, garage in pairs(AuctionsFolder:GetChildren()) do
+	onGarageAdded(garage)
+end
+
+debugPrint("Monitoring garages 1, 2, and 3...")
 
 local function storageFull()
 	local success, data = pcall(function() return DataEvent:InvokeServer() end)
@@ -269,9 +304,9 @@ end
 local function scanCurrentGarageForTarget()
 	if not currentGarage then return false end
 	
-	-- Only scan if we have selected items
+	-- Only scan if we have selected items to KEEP
 	if #selectedItemIds == 0 then
-		debugPrint("No selected items to look for")
+		debugPrint("No items selected to keep")
 		return false
 	end
 	
@@ -284,7 +319,7 @@ local function scanCurrentGarageForTarget()
 			local itemId = itemInstance.Name
 			local isTarget, itemData = isTargetItem(itemId)
 			if isTarget then
-				debugPrint("Found target item in garage:", itemId, itemData and itemData.Name)
+				debugPrint("Found item to KEEP in garage:", itemId, itemData and itemData.Name)
 				targetGarage = currentGarage
 				return true, itemId, itemData
 			end
@@ -294,32 +329,46 @@ local function scanCurrentGarageForTarget()
 	return false
 end
 
--- Loop to check ItemsWon every 10 seconds
+-- Loop to handle ItemsWon every 10 seconds
+-- FIXED: Now we SELL the junk items and KEEP the target items
 task.spawn(function()
 	while not halted do
 		task.wait(10)
 		
 		if not processingItemsWon then
-			debugPrint("Checking for items won...")
+			debugPrint("Checking items won...")
 			local success, data = pcall(function() return DataEvent:InvokeServer() end)
 			if success and data and data.ItemsWon then
 				local itemsWon = data.ItemsWon
-				local keepGuids = {}
+				local guidsToSell = {} -- Items we want to SELL (junk)
+				local guidsToKeep = {} -- Items we want to KEEP (target items)
 				
 				for guid, itemData in pairs(itemsWon) do
 					local itemId = tostring(itemData.itemId)
 					local isTarget, _ = isTargetItem(itemId)
+					
 					if isTarget then
-						debugPrint("Keeping target item:", itemId)
-						table.insert(keepGuids, guid)
+						-- This is a target item we want to KEEP
+						table.insert(guidsToKeep, guid)
+						debugPrint("KEEPING target item:", itemId)
+					else
+						-- This is junk we want to SELL
+						table.insert(guidsToSell, guid)
+						debugPrint("SELLING junk item:", itemId)
 					end
 				end
 				
-				if #keepGuids > 0 then
+				-- Sell the junk items (if any)
+				if #guidsToSell > 0 then
 					processingItemsWon = true
-					SellAllItems:InvokeServer("Default", keepGuids)
-					debugPrint("Sold", #keepGuids, "target items")
+					SellAllItems:InvokeServer("Default", guidsToSell)
+					debugPrint("Sold", #guidsToSell, "junk items")
 					processingItemsWon = false
+				end
+				
+				-- Log what we're keeping
+				if #guidsToKeep > 0 then
+					debugPrint("Keeping", #guidsToKeep, "target items")
 				end
 			end
 		end
@@ -335,7 +384,7 @@ local function waitForCondition(condition, timeout, checkInterval)
 	return false
 end
 
-debugPrint("Auction bot started - monitoring for garage", GARAGE_ID)
+debugPrint("Auction bot started - monitoring garages 1, 2, and 3")
 
 while not halted do
 	while processingItemsWon do
@@ -348,8 +397,8 @@ while not halted do
 		break
 	end
 	
-	debugPrint("Entering queue for garage:", GARAGE_ID)
-	pcall(function() EnterQueue:InvokeServer(GARAGE_ID) end)
+	debugPrint("Entering queue for garage: 1")
+	pcall(function() EnterQueue:InvokeServer("1") end)
 	
 	local entered = waitForCondition(function() return inAuction end, 10, 0.05)
 	if not entered then
@@ -358,6 +407,17 @@ while not halted do
 	end
 	
 	debugPrint("Successfully entered auction")
+	
+	-- If we entered a non-target garage (2 or 3), skip it
+	if currentAuctionGarage and currentAuctionGarage.Name ~= TARGET_GARAGE then
+		debugPrint("Entered non-target garage:", currentAuctionGarage.Name, "- skipping")
+		pcall(function() SkipCountdown:InvokeServer() end)
+		task.wait(0.05)
+		pcall(function() Skip:InvokeServer() end)
+		task.wait(1.5)
+		continue
+	end
+	
 	obtainedTarget = false
 	local targetFound = false
 	
@@ -389,14 +449,6 @@ while not halted do
 					task.wait(BID_CHECK_INTERVAL)
 				end
 				isBiddingActive = false
-			elseif not targetGarage then
-				if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
-					debugPrint("No target, skipping garage")
-					pcall(function() SkipCountdown:InvokeServer() end)
-					task.wait(0.05)
-					pcall(function() Skip:InvokeServer() end)
-					lastSkipTime = tick()
-				end
 			end
 		end
 		task.wait(0.25)
