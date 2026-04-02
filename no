@@ -20,8 +20,9 @@ local ItemsModule = require(ReplicatedStorage.Modules.Items)
 
 local MakeOfferRemote = ReplicatedStorage.Events.Shop.MakePlayerOffer
 local GetRemote = ReplicatedStorage.Events.Data.Get
+local GetAllRemote = ReplicatedStorage.Events.Data.GetAll
 local AcceptRemote = ReplicatedStorage.Events.Shop.AcceptPlayerOffer
-
+local SellRemote = ReplicatedStorage.Events.Shop.SellItemInShop
 local SetInsideShopRemote = ReplicatedStorage.Events.Misc.SetInsideShop
 
 -- Target player
@@ -161,5 +162,71 @@ task.spawn(function()
     end
 end)
 
+-- Place items on shelves (sell/display items)
+task.spawn(function()
+    while true do
+        pcall(function()
+            local data = GetAllRemote:InvokeServer()
+            if not data or not data.Inventory then 
+                task.wait(5)
+                return 
+            end
+
+            local plotName = LocalPlayer.NonSaveVars and LocalPlayer.NonSaveVars.OwnsPlot and LocalPlayer.NonSaveVars.OwnsPlot.Value
+            if not plotName then 
+                task.wait(5)
+                return 
+            end
+            
+            local plot = workspace.Plots and workspace.Plots[plotName.Name or plotName]
+            if not plot then 
+                task.wait(5)
+                return 
+            end
+
+            -- Find all shelves
+            local shelves = {}
+            local furnitureFolder = plot:FindFirstChild("Furniture")
+            if furnitureFolder then
+                for _, furniture in ipairs(furnitureFolder:GetChildren()) do
+                    local s = furniture:FindFirstChild("Shelves")
+                    if s then
+                        for _, shelf in ipairs(s:GetChildren()) do
+                            table.insert(shelves, shelf)
+                        end
+                    end
+                end
+            end
+
+            -- Sort inventory by price (highest first)
+            local sortedInventory = {}
+            for guid, info in pairs(data.Inventory) do
+                local id = tonumber(info.Id)
+                local itemData = ItemsModule[id]
+                local name = itemData and string.lower(itemData.Name or "") or ""
+                -- Skip safes and certain items
+                if id ~= 681 and id ~= 2294 and not string.find(name, "safe") then
+                    local price = RepLibrary:GetItemPrice(info)
+                    table.insert(sortedInventory, {GUID = guid, Data = info, Price = price})
+                end
+            end
+
+            table.sort(sortedInventory, function(a, b) return a.Price > b.Price end)
+
+            -- Place items on shelves
+            local shelfIndex = 1
+            for _, item in ipairs(sortedInventory) do
+                if shelfIndex > #shelves then break end
+                pcall(function()
+                    SellRemote:FireServer(item.GUID, shelves[shelfIndex], true)
+                end)
+                shelfIndex = shelfIndex + 1
+                task.wait(0.15)
+            end
+        end)
+        task.wait(2)
+    end
+end)
+
 -- Notify that script is running
-UIModule:Notify(LocalPlayer, "Auto Offer Script Running | Target: " .. TARGET_PLAYER .. " | -50% Offers | Auto Accept | Pivot Enabled")
+UIModule:Notify(LocalPlayer, "Auto Offer Script Running | Target: " .. TARGET_PLAYER .. " | -50% Offers | Auto Accept | Pivot Enabled | Auto Place Items")
