@@ -1,369 +1,158 @@
+-- Removed UI and all trading shit
+-- Default behavior: Send -50% offers to Ebikeu, accept offers from Ebikeu, pivot to Ebikeu
+
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService")
 
 local LocalPlayer = Players.LocalPlayer
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local UIModule = require(ReplicatedStorage.Modules.UIModule)
 local Events = ReplicatedStorage:WaitForChild("Events")
-local ItemsModule = require(ReplicatedStorage.Modules.Items)
 local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
-local GaragesModule = require(ReplicatedStorage.Modules["Garages-experiment1"])
+local ItemsModule = require(ReplicatedStorage.Modules.Items)
 
-print("Script Started v 1.0.1")
+local MakeOfferRemote = ReplicatedStorage.Events.Shop.MakePlayerOffer
+local GetRemote = ReplicatedStorage.Events.Data.Get
+local AcceptRemote = ReplicatedStorage.Events.Shop.AcceptPlayerOffer
 
--- ========== ITEMS WON HANDLER ==========
-local function destroySpecificGuis()
-	local items = PlayerGui:FindFirstChild("ItemsWon")
-	if items then items:Destroy() end
-	local circle = PlayerGui:FindFirstChild("CircleAnimationUI")
-	if circle then circle:Destroy() end
-end
+local SetInsideShopRemote = ReplicatedStorage.Events.Misc.SetInsideShop
 
-destroySpecificGuis()
+-- Target player
+local TARGET_PLAYER = "Ebikeu"
 
-PlayerGui.ChildAdded:Connect(function(child)
-	if child.Name == "ItemsWon" or child.Name == "CircleAnimationUI" then
-		child:Destroy()
-	end
-end)
-
-local function tryClick(obj)
-	if obj and (obj:IsA("TextButton") or obj:IsA("ImageButton")) then
-		pcall(function() obj:Activate() end)
-		if getconnections then
-			for _, v in pairs(getconnections(obj.MouseButton1Click)) do
-				pcall(function() v:Fire() end)
-			end
-		end
-	end
-end
-
-local function checkForButton()
-	local itemsWon = PlayerGui:FindFirstChild("ItemsWon", true)
-	if itemsWon then
-		local button = itemsWon:FindFirstChild("Button", true)
-		if button then
-			tryClick(button)
-		end
-	end
-end
-
-checkForButton()
-
-PlayerGui.DescendantAdded:Connect(function(obj)
-	if obj.Name == "Button" then
-		task.wait(0.5)
-		tryClick(obj)
-	end
-end)
-
-task.spawn(function()
-	while true do
-		task.wait(0.25)
-		checkForButton()
-	end
-end)
-
-local function processItemsWon()
-    task.wait(1)
-    
-    local success, data = pcall(function()
-        return Events.Data.GetAll:InvokeServer()
-    end)
-    
-    if not success or not data then
-        print("GetAll failed")
-        return
-    end
-    
-    print("GetAll returned:")
-    
-    local itemsWon = data.ItemsWon
-    if not itemsWon or next(itemsWon) == nil then
-        print("No items won")
-        return
-    end
-    
-    task.wait(1)
-    
-    local sortedItems = {}
-    for guid, itemData in pairs(itemsWon) do
-        local itemInfo = ItemsModule[itemData.itemId]
-        if itemInfo then
-            table.insert(sortedItems, {
-                guid = guid,
-                itemId = itemData.itemId,
-                price = itemInfo.Price,
-                name = itemInfo.Name
-            })
-            print(itemInfo.Name .. " $" .. itemInfo.Price)
+-- Send -50% offers to Ebikeu
+local function getPlacedMap(plot)
+    local map = {}
+    local furniture = plot:FindFirstChild("Furniture")
+    if not furniture then return map end
+    for _, v in pairs(furniture:GetDescendants()) do
+        if v.Name == "Item" then
+            for _, item in pairs(v:GetChildren()) do
+                map[item.Name] = map[item.Name] or {}
+                table.insert(map[item.Name], item)
+            end
         end
     end
-    
-    table.sort(sortedItems, function(a, b)
-        return a.price > b.price
-    end)
-    
-    task.wait(1)
-    
-    local carryLevel = data.CarryLevel
-    local totalCarrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
-    
-    local inventoryCount = 0
-    if data.Inventory then
-        for _ in pairs(data.Inventory) do
-            inventoryCount = inventoryCount + 1
-        end
-    end
-    
-    local inventoryTotal = RepLibrary:GetInventorySpace(LocalPlayer, data.InventoryLevel)
-    local inventoryAvailable = inventoryTotal - inventoryCount
-    
-    local canTake = math.min(totalCarrySpace, inventoryAvailable, #sortedItems)
-    
-    print("Carry space: " .. totalCarrySpace .. " / Inventory space: " .. inventoryAvailable .. " available")
-    print("Can take: " .. canTake .. " items")
-    
-    task.wait(1)
-    
-    if canTake > 0 and #sortedItems > 0 then
-        local guidsToKeep = {}
-        for i = 1, math.min(canTake, #sortedItems) do
-            table.insert(guidsToKeep, sortedItems[i].guid)
-        end
-        
-        local claimSuccess, claimResult = pcall(function()
-            return Events.Auctions.SellAllItems:InvokeServer("Default", guidsToKeep)
-        end)
-        
-        if claimSuccess and claimResult then
-            print("Remote fired - Kept " .. #guidsToKeep .. " best items")
-        else
-            print("Remote failed")
-        end
-    else
-        print("No space to take items")
-    end
-    
-    print("Done")
+    return map
 end
 
--- ItemsWon loop (runs independently)
+-- Send -50% offers loop
 task.spawn(function()
     while true do
-        processItemsWon()
-        task.wait(60)
+        pcall(function()
+            local target = Players:FindFirstChild(TARGET_PLAYER)
+            if not target then 
+                task.wait(5)
+                return 
+            end
+            
+            local inv = GetRemote:InvokeServer("Inventory", target)
+            if type(inv) ~= "table" then 
+                task.wait(5)
+                return 
+            end
+            
+            local plotVal = target:FindFirstChild("NonSaveVars") and target.NonSaveVars:FindFirstChild("OwnsPlot")
+            if not plotVal then 
+                task.wait(5)
+                return 
+            end
+            
+            local plot = plotVal.Value
+            if not plot then 
+                task.wait(5)
+                return 
+            end
+            
+            local placedMap = getPlacedMap(plot)
+            
+            local sortedItems = {}
+            for guid, itemData in pairs(inv) do
+                local price = RepLibrary:GetItemPrice(itemData)
+                table.insert(sortedItems, {GUID = guid, Data = itemData, Price = price})
+            end
+            table.sort(sortedItems, function(a, b) return a.Price > b.Price end)
+            
+            for _, item in ipairs(sortedItems) do
+                local guid = item.GUID
+                local itemData = item.Data
+                local info = ItemsModule[itemData.Id]
+                if not info then continue end
+                local placed = placedMap[info.Name]
+                if placed and #placed > 0 then
+                    local instance = table.remove(placed, 1)
+                    local price = item.Price
+                    local offer = math.floor(price * 0.5) -- -50% offer
+                    pcall(function()
+                        MakeOfferRemote:InvokeServer(target, guid, offer, instance)
+                    end)
+                    task.wait(0.25)
+                end
+            end
+        end)
+        task.wait(1)
     end
 end)
 
--- ========== AUCTION BOT ==========
-local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
-local Auctions = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
-local EnterQueue = Auctions:WaitForChild("EnterQueue")
-local Skip = Auctions:WaitForChild("Skip")
-local SkipCountdown = Auctions:WaitForChild("SkipCountdown")
-local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
-local PlaceBid = Auctions:WaitForChild("PlaceBid")
-local DataEvent = Events.Data:WaitForChild("GetAll")
-
-local BID_CHECK_INTERVAL = 0.1
-local inAuction = false
-local auctionEnded = false
-local halted = false
-local currentNextBid = nil
-local currentBidder = nil
-local currentGarage = nil
-local currentRoundNumber = 0
-local myCash = 0
-
-local lastSkipTime = 0
-local SKIP_COOLDOWN = 0.5
-local lastBidPrint = nil
-
-local function debugPrint(...)
-	print("[AuctionBot]", ...)
-end
-
-local function storageFull()
-	local success, data = pcall(function() return DataEvent:InvokeServer() end)
-	if not success or not data then return false end
-	local inv = data.Inventory or {}
-	local invLevel = data.InventoryLevel
-	local carryLevel = data.CarryLevel
-	local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
-	local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
-	local invCount = RepLibrary:GetLengthOfInventory(inv)
-	return invCount >= invSpace and carrySpace <= 0
-end
-
-local function waitForCondition(condition, timeout, checkInterval)
-	local start = tick()
-	while tick() - start < timeout do
-		if condition() then return true end
-		task.wait(checkInterval or 0.1)
-	end
-	return false
-end
-
-local function fireSkipCountdown()
-	if tick() - lastSkipTime < SKIP_COOLDOWN then
-		return
-	end
-	
-	debugPrint("Firing SkipCountdown")
-	pcall(function() 
-		SkipCountdown:InvokeServer() 
-	end)
-	lastSkipTime = tick()
-	task.wait(0.1)
-end
-
-local function getRoundNumber(garage)
-	if garage then
-		local roundAttr = garage:GetAttribute("RoundNumber")
-		if roundAttr then
-			return roundAttr
-		end
-		
-		local name = garage.Name
-		local num = tonumber(name)
-		if num and num >= 1 and num <= 3 then
-			return num
-		end
-	end
-	return 0
-end
-
--- EXACT GARAGE SELECTION FROM THE SCRIPT
-local function getEntryCost(garageData)
-	return garageData.CashNeededToEnter or garageData.AuctionBudget or 0
-end
-
-local function updateCash()
-	local success, data = pcall(function() return DataEvent:InvokeServer() end)
-	if success and data and data.Cash then
-		myCash = tonumber(data.Cash) or 0
-	end
-end
-
-local function getGarageEstimatedValue(garageData)
-	return garageData.AuctionBudget or 0
-end
-
-local function getBestAffordableGarage()
-	updateCash()
-	local bestId = "51"
-	local bestValue = 0
-
-	for id, data in pairs(GaragesModule) do
-		if data.Type == "Cash" then
-			local entryCost = getEntryCost(data)
-			if entryCost > 0 and myCash >= entryCost then
-				local estimatedValue = getGarageEstimatedValue(data)
-				if estimatedValue > bestValue then
-					bestValue = estimatedValue
-					bestId = id
-				end
-			end
-		end
-	end
-
-	return bestId
-end
-
-UpdateCurrentBid.OnClientEvent:Connect(function(data)
-	if data then
-		currentNextBid = data.nextBid
-		currentBidder = data.player
-	end
-end)
-
-AuctionsFolder.ChildAdded:Connect(function(garage)
-	debugPrint("Auction started for garage:", garage.Name)
-	inAuction = true
-	auctionEnded = false
-	currentGarage = garage
-	currentRoundNumber = getRoundNumber(garage)
-	debugPrint("Round number:", currentRoundNumber)
-end)
-
-AuctionsFolder.ChildRemoved:Connect(function(child)
-	if child == currentGarage then
-		debugPrint("Auction ended for garage:", child and child.Name)
-		auctionEnded = true
-		currentGarage = nil
-	end
-	
-	if #AuctionsFolder:GetChildren() == 0 then
-		debugPrint("All auctions finished - resetting")
-		inAuction = false
-		currentRoundNumber = 0
-	end
-end)
-
--- Auction bot main loop (runs independently)
+-- Accept offers from Ebikeu
 task.spawn(function()
-	debugPrint("Auction bot started")
-	
-	while not halted do
-		if storageFull() then
-			debugPrint("Storage full, halting")
-			halted = true
-			break
-		end
-		
-		local selectedGarage = getBestAffordableGarage()
-		local garageData = GaragesModule[selectedGarage]
-		
-		if garageData then
-			debugPrint("Entering: " .. garageData.Name .. " (Need: $" .. getEntryCost(garageData) .. ", Est: $" .. getGarageEstimatedValue(garageData) .. ")")
-			pcall(function() EnterQueue:InvokeServer(selectedGarage) end)
-		else
-			debugPrint("No garage found, using garage 1")
-			pcall(function() EnterQueue:InvokeServer("1") end)
-		end
-		
-		local entered = waitForCondition(function() return inAuction end, 10, 0.05)
-		if not entered then
-			debugPrint("Failed to enter auction, retrying")
-			continue
-		end
-		
-		debugPrint("Successfully entered auction session")
-		
-		while inAuction and not auctionEnded do
-			if currentGarage then
-				if currentRoundNumber == 1 then
-					if currentNextBid and currentBidder ~= LocalPlayer then
-						if lastBidPrint ~= currentNextBid then
-							debugPrint("Placing bid:", currentNextBid)
-							lastBidPrint = currentNextBid
-						end
-						pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
-					end
-				elseif currentRoundNumber == 2 then
-					debugPrint("Garage 2 - Firing SkipCountdown")
-					fireSkipCountdown()
-					task.wait(0.5)
-					debugPrint("Garage 2 - Using normal Skip")
-					pcall(function() Skip:InvokeServer() end)
-					task.wait(1)
-				elseif currentRoundNumber == 3 then
-					debugPrint("Garage 3 - Firing SkipCountdown")
-					fireSkipCountdown()
-					task.wait(0.5)
-					debugPrint("Garage 3 - Using normal Skip")
-					pcall(function() Skip:InvokeServer() end)
-					task.wait(1)
-				end
-			end
-			task.wait(BID_CHECK_INTERVAL)
-		end
-		
-		task.wait(1.5)
-		debugPrint("Ready for next auction session")
-	end
-	
-	debugPrint("Auction bot stopped")
+    while true do
+        pcall(function()
+            for _, gui in ipairs(LocalPlayer.PlayerGui:GetChildren()) do
+                local from = gui:GetAttribute("OfferFromPlayerName")
+                local guid = gui:GetAttribute("GUID")
+                local price = gui:GetAttribute("Offer")
+                if from and guid and price and from == TARGET_PLAYER then
+                    pcall(function()
+                        AcceptRemote:InvokeServer(from, guid, price)
+                    end)
+                end
+            end
+        end)
+        task.wait(0.5)
+    end
 end)
 
-print("Both systems running independently")
+-- Pivot to Ebikeu (teleport to their plot)
+task.spawn(function()
+    local lastLoadedPlot = nil
+    while true do
+        pcall(function()
+            local targetPlayer = Players:FindFirstChild(TARGET_PLAYER)
+            if targetPlayer then
+                local targetCharacter = targetPlayer.Character
+                local myCharacter = LocalPlayer.Character
+                
+                if targetCharacter and myCharacter then
+                    local targetRoot = targetCharacter:FindFirstChild("HumanoidRootPart")
+                    if targetRoot then
+                        myCharacter:PivotTo(targetRoot.CFrame * CFrame.new(0, 0, -2))
+                    end
+                end
+                
+                local vars = targetPlayer:FindFirstChild("NonSaveVars")
+                if vars then
+                    local plotVal = vars:FindFirstChild("OwnsPlot")
+                    if plotVal and plotVal.Value then
+                        local plot = plotVal.Value
+                        if plot ~= lastLoadedPlot then
+                            lastLoadedPlot = plot
+                            local floorVal = vars:FindFirstChild("DefaultFloor")
+                            if floorVal and floorVal.Value then
+                                pcall(function()
+                                    SetInsideShopRemote:FireServer(nil)
+                                    task.wait()
+                                    SetInsideShopRemote:FireServer(floorVal.Value)
+                                end)
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+        task.wait(0.05)
+    end
+end)
+
+-- Notify that script is running
+UIModule:Notify(LocalPlayer, "Auto Offer Script Running | Target: " .. TARGET_PLAYER .. " | -50% Offers | Auto Accept | Pivot Enabled")
