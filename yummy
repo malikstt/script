@@ -16,29 +16,14 @@ local GetAll = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):Wai
 local ItemsModule = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Items"))
 local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
 local AcceptRemote = ReplicatedStorage.Events.Shop.AcceptOfferServer
-local DeclineRemote = ReplicatedStorage.Events.Shop.DeclineOfferServer
 
-local function getFurnitureFolder()
-    local nsv = LocalPlayer:WaitForChild("NonSaveVars")
-    local own = nsv:WaitForChild("OwnsPlot")
-    repeat task.wait() until own.Value and own.Value ~= 0
-    return Workspace:WaitForChild("Plots"):WaitForChild(tostring(own.Value)):WaitForChild("Furniture")
-end
-
-local function removeAllFurniture()
-    local furnitureFolder = getFurnitureFolder()
-    for _, model in ipairs(furnitureFolder:GetChildren()) do
-        if model:IsA("Model") then
-            pcall(function()
-                RemoveFurniture:InvokeServer(model)
-            end)
-            task.wait(0.1)
-        end
-    end
-    print("Removed all furniture")
-end
-
-removeAllFurniture()
+-- Achievement System
+local Events = ReplicatedStorage:WaitForChild("Events")
+local Data = Events:WaitForChild("Data")
+local GetAchievementsData = Data:WaitForChild("GetAchievementsData")
+local ClaimAchievement = Data:WaitForChild("ClaimAchievement")
+local AchievementsModule = require(ReplicatedStorage.Modules:WaitForChild("Achievements"))
+local CHECK_INTERVAL = 360
 
 local nsv = LocalPlayer:WaitForChild("NonSaveVars")
 local own = nsv:WaitForChild("OwnsPlot")
@@ -148,6 +133,7 @@ local function getMyShelves()
     return shelves
 end
 
+-- Anti-AFK
 task.spawn(function()
     task.wait(1)
     for _, x in pairs(getconnections(LocalPlayer.Idled)) do
@@ -160,6 +146,7 @@ task.spawn(function()
     end)
 end)
 
+-- External script loaders
 task.spawn(function()
     pcall(function()
         loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/amgs"))()
@@ -184,41 +171,16 @@ task.spawn(function()
     end)
 end)
 
+-- Accept any offer
 task.spawn(function()
     while true do
         task.spawn(function()
             pcall(function()
                 for _, shelf in ipairs(getMyShelves()) do
                     local offer = shelf:GetAttribute("Offer")
-                    if not offer then continue end
-
-                    local itemFolder = shelf:FindFirstChild("Item")
-                    if not itemFolder then continue end
-
-                    local item = itemFolder:GetChildren()[1]
-                    if not item then continue end
-
-                    local id = item:GetAttribute("Id")
-                    if not id then continue end
-
-                    local basePrice = RepLibrary:GetItemPrice({Id = id})
-                    if not basePrice or basePrice <= 0 then continue end
-
-                    local percent = ((offer - basePrice) / basePrice) * 100
-
-                    if percent >= 50 then
-                        task.spawn(function()
-                            for i = 1, 3 do
-                                AcceptRemote:FireServer(shelf)
-                                task.wait(1)
-                            end
-                            task.wait(3)
-                            DeclineRemote:FireServer(shelf)
-                        end)
-                    elseif percent >= 10 then
+                    if offer then
                         AcceptRemote:FireServer(shelf)
-                    else
-                        DeclineRemote:FireServer(shelf)
+                        task.wait(0.5)
                     end
                 end
             end)
@@ -227,10 +189,12 @@ task.spawn(function()
     end
 end)
 
+-- Place shelves
 task.spawn(function()
     placeShelves()
 end)
 
+-- Sell items every 60 seconds
 task.spawn(function()
     while true do
         task.spawn(function()
@@ -240,5 +204,52 @@ task.spawn(function()
             end
         end)
         task.wait(60)
+    end
+end)
+
+-- Claim achievements every hour
+local function checkAchievements()
+    print("Checking achievements...")
+
+    local success, data = pcall(function()
+        return GetAchievementsData:InvokeServer()
+    end)
+
+    if not success or not data then
+        warn("Failed to get achievement data")
+        return
+    end
+
+    local claimedSomething = false
+
+    for achievementName, achievementInfo in pairs(AchievementsModule) do
+        local currentLevel = data[achievementName] or 0
+        local nextLevel = currentLevel + 1
+
+        if achievementInfo.Levels[nextLevel] then
+            local success2, result = pcall(function()
+                return ClaimAchievement:InvokeServer(achievementName, nextLevel)
+            end)
+
+            if success2 and result then
+                print("Claimed:", achievementName, "Level:", nextLevel)
+                claimedSomething = true
+                task.wait(0.25)
+            end
+        end
+    end
+
+    if not claimedSomething then
+        print("All claimable achievements are already claimed.")
+    else
+        print("Finished claiming achievements.")
+    end
+end
+
+task.spawn(function()
+    while true do
+        checkAchievements()
+        print("Next achievement check in 1 hour.")
+        task.wait(CHECK_INTERVAL)
     end
 end)
