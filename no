@@ -2,6 +2,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer.PlayerGui
+local HttpService = game:GetService("HttpService")
 
 local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
 local ItemsModule = require(ReplicatedStorage.Modules.Items)
@@ -12,6 +13,11 @@ local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
 local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 local SellAllItems = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions"):WaitForChild("SellAllItems")
+
+-- Discord Webhook
+local Items = require(ReplicatedStorage.Modules.Items)
+local RollRemote = ReplicatedStorage.Events.RNG.Roll
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1486016437918367866/Yxe21WPlTWk37b9Pgazrw6NjRK3GKbcynKPociVbyv_hb2eke396nH991ye1HnF_WOcL"
 
 -- HARDCODED GARAGE REQUIREMENTS (Garage ID : Required Cash)
 local GARAGE_REQUIREMENTS = {
@@ -38,6 +44,23 @@ local currentGarageValue = 0
 local bidPlaced = false
 local processingItemsWon = false
 local currentGarageBudget = 0
+
+-- Discord notification variables
+local rolledIDs = {}
+
+local RARITY_COLORS = {
+    ["Common"] = 0x95a5a6,
+    ["Uncommon"] = 0x3498db,
+    ["Rare"] = 0x2ecc71,
+    ["Epic"] = 0xf1c40f,
+    ["Limited"] = 0xe74c3c,
+    ["Legendary"] = 0x9b59b6,
+    ["Godly"] = 0x8e44ad,
+    ["Mythical"] = 0xf39c12,
+    ["Insane"] = 0x8b4513
+}
+
+local PING_TEXT = "<@1135837863603351573> <@1135837863603351573>"
 
 -- DESTROY ANNOYING GUIS
 local function destroySpecificGuis()
@@ -209,6 +232,85 @@ end
 
 coroutine.wrap(joinAuction)()
 
+-- Discord Functions
+local function GetAllData()
+    local success, result = pcall(function()
+        return ReplicatedStorage.Events.Data.GetAll:InvokeServer()
+    end)
+    if success then return result end
+    return nil
+end
+
+local function FindSerialInInventory(itemId, inventory)
+    for _, invItem in pairs(inventory) do
+        if tostring(invItem.Id) == tostring(itemId) then
+            for key, value in pairs(invItem) do
+                if key:lower():find("serial") and tonumber(value) then
+                    return value
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function sendDiscordNotification(username, itemData, serial)
+    if not itemData then return end
+    local rarity = itemData.Rarity or "Unknown"
+    if rarity ~= "Limited" and not serial then return end
+    local color = RARITY_COLORS[rarity] or 0xffffff
+    local title
+    local description = "Item: "..(itemData.Name or "Unknown").."\nRarity: "..rarity
+    local content = nil
+    if serial then
+        title = username.." GOT A SERIAL!"
+        description = description.."\nSerial: #"..tostring(serial)
+        content = PING_TEXT
+    else
+        title = username.." Rolled a Limited Item!"
+    end
+    local data = {
+        username = "Item Notifier",
+        content = content,
+        embeds = {{
+            title = title,
+            description = description,
+            color = color
+        }}
+    }
+    request({
+        Url = WEBHOOK_URL,
+        Method = "POST",
+        Headers = {["Content-Type"] = "application/json"},
+        Body = HttpService:JSONEncode(data)
+    })
+end
+
+-- Discord Roll Notifier Background Task
+task.spawn(function()
+    while true do
+        task.wait(1)
+        local success, itemId = pcall(function()
+            return RollRemote:InvokeServer()
+        end)
+        if success and itemId then
+            local itemData = Items[itemId]
+            local serial
+            if itemData and itemData.Rarity == "Limited" then
+                local data = GetAllData()
+                if data and data.AprilFoolsInventory2026 then
+                    serial = FindSerialInInventory(itemId, data.AprilFoolsInventory2026)
+                end
+            end
+            local uniqueKey = serial and (itemId.."_"..serial) or tostring(itemId)
+            if not rolledIDs[uniqueKey] then
+                rolledIDs[uniqueKey] = true
+                sendDiscordNotification(LocalPlayer.Name, itemData, serial)
+            end
+        end
+    end
+end)
+
 AuctionsFolder.ChildAdded:Connect(function(garage)
     if processingItemsWon then return end
     
@@ -311,3 +413,4 @@ AuctionsFolder.ChildRemoved:Connect(function()
 end)
 
 print("🚀 Started - " .. MIN_PROFIT .. "% profit (Using hardcoded garage requirements - SELLS ALL items)")
+print("📢 Discord roll notifier active")
