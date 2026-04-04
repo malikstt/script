@@ -37,7 +37,8 @@ local autoRebirthEnabled = false
 local autoDuelEnabled = false
 local walkSpeedValue = 80
 local currentData = nil
-local selectedWinPart = "WinPart"
+local selectedWinPartPath = nil
+local autoWinConnection = nil
 
 -- Auto Duel variables
 local duelMinValue = 1
@@ -129,34 +130,43 @@ local function getNextDuelValue()
     return currentDuelValue
 end
 
-local function autoWinTouch()
-    local char = player.Character
-    if not char then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
+local function getPartFromPath(path)
+    if not path then return nil end
+    local parts = {}
+    for part in string.gmatch(path, "[^.]+") do
+        table.insert(parts, part)
+    end
     
-    local part = Workspace:FindFirstChild(selectedWinPart)
-    if not part then return end
-    
-    firetouchinterest(hrp, part, 0)
-    firetouchinterest(hrp, part, 1)
-    hrp.Velocity = Vector3.zero
+    local current = Workspace
+    for _, partName in ipairs(parts) do
+        current = current:FindFirstChild(partName)
+        if not current then return nil end
+    end
+    return current
 end
 
-local function scanAutoWinParts()
+local function scanAllWinParts()
     local parts = {}
-    for _, obj in ipairs(Workspace:GetChildren()) do
-        if string.match(obj.Name, "WinPart") then
-            table.insert(parts, obj.Name)
+    
+    local function scanRecursive(obj, currentPath)
+        if obj:IsA("BasePart") and string.match(obj.Name, "WinPart") then
+            table.insert(parts, currentPath .. obj.Name)
+        end
+        
+        for _, child in ipairs(obj:GetChildren()) do
+            if child:IsA("Model") or child:IsA("Folder") or child:IsA("BasePart") then
+                scanRecursive(child, currentPath .. child.Name .. ".")
+            end
         end
     end
+    
+    scanRecursive(Workspace, "")
     return parts
 end
 
-scanBooksFromWorkspace()
-local winParts = scanAutoWinParts()
-if #winParts > 0 and not table.find(winParts, selectedWinPart) then
-    selectedWinPart = winParts[1]
+local winParts = scanAllWinParts()
+if #winParts > 0 then
+    selectedWinPartPath = winParts[1]
 end
 
 mainTab:CreateToggle({
@@ -239,9 +249,9 @@ if #winParts > 0 then
     winPartDropdown = mainTab:CreateDropdown({
         Name = "Select Win Part",
         Options = winParts,
-        CurrentOption = selectedWinPart,
+        CurrentOption = selectedWinPartPath,
         Callback = function(option)
-            selectedWinPart = option
+            selectedWinPartPath = option
         end
     })
 end
@@ -251,19 +261,41 @@ mainTab:CreateToggle({
     CurrentValue = false,
     Callback = function(value)
         autoWinEnabled = value
+        
+        if value then
+            if autoWinConnection then autoWinConnection:Disconnect() end
+            autoWinConnection = RunService.Heartbeat:Connect(function()
+                local char = player.Character
+                if not char then return end
+                local hrp = char:FindFirstChild("HumanoidRootPart")
+                if not hrp then return end
+                
+                local part = getPartFromPath(selectedWinPartPath)
+                if not part then return end
+                
+                firetouchinterest(hrp, part, 0)
+                firetouchinterest(hrp, part, 1)
+                hrp.Velocity = Vector3.zero
+            end)
+        else
+            if autoWinConnection then
+                autoWinConnection:Disconnect()
+                autoWinConnection = nil
+            end
+        end
     end
 })
 
 mainTab:CreateButton({
     Name = "Refresh Part List",
     Callback = function()
-        local newParts = scanAutoWinParts()
+        local newParts = scanAllWinParts()
         if #newParts > 0 and winPartDropdown then
-            if not table.find(newParts, selectedWinPart) then
-                selectedWinPart = newParts[1]
+            if not table.find(newParts, selectedWinPartPath) then
+                selectedWinPartPath = newParts[1]
             end
             winPartDropdown:SetOptions(newParts)
-            winPartDropdown:SetCurrentOption(selectedWinPart)
+            winPartDropdown:SetCurrentOption(selectedWinPartPath)
         end
     end
 })
@@ -395,15 +427,6 @@ RunService.Heartbeat:Connect(function()
     
     if stepEnabled then
         stepRemote:FireServer()
-    end
-end)
-
-task.spawn(function()
-    while true do
-        if autoWinEnabled then
-            autoWinTouch()
-        end
-        task.wait(0.1)
     end
 end)
 
