@@ -1,5 +1,4 @@
--- Real Rayfield Library (latest)
-local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -9,114 +8,321 @@ local Workspace = game:GetService("Workspace")
 local player = Players.LocalPlayer
 local remoteEvents = ReplicatedStorage:WaitForChild("RemoteEvents")
 local stepRemote = remoteEvents:WaitForChild("StepTaken")
-local duelRemote = remoteEvents:WaitForChild("DuelEnd")
+local duelEndRemote = remoteEvents:WaitForChild("DuelEnd")
 local updateUI = remoteEvents:WaitForChild("UpdateUI")
 local doRebirth = remoteEvents:WaitForChild("DoRebirth")
 local rebirthSuccess = remoteEvents:WaitForChild("RebirthSuccess")
+local bookEquip = remoteEvents:WaitForChild("BookEquip")
 
-local Window = Rayfield:CreateWindow({
-    Name = "Auto Farm Hub",
-    LoadingTitle = "Loading...",
-    LoadingSubtitle = "Please wait",
-    ConfigurationSaving = {
-        Enabled = true,
-        FolderName = "AutoFarmHub",
-        FileName = "Settings"
-    }
-})
-
-local mainTab = Window:CreateTab("Main")
-local rebirthTab = Window:CreateTab("Rebirth")
-local settingsTab = Window:CreateTab("Settings")
-
-local speedEnabled = false
-local autoWinEnabled = false
-local stepEnabled = false
-local autoRebirthEnabled = false
-local duelMin = 1
-local duelMax = 10
-local walkSpeedValue = 80
 local currentData = nil
+local unlockedBooks = {}
+local equippedBook = 0
+local currentWins = 0
+local booksList = {}
+local autoRebirthEnabled = false
+local autoWinEnabled = false
+local autoStepEnabled = false
+local autoDuelEnabled = false
+local autoBookEnabled = false
+local forceBookEnabled = false
+local forceBookId = nil
+local selectedWinPart = nil
 
-local function calculateProgress(level, maxLevel)
-    if not level or not maxLevel or maxLevel <= 0 then return 0 end
-    return (level / maxLevel) * 100
+local function scanAutoWinParts()
+    local parts = {}
+    for _, obj in ipairs(Workspace:GetChildren()) do
+        if string.match(obj.Name, "^AutoWinGetPart") then
+            table.insert(parts, obj.Name)
+        end
+    end
+    return parts
+end
+
+local function scanBooksFromWorkspace()
+    booksList = {}
+    for _, obj in ipairs(Workspace:GetChildren()) do
+        if string.match(obj.Name, "^EquipPart%d+$") then
+            local id = tonumber(string.match(obj.Name, "%d+"))
+            if id then
+                local billboard = obj:FindFirstChildOfClass("BillboardGui")
+                local displayName = "Book " .. id
+                if billboard then
+                    local textLabel = billboard:FindFirstChildOfClass("TextLabel")
+                    if textLabel and textLabel.Text ~= "" then
+                        displayName = textLabel.Text
+                    end
+                end
+                table.insert(booksList, {id = id, displayName = displayName})
+            end
+        end
+    end
+    table.sort(booksList, function(a,b) return a.id < b.id end)
+    if #booksList == 0 then
+        for i = 1, 18 do
+            table.insert(booksList, {id = i, displayName = "Book " .. i})
+        end
+    end
+end
+
+local function getBestAvailableBook()
+    local best = nil
+    for _, book in ipairs(booksList) do
+        if unlockedBooks[tostring(book.id)] == true then
+            best = book
+        end
+    end
+    return best
+end
+
+local function equipBook(bookId)
+    bookEquip:FireServer(bookId)
+end
+
+local function autoEquipBestBook()
+    if not autoBookEnabled then return end
+    local best = getBestAvailableBook()
+    if best and best.id ~= equippedBook then
+        equipBook(best.id)
+    end
+end
+
+local function getBestDuelValue()
+    if not currentData then return 1 end
+    local level = currentData.Level or 1
+    local maxLevel = currentData.MaxLevel or 100
+    local multi = currentData.RebirthMulti or 1
+    local progress = level / maxLevel
+    local optimal = math.floor(progress * 100 * multi) + 1
+    optimal = math.clamp(optimal, 1, 100)
+    return optimal
 end
 
 local function autoWinTeleport()
-    local part = Workspace:FindFirstChild("AutoWinGetPart17", true)
+    if not selectedWinPart then return end
+    local part = Workspace:FindFirstChild(selectedWinPart)
     if part and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
         player.Character.HumanoidRootPart.CFrame = part.CFrame
     end
 end
 
-mainTab:CreateToggle({
-    Name = "Speed Boost",
-    CurrentValue = false,
-    Callback = function(value)
-        speedEnabled = value
+local function formatNumber(num)
+    if num >= 1000000000000 then return string.format("%.1fT", num / 1000000000000) end
+    if num >= 1000000000 then return string.format("%.1fB", num / 1000000000) end
+    if num >= 1000000 then return string.format("%.1fM", num / 1000000) end
+    if num >= 1000 then return string.format("%.1fK", num / 1000) end
+    return tostring(math.floor(num))
+end
+
+scanBooksFromWorkspace()
+local winParts = scanAutoWinParts()
+if #winParts > 0 then
+    selectedWinPart = "AutoWinGetPart17"
+    if not table.find(winParts, selectedWinPart) then
+        selectedWinPart = winParts[1]
     end
+else
+    selectedWinPart = "AutoWinGetPart17"
+end
+
+player.CharacterAdded:Connect(function()
+    task.wait(1)
+    scanBooksFromWorkspace()
+end)
+
+local Window = Rayfield:CreateWindow({
+    Name = "IQ Duel Hub",
+    LoadingTitle = "Loading...",
+    LoadingSubtitle = "Initializing",
+    ConfigurationSaving = {Enabled = true, FolderName = "IQDuelHub", FileName = "Settings"}
 })
 
-mainTab:CreateSlider({
-    Name = "Walk Speed",
-    Range = {16, 250},
-    Increment = 1,
-    Suffix = "Speed",
-    CurrentValue = 80,
-    Callback = function(value)
-        walkSpeedValue = value
-    end
-})
+local mainTab = Window:CreateTab("Main")
+local booksTab = Window:CreateTab("Books")
+local infoTab = Window:CreateTab("Info")
 
-mainTab:CreateToggle({
-    Name = "Auto Win",
-    CurrentValue = false,
-    Callback = function(value)
-        autoWinEnabled = value
-    end
-})
+mainTab:CreateSection("Combat")
 
 mainTab:CreateToggle({
     Name = "Auto Step",
     CurrentValue = false,
-    Callback = function(value)
-        stepEnabled = value
+    Callback = function(val) autoStepEnabled = val end
+})
+
+mainTab:CreateToggle({
+    Name = "Auto Duel (Smart Value)",
+    CurrentValue = false,
+    Callback = function(val) autoDuelEnabled = val end
+})
+
+mainTab:CreateSection("Auto Win")
+
+local winPartDropdown = nil
+local winPartOptions = winParts
+
+if #winPartOptions == 0 then
+    winPartOptions = {"AutoWinGetPart17"}
+end
+
+local function updateWinPart(option)
+    selectedWinPart = option
+end
+
+winPartDropdown = mainTab:CreateDropdown({
+    Name = "Select Teleport Part",
+    Options = winPartOptions,
+    CurrentOption = selectedWinPart,
+    Callback = updateWinPart
+})
+
+mainTab:CreateToggle({
+    Name = "Auto Win Teleport",
+    CurrentValue = false,
+    Callback = function(val) autoWinEnabled = val end
+})
+
+mainTab:CreateButton({
+    Name = "Refresh Part List",
+    Callback = function()
+        local newParts = scanAutoWinParts()
+        if #newParts > 0 then
+            winPartOptions = newParts
+            if not table.find(winPartOptions, selectedWinPart) then
+                selectedWinPart = winPartOptions[1]
+            end
+            winPartDropdown:SetOptions(winPartOptions)
+            winPartDropdown:SetCurrentOption(selectedWinPart)
+            Rayfield:Notify({Title = "Auto Win", Content = "Found " .. #newParts .. " parts", Duration = 2})
+        else
+            Rayfield:Notify({Title = "Auto Win", Content = "No AutoWinGetPart found", Duration = 2})
+        end
     end
 })
 
-mainTab:CreateInput({
-    Name = "Duel End Min Value",
-    PlaceholderText = "1",
-    Callback = function(text)
-        local num = tonumber(text)
-        if num then duelMin = num end
+booksTab:CreateSection("Book Management")
+
+autoBookEnabled = false
+booksTab:CreateToggle({
+    Name = "Auto Equip Best Available Book",
+    CurrentValue = false,
+    Callback = function(val)
+        autoBookEnabled = val
+        if val then
+            forceBookEnabled = false
+            autoEquipBestBook()
+        end
     end
 })
 
-mainTab:CreateInput({
-    Name = "Duel End Max Value",
-    PlaceholderText = "10",
-    Callback = function(text)
-        local num = tonumber(text)
-        if num then duelMax = num end
+local bookOptions = {}
+for _, book in ipairs(booksList) do
+    table.insert(bookOptions, book.displayName .. " (ID: " .. book.id .. ")")
+end
+
+local bookDropdown = nil
+local forceBookToggle = nil
+local bookStatsLabel = nil
+
+local function updateBookUI()
+    if not bookStatsLabel then return end
+    local selectedBook = nil
+    for _, book in ipairs(booksList) do
+        if book.id == forceBookId then
+            selectedBook = book
+            break
+        end
+    end
+    if selectedBook then
+        local isUnlocked = unlockedBooks[tostring(selectedBook.id)] == true
+        local isEquipped = (equippedBook == selectedBook.id)
+        bookStatsLabel:Set("ID: " .. selectedBook.id .. " | " .. selectedBook.displayName .. " | Unlocked: " .. (isUnlocked and "Yes" or "No") .. " | Equipped: " .. (isEquipped and "Yes" or "No"))
+    else
+        bookStatsLabel:Set("No book selected")
+    end
+end
+
+local function onBookSelect(option)
+    for _, book in ipairs(booksList) do
+        if option == book.displayName .. " (ID: " .. book.id .. ")" then
+            forceBookId = book.id
+            if forceBookEnabled then
+                equipBook(forceBookId)
+            end
+            updateBookUI()
+            break
+        end
+    end
+end
+
+if #bookOptions == 0 then
+    bookOptions = {"No books found"}
+end
+
+bookDropdown = booksTab:CreateDropdown({
+    Name = "Select Book",
+    Options = bookOptions,
+    CurrentOption = bookOptions[1],
+    Callback = onBookSelect
+})
+
+forceBookToggle = booksTab:CreateToggle({
+    Name = "Force Equip Selected Book",
+    CurrentValue = false,
+    Callback = function(val)
+        forceBookEnabled = val
+        if val then
+            autoBookEnabled = false
+            if forceBookId then
+                equipBook(forceBookId)
+            end
+        end
     end
 })
 
-local statusLabel = rebirthTab:CreateLabel("Status: Waiting...")
-local progressLabel = rebirthTab:CreateLabel("Progress: 0%")
-local multiLabel = rebirthTab:CreateLabel("Multiplier: x0")
-local levelLabel = rebirthTab:CreateLabel("Level: 0/0")
+bookStatsLabel = booksTab:CreateLabel("No book selected")
 
-rebirthTab:CreateToggle({
+booksTab:CreateButton({
+    Name = "Refresh Book List",
+    Callback = function()
+        scanBooksFromWorkspace()
+        local newOptions = {}
+        for _, book in ipairs(booksList) do
+            table.insert(newOptions, book.displayName .. " (ID: " .. book.id .. ")")
+        end
+        if #newOptions > 0 then
+            bookDropdown:SetOptions(newOptions)
+            bookDropdown:SetCurrentOption(newOptions[1])
+        end
+        Rayfield:Notify({Title = "Books", Content = "Found " .. #booksList .. " books", Duration = 2})
+        updateBookUI()
+    end
+})
+
+booksTab:CreateButton({
+    Name = "Unequip Current Book",
+    Callback = function()
+        equipBook(0)
+        if forceBookToggle then forceBookToggle:Set(false) end
+        forceBookEnabled = false
+        if autoBookEnabled then autoBookEnabled = false end
+    end
+})
+
+infoTab:CreateSection("Player Stats")
+
+local levelLabel = infoTab:CreateLabel("Level: Loading...")
+local multiLabel = infoTab:CreateLabel("Multiplier: Loading...")
+local winsLabel = infoTab:CreateLabel("Wins: Loading...")
+local rebirthStatusLabel = infoTab:CreateLabel("Rebirth: Loading...")
+
+infoTab:CreateSection("Auto Rebirth")
+
+infoTab:CreateToggle({
     Name = "Auto Rebirth",
     CurrentValue = false,
-    Callback = function(value)
-        autoRebirthEnabled = value
-    end
+    Callback = function(val) autoRebirthEnabled = val end
 })
 
-rebirthTab:CreateButton({
+infoTab:CreateButton({
     Name = "Manual Rebirth",
     Callback = function()
         if currentData and currentData.CanRebirth then
@@ -125,26 +331,8 @@ rebirthTab:CreateButton({
     end
 })
 
-settingsTab:CreateButton({
-    Name = "Destroy UI",
-    Callback = function()
-        Rayfield:Destroy()
-    end
-})
-
-settingsTab:CreateButton({
-    Name = "Toggle UI",
-    Callback = function()
-        Rayfield:Toggle()
-    end
-})
-
 RunService.Heartbeat:Connect(function()
-    if speedEnabled and player.Character and player.Character:FindFirstChild("Humanoid") then
-        player.Character.Humanoid.WalkSpeed = walkSpeedValue
-    end
-    
-    if stepEnabled then
+    if autoStepEnabled then
         stepRemote:FireServer()
     end
 end)
@@ -154,35 +342,81 @@ task.spawn(function()
         if autoWinEnabled then
             autoWinTeleport()
         end
-        task.wait(0.5)
+        if autoDuelEnabled then
+            local bestValue = getBestDuelValue()
+            duelEndRemote:FireServer(true, bestValue)
+        end
+        task.wait(0.3)
     end
 end)
 
 task.spawn(function()
     while true do
-        if stepEnabled then
-            local value = math.random(duelMin, duelMax)
-            duelRemote:FireServer(true, value)
+        if autoBookEnabled then
+            autoEquipBestBook()
         end
-        task.wait(0.2)
+        task.wait(2)
     end
 end)
 
 updateUI.OnClientEvent:Connect(function(data)
     if data.RebirthCount ~= nil then
         currentData = data
-        local progress = calculateProgress(data.Level, data.MaxLevel)
-        
-        statusLabel:Set("Status: " .. (data.CanRebirth and "READY TO REBIRTH!" or "Leveling..."))
-        progressLabel:Set("Progress: " .. string.format("%.1f", progress) .. "%")
-        multiLabel:Set("Multiplier: x" .. string.format("%.1f", data.RebirthMulti))
-        levelLabel:Set("Level: " .. data.Level .. "/" .. data.MaxLevel)
+        levelLabel:Set("Level: " .. (data.Level or 0) .. " / " .. (data.MaxLevel or 100))
+        multiLabel:Set("Multiplier: x" .. string.format("%.1f", data.RebirthMulti or 1))
+        rebirthStatusLabel:Set("Rebirth: " .. (data.CanRebirth and "READY!" or "Leveling..."))
         
         if autoRebirthEnabled and data.CanRebirth then
             task.wait(0.5)
             doRebirth:FireServer()
         end
     end
+    
+    if data.EquippedBook ~= nil then
+        equippedBook = data.EquippedBook
+        updateBookUI()
+    end
+    
+    if data.UnlockedBooks then
+        unlockedBooks = data.UnlockedBooks
+        updateBookUI()
+    end
 end)
 
-print("Auto Farm Hub Loaded - Press Insert to toggle UI")
+local leaderstats = player:FindFirstChild("leaderstats")
+if leaderstats then
+    local wins = leaderstats:FindFirstChild("WINS")
+    if wins then
+        wins.Changed:Connect(function()
+            currentWins = wins.Value
+            winsLabel:Set("Wins: " .. formatNumber(currentWins))
+        end)
+        currentWins = wins.Value
+        winsLabel:Set("Wins: " .. formatNumber(currentWins))
+    end
+end
+
+bookEquip.OnClientEvent:Connect(function(bookId, action)
+    if action == "equipped" then
+        equippedBook = bookId
+        updateBookUI()
+        if autoBookEnabled then
+            task.wait(1)
+            autoEquipBestBook()
+        end
+    elseif action == "unequipped" then
+        equippedBook = 0
+        updateBookUI()
+    elseif action == "gamepass_unlocked" or action == "gamepass_owned" then
+        if autoBookEnabled then
+            task.wait(0.5)
+            autoEquipBestBook()
+        end
+    end
+end)
+
+rebirthSuccess.OnClientEvent:Connect(function()
+    Rayfield:Notify({Title = "Rebirth", Content = "Rebirth successful! Multiplier increased.", Duration = 3})
+end)
+
+Rayfield:Notify({Title = "IQ Duel Hub", Content = "Loaded successfully!", Duration = 3})
