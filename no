@@ -185,6 +185,23 @@ local function getBestAffordableGarage()
     local bestId = "51"
     local bestValue = 0
     
+    -- FARM MODE: If cash is less than 50,000, force farm garage ID 2
+    if myCash < 50000 then
+        -- Check if garage ID 2 is unlocked
+        local requiredCashForId2 = GARAGE_REQUIREMENTS[2]
+        if requiredCashForId2 and myCash >= requiredCashForId2 then
+            -- Garage 2 is unlocked, farm it
+            return "2"
+        else
+            -- Garage 2 not unlocked yet, farm garage 1 until we can unlock garage 2
+            local requiredCashForId1 = GARAGE_REQUIREMENTS[1]
+            if requiredCashForId1 and myCash >= requiredCashForId1 then
+                return "1"
+            end
+        end
+    end
+    
+    -- NORMAL MODE: Cash is 50k or more, use original logic
     if myCash >= 500000 then
         return nil
     end
@@ -322,6 +339,164 @@ task.spawn(function()
     end
 end)
 
+-- ========== POTION BUYING SYSTEM ==========
+local Events = ReplicatedStorage:WaitForChild("Events"):WaitForChild("UI")
+local ShopData = Events.Data.GetPotionShopData
+local GetAll = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
+
+local LUCK_I = "1"
+local LUCK_II = "2"
+local LUCK_III = "3"
+
+local MAX_COUNT = 99
+local potionBuyingActive = true
+
+local function getPotionCounts()
+    local success, data = pcall(function()
+        return GetAll:InvokeServer()
+    end)
+    if not success or not data then return nil end
+    local counts = {["2328"] = 0, ["2329"] = 0, ["2330"] = 0}
+    local function scan(container)
+        if not container then return end
+        for _, item in pairs(container) do
+            local id = tostring(item.Id)
+            if counts[id] then
+                counts[id] = counts[id] + 1
+            end
+        end
+    end
+    scan(data.Inventory)
+    scan(data.Furniture)
+    return counts
+end
+
+local function needsMorePotions(counts)
+    if not counts then return true end
+    return counts["2328"] < MAX_COUNT or counts["2329"] < MAX_COUNT or counts["2330"] < MAX_COUNT
+end
+
+local lastStock = nil
+local buying = false
+local potionQueue = {}
+
+local function buyPotion(id)
+    if not potionBuyingActive then return end
+    if buying then
+        table.insert(potionQueue, id)
+        return
+    end
+    buying = true
+    local success = pcall(function()
+        return Events.BuyPotion:InvokeServer(id)
+    end)
+    if success then
+        warn("Bought potion " .. id)
+    end
+    buying = false
+    if #potionQueue > 0 and potionBuyingActive then
+        task.wait(0.5)
+        buyPotion(table.remove(potionQueue, 1))
+    end
+end
+
+local function checkPotionShop(data)
+    if not potionBuyingActive then return end
+    local counts = getPotionCounts()
+    if not needsMorePotions(counts) then
+        potionBuyingActive = false
+        warn("Reached " .. MAX_COUNT .. " of each potion. Stopping.")
+        return
+    end
+    if not data or not data.Potions then return end
+    local luckI = data.Potions[LUCK_I]
+    local luckII = data.Potions[LUCK_II]
+    local luckIII = data.Potions[LUCK_III]
+    local lastI = lastStock and lastStock.Potions and lastStock.Potions[LUCK_I] or 0
+    local lastII = lastStock and lastStock.Potions and lastStock.Potions[LUCK_II] or 0
+    local lastIII = lastStock and lastStock.Potions and lastStock.Potions[LUCK_III] or 0
+    if luckI and luckI > 0 and luckI ~= lastI and counts["2328"] < MAX_COUNT then
+        buyPotion(LUCK_I)
+    end
+    if luckII and luckII > 0 and luckII ~= lastII and counts["2329"] < MAX_COUNT then
+        buyPotion(LUCK_II)
+    end
+    if luckIII and luckIII > 0 and luckIII ~= lastIII and counts["2330"] < MAX_COUNT then
+        buyPotion(LUCK_III)
+    end
+    lastStock = data
+end
+
+local function fetchPotionShop()
+    if not potionBuyingActive then return end
+    local success, data = pcall(function()
+        return ShopData:InvokeServer()
+    end)
+    if success and data then
+        checkPotionShop(data)
+    end
+end
+
+Events.RestockedPotions.OnClientEvent:Connect(function()
+    task.wait(0.5)
+    fetchPotionShop()
+end)
+
+task.spawn(function()
+    while potionBuyingActive do
+        task.wait(30)
+        fetchPotionShop()
+    end
+end)
+
+fetchPotionShop()
+
+-- ========== POTION USING SYSTEM ==========
+local UsePotion = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Potions"):WaitForChild("UsePotion")
+
+local function useAllPotions()
+    local data = GetAllData()
+    if not data or not data.Inventory then return end
+    
+    local inventory = data.Inventory
+    local usedCount = 0
+    
+    for guid, item in pairs(inventory) do
+        local info = Items[item.Id]
+        
+        if info and info.PotionId then
+            usedCount = usedCount + 1
+            print("Found potion:", info.Name, "| Id:", item.Id, "| GUID:", guid)
+            
+            local success, err = pcall(function()
+                UsePotion:InvokeServer(guid)
+            end)
+            
+            if success then
+                print("Used potion:", guid)
+            else
+                warn("Failed to use potion:", guid, err)
+            end
+            
+            task.wait(0.15)
+        end
+    end
+    
+    print("Total potions used:", usedCount)
+end
+
+-- Run potion usage on script start and periodically
+task.spawn(function()
+    task.wait(5) -- Wait for initial data load
+    useAllPotions()
+    
+    -- Also check and use potions every 5 minutes
+    while true do
+        task.wait(300) -- 5 minutes
+        useAllPotions()
+    end
+end)
+
 AuctionsFolder.ChildAdded:Connect(function(garage)
     if processingItemsWon then return end
     
@@ -401,4 +576,4 @@ AuctionsFolder.ChildRemoved:Connect(function()
         task.wait(math.random(10, 30))
         sellAllItems()
     end
-end)p
+end)
