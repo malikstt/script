@@ -57,6 +57,14 @@ local RARITY_COLORS = {
     ["Insane"] = 0x8b4513
 }
 
+local NOTIFIABLE_RARITIES = {
+    ["Limited"] = true,
+    ["Legendary"] = true,
+    ["Godly"] = true,
+    ["Mythical"] = true,
+    ["Insane"] = true
+}
+
 local function destroySpecificGuis()
     local items = PlayerGui:FindFirstChild("ItemsWon")
     if items then items:Destroy() end
@@ -104,7 +112,7 @@ end)
 
 task.spawn(function()
     while true do
-        task.wait(30)
+        task.wait(math.random(25, 45))
         checkForButton()
     end
 end)
@@ -118,21 +126,19 @@ end
 
 local function sellAllItems()
     processingItemsWon = true
-    task.wait(1)
+    task.wait(math.random(1, 3))
 
     local success, data = pcall(function()
         return DataEvent:InvokeServer()
     end)
 
     if not success or not data then
-        print("❌ GetAll failed")
         processingItemsWon = false
         return
     end
 
     local itemsWon = data.ItemsWon
     if not itemsWon or next(itemsWon) == nil then
-        print("📦 No items won")
         processingItemsWon = false
         return
     end
@@ -143,22 +149,13 @@ local function sellAllItems()
         table.insert(allGuids, guid)
     end
 
-    print("📦 Found " .. #allGuids .. " items → selling ALL")
-
-    task.wait(1)
+    task.wait(math.random(1, 3))
 
     local sellSuccess, sellResult = pcall(function()
         return SellAllItems:InvokeServer("Default", allGuids)
     end)
 
-    if sellSuccess and sellResult then
-        print("✅ Sold ALL items successfully")
-    else
-        print("❌ Sell failed")
-    end
-
-    print("✅ Items won processing complete")
-    task.wait(2)
+    task.wait(math.random(2, 5))
     processingItemsWon = false
 end
 
@@ -166,15 +163,12 @@ UpdateCurrentBid.OnClientEvent:Connect(function(data)
     if data then
         currentBidData = data
         if inAuction and currentGarageValue > 0 then
-            print("💰 Bid Update: $" .. tostring(data.nextBid) .. " | " .. tostring(data.player and (data.player.Name or "NPC") or "None"))
-            
             if data.player ~= LocalPlayer and bidPlaced then
                 local nextBid = data.nextBid
                 local profit = currentGarageValue - nextBid
                 local profitPercent = (profit / currentGarageValue) * 100
                 
                 if profitPercent >= MIN_PROFIT and nextBid <= myCash then
-                    print("⚡ Counter-bidding: $" .. nextBid)
                     pcall(function() PlaceBid:InvokeServer(nextBid) end)
                 end
             end
@@ -191,7 +185,6 @@ local function getBestAffordableGarage()
     local bestId = "51"
     local bestValue = 0
     
-    -- If cash is over 500k, don't join any auctions
     if myCash >= 500000 then
         return nil
     end
@@ -217,20 +210,23 @@ local function joinAuction()
         if not processingItemsWon and not inAuction then
             local garageId = getBestAffordableGarage()
             
-            -- If garageId is nil (cash >= 500k), skip entering queue
             if garageId then
-                local requiredCash = GARAGE_REQUIREMENTS[tonumber(garageId)] or 0
-                local garageData = GaragesModule[garageId]
-                if garageData then
-                    print("🎯 Entering: " .. garageData.Name .. " (Required: $" .. requiredCash .. ", Est: $" .. getGarageEstimatedValue(garageData) .. ")")
-                    pcall(function() EnterQueue:InvokeServer(garageId) end)
+                if math.random(1, 100) <= 15 then
+                    task.wait(math.random(5, 12))
                 end
+                
+                pcall(function() EnterQueue:InvokeServer(garageId) end)
+                
+                local waitTime = math.random(4000, 10000) / 1000
+                if math.random(1, 8) == 1 then
+                    waitTime = waitTime + math.random(10, 25)
+                end
+                task.wait(waitTime)
             else
-                -- Wait longer if over 500k to avoid spam checking
-                task.wait(30)
+                task.wait(math.random(25, 45))
             end
         end
-        task.wait(1)
+        task.wait(math.random(8, 20))
     end
 end
 
@@ -260,36 +256,51 @@ end
 local function sendDiscordNotification(username, itemData, serial)
     if not itemData then return end
     local rarity = itemData.Rarity or "Unknown"
-    if rarity ~= "Limited" and not serial then return end
+    
+    if not NOTIFIABLE_RARITIES[rarity] then
+        return
+    end
+    
     local color = RARITY_COLORS[rarity] or 0xffffff
     local title
-    local description = "Item: "..(itemData.Name or "Unknown").."\nRarity: "..rarity
+    local description = "Item: " .. (itemData.Name or "Unknown") .. "\nRarity: " .. rarity
+    
     if serial then
-        title = username.." GOT A SERIAL!"
-        description = description.."\nSerial: #"..tostring(serial)
+        title = username .. " GOT A SERIAL " .. rarity:upper() .. "!"
+        description = description .. "\nSerial: #" .. tostring(serial)
     else
-        title = username.." Rolled a Limited Item!"
+        if rarity == "Limited" then
+            title = username .. " Rolled a Limited Item!"
+        else
+            title = username .. " Rolled a " .. rarity .. " Item!"
+        end
     end
+    
     local data = {
         username = "Item Notifier",
         embeds = {{
             title = title,
             description = description,
-            color = color
+            color = color,
+            footer = {
+                text = os.date("%Y-%m-%d %H:%M:%S")
+            }
         }}
     }
-    request({
-        Url = WEBHOOK_URL,
-        Method = "POST",
-        Headers = {["Content-Type"] = "application/json"},
-        Body = HttpService:JSONEncode(data)
-    })
+    
+    pcall(function()
+        request({
+            Url = WEBHOOK_URL,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = HttpService:JSONEncode(data)
+        })
+    end)
 end
 
--- ROLLING CONTINUES REGARDLESS OF CASH (THIS NEVER STOPS)
 task.spawn(function()
     while true do
-        task.wait(1)
+        task.wait(math.random(1, 3))
         local success, itemId = pcall(function()
             return RollRemote:InvokeServer()
         end)
@@ -311,7 +322,6 @@ task.spawn(function()
     end
 end)
 
--- BIDDING AND AUCTION PARTICIPATION STILL WORKS (only entering queue stops)
 AuctionsFolder.ChildAdded:Connect(function(garage)
     if processingItemsWon then return end
     
@@ -330,15 +340,12 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
         end
     end
     
-    print("\n=== " .. garageName .. " (Required: $" .. currentGarageBudget .. ") ===")
-    
     local itemsFolder = garage:WaitForChild("Items", 5)
     if not itemsFolder then
-        print("❌ No items")
         return
     end
     
-    task.wait(3)
+    task.wait(math.random(2, 5))
     
     currentGarageValue = 0
     local items = itemsFolder:GetChildren()
@@ -353,20 +360,16 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     end
     
     if currentGarageValue == 0 then
-        print("❌ Value: $0")
         return
     end
     
-    print("💰 Value: $" .. currentGarageValue)
-    
     local timeout = 0
     while not currentBidData and timeout < 8 do
-        task.wait(0.5)
+        task.wait(math.random(3, 8) / 10)
         timeout = timeout + 0.5
     end
     
     if not currentBidData then
-        print("❌ No bid data")
         return
     end
     
@@ -376,44 +379,26 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     local worth = profitPercent >= MIN_PROFIT
     local canAfford = nextBid <= myCash
     
-    print("💰 Next: $" .. nextBid)
-    print("📊 Profit: $" .. profit .. " (" .. string.format("%.2f", profitPercent) .. "%)")
-    print(worth and "✅ WORTH" or "❌ NOT WORTH")
-    print(canAfford and "✅ Can afford" or "❌ Can't afford")
-    
     if currentBidData.player == LocalPlayer then
-        print("👑 Highest bidder")
         bidPlaced = true
         return
     end
     
     if worth and canAfford then
-        print("⚡ Bidding...")
-        local success = pcall(function()
+        pcall(function()
             return PlaceBid:InvokeServer(nextBid)
         end)
-        if success then
-            print("✅ Bid placed")
-            bidPlaced = true
-        else
-            print("❌ Bid failed")
-        end
+        bidPlaced = true
     end
 end)
 
 AuctionsFolder.ChildRemoved:Connect(function()
     if #AuctionsFolder:GetChildren() == 0 then
-        print("\n=== Left ===\n")
         inAuction = false
         currentBidData = nil
         currentGarageValue = 0
         bidPlaced = false
-        task.wait(2)
+        task.wait(math.random(10, 30))
         sellAllItems()
     end
-end)
-
-print("🚀 Started - " .. MIN_PROFIT .. "% profit")
-print("💰 Rolling ALWAYS works")
-print("🛑 EnterQueue STOPS when cash ≥ 500k")
-print("✅ Bidding still works if you're already in an auction")
+end)p
