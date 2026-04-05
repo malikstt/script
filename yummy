@@ -11,7 +11,7 @@ local screenGui = Instance.new("ScreenGui")
 screenGui.Parent = player.PlayerGui
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 200, 0, 150)
+mainFrame.Size = UDim2.new(0, 200, 0, 250)
 mainFrame.Position = UDim2.new(0, 10, 0, 10)
 mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 mainFrame.BackgroundTransparency = 0.1
@@ -38,9 +38,30 @@ tradeToggle.Text = "Auto Trade: OFF"
 tradeToggle.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
 tradeToggle.Parent = mainFrame
 
+local farmButton = Instance.new("TextButton")
+farmButton.Size = UDim2.new(0, 180, 0, 30)
+farmButton.Position = UDim2.new(0, 10, 0, 120)
+farmButton.Text = "Farm Eggs / Codes"
+farmButton.BackgroundColor3 = Color3.fromRGB(0, 100, 255)
+farmButton.Parent = mainFrame
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, 0, 0, 60)
+statusLabel.Position = UDim2.new(0, 0, 0, 160)
+statusLabel.Text = "Ready"
+statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+statusLabel.BackgroundTransparency = 1
+statusLabel.TextWrapped = true
+statusLabel.Parent = mainFrame
+
 local acceptEnabled = false
 local tradeEnabled = false
 local isTrading = false
+
+local function updateStatus(text)
+    statusLabel.Text = text
+    print(text)
+end
 
 local function acceptTradeRequest()
     local playerGui = player:WaitForChild("PlayerGui")
@@ -54,7 +75,7 @@ local function acceptTradeRequest()
             local acceptButton = request:FindFirstChild("Accept")
             if acceptButton then
                 acceptButton:Click()
-                print("Accepted trade request from:", request.Name)
+                updateStatus("Accepted trade request from: " .. request.Name)
                 return true
             end
         end
@@ -80,7 +101,7 @@ local function waitForTradeAndConfirm()
     local function checkAndAccept()
         if frame.Accept and frame.Accept.Visible then
             frame.Accept:Click()
-            print("Accepted trade")
+            updateStatus("Accepted trade")
             return true
         end
         return false
@@ -88,7 +109,7 @@ local function waitForTradeAndConfirm()
     
     while true do
         if frame.Countdown and frame.Countdown.Visible then
-            print("Countdown started")
+            updateStatus("Countdown started")
             break
         end
         checkAndAccept()
@@ -98,11 +119,11 @@ end
 
 local function sendTradeRequest()
     if not targetPlayer then
-        print("Target player not found")
+        updateStatus("Target player not found")
         return false
     end
     network.FireServer("Sent Trade Request", targetPlayer)
-    print("Trade request sent to", targetName)
+    updateStatus("Trade request sent to " .. targetName)
     return true
 end
 
@@ -173,6 +194,96 @@ local function startAutoTrade()
     end
 end
 
+local function farmEggsAndCodes()
+    updateStatus("Starting Egg Hunt...")
+    
+    local eggHuntConfig = require(rs:WaitForChild("Tables").EggHunt)
+    local stats = paper.Stats
+    
+    local totalEggs = 0
+    local foundCount = 0
+    local claimedCount = 0
+    local failedCount = 0
+    
+    for eggName, _ in pairs(eggHuntConfig) do
+        totalEggs = totalEggs + 1
+    end
+    updateStatus("Total eggs: " .. totalEggs)
+    
+    for eggName, eggData in pairs(eggHuntConfig) do
+        local success, result = pcall(function()
+            return paper.Network.InvokeServer("Claim Egg", eggName)
+        end)
+        
+        if success and result then
+            foundCount = foundCount + 1
+            updateStatus("Found: " .. eggName)
+        else
+            failedCount = failedCount + 1
+        end
+        task.wait(0.1)
+    end
+    
+    updateStatus("Found eggs: " .. foundCount .. "/" .. totalEggs)
+    task.wait(1)
+    
+    local eggHuntData = stats.Get("EggHuntData")
+    local foundEggs = eggHuntData.Value.FoundEggs or {}
+    local claimedEggs = eggHuntData.Value.ClaimedEggs or {}
+    
+    local rewardsToClaim = 0
+    for eggName, _ in pairs(foundEggs) do
+        if not claimedEggs[eggName] then
+            rewardsToClaim = rewardsToClaim + 1
+        end
+    end
+    updateStatus("Rewards pending: " .. rewardsToClaim)
+    
+    for eggName, _ in pairs(foundEggs) do
+        if not claimedEggs[eggName] then
+            local success, result = pcall(function()
+                return paper.Network.InvokeServer("Claim Egg Reward", eggName)
+            end)
+            
+            if success and result then
+                claimedCount = claimedCount + 1
+                updateStatus("Claimed reward for: " .. eggName)
+            else
+                failedCount = failedCount + 1
+            end
+            task.wait(0.1)
+        end
+    end
+    
+    updateStatus("Eggs found: " .. foundCount .. " | Rewards claimed: " .. claimedCount)
+    
+    updateStatus("Starting Code Redeem...")
+    
+    local codes = {
+        "update1", "update2", "update3", "update4", "update5",
+        "easter", "10kccu", "RELEASE"
+    }
+    
+    local remote = rs:WaitForChild("Paper"):WaitForChild("Remotes"):WaitForChild("__remotefunction")
+    
+    for _, code in ipairs(codes) do
+        local args = { "Redeem Code", code }
+        
+        local success, result = pcall(function()
+            return remote:InvokeServer(unpack(args))
+        end)
+        
+        if success then
+            updateStatus("Redeemed: " .. code .. " - " .. tostring(result))
+        else
+            updateStatus("Failed: " .. code)
+        end
+        task.wait(0.5)
+    end
+    
+    updateStatus("Farm completed! Eggs: " .. foundCount .. "/" .. totalEggs .. " | Codes redeemed")
+end
+
 acceptToggle.MouseButton1Click:Connect(function()
     acceptEnabled = not acceptEnabled
     if acceptEnabled then
@@ -195,4 +306,8 @@ tradeToggle.MouseButton1Click:Connect(function()
         tradeToggle.Text = "Auto Trade: OFF"
         tradeToggle.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
     end
+end)
+
+farmButton.MouseButton1Click:Connect(function()
+    task.spawn(farmEggsAndCodes)
 end)
