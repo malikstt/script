@@ -57,10 +57,6 @@ local RARITY_COLORS = {
     ["Insane"] = 0x8b4513
 }
 
-local NOTIFIABLE_RARITIES = {
-    ["Limited"] = true
-}
-
 local function destroySpecificGuis()
     local items = PlayerGui:FindFirstChild("ItemsWon")
     if items then items:Destroy() end
@@ -108,7 +104,7 @@ end)
 
 task.spawn(function()
     while true do
-        task.wait(math.random(25, 45))
+        task.wait(30)
         checkForButton()
     end
 end)
@@ -122,19 +118,21 @@ end
 
 local function sellAllItems()
     processingItemsWon = true
-    task.wait(math.random(1, 3))
+    task.wait(1)
 
     local success, data = pcall(function()
         return DataEvent:InvokeServer()
     end)
 
     if not success or not data then
+        print("❌ GetAll failed")
         processingItemsWon = false
         return
     end
 
     local itemsWon = data.ItemsWon
     if not itemsWon or next(itemsWon) == nil then
+        print("📦 No items won")
         processingItemsWon = false
         return
     end
@@ -145,13 +143,22 @@ local function sellAllItems()
         table.insert(allGuids, guid)
     end
 
-    task.wait(math.random(1, 3))
+    print("📦 Found " .. #allGuids .. " items → selling ALL")
+
+    task.wait(1)
 
     local sellSuccess, sellResult = pcall(function()
         return SellAllItems:InvokeServer("Default", allGuids)
     end)
 
-    task.wait(math.random(2, 5))
+    if sellSuccess and sellResult then
+        print("✅ Sold ALL items successfully")
+    else
+        print("❌ Sell failed")
+    end
+
+    print("✅ Items won processing complete")
+    task.wait(2)
     processingItemsWon = false
 end
 
@@ -159,12 +166,15 @@ UpdateCurrentBid.OnClientEvent:Connect(function(data)
     if data then
         currentBidData = data
         if inAuction and currentGarageValue > 0 then
+            print("💰 Bid Update: $" .. tostring(data.nextBid) .. " | " .. tostring(data.player and (data.player.Name or "NPC") or "None"))
+            
             if data.player ~= LocalPlayer and bidPlaced then
                 local nextBid = data.nextBid
                 local profit = currentGarageValue - nextBid
                 local profitPercent = (profit / currentGarageValue) * 100
                 
                 if profitPercent >= MIN_PROFIT and nextBid <= myCash then
+                    print("⚡ Counter-bidding: $" .. nextBid)
                     pcall(function() PlaceBid:InvokeServer(nextBid) end)
                 end
             end
@@ -176,69 +186,41 @@ local function getGarageEstimatedValue(garageData)
     return garageData.AuctionBudget or 0
 end
 
-local function getBestAffordableGarage()
+local function getGarageToJoin()
     updateCash()
-    local bestId = "51"
-    local bestValue = 0
-    
-    if myCash < 50000 then
-        local requiredCashForId2 = GARAGE_REQUIREMENTS[2]
-        if requiredCashForId2 and myCash >= requiredCashForId2 then
-            return "2"
-        else
-            local requiredCashForId1 = GARAGE_REQUIREMENTS[1]
-            if requiredCashForId1 and myCash >= requiredCashForId1 then
-                return "1"
-            end
-        end
-    end
     
     if myCash >= 500000 then
         return nil
     end
     
-    for id, data in pairs(GaragesModule) do
-        if data.Type == "Cash" then
-            local requiredCash = GARAGE_REQUIREMENTS[tonumber(id)]
-            if requiredCash and myCash >= requiredCash then
-                local estimatedValue = getGarageEstimatedValue(data)
-                if estimatedValue > bestValue then
-                    bestValue = estimatedValue
-                    bestId = id
-                end
-            end
-        end
+    if myCash >= 500 then
+        return "2"
+    elseif myCash >= 150 then
+        return "1"
     end
     
-    return bestId
+    return nil
 end
 
 local function joinAuction()
     while true do
         if not processingItemsWon and not inAuction then
-            local garageId = getBestAffordableGarage()
+            local garageId = getGarageToJoin()
             
             if garageId then
                 local requiredCash = GARAGE_REQUIREMENTS[tonumber(garageId)] or 0
                 local garageData = GaragesModule[garageId]
                 if garageData then
-                    -- Wait 4-8 seconds, checking if inAuction becomes true
-                    local waitTime = math.random(4, 8)
-                    local elapsed = 0
-                    while elapsed < waitTime do
-                        task.wait(0.5)
-                        elapsed = elapsed + 0.5
-                        if inAuction then
-                            break
-                        end
-                    end
+                    local waitTime = math.random(3, 10)
+                    task.wait(waitTime)
                     
-                    if not inAuction then
+                    if not processingItemsWon and not inAuction then
+                        print("🎯 Entering: " .. garageData.Name .. " (Required: $" .. requiredCash .. ")")
                         pcall(function() EnterQueue:InvokeServer(garageId) end)
                     end
                 end
             else
-                task.wait(math.random(25, 45))
+                task.wait(5)
             end
         end
         task.wait(1)
@@ -271,47 +253,35 @@ end
 local function sendDiscordNotification(username, itemData, serial)
     if not itemData then return end
     local rarity = itemData.Rarity or "Unknown"
-    
-    if not NOTIFIABLE_RARITIES[rarity] then
-        return
-    end
-    
+    if rarity ~= "Limited" and not serial then return end
     local color = RARITY_COLORS[rarity] or 0xffffff
     local title
-    local description = "Item: " .. (itemData.Name or "Unknown") .. "\nRarity: " .. rarity
-    
+    local description = "Item: "..(itemData.Name or "Unknown").."\nRarity: "..rarity
     if serial then
-        title = username .. " GOT A SERIAL " .. rarity:upper() .. "!"
-        description = description .. "\nSerial: #" .. tostring(serial)
+        title = username.." GOT A SERIAL!"
+        description = description.."\nSerial: #"..tostring(serial)
     else
-        title = username .. " Rolled a Limited Item!"
+        title = username.." Rolled a Limited Item!"
     end
-    
     local data = {
         username = "Item Notifier",
         embeds = {{
             title = title,
             description = description,
-            color = color,
-            footer = {
-                text = os.date("%Y-%m-%d %H:%M:%S")
-            }
+            color = color
         }}
     }
-    
-    pcall(function()
-        request({
-            Url = WEBHOOK_URL,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = HttpService:JSONEncode(data)
-        })
-    end)
+    request({
+        Url = WEBHOOK_URL,
+        Method = "POST",
+        Headers = {["Content-Type"] = "application/json"},
+        Body = HttpService:JSONEncode(data)
+    })
 end
 
 task.spawn(function()
     while true do
-        task.wait(math.random(1, 3))
+        task.wait(1)
         local success, itemId = pcall(function()
             return RollRemote:InvokeServer()
         end)
@@ -333,230 +303,6 @@ task.spawn(function()
     end
 end)
 
--- APRIL FOOLS RNG UPGRADES SYSTEM
-task.spawn(function()
-    local upgradesModule = require(ReplicatedStorage.Modules.AprilFoolsRNGUpgrades)
-    local buyRemote = ReplicatedStorage.Events.RNG.BuyHalloweenUpgrade
-    local getUpgrades = ReplicatedStorage.Events.RNG.GetHalloweenUpgrades
-
-    local PRIORITY = {
-        "LaughsMultiplier",
-        "FasterRoll",
-        "Luck"
-    }
-
-    local TARGET_HEARTS = 450000
-
-    local function getLaughs()
-        local getAllResult = getUpgrades:InvokeServer()
-        if getAllResult and getAllResult.Laughs then
-            return getAllResult.Laughs
-        end
-        return 0
-    end
-
-    local function tryUpgrade(upgrade)
-        local data = getUpgrades:InvokeServer()
-        local current = data[upgrade] or 0
-        local maxLevel = #upgradesModule[upgrade]
-
-        if current < maxLevel then
-            local nextData = upgradesModule[upgrade][current + 1]
-            if not nextData or not nextData.Laughs then
-                warn("Missing cost for", upgrade)
-                return false
-            end
-
-            local cost = nextData.Laughs
-            local currency = getLaughs()
-
-            if currency >= cost then
-                buyRemote:InvokeServer(upgrade)
-                return true
-            end
-        end
-
-        return false
-    end
-
-    while true do
-        local currentHearts = getLaughs()
-
-        if currentHearts >= TARGET_HEARTS then
-            break
-        end
-
-        while tryUpgrade("LaughsMultiplier") do
-            task.wait(0.1)
-            if getLaughs() >= TARGET_HEARTS then break end
-        end
-        if getLaughs() >= TARGET_HEARTS then break end
-
-        for _, upgrade in ipairs(PRIORITY) do
-            if upgrade ~= "LaughsMultiplier" then
-                while tryUpgrade(upgrade) do
-                    task.wait(0.1)
-                    if getLaughs() >= TARGET_HEARTS then break end
-                end
-                if getLaughs() >= TARGET_HEARTS then break end
-            end
-        end
-
-        task.wait(0.5)
-    end
-end)
-
--- POTION BUYING SYSTEM
-local Events = ReplicatedStorage:WaitForChild("Events"):WaitForChild("UI")
-local ShopData = Events.Data.GetPotionShopData
-local GetAll = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
-
-local LUCK_I = "1"
-local LUCK_II = "2"
-local LUCK_III = "3"
-
-local MAX_COUNT = 99
-local potionBuyingActive = true
-
-local function getPotionCounts()
-    local success, data = pcall(function()
-        return GetAll:InvokeServer()
-    end)
-    if not success or not data then return nil end
-    local counts = {["2328"] = 0, ["2329"] = 0, ["2330"] = 0}
-    local function scan(container)
-        if not container then return end
-        for _, item in pairs(container) do
-            local id = tostring(item.Id)
-            if counts[id] then
-                counts[id] = counts[id] + 1
-            end
-        end
-    end
-    scan(data.Inventory)
-    scan(data.Furniture)
-    return counts
-end
-
-local function needsMorePotions(counts)
-    if not counts then return true end
-    return counts["2328"] < MAX_COUNT or counts["2329"] < MAX_COUNT or counts["2330"] < MAX_COUNT
-end
-
-local lastStock = nil
-local buying = false
-local potionQueue = {}
-
-local function buyPotion(id)
-    if not potionBuyingActive then return end
-    if buying then
-        table.insert(potionQueue, id)
-        return
-    end
-    buying = true
-    local success = pcall(function()
-        return Events.BuyPotion:InvokeServer(id)
-    end)
-    if success then
-        warn("Bought potion " .. id)
-    end
-    buying = false
-    if #potionQueue > 0 and potionBuyingActive then
-        task.wait(0.5)
-        buyPotion(table.remove(potionQueue, 1))
-    end
-end
-
-local function checkPotionShop(data)
-    if not potionBuyingActive then return end
-    local counts = getPotionCounts()
-    if not needsMorePotions(counts) then
-        potionBuyingActive = false
-        warn("Reached " .. MAX_COUNT .. " of each potion. Stopping.")
-        return
-    end
-    if not data or not data.Potions then return end
-    local luckI = data.Potions[LUCK_I]
-    local luckII = data.Potions[LUCK_II]
-    local luckIII = data.Potions[LUCK_III]
-    local lastI = lastStock and lastStock.Potions and lastStock.Potions[LUCK_I] or 0
-    local lastII = lastStock and lastStock.Potions and lastStock.Potions[LUCK_II] or 0
-    local lastIII = lastStock and lastStock.Potions and lastStock.Potions[LUCK_III] or 0
-    if luckI and luckI > 0 and luckI ~= lastI and counts["2328"] < MAX_COUNT then
-        buyPotion(LUCK_I)
-    end
-    if luckII and luckII > 0 and luckII ~= lastII and counts["2329"] < MAX_COUNT then
-        buyPotion(LUCK_II)
-    end
-    if luckIII and luckIII > 0 and luckIII ~= lastIII and counts["2330"] < MAX_COUNT then
-        buyPotion(LUCK_III)
-    end
-    lastStock = data
-end
-
-local function fetchPotionShop()
-    if not potionBuyingActive then return end
-    local success, data = pcall(function()
-        return ShopData:InvokeServer()
-    end)
-    if success and data then
-        checkPotionShop(data)
-    end
-end
-
-Events.RestockedPotions.OnClientEvent:Connect(function()
-    task.wait(0.5)
-    fetchPotionShop()
-end)
-
-task.spawn(function()
-    while potionBuyingActive do
-        task.wait(30)
-        fetchPotionShop()
-    end
-end)
-
-fetchPotionShop()
-
--- POTION USING SYSTEM
-local UsePotion = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Potions"):WaitForChild("UsePotion")
-
-local function useAllPotions()
-    local data = GetAllData()
-    if not data or not data.Inventory then return end
-    
-    local inventory = data.Inventory
-    local usedCount = 0
-    
-    for guid, item in pairs(inventory) do
-        local info = Items[item.Id]
-        
-        if info and info.PotionId then
-            usedCount = usedCount + 1
-            
-            local success, err = pcall(function()
-                UsePotion:InvokeServer(guid)
-            end)
-            
-            if not success then
-                warn("Failed to use potion:", guid, err)
-            end
-            
-            task.wait(0.15)
-        end
-    end
-end
-
-task.spawn(function()
-    task.wait(5)
-    useAllPotions()
-    
-    while true do
-        task.wait(300)
-        useAllPotions()
-    end
-end)
-
 AuctionsFolder.ChildAdded:Connect(function(garage)
     if processingItemsWon then return end
     
@@ -575,12 +321,15 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
         end
     end
     
+    print("\n=== " .. garageName .. " (Required: $" .. currentGarageBudget .. ") ===")
+    
     local itemsFolder = garage:WaitForChild("Items", 5)
     if not itemsFolder then
+        print("❌ No items")
         return
     end
     
-    task.wait(math.random(2, 5))
+    task.wait(3)
     
     currentGarageValue = 0
     local items = itemsFolder:GetChildren()
@@ -595,16 +344,20 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     end
     
     if currentGarageValue == 0 then
+        print("❌ Value: $0")
         return
     end
     
+    print("💰 Value: $" .. currentGarageValue)
+    
     local timeout = 0
     while not currentBidData and timeout < 8 do
-        task.wait(math.random(3, 8) / 10)
+        task.wait(0.5)
         timeout = timeout + 0.5
     end
     
     if not currentBidData then
+        print("❌ No bid data")
         return
     end
     
@@ -614,26 +367,44 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     local worth = profitPercent >= MIN_PROFIT
     local canAfford = nextBid <= myCash
     
+    print("💰 Next: $" .. nextBid)
+    print("📊 Profit: $" .. profit .. " (" .. string.format("%.2f", profitPercent) .. "%)")
+    print(worth and "✅ WORTH" or "❌ NOT WORTH")
+    print(canAfford and "✅ Can afford" or "❌ Can't afford")
+    
     if currentBidData.player == LocalPlayer then
+        print("👑 Highest bidder")
         bidPlaced = true
         return
     end
     
     if worth and canAfford then
-        pcall(function()
+        print("⚡ Bidding...")
+        local success = pcall(function()
             return PlaceBid:InvokeServer(nextBid)
         end)
-        bidPlaced = true
+        if success then
+            print("✅ Bid placed")
+            bidPlaced = true
+        else
+            print("❌ Bid failed")
+        end
     end
 end)
 
 AuctionsFolder.ChildRemoved:Connect(function()
     if #AuctionsFolder:GetChildren() == 0 then
+        print("\n=== Left ===\n")
         inAuction = false
         currentBidData = nil
         currentGarageValue = 0
         bidPlaced = false
-        task.wait(math.random(10, 30))
+        task.wait(2)
         sellAllItems()
     end
 end)
+
+print("🚀 Started - " .. MIN_PROFIT .. "% profit")
+print("💰 Garage 2 only ($500 requirement)")
+print("🛑 Stops when cash ≥ 500k")
+print("✅ Keeps rejoining Garage 2 nonstop")
