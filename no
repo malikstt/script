@@ -18,6 +18,16 @@ local Items = require(ReplicatedStorage.Modules.Items)
 local RollRemote = ReplicatedStorage.Events.RNG.Roll
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1486016437918367866/Yxe21WPlTWk37b9Pgazrw6NjRK3GKbcynKPociVbyv_hb2eke396nH991ye1HnF_WOcL"
 
+local TRACKED_ITEM_IDS = {
+    [2778] = true,
+    [2779] = true,
+    [2780] = true,
+    [2781] = true,
+    [2782] = true,
+    [2783] = true,
+    [2784] = true
+}
+
 local GARAGE_REQUIREMENTS = {
     [1] = 150,
     [2] = 500,
@@ -43,7 +53,6 @@ local bidPlaced = false
 local processingItemsWon = false
 local currentGarageBudget = 0
 
--- FAIL SAFE - Only stops EnterQueue
 local consecutiveEntryFailures = 0
 local MAX_ENTRY_FAILURES = 10
 local stopEntering = false
@@ -223,10 +232,8 @@ local function joinAuction()
                         print("🎯 Entering: " .. garageData.Name .. " (Required: $" .. requiredCash .. ")")
                         pcall(function() EnterQueue:InvokeServer(garageId) end)
                         
-                        -- Wait to see if entry works
                         task.wait(5)
                         
-                        -- If still not in auction, count as failure
                         if not inAuction then
                             consecutiveEntryFailures = consecutiveEntryFailures + 1
                             print("⚠️ Entry failed " .. consecutiveEntryFailures .. "/" .. MAX_ENTRY_FAILURES)
@@ -243,7 +250,6 @@ local function joinAuction()
                 task.wait(5)
             end
         elseif stopEntering then
-            -- Just chill, don't spam logs
             task.wait(30)
         end
         task.wait(1)
@@ -252,11 +258,9 @@ end
 
 coroutine.wrap(joinAuction)()
 
--- Reset entry failures when successfully IN an auction (ChildAdded fires)
 AuctionsFolder.ChildAdded:Connect(function(garage)
     if processingItemsWon then return end
     
-    -- Successfully entered! Reset failure counter
     if consecutiveEntryFailures > 0 then
         print("✅ Entered auction! Resetting entry failures (was " .. consecutiveEntryFailures .. ")")
         consecutiveEntryFailures = 0
@@ -382,19 +386,25 @@ local function FindSerialInInventory(itemId, inventory)
     return nil
 end
 
-local function sendDiscordNotification(username, itemData, serial)
+local function sendDiscordNotification(username, itemId, itemData, serial)
+    if not TRACKED_ITEM_IDS[tonumber(itemId)] then
+        return
+    end
+    
     if not itemData then return end
+    
     local rarity = itemData.Rarity or "Unknown"
-    if rarity ~= "Limited" and not serial then return end
     local color = RARITY_COLORS[rarity] or 0xffffff
     local title
-    local description = "Item: "..(itemData.Name or "Unknown").."\nRarity: "..rarity
+    local description = "Item: "..(itemData.Name or "Unknown").."\nRarity: "..rarity.."\nID: "..tostring(itemId)
+    
     if serial then
         title = username.." GOT A SERIAL!"
         description = description.."\nSerial: #"..tostring(serial)
     else
-        title = username.." Rolled a Limited Item!"
+        title = username.." Rolled a Tracked Item!"
     end
+    
     local data = {
         username = "Item Notifier",
         embeds = {{
@@ -403,12 +413,15 @@ local function sendDiscordNotification(username, itemData, serial)
             color = color
         }}
     }
-    request({
-        Url = WEBHOOK_URL,
-        Method = "POST",
-        Headers = {["Content-Type"] = "application/json"},
-        Body = HttpService:JSONEncode(data)
-    })
+    
+    pcall(function()
+        request({
+            Url = WEBHOOK_URL,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = HttpService:JSONEncode(data)
+        })
+    end)
 end
 
 task.spawn(function()
@@ -429,7 +442,7 @@ task.spawn(function()
             local uniqueKey = serial and (itemId.."_"..serial) or tostring(itemId)
             if not rolledIDs[uniqueKey] then
                 rolledIDs[uniqueKey] = true
-                sendDiscordNotification(LocalPlayer.Name, itemData, serial)
+                sendDiscordNotification(LocalPlayer.Name, itemId, itemData, serial)
             end
         end
     end
@@ -440,3 +453,4 @@ print("💰 Garage 2 only ($500 requirement)")
 print("🛑 Stops when cash ≥ 500k")
 print("🔒 Will stop EnterQueue after " .. MAX_ENTRY_FAILURES .. " consecutive failures")
 print("✅ Webhooks and rolling ALWAYS active")
+print("🎯 Only tracking items: 2778, 2779, 2780, 2781, 2782, 2783, 2784")
