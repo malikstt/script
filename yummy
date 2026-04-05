@@ -3,19 +3,20 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
--- Services
 local GetAll = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 local EndTutorial = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Tutorial"):WaitForChild("EndTutorial")
 local Items = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Items"))
+local upgradesModule = require(ReplicatedStorage.Modules.AprilFoolsRNGUpgrades)
+local GetUpgrades = ReplicatedStorage.Events.RNG.GetHalloweenUpgrades
 
--- Destroy existing ScreenGuis
+local APRIL_SERIAL_IDS = {2778, 2779, 2780, 2781, 2782, 2783, 2784}
+
 for _, gui in ipairs(LocalPlayer.PlayerGui:GetChildren()) do
     if gui:IsA("ScreenGui") then
         gui:Destroy()
     end
 end
 
--- ===== BACKGROUND (Invisible White Tab - Exists but hidden) =====
 local backgroundGui = Instance.new("ScreenGui")
 backgroundGui.Name = "BackgroundTab"
 backgroundGui.DisplayOrder = 0
@@ -30,14 +31,12 @@ backgroundFrame.BackgroundTransparency = 1
 backgroundFrame.BorderSizePixel = 0
 backgroundFrame.Parent = backgroundGui
 
--- ===== MAIN UI (Above Background) =====
 local mainGui = Instance.new("ScreenGui")
 mainGui.Name = "MainUI"
 mainGui.DisplayOrder = 1
 mainGui.ResetOnSpawn = false
 mainGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
--- Main Container (Centered)
 local mainContainer = Instance.new("Frame")
 mainContainer.Name = "MainContainer"
 mainContainer.Size = UDim2.new(0.85, 0, 0.85, 0)
@@ -66,7 +65,6 @@ mainStroke.Thickness = 1
 mainStroke.Transparency = 0.5
 mainStroke.Parent = mainContainer
 
--- ===== TITLE BAR =====
 local titleBar = Instance.new("Frame")
 titleBar.Name = "TitleBar"
 titleBar.Size = UDim2.new(1, 0, 0.12, 0)
@@ -96,7 +94,7 @@ titleStroke.Parent = titleBar
 local titleText = Instance.new("TextLabel")
 titleText.Size = UDim2.new(1, 0, 1, 0)
 titleText.BackgroundTransparency = 1
-titleText.Text = "🎯  PROGRESS DASHBOARD  🎯"
+titleText.Text = LocalPlayer.Name .. "'S DASHBOARD"
 titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
 titleText.TextSize = 28
 titleText.Font = Enum.Font.GothamBold
@@ -104,7 +102,6 @@ titleText.TextXAlignment = Enum.TextXAlignment.Center
 titleText.TextYAlignment = Enum.TextYAlignment.Center
 titleText.Parent = titleBar
 
--- ===== CONTENT AREA =====
 local contentArea = Instance.new("Frame")
 contentArea.Name = "ContentArea"
 contentArea.Size = UDim2.new(1, 0, 0.88, 0)
@@ -119,7 +116,6 @@ innerPadding.PaddingTop = UDim.new(0.04, 0)
 innerPadding.PaddingBottom = UDim.new(0.04, 0)
 innerPadding.Parent = contentArea
 
--- ===== STAT CARDS GRID =====
 local cardsContainer = Instance.new("Frame")
 cardsContainer.Name = "CardsContainer"
 cardsContainer.Size = UDim2.new(1, 0, 1, 0)
@@ -135,7 +131,6 @@ gridLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 gridLayout.CellPadding = UDim2.new(0.02, 0, 0.02, 0)
 gridLayout.CellSize = UDim2.new(0.3, 0, 0.28, 0)
 
--- ===== HELPER FUNCTIONS =====
 local function formatNumber(num)
     if not num or type(num) ~= "number" then return "0" end
     if num >= 1e9 then
@@ -162,7 +157,6 @@ local function formatCurrency(num)
     end
 end
 
--- ===== CREATE STAT CARD =====
 local function createStatCard(order, icon, title, color)
     local card = Instance.new("Frame")
     card.Size = UDim2.new(1, 0, 1, 0)
@@ -228,29 +222,28 @@ local function createStatCard(order, icon, title, color)
     return valueLabel
 end
 
--- ===== CREATE ALL STAT CARDS =====
 local stats = {
-    username = createStatCard(1, "👤", "USERNAME", Color3.fromRGB(100, 150, 255)),
-    cash = createStatCard(2, "💰", "CASH", Color3.fromRGB(255, 200, 50)),
-    gems = createStatCard(3, "💎", "GEMS", Color3.fromRGB(100, 255, 150)),
-    laughs = createStatCard(4, "🤡", "LAUGHS", Color3.fromRGB(255, 180, 80)),   -- NEW CARD
-    tutorial = createStatCard(5, "📚", "TUTORIAL", Color3.fromRGB(255, 150, 100)),
+    cash = createStatCard(1, "💰", "CASH", Color3.fromRGB(255, 200, 50)),
+    gems = createStatCard(2, "💎", "GEMS", Color3.fromRGB(100, 255, 150)),
+    laughs = createStatCard(3, "🤡", "LAUGHS", Color3.fromRGB(255, 180, 80)),
+    serials = createStatCard(4, "🔢", "SERIALS IN INV", Color3.fromRGB(255, 100, 255)),
+    luck = createStatCard(5, "🍀", "APRIL FOOLS LUCK", Color3.fromRGB(255, 180, 80)),
     runtime = createStatCard(6, "⏱️", "RUNTIME", Color3.fromRGB(100, 200, 255)),
     rolls = createStatCard(7, "🎲", "TOTAL ROLLS", Color3.fromRGB(255, 150, 100)),
     shinys = createStatCard(8, "✨", "SHINYS FOUND", Color3.fromRGB(255, 100, 255)),
     limiteds = createStatCard(9, "🏆", "LIMITEDS IN INV", Color3.fromRGB(200, 150, 100))
 }
 
--- ===== DATA CACHE =====
 local cachedData = {
     cash = 0,
     gems = 0,
-    laughs = 0,          -- NEW FIELD
+    laughs = 0,
+    serialsCount = 0,
     tutorialStatus = nil,
     rolls = 0,
     shinys = 0,
     limiteds = 0,
-    username = LocalPlayer.Name
+    luckMultiplier = 1
 }
 
 local startTime = tick()
@@ -262,7 +255,6 @@ local localTotalRolls = 0
 local localShinysFound = 0
 local localLimitedsFound = {}
 
--- ===== UPDATE TIMER =====
 local function updateTimer()
     local elapsed = tick() - startTime
     local hours = math.floor(elapsed / 3600)
@@ -271,25 +263,55 @@ local function updateTimer()
     stats.runtime.Text = string.format("%02d:%02d:%02d", hours, minutes, seconds)
 end
 
--- ===== UPDATE UI FROM CACHE =====
+local function countSerialItems(inventory)
+    if not inventory then return 0 end
+    local count = 0
+    for _, invItem in pairs(inventory) do
+        local id = invItem.Id
+        if id then
+            for _, serialId in ipairs(APRIL_SERIAL_IDS) do
+                if id == serialId then
+                    count = count + 1
+                    break
+                end
+            end
+        end
+    end
+    return count
+end
+
+local function fetchLuckMultiplier()
+    local success, currentUpgrades = pcall(function()
+        return GetUpgrades:InvokeServer()
+    end)
+    
+    if success and currentUpgrades then
+        local level = currentUpgrades["Luck"] or 0
+        if level > 0 and upgradesModule and upgradesModule["Luck"] and upgradesModule["Luck"][level] then
+            return upgradesModule["Luck"][level].DisplayLuck or 1
+        end
+    end
+    return 1
+end
+
 local function updateUIFromCache()
-    stats.username.Text = cachedData.username
     stats.cash.Text = formatCurrency(cachedData.cash)
     stats.gems.Text = formatNumber(cachedData.gems)
-    stats.laughs.Text = formatNumber(cachedData.laughs)   -- NEW
+    stats.laughs.Text = formatNumber(cachedData.laughs)
+    stats.serials.Text = formatNumber(cachedData.serialsCount)
+    stats.luck.Text = "x" .. formatNumber(cachedData.luckMultiplier)
     stats.rolls.Text = formatNumber(cachedData.rolls)
     stats.shinys.Text = formatNumber(cachedData.shinys)
     stats.limiteds.Text = formatNumber(cachedData.limiteds)
     
-    if cachedData.tutorialStatus == true then
-        stats.tutorial.Text = "✅ COMPLETED"
-        stats.tutorial.TextColor3 = Color3.fromRGB(100, 255, 100)
-    elseif cachedData.tutorialStatus == false then
-        stats.tutorial.Text = "❌ NOT STARTED"
-        stats.tutorial.TextColor3 = Color3.fromRGB(255, 100, 100)
+    if cachedData.serialsCount == 7 then
+        stats.serials.TextColor3 = Color3.fromRGB(100, 255, 100)
+    elseif cachedData.serialsCount >= 4 then
+        stats.serials.TextColor3 = Color3.fromRGB(255, 200, 100)
+    elseif cachedData.serialsCount >= 1 then
+        stats.serials.TextColor3 = Color3.fromRGB(255, 150, 100)
     else
-        stats.tutorial.Text = "⚠️ UNKNOWN"
-        stats.tutorial.TextColor3 = Color3.fromRGB(255, 200, 100)
+        stats.serials.TextColor3 = Color3.fromRGB(255, 100, 100)
     end
     
     if cachedData.cash >= 500000 then
@@ -307,7 +329,6 @@ local function updateUIFromCache()
     end
 end
 
--- ===== FETCH AND UPDATE DATA =====
 local function fetchAndUpdateData()
     local success, data = pcall(function()
         return GetAll:InvokeServer()
@@ -316,7 +337,7 @@ local function fetchAndUpdateData()
     if success and data then
         cachedData.cash = data.Cash or 0
         cachedData.gems = data.Gems or 0
-        cachedData.laughs = data.Laughs2026 or 0   -- NEW: fetch Laughs2026
+        cachedData.laughs = data.Laughs2026 or 0
         cachedData.tutorialStatus = data.CompletedTutorial
         
         if data.AprilFools2026Rolls then
@@ -329,6 +350,12 @@ local function fetchAndUpdateData()
             cachedData.shinys = data.AprilFools2026ShinysFound
         else
             cachedData.shinys = localShinysFound
+        end
+        
+        if data.AprilFoolsInventory2026 then
+            cachedData.serialsCount = countSerialItems(data.AprilFoolsInventory2026)
+        else
+            cachedData.serialsCount = 0
         end
         
         local limitedCount = 0
@@ -344,6 +371,9 @@ local function fetchAndUpdateData()
             cachedData.limiteds = #localLimitedsFound
         end
         
+        local luckMulti = fetchLuckMultiplier()
+        cachedData.luckMultiplier = luckMulti
+        
         updateUIFromCache()
         
         if cachedData.tutorialStatus == false then
@@ -353,7 +383,6 @@ local function fetchAndUpdateData()
                 end)
                 if endSuccess then
                     cachedData.tutorialStatus = true
-                    updateUIFromCache()
                 end
             end)
         end
@@ -362,12 +391,13 @@ local function fetchAndUpdateData()
     else
         stats.cash.Text = "⚠️ ERROR"
         stats.gems.Text = "⚠️ ERROR"
-        stats.laughs.Text = "⚠️ ERROR"   -- NEW
+        stats.laughs.Text = "⚠️ ERROR"
+        stats.serials.Text = "⚠️ ERROR"
+        stats.luck.Text = "⚠️ ERROR"
         return 0
     end
 end
 
--- ===== FARMING SCRIPT =====
 local function startFarmingScript()
     if farmingScriptRunning then return end
     farmingScriptRunning = true
@@ -379,7 +409,6 @@ local function startFarmingScript()
     local GetAchievementsData = Data:WaitForChild("GetAchievementsData")
     local ClaimAchievement = Data:WaitForChild("ClaimAchievement")
     local AchievementsModule = require(ReplicatedStorage.Modules:WaitForChild("Achievements"))
-    local CHECK_INTERVAL = math.random(300, 500)
     
     local nsv = LocalPlayer:WaitForChild("NonSaveVars")
     local own = nsv:WaitForChild("OwnsPlot")
@@ -468,7 +497,6 @@ local function startFarmingScript()
     end)
 end
 
--- ===== INITIALIZATION =====
 repeat task.wait() until LocalPlayer.Character and LocalPlayer.Character.Parent
 
 local initialCash = fetchAndUpdateData()
