@@ -1,36 +1,168 @@
+repeat task.wait() until game:IsLoaded()
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
 
-local Snowflakes = workspace:WaitForChild("Debris"):WaitForChild("Snowflakes")
-
-local player = game.Players.LocalPlayer
+local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
 local humanoidRoot = character:WaitForChild("HumanoidRootPart")
+
+-- Remotes
+local BuyRemote = ReplicatedStorage.Events.RNG.BuyHalloweenUpgrade
+local GetUpgrades = ReplicatedStorage.Events.RNG.GetHalloweenUpgrades
+local GetAll = ReplicatedStorage.Events.Data.GetAll
+
+local UpgradeData = require(ReplicatedStorage.Modules.AprilFoolsRNGUpgrades)
+
+local order = {
+    "LaughsMultiplier",
+    "Luck",
+    "FasterRoll"
+}
+
+-- Snowflakes
+local Snowflakes = Workspace:WaitForChild("Debris"):WaitForChild("Snowflakes")
 
 local touched = {}
 
 local function touch(obj)
-if obj:IsA("BasePart") and not touched[obj] then
-print("Touching:", obj:GetFullName())
-firetouchinterest(humanoidRoot, obj, 0)
-firetouchinterest(humanoidRoot, obj, 1)
-touched[obj] = true
-end
+    if obj:IsA("BasePart") and not touched[obj] then
+        firetouchinterest(humanoidRoot, obj, 0)
+        firetouchinterest(humanoidRoot, obj, 1)
+        touched[obj] = true
+        print("Collected:", obj.Name)
+    end
 end
 
 RunService.RenderStepped:Connect(function()
-for _, v in ipairs(Snowflakes:GetChildren()) do
-print("Found child:", v.Name, v.ClassName)
+    for _, v in ipairs(Snowflakes:GetChildren()) do
+        if v.Name == "DroppedLaugh" then
+            if v:IsA("BasePart") then
+                touch(v)
+            else
+                for _, obj in ipairs(v:GetDescendants()) do
+                    touch(obj)
+                end
+            end
+        end
+    end
+end)
 
-if v.Name == "DroppedLaugh" then  
-        if v:IsA("BasePart") then  
-            touch(v)  
-        else  
-            for _, obj in ipairs(v:GetDescendants()) do  
-                print("Inner:", obj.Name, obj.ClassName)  
-                touch(obj)  
-            end  
-        end  
-    end  
+-- CLEANER (fixed: keeps Snowflakes)
+local PLOTS = "Plots"
+local NONSAVE = "NonSaveVars"
+local OWN = "OwnsPlot"
+local BASE = "Baseplate2"
+local DEBRIS = "Debris"
+local AUCTIONS = "Auctions"
+local INTERIOR = "Interior"
+local SHOP = "Shop1"
+local CANVAS = "Canvas"
+local SNOWFLAKES = "Snowflakes"
+
+local function getCurrentPlot()
+    local nsv = player:FindFirstChild(NONSAVE)
+    if not nsv then return end
+
+    local own = nsv:FindFirstChild(OWN)
+    if not own then return end
+
+    local plots = Workspace:FindFirstChild(PLOTS)
+    if not plots then return end
+
+    return plots:FindFirstChild(tostring(own.Value))
 end
 
+local keep = {
+    Workspace:WaitForChild(BASE),
+    Workspace:WaitForChild(DEBRIS):WaitForChild(AUCTIONS),
+    Workspace:WaitForChild(DEBRIS):WaitForChild(SNOWFLAKES)
+}
+
+local plot = getCurrentPlot()
+
+if plot then
+    table.insert(keep, plot)
+
+    local canvas = plot:FindFirstChild(INTERIOR)
+        and plot.Interior:FindFirstChild(SHOP)
+        and plot.Interior.Shop1:FindFirstChild(CANVAS)
+
+    if canvas then
+        table.insert(keep, canvas)
+    end
+end
+
+local function shouldKeep(inst)
+    for _, v in ipairs(keep) do
+        if inst:IsDescendantOf(v) then
+            return true
+        end
+    end
+
+    if inst:FindFirstAncestorOfClass("Model")
+        and Players:GetPlayerFromCharacter(inst:FindFirstAncestorOfClass("Model")) then
+        return true
+    end
+
+    return false
+end
+
+local function hidePart(part)
+    pcall(function()
+        sethiddenproperty(part, "LocalTransparencyModifier", 1)
+    end)
+
+    part.CanCollide = false
+end
+
+for _, v in ipairs(Workspace:GetDescendants()) do
+    if v:IsA("BasePart") and not shouldKeep(v) then
+        hidePart(v)
+    end
+end
+
+Workspace.DescendantAdded:Connect(function(inst)
+    if inst:IsA("BasePart") and not shouldKeep(inst) then
+        hidePart(inst)
+    end
+end)
+
+-- AUTO BUYER
+task.spawn(function()
+    while true do
+        local current = GetUpgrades:InvokeServer()
+
+        local success, data = pcall(function()
+            return GetAll:InvokeServer()
+        end)
+
+        local laughs = 0
+        if success and data then
+            laughs = data.Laughs2026 or 0
+        end
+
+        for _, upgrade in ipairs(order) do
+            local level = current[upgrade] or 0
+            local info = UpgradeData[upgrade]
+
+            if info and level < #info then
+                local cost = info[level + 1].Laughs
+
+                if laughs >= cost then
+                    local bought = BuyRemote:InvokeServer(upgrade)
+
+                    if bought then
+                        print("Bought:", upgrade, "Cost:", cost)
+                        task.wait(0.2)
+                        break
+                    end
+                end
+            end
+        end
+
+        task.wait(0.5)
+    end
 end)
