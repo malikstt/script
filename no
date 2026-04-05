@@ -43,6 +43,11 @@ local bidPlaced = false
 local processingItemsWon = false
 local currentGarageBudget = 0
 
+-- FAIL SAFE - Only stops EnterQueue
+local consecutiveEntryFailures = 0
+local MAX_ENTRY_FAILURES = 10
+local stopEntering = false
+
 local rolledIDs = {}
 
 local RARITY_COLORS = {
@@ -204,7 +209,7 @@ end
 
 local function joinAuction()
     while true do
-        if not processingItemsWon and not inAuction then
+        if not processingItemsWon and not inAuction and not stopEntering then
             local garageId = getGarageToJoin()
             
             if garageId then
@@ -217,11 +222,29 @@ local function joinAuction()
                     if not processingItemsWon and not inAuction then
                         print("🎯 Entering: " .. garageData.Name .. " (Required: $" .. requiredCash .. ")")
                         pcall(function() EnterQueue:InvokeServer(garageId) end)
+                        
+                        -- Wait to see if entry works
+                        task.wait(5)
+                        
+                        -- If still not in auction, count as failure
+                        if not inAuction then
+                            consecutiveEntryFailures = consecutiveEntryFailures + 1
+                            print("⚠️ Entry failed " .. consecutiveEntryFailures .. "/" .. MAX_ENTRY_FAILURES)
+                            
+                            if consecutiveEntryFailures >= MAX_ENTRY_FAILURES then
+                                stopEntering = true
+                                print("🔴 STOPPED ENTERING AUCTIONS - " .. MAX_ENTRY_FAILURES .. " consecutive failures")
+                                print("🔴 Webhooks and rolling still active, but no more EnterQueue calls")
+                            end
+                        end
                     end
                 end
             else
                 task.wait(5)
             end
+        elseif stopEntering then
+            -- Just chill, don't spam logs
+            task.wait(30)
         end
         task.wait(1)
     end
@@ -229,82 +252,16 @@ end
 
 coroutine.wrap(joinAuction)()
 
-local function GetAllData()
-    local success, result = pcall(function()
-        return ReplicatedStorage.Events.Data.GetAll:InvokeServer()
-    end)
-    if success then return result end
-    return nil
-end
-
-local function FindSerialInInventory(itemId, inventory)
-    for _, invItem in pairs(inventory) do
-        if tostring(invItem.Id) == tostring(itemId) then
-            for key, value in pairs(invItem) do
-                if key:lower():find("serial") and tonumber(value) then
-                    return value
-                end
-            end
-        end
-    end
-    return nil
-end
-
-local function sendDiscordNotification(username, itemData, serial)
-    if not itemData then return end
-    local rarity = itemData.Rarity or "Unknown"
-    if rarity ~= "Limited" and not serial then return end
-    local color = RARITY_COLORS[rarity] or 0xffffff
-    local title
-    local description = "Item: "..(itemData.Name or "Unknown").."\nRarity: "..rarity
-    if serial then
-        title = username.." GOT A SERIAL!"
-        description = description.."\nSerial: #"..tostring(serial)
-    else
-        title = username.." Rolled a Limited Item!"
-    end
-    local data = {
-        username = "Item Notifier",
-        embeds = {{
-            title = title,
-            description = description,
-            color = color
-        }}
-    }
-    request({
-        Url = WEBHOOK_URL,
-        Method = "POST",
-        Headers = {["Content-Type"] = "application/json"},
-        Body = HttpService:JSONEncode(data)
-    })
-end
-
-task.spawn(function()
-    while true do
-        task.wait(1)
-        local success, itemId = pcall(function()
-            return RollRemote:InvokeServer()
-        end)
-        if success and itemId then
-            local itemData = Items[itemId]
-            local serial
-            if itemData and itemData.Rarity == "Limited" then
-                local data = GetAllData()
-                if data and data.AprilFoolsInventory2026 then
-                    serial = FindSerialInInventory(itemId, data.AprilFoolsInventory2026)
-                end
-            end
-            local uniqueKey = serial and (itemId.."_"..serial) or tostring(itemId)
-            if not rolledIDs[uniqueKey] then
-                rolledIDs[uniqueKey] = true
-                sendDiscordNotification(LocalPlayer.Name, itemData, serial)
-            end
-        end
-    end
-end)
-
+-- Reset entry failures when successfully IN an auction (ChildAdded fires)
 AuctionsFolder.ChildAdded:Connect(function(garage)
     if processingItemsWon then return end
+    
+    -- Successfully entered! Reset failure counter
+    if consecutiveEntryFailures > 0 then
+        print("✅ Entered auction! Resetting entry failures (was " .. consecutiveEntryFailures .. ")")
+        consecutiveEntryFailures = 0
+        stopEntering = false
+    end
     
     inAuction = true
     currentBidData = nil
@@ -404,7 +361,82 @@ AuctionsFolder.ChildRemoved:Connect(function()
     end
 end)
 
+local function GetAllData()
+    local success, result = pcall(function()
+        return ReplicatedStorage.Events.Data.GetAll:InvokeServer()
+    end)
+    if success then return result end
+    return nil
+end
+
+local function FindSerialInInventory(itemId, inventory)
+    for _, invItem in pairs(inventory) do
+        if tostring(invItem.Id) == tostring(itemId) then
+            for key, value in pairs(invItem) do
+                if key:lower():find("serial") and tonumber(value) then
+                    return value
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function sendDiscordNotification(username, itemData, serial)
+    if not itemData then return end
+    local rarity = itemData.Rarity or "Unknown"
+    if rarity ~= "Limited" and not serial then return end
+    local color = RARITY_COLORS[rarity] or 0xffffff
+    local title
+    local description = "Item: "..(itemData.Name or "Unknown").."\nRarity: "..rarity
+    if serial then
+        title = username.." GOT A SERIAL!"
+        description = description.."\nSerial: #"..tostring(serial)
+    else
+        title = username.." Rolled a Limited Item!"
+    end
+    local data = {
+        username = "Item Notifier",
+        embeds = {{
+            title = title,
+            description = description,
+            color = color
+        }}
+    }
+    request({
+        Url = WEBHOOK_URL,
+        Method = "POST",
+        Headers = {["Content-Type"] = "application/json"},
+        Body = HttpService:JSONEncode(data)
+    })
+end
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+        local success, itemId = pcall(function()
+            return RollRemote:InvokeServer()
+        end)
+        if success and itemId then
+            local itemData = Items[itemId]
+            local serial
+            if itemData and itemData.Rarity == "Limited" then
+                local data = GetAllData()
+                if data and data.AprilFoolsInventory2026 then
+                    serial = FindSerialInInventory(itemId, data.AprilFoolsInventory2026)
+                end
+            end
+            local uniqueKey = serial and (itemId.."_"..serial) or tostring(itemId)
+            if not rolledIDs[uniqueKey] then
+                rolledIDs[uniqueKey] = true
+                sendDiscordNotification(LocalPlayer.Name, itemData, serial)
+            end
+        end
+    end
+end)
+
 print("🚀 Started - " .. MIN_PROFIT .. "% profit")
 print("💰 Garage 2 only ($500 requirement)")
 print("🛑 Stops when cash ≥ 500k")
-print("✅ Keeps rejoining Garage 2 nonstop")
+print("🔒 Will stop EnterQueue after " .. MAX_ENTRY_FAILURES .. " consecutive failures")
+print("✅ Webhooks and rolling ALWAYS active")
