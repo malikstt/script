@@ -11,7 +11,7 @@ local humanoidRoot = character:WaitForChild("HumanoidRootPart")
 
 -- REMOVE NOTIFY
 task.spawn(function()
-    local notifyFolder = player:WaitForChild("PlayerGui"):FindFirstChild("NotifyFolder")
+    local notifyFolder = player:FindFirstChild("PlayerGui"):FindFirstChild("NotifyFolder")
 
     if notifyFolder then
         notifyFolder:Destroy()
@@ -34,12 +34,41 @@ local order = {
     "FasterRoll"
 }
 
+-- Check if all upgrades are maxed
+local function areAllUpgradesMaxed(currentUpgrades)
+    for _, upgrade in ipairs(order) do
+        local level = currentUpgrades[upgrade] or 0
+        local info = UpgradeData[upgrade]
+        
+        if info and level < #info then
+            return false -- Not maxed yet
+        end
+    end
+    return true -- All maxed
+end
+
+-- Get max levels for display
+local function getMaxLevels()
+    local maxLevels = {}
+    for _, upgrade in ipairs(order) do
+        local info = UpgradeData[upgrade]
+        if info then
+            maxLevels[upgrade] = #info
+        end
+    end
+    return maxLevels
+end
+
 -- SNOWFLAKES
 local Snowflakes = Workspace:WaitForChild("Debris"):WaitForChild("Snowflakes")
 
 local touched = {}
+local collectingEnabled = true
+local allMaxed = false
 
 local function touch(obj)
+    if not collectingEnabled then return end
+    
     if obj:IsA("BasePart") and not touched[obj] then
         firetouchinterest(humanoidRoot, obj, 0)
         firetouchinterest(humanoidRoot, obj, 1)
@@ -53,6 +82,8 @@ local function touch(obj)
 end
 
 RunService.RenderStepped:Connect(function()
+    if not collectingEnabled then return end
+    
     for _, v in ipairs(Snowflakes:GetChildren()) do
         if v.Name == "DroppedLaugh" then
             if v:IsA("BasePart") then
@@ -149,30 +180,68 @@ end)
 task.spawn(function()
     while true do
         local current = GetUpgrades:InvokeServer()
+        
+        -- Check if all upgrades are maxed
+        if areAllUpgradesMaxed(current) then
+            if not allMaxed then
+                allMaxed = true
+                collectingEnabled = false
+                print("========================================")
+                print("🎉 ALL UPGRADES MAXED! 🎉")
+                print("LaughsMultiplier, Luck, and FasterRoll are all at max level!")
+                print("Stopping auto-buy and snowflake collection.")
+                print("========================================")
+                
+                -- Print max levels achieved
+                local maxLevels = getMaxLevels()
+                for upgrade, maxLevel in pairs(maxLevels) do
+                    print(upgrade .. " maxed at level: " .. maxLevel)
+                end
+                print("========================================")
+            end
+            task.wait(5) -- Check less frequently when maxed
+        else
+            if allMaxed then
+                allMaxed = false
+                collectingEnabled = true
+                print("Not all upgrades are maxed anymore, resuming...")
+            end
+            
+            local success, data = pcall(function()
+                return GetAll:InvokeServer()
+            end)
 
-        local success, data = pcall(function()
-            return GetAll:InvokeServer()
-        end)
+            local laughs = 0
+            if success and data then
+                laughs = data.Laughs2026 or 0
+            end
 
-        local laughs = 0
-        if success and data then
-            laughs = data.Laughs2026 or 0
-        end
+            -- Print current progress
+            local progressStr = "Current Progress: "
+            for _, upgrade in ipairs(order) do
+                local level = current[upgrade] or 0
+                local info = UpgradeData[upgrade]
+                if info then
+                    progressStr = progressStr .. upgrade .. " " .. level .. "/" .. #info .. " | "
+                end
+            end
+            print(progressStr)
 
-        for _, upgrade in ipairs(order) do
-            local level = current[upgrade] or 0
-            local info = UpgradeData[upgrade]
+            for _, upgrade in ipairs(order) do
+                local level = current[upgrade] or 0
+                local info = UpgradeData[upgrade]
 
-            if info and level < #info then
-                local cost = info[level + 1].Laughs
+                if info and level < #info then
+                    local cost = info[level + 1].Laughs
 
-                if laughs >= cost then
-                    local bought = BuyRemote:InvokeServer(upgrade)
+                    if laughs >= cost then
+                        local bought = BuyRemote:InvokeServer(upgrade)
 
-                    if bought then
-                        print("Bought:", upgrade, "Cost:", cost)
-                        task.wait(0.2)
-                        break
+                        if bought then
+                            print("Bought:", upgrade, "Cost:", cost, "New Level:", level + 1)
+                            task.wait(0.2)
+                            break
+                        end
                     end
                 end
             end
