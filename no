@@ -18,6 +18,38 @@ local Items = require(ReplicatedStorage.Modules.Items)
 local RollRemote = ReplicatedStorage.Events.RNG.Roll
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1486016437918367866/Yxe21WPlTWk37b9Pgazrw6NjRK3GKbcynKPociVbyv_hb2eke396nH991ye1HnF_WOcL"
 
+-- RATE LIMITER FOR ENTERQUEUE
+local enterQueueTimestamps = {}
+local MAX_ENTERQUEUE_CALLS = 2
+local TIME_WINDOW = 60 -- 1 minute in seconds
+
+local function canCallEnterQueue()
+    local now = os.time()
+    -- Remove timestamps older than TIME_WINDOW
+    for i = #enterQueueTimestamps, 1, -1 do
+        if now - enterQueueTimestamps[i] >= TIME_WINDOW then
+            table.remove(enterQueueTimestamps, i)
+        end
+    end
+    -- Check if we can make another call
+    return #enterQueueTimestamps < MAX_ENTERQUEUE_CALLS
+end
+
+local function recordEnterQueueCall()
+    table.insert(enterQueueTimestamps, os.time())
+end
+
+-- Wrapped EnterQueue function with rate limiting
+local function safeEnterQueue(garageId)
+    if canCallEnterQueue() then
+        recordEnterQueueCall()
+        return EnterQueue:InvokeServer(garageId)
+    else
+        print(string.format("⏰ Rate limit hit! Cannot call EnterQueue more than %d times per minute. Waiting...", MAX_ENTERQUEUE_CALLS))
+        return nil
+    end
+end
+
 local TRACKED_ITEM_IDS = {
     [2778] = true,
     [2779] = true,
@@ -228,7 +260,7 @@ local function joinAuction()
             local garageData = GaragesModule[garageId]
             if garageData then
                 print("🎯 Entering: " .. garageData.Name .. " (Required: $" .. requiredCash .. ", Est: $" .. getGarageEstimatedValue(garageData) .. ")")
-                pcall(function() EnterQueue:InvokeServer(garageId) end)
+                safeEnterQueue(garageId) -- Using rate-limited version
             end
         end
         task.wait(1)
@@ -426,3 +458,4 @@ end)
 print("🚀 Started - " .. MIN_PROFIT .. "% profit (Using hardcoded garage requirements - SELLS ALL items)")
 print("🎲 Rolling every 0.1 seconds")
 print("🎯 Only tracking items: 2778, 2779, 2780, 2781, 2782, 2783, 2784")
+print("⏰ EnterQueue limited to " .. MAX_ENTERQUEUE_CALLS .. " calls per " .. TIME_WINDOW .. " seconds")
