@@ -9,6 +9,9 @@ local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
 local humanoidRoot = character:WaitForChild("HumanoidRootPart")
 
+-- REMOTE
+local GetAll = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
+
 -- REMOVE NOTIFY
 task.spawn(function()
     local notifyFolder = player:FindFirstChild("PlayerGui"):FindFirstChild("NotifyFolder")
@@ -24,7 +27,6 @@ end)
 -- REMOTES
 local BuyRemote = ReplicatedStorage.Events.RNG.BuyHalloweenUpgrade
 local GetUpgrades = ReplicatedStorage.Events.RNG.GetHalloweenUpgrades
-local GetAll = ReplicatedStorage.Events.Data.GetAll
 
 local UpgradeData = require(ReplicatedStorage.Modules.AprilFoolsRNGUpgrades)
 
@@ -34,29 +36,20 @@ local order = {
     "FasterRoll"
 }
 
--- Check if all upgrades are maxed
-local function areAllUpgradesMaxed(currentUpgrades)
-    for _, upgrade in ipairs(order) do
-        local level = currentUpgrades[upgrade] or 0
-        local info = UpgradeData[upgrade]
-        
-        if info and level < #info then
-            return false -- Not maxed yet
-        end
-    end
-    return true -- All maxed
-end
+-- Check if laughs threshold is reached
+local function isLaughsThresholdReached()
+    local success, data = pcall(function()
+        return GetAll:InvokeServer()
+    end)
 
--- Get max levels for display
-local function getMaxLevels()
-    local maxLevels = {}
-    for _, upgrade in ipairs(order) do
-        local info = UpgradeData[upgrade]
-        if info then
-            maxLevels[upgrade] = #info
-        end
+    if success and data then
+        local laughs = data.Laughs2026 or 0
+        print("Laughs: " .. laughs)
+        return laughs > 500000
+    else
+        print("Failed to fetch Laughs")
+        return false
     end
-    return maxLevels
 end
 
 -- SNOWFLAKES
@@ -64,7 +57,7 @@ local Snowflakes = Workspace:WaitForChild("Debris"):WaitForChild("Snowflakes")
 
 local touched = {}
 local collectingEnabled = true
-local allMaxed = false
+local thresholdReached = false
 
 local function touch(obj)
     if not collectingEnabled then return end
@@ -179,33 +172,26 @@ end)
 -- AUTO BUYER
 task.spawn(function()
     while true do
-        local current = GetUpgrades:InvokeServer()
-        
-        -- Check if all upgrades are maxed
-        if areAllUpgradesMaxed(current) then
-            if not allMaxed then
-                allMaxed = true
+        -- Check if laughs threshold is reached
+        if isLaughsThresholdReached() then
+            if not thresholdReached then
+                thresholdReached = true
                 collectingEnabled = false
                 print("========================================")
-                print("🎉 ALL UPGRADES MAXED! 🎉")
-                print("LaughsMultiplier, Luck, and FasterRoll are all at max level!")
+                print("🎉 LAUGHS THRESHOLD REACHED! 🎉")
+                print("Laughs2026 is over 500,000!")
                 print("Stopping auto-buy and snowflake collection.")
                 print("========================================")
-                
-                -- Print max levels achieved
-                local maxLevels = getMaxLevels()
-                for upgrade, maxLevel in pairs(maxLevels) do
-                    print(upgrade .. " maxed at level: " .. maxLevel)
-                end
-                print("========================================")
             end
-            task.wait(5) -- Check less frequently when maxed
+            task.wait(5) -- Check less frequently when threshold reached
         else
-            if allMaxed then
-                allMaxed = false
+            if thresholdReached then
+                thresholdReached = false
                 collectingEnabled = true
-                print("Not all upgrades are maxed anymore, resuming...")
+                print("Laughs2026 is below 500,000 again, resuming...")
             end
+            
+            local current = GetUpgrades:InvokeServer()
             
             local success, data = pcall(function()
                 return GetAll:InvokeServer()
@@ -214,18 +200,8 @@ task.spawn(function()
             local laughs = 0
             if success and data then
                 laughs = data.Laughs2026 or 0
+                print("Current Laughs: " .. laughs .. " / 500,000")
             end
-
-            -- Print current progress
-            local progressStr = "Current Progress: "
-            for _, upgrade in ipairs(order) do
-                local level = current[upgrade] or 0
-                local info = UpgradeData[upgrade]
-                if info then
-                    progressStr = progressStr .. upgrade .. " " .. level .. "/" .. #info .. " | "
-                end
-            end
-            print(progressStr)
 
             for _, upgrade in ipairs(order) do
                 local level = current[upgrade] or 0
@@ -238,7 +214,7 @@ task.spawn(function()
                         local bought = BuyRemote:InvokeServer(upgrade)
 
                         if bought then
-                            print("Bought:", upgrade, "Cost:", cost, "New Level:", level + 1)
+                            print("Bought:", upgrade, "Cost:", cost)
                             task.wait(0.2)
                             break
                         end
