@@ -13,17 +13,20 @@ local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 local SellAllItems = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions"):WaitForChild("SellAllItems")
 
+-- RATE LIMITER FOR ENTERQUEUE
 local enterQueueTimestamps = {}
-local MAX_ENTERQUEUE_CALLS = 3
-local TIME_WINDOW = 60
+local MAX_ENTERQUEUE_CALLS = 2
+local TIME_WINDOW = 60 -- 1 minute in seconds
 
 local function canCallEnterQueue()
     local now = os.time()
+    -- Remove timestamps older than TIME_WINDOW
     for i = #enterQueueTimestamps, 1, -1 do
         if now - enterQueueTimestamps[i] >= TIME_WINDOW then
             table.remove(enterQueueTimestamps, i)
         end
     end
+    -- Check if we can make another call
     return #enterQueueTimestamps < MAX_ENTERQUEUE_CALLS
 end
 
@@ -31,30 +34,21 @@ local function recordEnterQueueCall()
     table.insert(enterQueueTimestamps, os.time())
 end
 
+-- Wrapped EnterQueue function with rate limiting
 local function safeEnterQueue(garageId)
     if canCallEnterQueue() then
         recordEnterQueueCall()
         return EnterQueue:InvokeServer(garageId)
     else
-        print("⏰ Rate limit hit: " .. MAX_ENTERQUEUE_CALLS .. " calls per minute max")
+        print(string.format("⏰ Rate limit hit! Cannot call EnterQueue more than %d times per minute. Waiting...", MAX_ENTERQUEUE_CALLS))
         return nil
     end
 end
 
+-- HARDCODED GARAGE REQUIREMENTS (ONLY 1 AND 2)
 local GARAGE_REQUIREMENTS = {
     [1] = 150,
     [2] = 500,
-    [3] = 900,
-    [4] = 1650,
-    [5] = 3000,
-    [6] = 5500,
-    [7] = 7500,
-    [8] = 14000,
-    [9] = 30000,
-    [15] = 68000,
-    [51] = 350000,
-    [52] = 1300000,
-    [62] = 2500000,
 }
 
 local currentBidData = nil
@@ -66,6 +60,7 @@ local bidPlaced = false
 local processingItemsWon = false
 local currentGarageBudget = 0
 
+-- DESTROY ANNOYING GUIS
 local function destroySpecificGuis()
     local items = PlayerGui:FindFirstChild("ItemsWon")
     if items then items:Destroy() end
@@ -81,6 +76,7 @@ PlayerGui.ChildAdded:Connect(function(child)
     end
 end)
 
+-- BUTTON CLICKING
 local function tryClick(obj)
     if obj and (obj:IsA("TextButton") or obj:IsA("ImageButton")) then
         pcall(function() obj:Activate() end)
@@ -195,14 +191,35 @@ local function getGarageEstimatedValue(garageData)
     return garageData.AuctionBudget or 0
 end
 
+local function getBestAffordableGarage()
+    updateCash()
+    local bestId = "1"
+    local bestValue = 0
+    
+    for id, data in pairs(GaragesModule) do
+        if data.Type == "Cash" then
+            local requiredCash = GARAGE_REQUIREMENTS[tonumber(id)]
+            if requiredCash and myCash >= requiredCash then
+                local estimatedValue = getGarageEstimatedValue(data)
+                if estimatedValue > bestValue then
+                    bestValue = estimatedValue
+                    bestId = id
+                end
+            end
+        end
+    end
+    
+    return bestId
+end
+
 local function joinAuction()
     while true do
         if not processingItemsWon and not inAuction then
-            local garageId = "2"
-            local requiredCash = GARAGE_REQUIREMENTS[2] or 500
-            local garageData = GaragesModule["2"]
+            local garageId = getBestAffordableGarage()
+            local requiredCash = GARAGE_REQUIREMENTS[tonumber(garageId)] or 0
+            local garageData = GaragesModule[garageId]
             if garageData then
-                print("🎯 Entering Garage 2 (Required: $" .. requiredCash .. ", Est: $" .. getGarageEstimatedValue(garageData) .. ")")
+                print("🎯 Entering: " .. garageData.Name .. " (Required: $" .. requiredCash .. ", Est: $" .. getGarageEstimatedValue(garageData) .. ")")
                 safeEnterQueue(garageId)
             end
         end
@@ -228,11 +245,6 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
             currentGarageBudget = GARAGE_REQUIREMENTS[tonumber(id)] or 0
             break
         end
-    end
-    
-    if garageId ~= "2" then
-        print("❌ Not Garage 2, leaving...")
-        return
     end
     
     print("\n=== " .. garageName .. " (Required: $" .. currentGarageBudget .. ") ===")
@@ -318,5 +330,5 @@ AuctionsFolder.ChildRemoved:Connect(function()
     end
 end)
 
-print("🚀 Garage 2 only script - " .. MIN_PROFIT .. "% profit")
-print("⏰ EnterQueue limited to " .. MAX_ENTERQUEUE_CALLS .. " calls per minute")
+print("🚀 Started - " .. MIN_PROFIT .. "% profit (Only garages 1 and 2 - SELLS ALL items)")
+print("⏰ EnterQueue limited to " .. MAX_ENTERQUEUE_CALLS .. " calls per " .. TIME_WINDOW .. " seconds")
