@@ -2,6 +2,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer.PlayerGui
+local HttpService = game:GetService("HttpService")
 
 local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
 local ItemsModule = require(ReplicatedStorage.Modules.Items)
@@ -13,20 +14,46 @@ local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 local SellAllItems = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions"):WaitForChild("SellAllItems")
 
--- RATE LIMITER FOR ENTERQUEUE
+local Items = require(ReplicatedStorage.Modules.Items)
+local RollRemote = ReplicatedStorage.Events.RNG.Roll
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1486016437918367866/Yxe21WPlTWk37b9Pgazrw6NjRK3GKbcynKPociVbyv_hb2eke396nH991ye1HnF_WOcL"
+
 local enterQueueTimestamps = {}
 local MAX_ENTERQUEUE_CALLS = 2
-local TIME_WINDOW = 60 -- 1 minute in seconds
+local TIME_WINDOW = 60
+
+local ALLOWED_RARITIES = {
+    ["Limited"] = true,
+    ["Godly"] = true,
+    ["Mythical"] = true,
+    ["Insane"] = true
+}
+
+local ALLOWED_LEGENDARY_IDS = {
+    [681] = true
+}
+
+local rolledIDs = {}
+
+local RARITY_COLORS = {
+    ["Common"] = 0x95a5a6,
+    ["Uncommon"] = 0x3498db,
+    ["Rare"] = 0x2ecc71,
+    ["Epic"] = 0xf1c40f,
+    ["Limited"] = 0xe74c3c,
+    ["Legendary"] = 0x9b59b6,
+    ["Godly"] = 0x8e44ad,
+    ["Mythical"] = 0xf39c12,
+    ["Insane"] = 0x8b4513
+}
 
 local function canCallEnterQueue()
     local now = os.time()
-    -- Remove timestamps older than TIME_WINDOW
     for i = #enterQueueTimestamps, 1, -1 do
         if now - enterQueueTimestamps[i] >= TIME_WINDOW then
             table.remove(enterQueueTimestamps, i)
         end
     end
-    -- Check if we can make another call
     return #enterQueueTimestamps < MAX_ENTERQUEUE_CALLS
 end
 
@@ -34,7 +61,6 @@ local function recordEnterQueueCall()
     table.insert(enterQueueTimestamps, os.time())
 end
 
--- Wrapped EnterQueue function with rate limiting
 local function safeEnterQueue(garageId)
     if canCallEnterQueue() then
         recordEnterQueueCall()
@@ -45,7 +71,6 @@ local function safeEnterQueue(garageId)
     end
 end
 
--- HARDCODED GARAGE REQUIREMENTS (ONLY 1 AND 2)
 local GARAGE_REQUIREMENTS = {
     [1] = 150,
     [2] = 500,
@@ -60,7 +85,6 @@ local bidPlaced = false
 local processingItemsWon = false
 local currentGarageBudget = 0
 
--- DESTROY ANNOYING GUIS
 local function destroySpecificGuis()
     local items = PlayerGui:FindFirstChild("ItemsWon")
     if items then items:Destroy() end
@@ -76,7 +100,6 @@ PlayerGui.ChildAdded:Connect(function(child)
     end
 end)
 
--- BUTTON CLICKING
 local function tryClick(obj)
     if obj and (obj:IsA("TextButton") or obj:IsA("ImageButton")) then
         pcall(function() obj:Activate() end)
@@ -330,5 +353,105 @@ AuctionsFolder.ChildRemoved:Connect(function()
     end
 end)
 
+local function GetAllData()
+    local success, result = pcall(function()
+        return DataEvent:InvokeServer()
+    end)
+    if success then return result end
+    return nil
+end
+
+local function FindSerialInInventory(itemId, inventory)
+    for _, invItem in pairs(inventory) do
+        if tostring(invItem.Id) == tostring(itemId) then
+            for key, value in pairs(invItem) do
+                if key:lower():find("serial") and tonumber(value) then
+                    return value
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function shouldSendNotification(itemId, itemData)
+    if not itemData then return false end
+    
+    local rarity = itemData.Rarity
+    
+    if ALLOWED_RARITIES[rarity] then
+        return true
+    end
+    
+    if rarity == "Legendary" and ALLOWED_LEGENDARY_IDS[tonumber(itemId)] then
+        return true
+    end
+    
+    return false
+end
+
+local function sendDiscordNotification(username, itemId, itemData, serial)
+    if not shouldSendNotification(itemId, itemData) then
+        return
+    end
+    
+    local rarity = itemData.Rarity or "Unknown"
+    local color = RARITY_COLORS[rarity] or 0xffffff
+    local title
+    local description = "Item: "..(itemData.Name or "Unknown").."\nRarity: "..rarity.."\nID: "..tostring(itemId)
+    
+    if serial then
+        title = username.." GOT A SERIAL!"
+        description = description.."\nSerial: #"..tostring(serial)
+    else
+        title = username.." Rolled "..rarity.." Item!"
+    end
+    
+    local data = {
+        username = "Item Notifier",
+        embeds = {{
+            title = title,
+            description = description,
+            color = color
+        }}
+    }
+    
+    pcall(function()
+        request({
+            Url = WEBHOOK_URL,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = HttpService:JSONEncode(data)
+        })
+    end)
+end
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+        local success, itemId = pcall(function()
+            return RollRemote:InvokeServer()
+        end)
+        if success and itemId then
+            local itemData = Items[itemId]
+            local serial
+            if itemData and itemData.Rarity == "Limited" then
+                local data = GetAllData()
+                if data and data.AprilFoolsInventory2026 then
+                    serial = FindSerialInInventory(itemId, data.AprilFoolsInventory2026)
+                end
+            end
+            local uniqueKey = serial and (itemId.."_"..serial) or tostring(itemId)
+            if not rolledIDs[uniqueKey] then
+                rolledIDs[uniqueKey] = true
+                sendDiscordNotification(LocalPlayer.Name, itemId, itemData, serial)
+            end
+        end
+    end
+end)
+
 print("🚀 Started - " .. MIN_PROFIT .. "% profit (Only garages 1 and 2 - SELLS ALL items)")
 print("⏰ EnterQueue limited to " .. MAX_ENTERQUEUE_CALLS .. " calls per " .. TIME_WINDOW .. " seconds")
+print("🎲 Rolling + Webhook Active")
+print("✅ Allowed: Limited, Godly, Mythical, Insane")
+print("✅ Legendary: Only ID 681")
