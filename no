@@ -2,7 +2,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer.PlayerGui
-local HttpService = game:GetService("HttpService")
 
 local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
 local ItemsModule = require(ReplicatedStorage.Modules.Items)
@@ -14,24 +13,17 @@ local PlaceBid = Auctions:WaitForChild("PlaceBid")
 local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 local SellAllItems = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions"):WaitForChild("SellAllItems")
 
-local Items = require(ReplicatedStorage.Modules.Items)
-local RollRemote = ReplicatedStorage.Events.RNG.Roll
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1486016437918367866/Yxe21WPlTWk37b9Pgazrw6NjRK3GKbcynKPociVbyv_hb2eke396nH991ye1HnF_WOcL"
-
--- RATE LIMITER FOR ENTERQUEUE
 local enterQueueTimestamps = {}
-local MAX_ENTERQUEUE_CALLS = 2
-local TIME_WINDOW = 60 -- 1 minute in seconds
+local MAX_ENTERQUEUE_CALLS = 3
+local TIME_WINDOW = 60
 
 local function canCallEnterQueue()
     local now = os.time()
-    -- Remove timestamps older than TIME_WINDOW
     for i = #enterQueueTimestamps, 1, -1 do
         if now - enterQueueTimestamps[i] >= TIME_WINDOW then
             table.remove(enterQueueTimestamps, i)
         end
     end
-    -- Check if we can make another call
     return #enterQueueTimestamps < MAX_ENTERQUEUE_CALLS
 end
 
@@ -39,28 +31,16 @@ local function recordEnterQueueCall()
     table.insert(enterQueueTimestamps, os.time())
 end
 
--- Wrapped EnterQueue function with rate limiting
 local function safeEnterQueue(garageId)
     if canCallEnterQueue() then
         recordEnterQueueCall()
         return EnterQueue:InvokeServer(garageId)
     else
-        print(string.format("⏰ Rate limit hit! Cannot call EnterQueue more than %d times per minute. Waiting...", MAX_ENTERQUEUE_CALLS))
+        print("⏰ Rate limit hit: " .. MAX_ENTERQUEUE_CALLS .. " calls per minute max")
         return nil
     end
 end
 
-local TRACKED_ITEM_IDS = {
-    [2778] = true,
-    [2779] = true,
-    [2780] = true,
-    [2781] = true,
-    [2782] = true,
-    [2783] = true,
-    [2784] = true
-}
-
--- HARDCODED GARAGE REQUIREMENTS
 local GARAGE_REQUIREMENTS = {
     [1] = 150,
     [2] = 500,
@@ -86,21 +66,6 @@ local bidPlaced = false
 local processingItemsWon = false
 local currentGarageBudget = 0
 
-local rolledIDs = {}
-
-local RARITY_COLORS = {
-    ["Common"] = 0x95a5a6,
-    ["Uncommon"] = 0x3498db,
-    ["Rare"] = 0x2ecc71,
-    ["Epic"] = 0xf1c40f,
-    ["Limited"] = 0xe74c3c,
-    ["Legendary"] = 0x9b59b6,
-    ["Godly"] = 0x8e44ad,
-    ["Mythical"] = 0xf39c12,
-    ["Insane"] = 0x8b4513
-}
-
--- DESTROY ANNOYING GUIS
 local function destroySpecificGuis()
     local items = PlayerGui:FindFirstChild("ItemsWon")
     if items then items:Destroy() end
@@ -116,7 +81,6 @@ PlayerGui.ChildAdded:Connect(function(child)
     end
 end)
 
--- BUTTON CLICKING
 local function tryClick(obj)
     if obj and (obj:IsA("TextButton") or obj:IsA("ImageButton")) then
         pcall(function() obj:Activate() end)
@@ -231,36 +195,15 @@ local function getGarageEstimatedValue(garageData)
     return garageData.AuctionBudget or 0
 end
 
-local function getBestAffordableGarage()
-    updateCash()
-    local bestId = "51"
-    local bestValue = 0
-    
-    for id, data in pairs(GaragesModule) do
-        if data.Type == "Cash" then
-            local requiredCash = GARAGE_REQUIREMENTS[tonumber(id)]
-            if requiredCash and myCash >= requiredCash then
-                local estimatedValue = getGarageEstimatedValue(data)
-                if estimatedValue > bestValue then
-                    bestValue = estimatedValue
-                    bestId = id
-                end
-            end
-        end
-    end
-    
-    return bestId
-end
-
 local function joinAuction()
     while true do
         if not processingItemsWon and not inAuction then
-            local garageId = getBestAffordableGarage()
-            local requiredCash = GARAGE_REQUIREMENTS[tonumber(garageId)] or 0
-            local garageData = GaragesModule[garageId]
+            local garageId = "2"
+            local requiredCash = GARAGE_REQUIREMENTS[2] or 500
+            local garageData = GaragesModule["2"]
             if garageData then
-                print("🎯 Entering: " .. garageData.Name .. " (Required: $" .. requiredCash .. ", Est: $" .. getGarageEstimatedValue(garageData) .. ")")
-                safeEnterQueue(garageId) -- Using rate-limited version
+                print("🎯 Entering Garage 2 (Required: $" .. requiredCash .. ", Est: $" .. getGarageEstimatedValue(garageData) .. ")")
+                safeEnterQueue(garageId)
             end
         end
         task.wait(1)
@@ -285,6 +228,11 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
             currentGarageBudget = GARAGE_REQUIREMENTS[tonumber(id)] or 0
             break
         end
+    end
+    
+    if garageId ~= "2" then
+        print("❌ Not Garage 2, leaving...")
+        return
     end
     
     print("\n=== " .. garageName .. " (Required: $" .. currentGarageBudget .. ") ===")
@@ -370,92 +318,5 @@ AuctionsFolder.ChildRemoved:Connect(function()
     end
 end)
 
--- WEBHOOK FUNCTIONS
-local function GetAllData()
-    local success, result = pcall(function()
-        return ReplicatedStorage.Events.Data.GetAll:InvokeServer()
-    end)
-    if success then return result end
-    return nil
-end
-
-local function FindSerialInInventory(itemId, inventory)
-    for _, invItem in pairs(inventory) do
-        if tostring(invItem.Id) == tostring(itemId) then
-            for key, value in pairs(invItem) do
-                if key:lower():find("serial") and tonumber(value) then
-                    return value
-                end
-            end
-        end
-    end
-    return nil
-end
-
-local function sendDiscordNotification(username, itemId, itemData, serial)
-    if not TRACKED_ITEM_IDS[tonumber(itemId)] then
-        return
-    end
-    
-    if not itemData then return end
-    
-    local rarity = itemData.Rarity or "Unknown"
-    local color = RARITY_COLORS[rarity] or 0xffffff
-    local title
-    local description = "Item: "..(itemData.Name or "Unknown").."\nRarity: "..rarity.."\nID: "..tostring(itemId)
-    
-    if serial then
-        title = username.." GOT A SERIAL!"
-        description = description.."\nSerial: #"..tostring(serial)
-    else
-        title = username.." Rolled a Tracked Item!"
-    end
-    
-    local data = {
-        username = "Item Notifier",
-        embeds = {{
-            title = title,
-            description = description,
-            color = color
-        }}
-    }
-    
-    pcall(function()
-        request({
-            Url = WEBHOOK_URL,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = HttpService:JSONEncode(data)
-        })
-    end)
-end
-
--- FASTER ROLLING (every 0.1 seconds)
-task.spawn(function()
-    while true do
-        task.wait(0.1)
-        local success, itemId = pcall(function()
-            return RollRemote:InvokeServer()
-        end)
-        if success and itemId then
-            local itemData = Items[itemId]
-            local serial
-            if itemData and itemData.Rarity == "Limited" then
-                local data = GetAllData()
-                if data and data.AprilFoolsInventory2026 then
-                    serial = FindSerialInInventory(itemId, data.AprilFoolsInventory2026)
-                end
-            end
-            local uniqueKey = serial and (itemId.."_"..serial) or tostring(itemId)
-            if not rolledIDs[uniqueKey] then
-                rolledIDs[uniqueKey] = true
-                sendDiscordNotification(LocalPlayer.Name, itemId, itemData, serial)
-            end
-        end
-    end
-end)
-
-print("🚀 Started - " .. MIN_PROFIT .. "% profit (Using hardcoded garage requirements - SELLS ALL items)")
-print("🎲 Rolling every 0.1 seconds")
-print("🎯 Only tracking items: 2778, 2779, 2780, 2781, 2782, 2783, 2784")
-print("⏰ EnterQueue limited to " .. MAX_ENTERQUEUE_CALLS .. " calls per " .. TIME_WINDOW .. " seconds")
+print("🚀 Garage 2 only script - " .. MIN_PROFIT .. "% profit")
+print("⏰ EnterQueue limited to " .. MAX_ENTERQUEUE_CALLS .. " calls per minute")
