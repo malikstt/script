@@ -14,7 +14,7 @@ local screenGui = Instance.new("ScreenGui")
 screenGui.Parent = player.PlayerGui
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 300, 0, 150)
+mainFrame.Size = UDim2.new(0, 320, 0, 180)
 mainFrame.Position = UDim2.new(0, 10, 0, 10)
 mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
 mainFrame.BackgroundTransparency = 0.1
@@ -32,7 +32,7 @@ title.Font = Enum.Font.GothamBold
 title.Parent = mainFrame
 
 local statusBox = Instance.new("Frame")
-statusBox.Size = UDim2.new(0, 280, 0, 90)
+statusBox.Size = UDim2.new(0, 300, 0, 120)
 statusBox.Position = UDim2.new(0, 10, 0, 45)
 statusBox.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 statusBox.BackgroundTransparency = 0.5
@@ -111,32 +111,41 @@ local function farmEggsAndCodes()
     isFarming = false
 end
 
--- Execute trade
-local function executeTrade()
+-- Send trade request and wait for UI to open
+local function sendTradeAndWaitForUI()
     targetPlayer = game.Players:FindFirstChild(targetName)
     if not targetPlayer then
-        updateStatus("Waiting for " .. targetName .. " to join...")
-        return false
+        return false, nil
     end
     
     updateStatus("Sending trade request to " .. targetName)
     network.FireServer("Sent Trade Request", targetPlayer)
     
+    -- Wait for trade UI to open (this only happens if they accept)
     local menus = player.PlayerGui:WaitForChild("Menus")
-    local tradingFrame = nil
+    local startTime = tick()
     
     repeat
         task.wait(0.5)
-        tradingFrame = menus:FindFirstChild("Trading")
-    until tradingFrame and tradingFrame:FindFirstChild("Frame")
-    
-    local frame = tradingFrame.Frame
+        local tradingFrame = menus:FindFirstChild("Trading")
+        if tradingFrame and tradingFrame:FindFirstChild("Frame") then
+            return true, tradingFrame.Frame
+        end
+        -- Timeout after 10 seconds, resend
+        if tick() - startTime > 10 then
+            return false, nil
+        end
+    until false
+end
+
+-- Add all items to trade
+local function addAllItems(frame)
+    updateStatus("Adding all items...")
     
     repeat
         task.wait(0.1)
     until frame.My and frame.My.Items
     
-    updateStatus("Trade opened, adding items...")
     task.wait(1.5)
     
     local itemsData = paper.Stats.Get("Items").Value
@@ -153,21 +162,19 @@ local function executeTrade()
             tradeRemote:FireServer("Item", item.name, item.amount)
             task.wait(0.15)
         end
+        updateStatus("Added: " .. item.name .. " x" .. item.amount)
     end
     
-    updateStatus("All items added, accepting trade...")
     task.wait(1)
+    updateStatus("Accepting trade...")
     tradeRemote:FireServer("Accept")
-    updateStatus("Trade accepted, waiting for completion")
+    updateStatus("Trade complete, waiting for next cycle")
     task.wait(8)
-    updateStatus("Trade complete")
-    
-    return true
 end
 
 -- Main auto loop
 local function startAuto()
-    updateStatus("Auto trade started - target: " .. targetName)
+    updateStatus("Starting auto trade - target: " .. targetName)
     
     -- Farm eggs and codes first
     farmEggsAndCodes()
@@ -175,7 +182,30 @@ local function startAuto()
     
     -- Infinite trade loop
     while isTrading do
-        executeTrade()
+        -- Keep sending requests until trade UI opens
+        local success = false
+        local frame = nil
+        
+        while not success and isTrading do
+            targetPlayer = game.Players:FindFirstChild(targetName)
+            if not targetPlayer then
+                updateStatus("Waiting for " .. targetName .. " to join...")
+                task.wait(5)
+            else
+                success, frame = sendTradeAndWaitForUI()
+                if not success then
+                    updateStatus("No response, sending again in 5 seconds...")
+                    task.wait(5)
+                end
+            end
+        end
+        
+        -- Trade UI opened, add items and complete
+        if success and frame then
+            addAllItems(frame)
+        end
+        
+        -- Reset for next trade
         task.wait(3)
     end
 end
