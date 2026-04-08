@@ -1,70 +1,25 @@
 local rs = game:GetService("ReplicatedStorage")
 local player = game.Players.LocalPlayer
 local paper = require(rs:WaitForChild("Paper"))
-local tradeRemote = rs.Paper.Remotes.Trade
-local network = paper.Network
+local remotes = rs:WaitForChild("Paper"):WaitForChild("Remotes")
+local tradeRemote = remotes.Trade
 
 local targetName = "MALIKSTOM"
-local targetPlayer = nil
-local isTrading = true
-local isFarming = false
 
--- Create UI for status only
-local screenGui = Instance.new("ScreenGui")
-screenGui.Parent = player.PlayerGui
-
-local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 320, 0, 180)
-mainFrame.Position = UDim2.new(0, 10, 0, 10)
-mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-mainFrame.BackgroundTransparency = 0.1
-mainFrame.BorderSizePixel = 1
-mainFrame.BorderColor3 = Color3.fromRGB(255, 215, 0)
-mainFrame.Parent = screenGui
-
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 35)
-title.Text = "AUTO TRADE v2 - RUNNING"
-title.TextColor3 = Color3.fromRGB(255, 215, 0)
-title.BackgroundTransparency = 1
-title.TextSize = 16
-title.Font = Enum.Font.GothamBold
-title.Parent = mainFrame
-
-local statusBox = Instance.new("Frame")
-statusBox.Size = UDim2.new(0, 300, 0, 120)
-statusBox.Position = UDim2.new(0, 10, 0, 45)
-statusBox.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-statusBox.BackgroundTransparency = 0.5
-statusBox.BorderSizePixel = 1
-statusBox.BorderColor3 = Color3.fromRGB(80, 80, 80)
-statusBox.Parent = mainFrame
-
-local statusLabel = Instance.new("TextLabel")
-statusLabel.Size = UDim2.new(1, -10, 1, -10)
-statusLabel.Position = UDim2.new(0, 5, 0, 5)
-statusLabel.Text = "Starting..."
-statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-statusLabel.BackgroundTransparency = 1
-statusLabel.TextWrapped = true
-statusLabel.TextXAlignment = Enum.TextXAlignment.Left
-statusLabel.TextYAlignment = Enum.TextYAlignment.Top
-statusLabel.TextSize = 12
-statusLabel.Font = Enum.Font.Gotham
-statusLabel.Parent = statusBox
-
-local function updateStatus(text)
-    statusLabel.Text = text
-    print("[STATUS] " .. text)
+local function hasAnyItems()
+    local itemsData = paper.Stats.Get("Items").Value
+    for itemName, amount in pairs(itemsData) do
+        if amount > 0 then
+            return true
+        end
+    end
+    return false
 end
 
--- Farm eggs and codes
 local function farmEggsAndCodes()
-    if isFarming then return end
-    isFarming = true
+    print("[AUTO] Farming eggs and codes first...")
     
-    updateStatus("Starting Egg Hunt...")
-    
+    -- Egg Hunt
     local eggHuntConfig = require(rs:WaitForChild("Tables").EggHunt)
     local stats = paper.Stats
     
@@ -74,9 +29,10 @@ local function farmEggsAndCodes()
         end)
         task.wait(0.1)
     end
-    updateStatus("Egg claiming done")
+    print("[AUTO] Egg claiming done")
     task.wait(1)
     
+    -- Claim egg rewards
     local eggHuntData = stats.Get("EggHuntData")
     local foundEggs = eggHuntData.Value.FoundEggs or {}
     local claimedEggs = eggHuntData.Value.ClaimedEggs or {}
@@ -89,10 +45,10 @@ local function farmEggsAndCodes()
             task.wait(0.1)
         end
     end
-    updateStatus("Egg rewards claimed")
+    print("[AUTO] Egg rewards claimed")
     task.wait(1)
     
-    updateStatus("Redeeming codes...")
+    -- Redeem codes
     local codes = {
         "update1", "update2", "update3", "update4", "update5",
         "easter", "10kccu", "RELEASE"
@@ -106,109 +62,134 @@ local function farmEggsAndCodes()
         end)
         task.wait(0.5)
     end
-    updateStatus("Codes redeemed")
-    
-    isFarming = false
+    print("[AUTO] Codes redeemed")
 end
 
--- Send trade request and wait for UI to open
-local function sendTradeAndWaitForUI()
-    targetPlayer = game.Players:FindFirstChild(targetName)
-    if not targetPlayer then
+local function acceptTradeRequest(targetPlayer)
+    remotes["Accept Trade Request"]:FireServer(targetPlayer)
+    print("Accepted trade request from:", targetPlayer.Name)
+end
+
+local function findAndAcceptRequest()
+    -- Check if you have items AFTER egg hunt
+    if not hasAnyItems() then
+        print("No items in inventory, waiting for items...")
         return false, nil
     end
     
-    updateStatus("Sending trade request to " .. targetName)
-    network.FireServer("Sent Trade Request", targetPlayer)
+    local playerGui = player:WaitForChild("PlayerGui")
+    local main = playerGui:FindFirstChild("Main")
+    if not main then return false, nil end
     
-    -- Wait for trade UI to open (this only happens if they accept)
+    local requestsFrame = main:FindFirstChild("Requests")
+    if not requestsFrame then return false, nil end
+    
+    local requests = {}
+    for _, request in requestsFrame:GetChildren() do
+        if request:IsA("Frame") and request.Name ~= "UIListLayout" then
+            table.insert(requests, request)
+        end
+    end
+    
+    for _, request in ipairs(requests) do
+        local requesterName = request.Name
+        if requesterName == targetName then
+            local targetPlayer = game.Players:FindFirstChild(requesterName)
+            if targetPlayer then
+                acceptTradeRequest(targetPlayer)
+                return true, targetPlayer
+            end
+        end
+    end
+    return false, nil
+end
+
+local function waitForOtherToAccept()
     local menus = player.PlayerGui:WaitForChild("Menus")
-    local startTime = tick()
+    local tradingFrame = nil
+    local timeout = 0
     
     repeat
         task.wait(0.5)
-        local tradingFrame = menus:FindFirstChild("Trading")
-        if tradingFrame and tradingFrame:FindFirstChild("Frame") then
-            return true, tradingFrame.Frame
+        timeout = timeout + 0.5
+        tradingFrame = menus:FindFirstChild("Trading")
+        if timeout >= 10 then
+            print("Timeout waiting for trade UI")
+            return false
         end
-        -- Timeout after 10 seconds, resend
-        if tick() - startTime > 10 then
-            return false, nil
-        end
-    until false
-end
-
--- Add all items to trade
-local function addAllItems(frame)
-    updateStatus("Adding all items...")
+    until tradingFrame and tradingFrame:FindFirstChild("Frame")
+    
+    local frame = tradingFrame.Frame
+    timeout = 0
     
     repeat
         task.wait(0.1)
-    until frame.My and frame.My.Items
-    
-    task.wait(1.5)
-    
-    local itemsData = paper.Stats.Get("Items").Value
-    local itemList = {}
-    
-    for itemName, amount in pairs(itemsData) do
-        if amount > 0 then
-            table.insert(itemList, {name = itemName, amount = amount})
+        timeout = timeout + 0.1
+        if timeout >= 5 then
+            print("Timeout waiting for trade UI to load")
+            return false
         end
+    until frame.My and frame.Other
+    
+    print("In trade, waiting for other player to accept...")
+    timeout = 0
+    
+    while timeout < 120 do
+        if frame.Other.Accepted and frame.Other.Accepted.Visible then
+            print("Other player accepted, now accepting...")
+            tradeRemote:FireServer("Accept")
+            task.wait(1)
+            return true
+        end
+        
+        if frame.Countdown and frame.Countdown.Visible then
+            print("Countdown started, trade will complete automatically")
+            return true
+        end
+        
+        if not menus:FindFirstChild("Trading") then
+            print("Trade UI closed - trade was canceled")
+            return false
+        end
+        
+        task.wait(0.5)
+        timeout = timeout + 0.5
     end
     
-    for _, item in ipairs(itemList) do
-        for retry = 1, 3 do
-            tradeRemote:FireServer("Item", item.name, item.amount)
-            task.wait(0.15)
-        end
-        updateStatus("Added: " .. item.name .. " x" .. item.amount)
-    end
-    
-    task.wait(1)
-    updateStatus("Accepting trade...")
-    tradeRemote:FireServer("Accept")
-    updateStatus("Trade complete, waiting for next cycle")
-    task.wait(8)
+    print("Timeout waiting for other player to accept")
+    return false
 end
 
--- Main auto loop
-local function startAuto()
-    updateStatus("Starting auto trade - target: " .. targetName)
-    
-    -- Farm eggs and codes first
-    farmEggsAndCodes()
-    updateStatus("Farm complete, starting trade loop")
-    
-    -- Infinite trade loop
-    while isTrading do
-        -- Keep sending requests until trade UI opens
-        local success = false
-        local frame = nil
+-- MAIN SCRIPT
+print("Auto trade starting...")
+
+-- FIRST: Farm eggs and redeem codes to get items
+farmEggsAndCodes()
+print("Farm complete, now waiting for trade requests from " .. targetName)
+
+-- THEN: Only accept trades if you have items
+while true do
+    if hasAnyItems() then
+        local found, targetPlayer = findAndAcceptRequest()
         
-        while not success and isTrading do
-            targetPlayer = game.Players:FindFirstChild(targetName)
-            if not targetPlayer then
-                updateStatus("Waiting for " .. targetName .. " to join...")
-                task.wait(5)
+        if found then
+            print("Found request from: " .. targetPlayer.Name)
+            task.wait(1.5)
+            
+            local success = waitForOtherToAccept()
+            
+            if success then
+                print("Trade completed successfully with: " .. targetPlayer.Name)
+                task.wait(3)
             else
-                success, frame = sendTradeAndWaitForUI()
-                if not success then
-                    updateStatus("No response, sending again in 5 seconds...")
-                    task.wait(5)
-                end
+                print("Trade failed with: " .. targetPlayer.Name)
+                task.wait(2)
             end
+        else
+            task.wait(0.5)
         end
-        
-        -- Trade UI opened, add items and complete
-        if success and frame then
-            addAllItems(frame)
-        end
-        
-        -- Reset for next trade
-        task.wait(3)
+    else
+        print("No items available, waiting...")
+        task.wait(5)
     end
 end
-
--- Start everything automatically
-task.spawn(startAuto)
