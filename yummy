@@ -2,8 +2,9 @@ local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
-local Paper = require(ReplicatedStorage:WaitForChild("Paper"))
+local Workspace = game:GetService("Workspace")
 
+local Paper = require(ReplicatedStorage:WaitForChild("Paper"))
 local Stats = Paper.Stats
 local Network = Paper.Network
 
@@ -18,56 +19,125 @@ local Throws = Stats.Get("Throws")
 local Remotes = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes")
 local RemoteFunction = Remotes:WaitForChild("__remotefunction")
 
-local AutoThrowActive = false
-local AutoTrainActive = false
-local AutoThrowTimer = nil
+local CurrentStep = Tutorial.Value
+local AutoThrowEnabled = false
+local AutoTrainEnabled = false
+local RetryCount = 0
+local MaxRetries = 3
+
+local EggsFolder = Workspace:WaitForChild("Eggs")
+local WorldsFolder = Workspace:WaitForChild("Worlds")
+local SpawnFolder = WorldsFolder:WaitForChild("Spawn")
+
+local function TeleportToPosition(position)
+    local character = LocalPlayer.Character
+    if not character then return false end
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    hrp.CFrame = position
+    task.wait(0.5)
+    return true
+end
+
+local function TeleportToEgg()
+    for _, egg in pairs(EggsFolder:GetChildren()) do
+        if egg.Name:lower():find("basic") or egg.Name:lower():find("egg") then
+            TeleportToPosition(egg:GetPivot())
+            print("[Teleport] Moved to egg: " .. egg.Name)
+            return true
+        end
+    end
+    local eggHolder = EggsFolder:FindFirstChild("BasicEgg")
+    if eggHolder then
+        TeleportToPosition(eggHolder:GetPivot())
+        return true
+    end
+    return false
+end
+
+local function TeleportToTrainingWall()
+    local tutorialThrow = SpawnFolder:FindFirstChild("TutorialThrow")
+    if tutorialThrow then
+        TeleportToPosition(tutorialThrow:GetPivot())
+        print("[Teleport] Moved to training wall")
+        return true
+    end
+    local tutorialTrain = SpawnFolder:FindFirstChild("TutorialTrain")
+    if tutorialTrain then
+        TeleportToPosition(tutorialTrain:GetPivot())
+        return true
+    end
+    return false
+end
+
+local function TeleportToShop()
+    local tutorialBuy = SpawnFolder:FindFirstChild("TutorialBuyObject")
+    if tutorialBuy then
+        TeleportToPosition(tutorialBuy:GetPivot())
+        print("[Teleport] Moved to shop")
+        return true
+    end
+    return false
+end
 
 local function ToggleAutoThrow()
-    if AutoThrowActive then
-        if AutoThrowTimer then
-            task.cancel(AutoThrowTimer)
-            AutoThrowTimer = nil
-        end
-        if Stats.Get("AutoThrow").Value then
+    local autoThrowStat = Stats.Get("AutoThrow")
+    if AutoThrowEnabled then
+        if autoThrowStat and autoThrowStat.Value then
             Network.FireServer("Toggle Setting", "AutoThrow")
         end
-        AutoThrowActive = false
+        AutoThrowEnabled = false
         print("[AutoThrow] Disabled")
     else
-        if not Stats.Get("AutoThrow").Value then
+        if autoThrowStat and not autoThrowStat.Value then
             Network.FireServer("Toggle Setting", "AutoThrow")
         end
-        AutoThrowActive = true
+        AutoThrowEnabled = true
         print("[AutoThrow] Enabled")
-        AutoThrowTimer = task.delay(10, function()
-            if AutoThrowActive then
-                ToggleAutoThrow()
-            end
-        end)
+    end
+end
+
+local function EnableAutoThrow()
+    if not AutoThrowEnabled then
+        ToggleAutoThrow()
+    end
+end
+
+local function DisableAutoThrow()
+    if AutoThrowEnabled then
+        ToggleAutoThrow()
     end
 end
 
 local function ToggleAutoTrain()
-    if AutoTrainActive then
+    if AutoTrainEnabled then
         Network.FireServer("Stop Training")
         LocalPlayer:SetAttribute("TrainingStation", nil)
-        if Stats.Get("AutoTrain").Value then
+        local autoTrainStat = Stats.Get("AutoTrain")
+        if autoTrainStat and autoTrainStat.Value then
             Network.FireServer("Toggle Setting", "AutoTrain")
         end
-        AutoTrainActive = false
+        AutoTrainEnabled = false
         print("[AutoTrain] Disabled")
     else
-        if not Stats.Get("AutoTrain").Value then
+        local autoTrainStat = Stats.Get("AutoTrain")
+        if autoTrainStat and not autoTrainStat.Value then
             Network.FireServer("Toggle Setting", "AutoTrain")
         end
-        AutoTrainActive = true
+        AutoTrainEnabled = true
         print("[AutoTrain] Enabled")
-        task.spawn(function()
-            task.wait(10)
-            if AutoTrainActive then
-                ToggleAutoTrain()
-            end
-        end)
+    end
+end
+
+local function EnableAutoTrain()
+    if not AutoTrainEnabled then
+        ToggleAutoTrain()
+    end
+end
+
+local function DisableAutoTrain()
+    if AutoTrainEnabled then
+        ToggleAutoTrain()
     end
 end
 
@@ -96,84 +166,301 @@ end
 
 local function BuyEgg()
     local args = { "Hatch Egg", "Basic Egg", 1 }
-    RemoteFunction:InvokeServer(unpack(args))
-    print("[BuyEgg] Purchased Basic Egg")
+    local success = pcall(function()
+        return RemoteFunction:InvokeServer(unpack(args))
+    end)
+    if success then
+        print("[BuyEgg] Purchased Basic Egg")
+        return true
+    else
+        print("[BuyEgg] Failed to purchase egg")
+        return false
+    end
+end
+
+local function BuyNextItem()
+    local args = { "Buy Next Object" }
+    local success = pcall(function()
+        return RemoteFunction:InvokeServer(unpack(args))
+    end)
+    if success then
+        print("[BuyNextItem] Purchased next item")
+        return true
+    else
+        print("[BuyNextItem] Failed to buy next item")
+        return false
+    end
 end
 
 local function DoRebirth()
     local args = { "Rebirth", 1 }
-    RemoteFunction:InvokeServer(unpack(args))
-    print("[Rebirth] Performed Rebirth")
+    local success = pcall(function()
+        return RemoteFunction:InvokeServer(unpack(args))
+    end)
+    if success then
+        print("[Rebirth] Performed Rebirth")
+        return true
+    else
+        print("[Rebirth] Failed to perform rebirth")
+        return false
+    end
 end
 
-local function RunStrengthTrain()
-    ToggleAutoTrain()
-    task.wait(0.5)
-    for i = 10, 1, -1 do
+local function WaitForStat(stat, targetValue, timeout)
+    timeout = timeout or 60
+    local startTime = os.clock()
+    while os.clock() - startTime < timeout do
+        if stat.Value >= targetValue then
+            return true
+        end
         task.wait(1)
     end
-    ToggleAutoTrain()
-    task.wait(0.3)
-    for i = 1, 3 do
-        ForceJump()
-        task.wait(0.2)
-    end
-    MoveOffPad()
-    task.wait(0.3)
-    ForceJump()
-    print("[StrengthTrain] Completed training session")
+    return false
 end
 
-local function HandleTutorialStep()
-    local step = Tutorial.Value
-    print("[Tutorial] Current step: " .. step)
-    
-    if step == 1 then
-        print("[Tutorial] Step 1: Throw your rock - enabling AutoThrow")
-        ToggleAutoThrow()
-    elseif step == 2 then
-        print("[Tutorial] Step 2: Buy a Basic Egg")
+local function HandleStep1()
+    print("[Step 1] Throw your rock")
+    TeleportToTrainingWall()
+    task.wait(1)
+    EnableAutoThrow()
+    local success = WaitForStat(Throws, 1, 30)
+    DisableAutoThrow()
+    if success then
+        print("[Step 1] Complete")
+        return true
+    else
+        print("[Step 1] Failed - retrying")
+        return false
+    end
+end
+
+local function HandleStep2()
+    print("[Step 2] Buy a Basic Egg")
+    TeleportToEgg()
+    task.wait(1)
+    local success = BuyEgg()
+    if success then
+        print("[Step 2] Complete")
+        return true
+    else
+        print("[Step 2] Failed - retrying")
+        return false
+    end
+end
+
+local function HandleStep3()
+    print("[Step 3] Get 175 Strength")
+    TeleportToTrainingWall()
+    task.wait(1)
+    EnableAutoTrain()
+    local success = WaitForStat(Strength, 175, 120)
+    DisableAutoTrain()
+    if success then
+        print("[Step 3] Complete")
+        return true
+    else
+        print("[Step 3] Failed - retrying")
+        return false
+    end
+end
+
+local function HandleStep4()
+    print("[Step 4] Get 300 Money")
+    TeleportToTrainingWall()
+    task.wait(1)
+    EnableAutoThrow()
+    local success = WaitForStat(Money, 300, 120)
+    DisableAutoThrow()
+    if success then
+        print("[Step 4] Complete")
+        return true
+    else
+        print("[Step 4] Failed - retrying")
+        return false
+    end
+end
+
+local function HandleStep5()
+    print("[Step 5] Buy the next item")
+    TeleportToShop()
+    task.wait(1)
+    local success = BuyNextItem()
+    if success then
+        print("[Step 5] Complete")
+        return true
+    else
+        print("[Step 5] Failed - retrying")
+        return false
+    end
+end
+
+local function HandleStep6()
+    print("[Step 6] Get 225 Money")
+    TeleportToTrainingWall()
+    task.wait(1)
+    EnableAutoThrow()
+    local success = WaitForStat(Money, 225, 120)
+    DisableAutoThrow()
+    if success then
+        print("[Step 6] Complete")
+        return true
+    else
+        print("[Step 6] Failed - retrying")
+        return false
+    end
+end
+
+local function HandleStep7()
+    print("[Step 7] Get 3 More Pets")
+    local targetPets = PetCount.Value + 3
+    TeleportToEgg()
+    task.wait(1)
+    for i = 1, 5 do
         BuyEgg()
-    elseif step == 3 then
-        print("[Tutorial] Step 3: Get 175 Strength - training")
-        RunStrengthTrain()
-    elseif step == 4 then
-        print("[Tutorial] Step 4: Get 300 Money - enabling AutoThrow")
-        ToggleAutoThrow()
-    elseif step == 5 then
-        print("[Tutorial] Step 5: Buy the next item")
-    elseif step == 6 then
-        print("[Tutorial] Step 6: Get 225 Money - enabling AutoThrow")
-        ToggleAutoThrow()
-    elseif step == 7 then
-        print("[Tutorial] Step 7: Get 3 More Pets")
-        for i = 1, 4 do
-            BuyEgg()
-            task.wait(1)
+        task.wait(1)
+        if PetCount.Value >= targetPets then
+            break
         end
-    elseif step == 8 then
-        print("[Tutorial] Step 8: Get 500 Strength - training")
-        RunStrengthTrain()
-    elseif step == 9 then
-        print("[Tutorial] Step 9: Get 750 Strength on better wall - training")
-        RunStrengthTrain()
-    elseif step == 10 then
-        print("[Tutorial] Step 10: Throw item to afford rebirth - enabling AutoThrow")
-        ToggleAutoThrow()
-    elseif step == 11 then
-        print("[Tutorial] Step 11: Buy first Rebirth")
-        DoRebirth()
-    elseif step == 12 then
-        print("[Tutorial] Step 12: Tutorial complete!")
-        if AutoThrowActive then ToggleAutoThrow() end
-        if AutoTrainActive then ToggleAutoTrain() end
+    end
+    if PetCount.Value >= targetPets then
+        print("[Step 7] Complete")
+        return true
+    else
+        print("[Step 7] Failed - retrying")
+        return false
+    end
+end
+
+local function HandleStep8()
+    print("[Step 8] Get 500 Strength")
+    TeleportToTrainingWall()
+    task.wait(1)
+    EnableAutoTrain()
+    local success = WaitForStat(Strength, 500, 180)
+    DisableAutoTrain()
+    if success then
+        print("[Step 8] Complete")
+        return true
+    else
+        print("[Step 8] Failed - retrying")
+        return false
+    end
+end
+
+local function HandleStep9()
+    print("[Step 9] Get 750 Strength on better wall")
+    local secondWall = WorldsFolder:WaitForChild("Spawn"):FindFirstChild("TutorialTrainSecond")
+    if secondWall then
+        TeleportToPosition(secondWall:GetPivot())
+    else
+        TeleportToTrainingWall()
+    end
+    task.wait(1)
+    EnableAutoTrain()
+    local success = WaitForStat(Strength, 750, 180)
+    DisableAutoTrain()
+    if success then
+        print("[Step 9] Complete")
+        return true
+    else
+        print("[Step 9] Failed - retrying")
+        return false
+    end
+end
+
+local function HandleStep10()
+    print("[Step 10] Throw item to afford rebirth")
+    TeleportToTrainingWall()
+    task.wait(1)
+    EnableAutoThrow()
+    task.wait(30)
+    DisableAutoThrow()
+    print("[Step 10] Complete")
+    return true
+end
+
+local function HandleStep11()
+    print("[Step 11] Buy first Rebirth")
+    local success = DoRebirth()
+    if success then
+        print("[Step 11] Complete")
+        return true
+    else
+        print("[Step 11] Failed - retrying")
+        return false
+    end
+end
+
+local function HandleStep12()
+    print("[Step 12] Tutorial Complete!")
+    DisableAutoThrow()
+    DisableAutoTrain()
+    return true
+end
+
+local function ExecuteStep(step)
+    RetryCount = 0
+    local handlers = {
+        [1] = HandleStep1,
+        [2] = HandleStep2,
+        [3] = HandleStep3,
+        [4] = HandleStep4,
+        [5] = HandleStep5,
+        [6] = HandleStep6,
+        [7] = HandleStep7,
+        [8] = HandleStep8,
+        [9] = HandleStep9,
+        [10] = HandleStep10,
+        [11] = HandleStep11,
+        [12] = HandleStep12,
+    }
+    local handler = handlers[step]
+    if handler then
+        return handler()
+    end
+    return true
+end
+
+local function ProcessCurrentStep()
+    while true do
+        local currentStep = Tutorial.Value
+        if currentStep >= 12 then
+            print("[Tutorial] Already complete")
+            break
+        end
+        
+        print("[Tutorial] Processing step: " .. currentStep)
+        
+        local success = false
+        for retry = 1, MaxRetries do
+            success = ExecuteStep(currentStep)
+            if success then
+                break
+            end
+            print("[Tutorial] Retry " .. retry .. " for step " .. currentStep)
+            task.wait(2)
+        end
+        
+        if not success then
+            print("[Tutorial] Failed step " .. currentStep .. " after " .. MaxRetries .. " retries")
+            task.wait(5)
+        end
+        
+        task.wait(1)
     end
 end
 
 Tutorial.Changed:Connect(function()
-    HandleTutorialStep()
+    local newStep = Tutorial.Value
+    if newStep ~= CurrentStep then
+        CurrentStep = newStep
+        print("[Tutorial] Step changed to: " .. newStep)
+        task.spawn(function()
+            ProcessCurrentStep()
+        end)
+    end
 end)
 
-HandleTutorialStep()
+ProcessCurrentStep()
 
-print("[Tutorial Auto-Complete] Loaded and waiting for tutorial steps")
+print("[Tutorial Auto-Complete] Loaded - monitoring tutorial steps")
