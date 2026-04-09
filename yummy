@@ -1,9 +1,12 @@
-setfpscap(3)
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
+local VirtualUser = game:GetService("VirtualUser")
+local VirtualInput = game:GetService("VirtualInputManager")
+local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
 
 local Paper = require(ReplicatedStorage:WaitForChild("Paper"))
 local Stats = Paper.Stats
@@ -25,10 +28,106 @@ local AutoThrowEnabled = false
 local AutoTrainEnabled = false
 local RetryCount = 0
 local MaxRetries = 3
+local TutorialComplete = false
+local StartTime = os.clock()
 
 local EggsFolder = Workspace:WaitForChild("Eggs")
 local WorldsFolder = Workspace:WaitForChild("Worlds")
 local SpawnFolder = WorldsFolder:WaitForChild("Spawn")
+
+local mouse = LocalPlayer:GetMouse()
+
+local idledConnections = getconnections(LocalPlayer.Idled)
+for _, connection in pairs(idledConnections) do
+    connection:Disable()
+end
+
+LocalPlayer.Idled:Connect(function()
+    pcall(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new(0,0))
+    end)
+    
+    task.wait(0.1)
+    
+    pcall(function()
+        VirtualInput:SendMouseMotionEvent(1, 1, mouse.X, mouse.Y, game)
+        task.wait(0.05)
+        VirtualInput:SendMouseMotionEvent(-1, -1, mouse.X, mouse.Y, game)
+    end)
+end)
+
+task.spawn(function()
+    while task.wait(45) do
+        pcall(function()
+            VirtualInput:SendMouseMotionEvent(
+                math.random(-2, 2),
+                math.random(-2, 2),
+                mouse.X,
+                mouse.Y,
+                game
+            )
+        end)
+    end
+end)
+
+local function CreateGreenScreen()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "TutorialCompleteUI"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = CoreGui
+    
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 1, 0)
+    frame.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+    frame.BackgroundTransparency = 0.7
+    frame.Parent = screenGui
+    
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Size = UDim2.new(1, 0, 0.2, 0)
+    textLabel.Position = UDim2.new(0, 0, 0.4, 0)
+    textLabel.BackgroundTransparency = 1
+    textLabel.TextColor3 = Color3.fromRGB(0, 0, 0)
+    textLabel.TextScaled = true
+    textLabel.Font = Enum.Font.GothamBold
+    textLabel.Text = "TUTORIAL COMPLETE!"
+    textLabel.Parent = screenGui
+    
+    local timeLabel = Instance.new("TextLabel")
+    timeLabel.Size = UDim2.new(1, 0, 0.1, 0)
+    timeLabel.Position = UDim2.new(0, 0, 0.6, 0)
+    timeLabel.BackgroundTransparency = 1
+    timeLabel.TextColor3 = Color3.fromRGB(0, 0, 0)
+    timeLabel.TextScaled = true
+    timeLabel.Font = Enum.Font.Gotham
+    timeLabel.Parent = screenGui
+    
+    local function UpdateTime()
+        local runtime = os.clock() - StartTime
+        local hours = math.floor(runtime / 3600)
+        local minutes = math.floor((runtime % 3600) / 60)
+        local seconds = math.floor(runtime % 60)
+        timeLabel.Text = string.format("Runtime: %02d:%02d:%02d", hours, minutes, seconds)
+    end
+    
+    local heartbeatConn
+    heartbeatConn = RunService.Heartbeat:Connect(function()
+        if TutorialComplete then
+            UpdateTime()
+        else
+            heartbeatConn:Disconnect()
+        end
+    end)
+    
+    UpdateTime()
+    
+    for i = 1, 10 do
+        frame.BackgroundTransparency = 0.7 - (i * 0.05)
+        task.wait(0.05)
+    end
+    
+    return screenGui
+end
 
 local function TeleportToPosition(position)
     local character = LocalPlayer.Character
@@ -454,6 +553,17 @@ local function HandleStep12()
     print("[Step 12] Tutorial Complete!")
     DisableAutoThrow()
     DisableAutoTrain()
+    
+    if not TutorialComplete then
+        TutorialComplete = true
+        local runtime = os.clock() - StartTime
+        local hours = math.floor(runtime / 3600)
+        local minutes = math.floor((runtime % 3600) / 60)
+        local seconds = math.floor(runtime % 60)
+        print("[Tutorial] Complete! Runtime: " .. string.format("%02d:%02d:%02d", hours, minutes, seconds))
+        CreateGreenScreen()
+    end
+    
     return true
 end
 
@@ -484,7 +594,9 @@ local function ProcessCurrentStep()
     while true do
         local currentStep = Tutorial.Value
         if currentStep >= 12 then
-            print("[Tutorial] Already complete")
+            if not TutorialComplete then
+                HandleStep12()
+            end
             break
         end
         
@@ -527,3 +639,4 @@ end)
 ProcessCurrentStep()
 
 print("[Tutorial Auto-Complete] Loaded - monitoring tutorial steps")
+print("[Anti-AFK] Enabled - preventing idle disconnect")
