@@ -13,6 +13,10 @@ local RunService = game:GetService("RunService")
 local Paper = require(ReplicatedStorage:WaitForChild("Paper"))
 local Stats = Paper.Stats
 local Network = Paper.Network
+local EasterUpgradesConfig = require(ReplicatedStorage:WaitForChild("Tables").EasterUpgrades)
+local EasterRebirths = require(ReplicatedStorage:WaitForChild("Tables").RebirthsEaster)
+local UniverseModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Universe)
+local RebirthModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Rebirths)
 
 repeat task.wait() until Stats.IsLoaded(LocalPlayer)
 
@@ -23,6 +27,7 @@ local PetCount = Stats.Get("PetCount")
 local Throws = Stats.Get("Throws")
 local CurrentWorld = Stats.Get("CurrentWorld")
 local WorldsUnlocked = Stats.Get("WorldsUnlocked")
+local GoldenEggs = Stats.Get("GoldenEggs")
 
 local Remotes = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes")
 local RemoteFunction = Remotes:WaitForChild("__remotefunction")
@@ -76,6 +81,78 @@ task.spawn(function()
     end
 end)
 
+local function GetCurrentMoney()
+    return UniverseModule.GetMoneyStat(LocalPlayer, 0).Value
+end
+
+local function GetRebirthCost(rebirthNumber)
+    return RebirthModule.GetRebirthCost(LocalPlayer, rebirthNumber, 0)
+end
+
+local function GetBestAffordableRebirth()
+    local currentMoney = GetCurrentMoney()
+    local bestAffordable = 0
+    for rebirthNumber, _ in pairs(EasterRebirths) do
+        local cost = GetRebirthCost(rebirthNumber)
+        if cost <= currentMoney and rebirthNumber > bestAffordable then
+            bestAffordable = rebirthNumber
+        end
+    end
+    return bestAffordable
+end
+
+local function PerformRebirth(rebirthNumber)
+    local success, result = pcall(function()
+        return Network.InvokeServer("Rebirth", rebirthNumber)
+    end)
+    if success then
+        print("[Rebirth] Performed rebirth #" .. rebirthNumber)
+        return true
+    else
+        print("[Rebirth] Failed: " .. tostring(result))
+        return false
+    end
+end
+
+local function BuyGoldenEggUpgrade(upgradeName)
+    local success, result = pcall(function()
+        return Network.InvokeServer("Easter Upgrade", upgradeName)
+    end)
+    if success then
+        print("[EasterUpgrade] Purchased: " .. upgradeName)
+        return true
+    else
+        print("[EasterUpgrade] Failed: " .. upgradeName .. " - " .. tostring(result))
+        return false
+    end
+end
+
+local function CheckAndBuyUpgrades()
+    for upgradeName, upgradeData in pairs(EasterUpgradesConfig) do
+        if upgradeName ~= "Catagories" and not upgradeData.Hidden then
+            local stat = Stats.Get(upgradeData.StatName)
+            if stat then
+                local currentLevel = stat.Value
+                local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
+                
+                if currentLevel < maxLevel then
+                    local cost
+                    if upgradeData.Max then
+                        cost = upgradeData.UpgradeCosts(currentLevel)
+                    else
+                        cost = upgradeData.UpgradeCosts[currentLevel + 1]
+                    end
+                    
+                    if GoldenEggs.Value >= cost then
+                        BuyGoldenEggUpgrade(upgradeName)
+                        task.wait(0.5)
+                    end
+                end
+            end
+        end
+    end
+end
+
 local function EquipBestPets()
     local args = {
         "Pet",
@@ -101,6 +178,25 @@ task.spawn(function()
     end
 end)
 
+task.spawn(function()
+    while true do
+        task.wait(600)
+        pcall(function()
+            local bestRebirth = GetBestAffordableRebirth()
+            if bestRebirth > 0 then
+                PerformRebirth(bestRebirth)
+            end
+        end)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(30)
+        pcall(CheckAndBuyUpgrades)
+    end
+end)
+
 local function SetCurrentWorld(worldNumber)
     local args = { "Set Current World", worldNumber }
     local success, result = pcall(function()
@@ -111,20 +207,6 @@ local function SetCurrentWorld(worldNumber)
         return true
     else
         print("[World] Failed to set world: " .. worldNumber .. " - " .. tostring(result))
-        return false
-    end
-end
-
-local function EasterUpgrade()
-    local args = { "Easter Upgrade", "More Golden Eggs" }
-    local success, result = pcall(function()
-        return RemoteFunction:InvokeServer(unpack(args))
-    end)
-    if success then
-        print("[Easter] Upgrade triggered: More Golden Eggs")
-        return true
-    else
-        print("[Easter] Failed to trigger upgrade - " .. tostring(result))
         return false
     end
 end
@@ -457,16 +539,6 @@ local function StartPostTutorialLoop()
     pcall(function()
         if WorldsUnlocked and WorldsUnlocked.Value > 0 or (CurrentWorld and CurrentWorld.Value == 0) then
             SetCurrentWorld(0)
-        end
-    end)
-    
-    task.spawn(function()
-        while TutorialComplete do
-            local waitTime = math.random(30, 60)
-            task.wait(waitTime)
-            if TutorialComplete then
-                pcall(EasterUpgrade)
-            end
         end
     end)
     
