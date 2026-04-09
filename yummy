@@ -20,6 +20,8 @@ local Strength = Stats.Get("Strength")
 local Money = Stats.Get("Money")
 local PetCount = Stats.Get("PetCount")
 local Throws = Stats.Get("Throws")
+local CurrentWorld = Stats.Get("CurrentWorld")
+local WorldsUnlocked = Stats.Get("WorldsUnlocked")
 
 local Remotes = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes")
 local RemoteFunction = Remotes:WaitForChild("__remotefunction")
@@ -31,6 +33,7 @@ local RetryCount = 0
 local MaxRetries = 3
 local TutorialComplete = false
 local StartTime = os.clock()
+local PostTutorialLoopActive = false
 
 local EggsFolder = Workspace:WaitForChild("Eggs")
 local WorldsFolder = Workspace:WaitForChild("Worlds")
@@ -71,6 +74,34 @@ task.spawn(function()
         end)
     end
 end)
+
+local function SetCurrentWorld(worldNumber)
+    local args = { "Set Current World", worldNumber }
+    local success = pcall(function()
+        return RemoteFunction:InvokeServer(unpack(args))
+    end)
+    if success then
+        print("[World] Set to world: " .. worldNumber)
+        return true
+    else
+        print("[World] Failed to set world: " .. worldNumber)
+        return false
+    end
+end
+
+local function EasterUpgrade()
+    local args = { "Easter Upgrade", "More Golden Eggs" }
+    local success = pcall(function()
+        return RemoteFunction:InvokeServer(unpack(args))
+    end)
+    if success then
+        print("[Easter] Upgrade triggered: More Golden Eggs")
+        return true
+    else
+        print("[Easter] Failed to trigger upgrade")
+        return false
+    end
+end
 
 local function CreateGreenScreen()
     local screenGui = Instance.new("ScreenGui")
@@ -140,29 +171,6 @@ local function TeleportToPosition(position)
     return true
 end
 
-local function TeleportToEgg()
-    for _, egg in pairs(EggsFolder:GetChildren()) do
-        if egg.Name:lower() == "basicegg" or egg.Name:lower() == "basic egg" or egg.Name == "BasicEgg" then
-            TeleportToPosition(egg:GetPivot())
-            print("[Teleport] Moved to Basic Egg: " .. egg.Name)
-            return true
-        end
-    end
-    local basicEgg = EggsFolder:FindFirstChild("BasicEgg")
-    if basicEgg then
-        TeleportToPosition(basicEgg:GetPivot())
-        print("[Teleport] Moved to Basic Egg")
-        return true
-    end
-    print("[Teleport] Could not find Basic Egg, moving to first available egg")
-    local anyEgg = EggsFolder:GetChildren()[1]
-    if anyEgg then
-        TeleportToPosition(anyEgg:GetPivot())
-        return true
-    end
-    return false
-end
-
 local function TeleportToTrainingWall()
     local tutorialThrow = SpawnFolder:FindFirstChild("TutorialThrow")
     if tutorialThrow then
@@ -175,24 +183,9 @@ local function TeleportToTrainingWall()
         TeleportToPosition(tutorialTrain:GetPivot())
         return true
     end
-    return false
-end
-
-local function TeleportToSecondTrainingWall()
-    local secondWall = SpawnFolder:FindFirstChild("TutorialTrainSecond")
-    if secondWall then
-        TeleportToPosition(secondWall:GetPivot())
-        print("[Teleport] Moved to second training wall")
-        return true
-    end
-    return TeleportToTrainingWall()
-end
-
-local function TeleportToShop()
-    local tutorialBuy = SpawnFolder:FindFirstChild("TutorialBuyObject")
-    if tutorialBuy then
-        TeleportToPosition(tutorialBuy:GetPivot())
-        print("[Teleport] Moved to shop")
+    local spawnLocation = SpawnFolder:FindFirstChild("SpawnLocation")
+    if spawnLocation then
+        TeleportToPosition(spawnLocation:GetPivot())
         return true
     end
     return false
@@ -382,6 +375,49 @@ local function farmEggsAndCodes()
     print("[Codes] Codes redeemed")
 end
 
+local function StartPostTutorialLoop()
+    if PostTutorialLoopActive then return end
+    PostTutorialLoopActive = true
+    
+    print("[PostTutorial] Starting farm loop")
+    
+    if WorldsUnlocked.Value > 0 or CurrentWorld.Value == 0 then
+        SetCurrentWorld(0)
+    end
+    
+    task.spawn(function()
+        while TutorialComplete do
+            local waitTime = math.random(30, 60)
+            task.wait(waitTime)
+            if TutorialComplete then
+                EasterUpgrade()
+            end
+        end
+    end)
+    
+    task.spawn(function()
+        while TutorialComplete do
+            print("[PostTutorial] Throwing phase - 1 minute")
+            EnableAutoThrow()
+            for i = 1, 60 do
+                if not TutorialComplete then break end
+                task.wait(1)
+            end
+            DisableAutoThrow()
+            
+            if not TutorialComplete then break end
+            
+            print("[PostTutorial] Training phase - 1 minute")
+            EnableAutoTrain()
+            for i = 1, 60 do
+                if not TutorialComplete then break end
+                task.wait(1)
+            end
+            DisableAutoTrain()
+        end
+    end)
+end
+
 local function HandleStep1()
     print("[Step 1] Throw your rock")
     TeleportToTrainingWall()
@@ -400,7 +436,7 @@ end
 
 local function HandleStep2()
     print("[Step 2] Buy a Basic Egg")
-    TeleportToEgg()
+    TeleportToTrainingWall()
     task.wait(1)
     local success = BuyEgg()
     if success then
@@ -446,7 +482,7 @@ end
 
 local function HandleStep5()
     print("[Step 5] Buy the next item")
-    TeleportToShop()
+    TeleportToTrainingWall()
     task.wait(1)
     local success = BuyNextItem()
     if success then
@@ -477,7 +513,7 @@ end
 local function HandleStep7()
     print("[Step 7] Get 3 More Pets")
     local targetPets = PetCount.Value + 3
-    TeleportToEgg()
+    TeleportToTrainingWall()
     task.wait(1)
     for i = 1, 5 do
         BuyEgg()
@@ -513,7 +549,7 @@ end
 
 local function HandleStep9()
     print("[Step 9] Get 750 Strength on better wall")
-    TeleportToSecondTrainingWall()
+    TeleportToTrainingWall()
     task.wait(1)
     EnableAutoTrain()
     local success = WaitForStat(Strength, 750, 180)
@@ -563,6 +599,12 @@ local function HandleStep12()
         local seconds = math.floor(runtime % 60)
         print("[Tutorial] Complete! Runtime: " .. string.format("%02d:%02d:%02d", hours, minutes, seconds))
         CreateGreenScreen()
+        
+        if WorldsUnlocked.Value > 0 or CurrentWorld.Value == 0 then
+            SetCurrentWorld(0)
+        end
+        
+        StartPostTutorialLoop()
     end
     
     return true
