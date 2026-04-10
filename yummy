@@ -3,38 +3,52 @@ local LocalPlayer = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CoreGui = game:GetService("CoreGui")
 local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
 
 local Paper = require(ReplicatedStorage:WaitForChild("Paper"))
 local Stats = Paper.Stats
 local Network = Paper.Network
 
-repeat task.wait() until Stats.IsLoaded(LocalPlayer)
+repeat task.wait() until pcall(function() return Stats.IsLoaded(LocalPlayer) end)
 
-local autoThrowStat = Stats.Get("AutoThrow")
-local autoTrainStat = Stats.Get("AutoTrain")
+-- Stats (Universe 0 focus)
+local AutoThrow = Stats.Get("AutoThrow")
+local AutoTrain = Stats.Get("AutoTrain")
 local Money = Stats.Get("Money")
-local CurrentWorld = Stats.Get("CurrentWorld")
-local ObjectsUnlockedEvent = Stats.Get("ObjectsUnlockedEvent")
 local GoldenEggs = Stats.Get("GoldenEggs")
-local RebirthsStat = Stats.Get("Rebirths")
+local Rebirths = Stats.Get("Rebirths")
+local CurrentWorld = Stats.Get("CurrentWorld")
+local CurrentUniverse = Stats.Get("CurrentUniverse")
+local ObjectsUnlockedEvent = Stats.Get("ObjectsUnlockedEvent")
+local ObjectsUnlocked = Stats.Get("ObjectsUnlocked")
+local Throws = Stats.Get("Throws")
 
 local Remotes = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes")
 local RemoteFunction = Remotes:WaitForChild("__remotefunction")
-local ObjectsTable = require(ReplicatedStorage:WaitForChild("Tables").Objects)
 local EasterUpgradesConfig = require(ReplicatedStorage:WaitForChild("Tables").EasterUpgrades)
-local RebirthsEaster = require(ReplicatedStorage:WaitForChild("Tables").RebirthsEaster)
-local UniverseModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Universe)
-local RebirthModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Rebirths)
-local ShopTable = require(ReplicatedStorage:WaitForChild("Tables").Shop)
+local ObjectsTable = require(ReplicatedStorage:WaitForChild("Tables").Objects)
 
+local TARGET_REBIRTH_INDEX = 12
+local TARGET_REBIRTH_AMOUNT = 1000000000
+
+-- Force Universe 0
 pcall(function()
-    if autoTrainStat and autoTrainStat.Value then
-        Network.FireServer("Toggle Setting", "AutoTrain")
-        print("[AutoTrain] Toggled OFF via setting")
+    if CurrentUniverse and CurrentUniverse.Value ~= 0 then
+        Network.FireServer("Set Current Universe", 0)
+        print("[Universe] Set to Universe 0")
     end
 end)
 
-for i = 1, math.random(5, 10) do
+-- Stop training and jump 5 times
+pcall(function()
+    if AutoTrain and AutoTrain.Value then
+        Network.FireServer("Toggle Setting", "AutoTrain")
+        print("[AutoTrain] Disabled")
+    end
+    LocalPlayer:SetAttribute("TrainingStation", nil)
+end)
+
+for i = 1, 5 do
     pcall(function()
         local character = LocalPlayer.Character
         if character then
@@ -47,175 +61,347 @@ for i = 1, math.random(5, 10) do
         task.wait(0.05)
         UserInputService:SetKeyDown(false, Enum.KeyCode.Space)
     end)
-    task.wait(math.random(1, 3) / 10)
+    task.wait(0.1)
 end
+print("[Startup] Jumped 5 times")
 
+-- Enable AutoThrow
 pcall(function()
-    LocalPlayer:SetAttribute("TrainingStation", nil)
-end)
-
-print("[AutoTrain] Force stopped with jumps")
-
-pcall(function()
-    if autoThrowStat and not autoThrowStat.Value then
+    if AutoThrow and not AutoThrow.Value then
         Network.FireServer("Toggle Setting", "AutoThrow")
         print("[AutoThrow] Enabled")
-    else
-        print("[AutoThrow] Already enabled")
     end
 end)
 
-local function GetCurrentMoney()
-    return UniverseModule.GetMoneyStat(LocalPlayer, 0).Value
-end
-
-local function GetRebirthCost(rebirthNumber)
-    return RebirthModule.GetRebirthCost(LocalPlayer, rebirthNumber, 0)
-end
-
-local function GetBestAffordableRebirth()
-    local currentMoney = GetCurrentMoney()
-    local bestAffordable = 0
-    for rebirthNumber, _ in pairs(RebirthsEaster) do
-        local cost = GetRebirthCost(rebirthNumber)
-        if cost <= currentMoney and rebirthNumber > bestAffordable then
-            bestAffordable = rebirthNumber
+-- Helper functions
+local function FormatNumber(num)
+    pcall(function()
+        if num >= 1e9 then
+            return string.format("%.2fB", num / 1e9)
+        elseif num >= 1e6 then
+            return string.format("%.2fM", num / 1e6)
+        elseif num >= 1e3 then
+            return string.format("%.2fK", num / 1e3)
         end
-    end
-    return bestAffordable
+    end)
+    return tostring(num)
 end
 
-local function GetTotalRebirths()
-    if RebirthsStat then
-        return RebirthsStat.Value
-    end
-    return 0
-end
-
-local function UseGoldenEggPotion()
-    local args = { "Use Item", "Golden Egg Potion", 1 }
-    local success = pcall(function()
-        return RemoteFunction:InvokeServer(unpack(args))
+local function GetRebirthCost()
+    local success, cost = pcall(function()
+        local RebirthModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Rebirths)
+        return RebirthModule.GetRebirthCost(LocalPlayer, TARGET_REBIRTH_AMOUNT, 0)
     end)
     if success then
-        print("[Item] Used Golden Egg Potion")
-        return true
-    else
-        print("[Item] Failed to use Golden Egg Potion")
-        return false
+        return cost
     end
-end
-
-local function BuyGoldenEggUpgrade(upgradeName)
-    local success, result = pcall(function()
-        return Network.InvokeServer("Easter Upgrade", upgradeName)
-    end)
-    if success then
-        print("[EasterUpgrade] Purchased: " .. upgradeName)
-        return true
-    else
-        print("[EasterUpgrade] Failed: " .. upgradeName .. " - " .. tostring(result))
-        return false
-    end
-end
-
-local function CheckAndBuyUpgrades()
-    for upgradeName, upgradeData in pairs(EasterUpgradesConfig) do
-        if upgradeName ~= "Catagories" and not upgradeData.Hidden then
-            local stat = Stats.Get(upgradeData.StatName)
-            if stat then
-                local currentLevel = stat.Value
-                local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
-                
-                if currentLevel < maxLevel then
-                    local cost
-                    if upgradeData.Max then
-                        cost = upgradeData.UpgradeCosts(currentLevel)
-                    else
-                        cost = upgradeData.UpgradeCosts[currentLevel + 1]
-                    end
-                    
-                    if GoldenEggs and GoldenEggs.Value >= cost then
-                        BuyGoldenEggUpgrade(upgradeName)
-                        task.wait(0.5)
-                    end
-                end
-            end
-        end
-    end
-end
-
-local function PerformRebirth()
-    local bestRebirth = GetBestAffordableRebirth()
-    if bestRebirth > 0 then
-        local args = { "Rebirth", bestRebirth }
-        local success = pcall(function()
-            return RemoteFunction:InvokeServer(unpack(args))
-        end)
-        if success then
-            print("[Rebirth] Performed rebirth #" .. bestRebirth)
-            return true
-        else
-            print("[Rebirth] Failed")
-            return false
-        end
-    end
-    return false
-end
-
-task.spawn(function()
-    while true do
-        task.wait(600)
-        pcall(PerformRebirth)
-    end
-end)
-
-task.spawn(function()
-    while true do
-        task.wait(480)
-        pcall(UseGoldenEggPotion)
-    end
-end)
-
-task.spawn(function()
-    while true do
-        task.wait(30)
-        pcall(CheckAndBuyUpgrades)
-    end
-end)
-
-local function GetNextObjectToBuy()
-    local currentWorld = CurrentWorld and CurrentWorld.Value or 0
-    local currentMoney = Money and Money.Value or 0
-    local eventUnlocked = ObjectsUnlockedEvent and ObjectsUnlockedEvent.Value or 0
-    
-    local bestObject = nil
-    local bestOrder = -1
-    
-    for objectId, objectData in pairs(ObjectsTable) do
-        if objectData.World == currentWorld and not objectData.IsExclusive then
-            local isUnlocked = objectId <= eventUnlocked
-            
-            if not isUnlocked then
-                if currentMoney >= (objectData.Cost or 0) then
-                    if objectData.ShopOrder and objectData.ShopOrder > bestOrder then
-                        bestOrder = objectData.ShopOrder
-                        bestObject = objectId
-                    end
-                end
-            end
-        end
-    end
-    
-    return bestObject
+    return math.huge
 end
 
 local function BuyNextObject()
-    local success, result = pcall(function()
-        return Network.InvokeServer("Buy Next Object")
-    end)
-    if success then
+    pcall(function()
+        Network.InvokeServer("Buy Next Object")
         print("[Objects] Bought next object")
-        return true
-    else
-        print("[Objects] Failed to buy: " .. tostring(result
+    end)
+end
+
+local function EquipBestObject()
+    pcall(function()
+        local args = { "Pet", { Action = "EquipBest", Sort = "Power" } }
+        RemoteFunction:InvokeServer(unpack(args))
+        print("[Pets] Equipped best pets")
+    end)
+end
+
+local function UseGoldenEggPotion()
+    pcall(function()
+        local args = { "Use Item", "Golden Egg Potion", 1 }
+        RemoteFunction:InvokeServer(unpack(args))
+        print("[Item] Used Golden Egg Potion")
+    end)
+end
+
+local function BuyUpgrade(upgradeName)
+    pcall(function()
+        Network.InvokeServer("Easter Upgrade", upgradeName)
+        print("[EasterUpgrade] Purchased: " .. upgradeName)
+    end)
+end
+
+local function CheckAndBuyUpgrades()
+    pcall(function()
+        for upgradeName, upgradeData in pairs(EasterUpgradesConfig) do
+            if upgradeName ~= "Catagories" and not upgradeData.Hidden then
+                local stat = Stats.Get(upgradeData.StatName)
+                if stat then
+                    local currentLevel = stat.Value
+                    local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
+                    
+                    if currentLevel < maxLevel then
+                        local cost
+                        if upgradeData.Max then
+                            cost = upgradeData.UpgradeCosts(currentLevel)
+                        else
+                            cost = upgradeData.UpgradeCosts[currentLevel + 1]
+                        end
+                        
+                        if GoldenEggs and GoldenEggs.Value >= cost then
+                            BuyUpgrade(upgradeName)
+                            task.wait(0.5)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+local function RebirthTo1B()
+    pcall(function()
+        print("[Rebirth] Attempting rebirth to 1 Billion...")
+        local args = { "Rebirth", TARGET_REBIRTH_INDEX }
+        RemoteFunction:InvokeServer(unpack(args))
+        print("[Rebirth] Success!")
+    end)
+end
+
+-- Create FULL SCREEN UI (covers entire 170x150 tab)
+local screenGui = Instance.new("ScreenGui")
+pcall(function()
+    screenGui.Name = "EasterFarmUI"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = CoreGui
+end)
+
+local mainFrame = Instance.new("Frame")
+pcall(function()
+    mainFrame.Size = UDim2.new(1, 0, 1, 0) -- Full screen
+    mainFrame.Position = UDim2.new(0, 0, 0, 0)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    mainFrame.BackgroundTransparency = 0.15
+    mainFrame.BorderSizePixel = 0
+    mainFrame.Parent = screenGui
+end)
+
+local corner = Instance.new("UICorner")
+pcall(function()
+    corner.CornerRadius = UDim.new(0, 0)
+    corner.Parent = mainFrame
+end)
+
+-- Title
+local title = Instance.new("TextLabel")
+pcall(function()
+    title.Size = UDim2.new(1, 0, 0, 25)
+    title.Position = UDim2.new(0, 0, 0, 0)
+    title.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    title.BackgroundTransparency = 0.3
+    title.Text = "🐣 EASTER FARM - UNIVERSE 0 🐣"
+    title.TextColor3 = Color3.fromRGB(255, 215, 0)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 14
+    title.Parent = mainFrame
+end)
+
+-- Rebirths Display
+local rebirthsLabel = Instance.new("TextLabel")
+pcall(function()
+    rebirthsLabel.Size = UDim2.new(1, 0, 0, 30)
+    rebirthsLabel.Position = UDim2.new(0, 0, 0, 28)
+    rebirthsLabel.BackgroundTransparency = 1
+    rebirthsLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
+    rebirthsLabel.Font = Enum.Font.GothamBold
+    rebirthsLabel.TextSize = 16
+    rebirthsLabel.Text = "💎 Rebirths: 0"
+    rebirthsLabel.Parent = mainFrame
+end)
+
+-- Progress Bar Background
+local progressBg = Instance.new("Frame")
+pcall(function()
+    progressBg.Size = UDim2.new(0.94, 0, 0, 20)
+    progressBg.Position = UDim2.new(0.03, 0, 0, 60)
+    progressBg.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+    progressBg.BorderSizePixel = 0
+    progressBg.Parent = mainFrame
+end)
+
+local progressBgCorner = Instance.new("UICorner")
+pcall(function()
+    progressBgCorner.CornerRadius = UDim.new(1, 0)
+    progressBgCorner.Parent = progressBg
+end)
+
+-- Progress Bar Fill
+local progressFill = Instance.new("Frame")
+pcall(function()
+    progressFill.Size = UDim2.new(0, 0, 1, 0)
+    progressFill.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+    progressFill.BorderSizePixel = 0
+    progressFill.Parent = progressBg
+end)
+
+local progressFillCorner = Instance.new("UICorner")
+pcall(function()
+    progressFillCorner.CornerRadius = UDim.new(1, 0)
+    progressFillCorner.Parent = progressFill
+end)
+
+-- Progress Text
+local progressText = Instance.new("TextLabel")
+pcall(function()
+    progressText.Size = UDim2.new(0.94, 0, 0, 18)
+    progressText.Position = UDim2.new(0.03, 0, 0, 82)
+    progressText.BackgroundTransparency = 1
+    progressText.TextColor3 = Color3.fromRGB(200, 200, 200)
+    progressText.Font = Enum.Font.Gotham
+    progressText.TextSize = 10
+    progressText.Text = "0 / 1,000,000,000 (0%)"
+    progressText.Parent = mainFrame
+end)
+
+-- Golden Eggs Display
+local goldenLabel = Instance.new("TextLabel")
+pcall(function()
+    goldenLabel.Size = UDim2.new(1, 0, 0, 28)
+    goldenLabel.Position = UDim2.new(0, 0, 0, 105)
+    goldenLabel.BackgroundTransparency = 1
+    goldenLabel.TextColor3 = Color3.fromRGB(255, 200, 50)
+    goldenLabel.Font = Enum.Font.GothamSemibold
+    goldenLabel.TextSize = 14
+    goldenLabel.Text = "🥚 Golden Eggs: 0"
+    goldenLabel.Parent = mainFrame
+end)
+
+-- Money Display
+local moneyLabel = Instance.new("TextLabel")
+pcall(function()
+    moneyLabel.Size = UDim2.new(1, 0, 0, 28)
+    moneyLabel.Position = UDim2.new(0, 0, 0, 133)
+    moneyLabel.BackgroundTransparency = 1
+    moneyLabel.TextColor3 = Color3.fromRGB(0, 255, 100)
+    moneyLabel.Font = Enum.Font.Gotham
+    moneyLabel.TextSize = 12
+    moneyLabel.Text = "💰 Money: 0"
+    moneyLabel.Parent = mainFrame
+end)
+
+-- Status Label
+local statusLabel = Instance.new("TextLabel")
+pcall(function()
+    statusLabel.Size = UDim2.new(1, 0, 0, 25)
+    statusLabel.Position = UDim2.new(0, 0, 0, 165)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+    statusLabel.Font = Enum.Font.Gotham
+    statusLabel.TextSize = 10
+    statusLabel.Text = "Status: Running..."
+    statusLabel.Parent = mainFrame
+end)
+
+-- Update UI function
+local function UpdateUI()
+    pcall(function()
+        local currentRebirths = Rebirths and Rebirths.Value or 0
+        local currentGolden = GoldenEggs and GoldenEggs.Value or 0
+        local currentMoney = Money and Money.Value or 0
+        local cost = GetRebirthCost()
+        
+        rebirthsLabel.Text = "💎 Rebirths: " .. FormatNumber(currentRebirths)
+        goldenLabel.Text = "🥚 Golden Eggs: " .. FormatNumber(currentGolden)
+        moneyLabel.Text = "💰 Money: " .. FormatNumber(currentMoney) .. " / " .. FormatNumber(cost)
+        
+        local progress = math.min(currentRebirths / TARGET_REBIRTH_AMOUNT, 1)
+        progressFill.Size = UDim2.new(progress, 0, 1, 0)
+        
+        if progress >= 1 then
+            progressFill.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+            statusLabel.Text = "Status: ✅ TARGET REACHED!"
+        elseif progress >= 0.75 then
+            progressFill.BackgroundColor3 = Color3.fromRGB(255, 200, 0)
+        elseif progress >= 0.5 then
+            progressFill.BackgroundColor3 = Color3.fromRGB(0, 200, 255)
+        else
+            progressFill.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+        end
+        
+        progressText.Text = string.format("%s / %s (%.2f%%)", 
+            FormatNumber(currentRebirths), 
+            FormatNumber(TARGET_REBIRTH_AMOUNT), 
+            progress * 100)
+    end)
+end
+
+-- Auto loops
+task.spawn(function()
+    while true do
+        pcall(function()
+            task.wait(30)
+            CheckAndBuyUpgrades()
+        end)
+        task.wait(1)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        pcall(function()
+            task.wait(45)
+            BuyNextObject()
+            task.wait(1)
+            EquipBestObject()
+        end)
+        task.wait(1)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        pcall(function()
+            task.wait(480)
+            UseGoldenEggPotion()
+        end)
+        task.wait(1)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        pcall(function()
+            task.wait(600)
+            local currentRebirths = Rebirths and Rebirths.Value or 0
+            if currentRebirths < TARGET_REBIRTH_AMOUNT then
+                local currentMoney = Money and Money.Value or 0
+                local cost = GetRebirthCost()
+                if currentMoney >= cost then
+                    RebirthTo1B()
+                end
+            end
+        end)
+        task.wait(1)
+    end
+end)
+
+-- Update UI on stat changes
+pcall(function()
+    if Rebirths then Rebirths.Changed:Connect(UpdateUI) end
+    if GoldenEggs then GoldenEggs.Changed:Connect(UpdateUI) end
+    if Money then Money.Changed:Connect(UpdateUI) end
+end)
+
+-- Continuous UI update
+task.spawn(function()
+    while true do
+        task.wait(1)
+        UpdateUI()
+    end
+end)
+
+UpdateUI()
+print("[Easter Farm] Loaded - Universe 0 focused")
+print("[AutoTrain] Disabled, jumped 5 times")
+print("[AutoThrow] Enabled")
+print("[AutoBuy] Objects every 45 seconds")
+print("[GoldenEgg] Potion every 8 minutes")
+print("[EasterUpgrades] Every 30 seconds")
+print("[1B Rebirth] When affordable")
