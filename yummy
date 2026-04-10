@@ -4,21 +4,28 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualUser = game:GetService("VirtualUser")
 local VirtualInput = game:GetService("VirtualInputManager")
 local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
 
 local Paper = require(ReplicatedStorage:WaitForChild("Paper"))
 local Stats = Paper.Stats
 local Network = Paper.Network
 
-repeat task.wait() until pcall(function() return Stats.IsLoaded(LocalPlayer) end)
+repeat task.wait() until Stats.IsLoaded(LocalPlayer)
 
 local Strength = Stats.Get("Strength")
 local AutoThrow = Stats.Get("AutoThrow")
 local AutoTrain = Stats.Get("AutoTrain")
 local mouse = LocalPlayer:GetMouse()
 
+-- Strength tracking
+local strengthHistory = {}
+local lastStrength = 0
+local lastUpdateTime = os.clock()
+local targetStrength = 1e15 -- 1 Qa
+
 local function FormatNumber(num)
     if num >= 1e33 then
-        return string.format("%.2fe%d", num / 1e33, 33)
+        return string.format("%.2fDc", num / 1e33)
     elseif num >= 1e30 then
         return string.format("%.2fN", num / 1e30)
     elseif num >= 1e27 then
@@ -44,31 +51,78 @@ local function FormatNumber(num)
     end
 end
 
+local function FormatTime(seconds)
+    if seconds < 0 then return "0s" end
+    if seconds < 60 then
+        return string.format("%.0fs", seconds)
+    elseif seconds < 3600 then
+        return string.format("%.0fm", seconds / 60)
+    elseif seconds < 86400 then
+        return string.format("%.0fh", seconds / 3600)
+    else
+        return string.format("%.0fd", seconds / 86400)
+    end
+end
+
+local function GetStrengthPerMinute()
+    local currentStrength = Strength and Strength.Value or 0
+    local currentTime = os.clock()
+    local timeDiff = currentTime - lastUpdateTime
+    
+    if timeDiff >= 60 and lastStrength > 0 then
+        local gain = currentStrength - lastStrength
+        lastStrength = currentStrength
+        lastUpdateTime = currentTime
+        return gain
+    elseif timeDiff >= 60 then
+        lastStrength = currentStrength
+        lastUpdateTime = currentTime
+        return 0
+    end
+    
+    return 0
+end
+
+local function GetETA()
+    local currentStrength = Strength and Strength.Value or 0
+    if currentStrength >= targetStrength then
+        return 0
+    end
+    
+    local gainPerMinute = GetStrengthPerMinute()
+    if gainPerMinute <= 0 then
+        return -1
+    end
+    
+    local needed = targetStrength - currentStrength
+    local minutesNeeded = needed / gainPerMinute
+    return minutesNeeded * 60
+end
+
 local function GetUIColor(strength)
     if strength >= 1e33 then
-        -- Rainbow cycling for extreme values
         local hue = (tick() % 5) / 5
         return Color3.fromHSV(hue, 1, 0.7)
     elseif strength >= 1e30 then
-        return Color3.fromRGB(200, 100, 255) -- Purple
+        return Color3.fromRGB(200, 100, 255)
     elseif strength >= 1e27 then
-        return Color3.fromRGB(100, 200, 255) -- Cyan
+        return Color3.fromRGB(100, 200, 255)
     elseif strength >= 1e24 then
-        return Color3.fromRGB(255, 100, 200) -- Pink
+        return Color3.fromRGB(255, 100, 200)
     elseif strength >= 1e21 then
-        return Color3.fromRGB(160, 80, 240) -- Dark Purple
+        return Color3.fromRGB(160, 80, 240)
     elseif strength >= 1e18 then
-        return Color3.fromRGB(255, 50, 50) -- Dark Red
+        return Color3.fromRGB(255, 50, 50)
     elseif strength >= 1e15 then
-        return Color3.fromRGB(255, 100, 100) -- Red
+        return Color3.fromRGB(255, 100, 100)
     elseif strength >= 1e12 then
-        return Color3.fromRGB(255, 150, 50) -- Orange
+        return Color3.fromRGB(255, 150, 50)
     elseif strength >= 1e11 then
-        return Color3.fromRGB(255, 255, 80) -- Yellow
+        return Color3.fromRGB(255, 255, 80)
     elseif strength >= 1e10 then
-        return Color3.fromRGB(80, 255, 80) -- Green
+        return Color3.fromRGB(80, 255, 80)
     else
-        return Color3.fromRGB(20, 20, 25) -- Dark/Black
+        return Color3.fromRGB(20, 20, 25)
     end
 end
 
@@ -87,55 +141,76 @@ screenGui.Parent = playerGui
 
 local mainFrame = Instance.new("Frame")
 mainFrame.Size = UDim2.new(1, 0, 1, 0)
-mainFrame.Position = UDim2.new(0, 0, 0, 0)
 mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
 mainFrame.BorderSizePixel = 0
 mainFrame.Parent = screenGui
 
 local centerContainer = Instance.new("Frame")
-centerContainer.Size = UDim2.new(0, 500, 0, 400)
-centerContainer.Position = UDim2.new(0.5, -250, 0.5, -200)
+centerContainer.Size = UDim2.new(0, 550, 0, 500)
+centerContainer.Position = UDim2.new(0.5, -275, 0.5, -250)
 centerContainer.BackgroundTransparency = 1
 centerContainer.Parent = mainFrame
 
 local titleLabel = Instance.new("TextLabel")
-titleLabel.Size = UDim2.new(1, 0, 0, 60)
+titleLabel.Size = UDim2.new(1, 0, 0, 50)
 titleLabel.BackgroundTransparency = 1
 titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-titleLabel.TextSize = 42
+titleLabel.TextSize = 38
 titleLabel.Font = Enum.Font.GothamBold
 titleLabel.Text = "⚔️ TRAINING MODE"
 titleLabel.TextXAlignment = Enum.TextXAlignment.Center
 titleLabel.Parent = centerContainer
 
 local strengthLabel = Instance.new("TextLabel")
-strengthLabel.Size = UDim2.new(1, 0, 0, 100)
-strengthLabel.Position = UDim2.new(0, 0, 0, 70)
+strengthLabel.Size = UDim2.new(1, 0, 0, 80)
+strengthLabel.Position = UDim2.new(0, 0, 0, 55)
 strengthLabel.BackgroundTransparency = 1
 strengthLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-strengthLabel.TextSize = 72
+strengthLabel.TextSize = 64
 strengthLabel.Font = Enum.Font.GothamBold
 strengthLabel.Text = "0"
 strengthLabel.TextXAlignment = Enum.TextXAlignment.Center
 strengthLabel.Parent = centerContainer
 
+local perMinuteLabel = Instance.new("TextLabel")
+perMinuteLabel.Size = UDim2.new(1, 0, 0, 30)
+perMinuteLabel.Position = UDim2.new(0, 0, 0, 140)
+perMinuteLabel.BackgroundTransparency = 1
+perMinuteLabel.TextColor3 = Color3.fromRGB(200, 200, 100)
+perMinuteLabel.TextSize = 16
+perMinuteLabel.Font = Enum.Font.GothamBold
+perMinuteLabel.Text = "⚡ 0/min"
+perMinuteLabel.TextXAlignment = Enum.TextXAlignment.Center
+perMinuteLabel.Parent = centerContainer
+
+local etaLabel = Instance.new("TextLabel")
+etaLabel.Size = UDim2.new(1, 0, 0, 30)
+etaLabel.Position = UDim2.new(0, 0, 0, 175)
+etaLabel.BackgroundTransparency = 1
+etaLabel.TextColor3 = Color3.fromRGB(100, 200, 255)
+etaLabel.TextSize = 16
+etaLabel.Font = Enum.Font.GothamBold
+etaLabel.Text = "⏱️ ETA to 1Qa: Calculating..."
+etaLabel.TextXAlignment = Enum.TextXAlignment.Center
+etaLabel.Parent = centerContainer
+
 local statusLabel = Instance.new("TextLabel")
-statusLabel.Size = UDim2.new(1, 0, 0, 40)
-statusLabel.Position = UDim2.new(0, 0, 0, 180)
+statusLabel.Size = UDim2.new(1, 0, 0, 35)
+statusLabel.Position = UDim2.new(0, 0, 0, 215)
 statusLabel.BackgroundTransparency = 1
 statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
-statusLabel.TextSize = 20
+statusLabel.TextSize = 18
 statusLabel.Font = Enum.Font.GothamBold
 statusLabel.Text = "AUTO-TRAIN: ENABLED"
 statusLabel.TextXAlignment = Enum.TextXAlignment.Center
 statusLabel.Parent = centerContainer
 
 local subLabel = Instance.new("TextLabel")
-subLabel.Size = UDim2.new(1, 0, 0, 30)
-subLabel.Position = UDim2.new(0, 0, 0, 225)
+subLabel.Size = UDim2.new(1, 0, 0, 25)
+subLabel.Position = UDim2.new(0, 0, 0, 255)
 subLabel.BackgroundTransparency = 1
 subLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
-subLabel.TextSize = 14
+subLabel.TextSize = 12
 subLabel.Font = Enum.Font.Gotham
 subLabel.Text = "Auto-Throw disabled | Training only"
 subLabel.TextXAlignment = Enum.TextXAlignment.Center
@@ -143,7 +218,7 @@ subLabel.Parent = centerContainer
 
 local progressBg = Instance.new("Frame")
 progressBg.Size = UDim2.new(1, -40, 0, 20)
-progressBg.Position = UDim2.new(0, 20, 0, 270)
+progressBg.Position = UDim2.new(0, 20, 0, 295)
 progressBg.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
 progressBg.BorderSizePixel = 0
 progressBg.Parent = centerContainer
@@ -164,12 +239,12 @@ fillCorner.Parent = progressFill
 
 local thresholdLabels = Instance.new("Frame")
 thresholdLabels.Size = UDim2.new(1, 0, 0, 20)
-thresholdLabels.Position = UDim2.new(0, 0, 0, 295)
+thresholdLabels.Position = UDim2.new(0, 0, 0, 320)
 thresholdLabels.BackgroundTransparency = 1
 thresholdLabels.Parent = centerContainer
 
-local thresholds = {"1B", "10B", "100B", "1T", "1Qa", "1Qi", "1Sx", "1Sp"}
-local positions = {0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1}
+local thresholds = {"1B", "10B", "100B", "1T", "1Qa"}
+local positions = {0.2, 0.4, 0.6, 0.8, 1}
 
 for i, text in ipairs(thresholds) do
     local label = Instance.new("TextLabel")
@@ -186,46 +261,25 @@ end
 
 local function OnScreenResize()
     local scale = GetScale()
-    titleLabel.TextSize = 42 * scale
-    strengthLabel.TextSize = 72 * scale
-    statusLabel.TextSize = 20 * scale
-    subLabel.TextSize = 14 * scale
-    centerContainer.Size = UDim2.new(0, 500 * scale, 0, 400 * scale)
-    centerContainer.Position = UDim2.new(0.5, -250 * scale, 0.5, -200 * scale)
+    titleLabel.TextSize = 38 * scale
+    strengthLabel.TextSize = 64 * scale
+    perMinuteLabel.TextSize = 16 * scale
+    etaLabel.TextSize = 16 * scale
+    statusLabel.TextSize = 18 * scale
+    subLabel.TextSize = 12 * scale
+    centerContainer.Size = UDim2.new(0, 550 * scale, 0, 500 * scale)
+    centerContainer.Position = UDim2.new(0.5, -275 * scale, 0.5, -250 * scale)
 end
 
 workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(OnScreenResize)
 OnScreenResize()
 
-local function GetMaxStrength()
-    -- Dynamic max based on current strength (logarithmic scale for progress bar)
-    local strength = Strength and Strength.Value or 0
-    if strength < 1e12 then
-        return 1e12 -- 1T
-    elseif strength < 1e15 then
-        return 1e15 -- 1Qa
-    elseif strength < 1e18 then
-        return 1e18 -- 1Qi
-    elseif strength < 1e21 then
-        return 1e21 -- 1Sx
-    elseif strength < 1e24 then
-        return 1e24 -- 1Sp
-    else
-        return strength * 2
-    end
-end
-
 local function UpdateProgressBar(strength)
-    local maxStrength = GetMaxStrength()
-    local percent = math.min(strength / maxStrength, 1)
+    local percent = math.min(strength / targetStrength, 1)
     local width = percent * (progressBg.AbsoluteSize.X - 4)
     progressFill:TweenSize(UDim2.new(0, width, 1, 0), "Out", "Quad", 0.3, true)
     
-    if strength >= 1e21 then
-        progressFill.BackgroundColor3 = Color3.fromRGB(160, 80, 240)
-    elseif strength >= 1e18 then
-        progressFill.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
-    elseif strength >= 1e15 then
+    if strength >= 1e15 then
         progressFill.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
     elseif strength >= 1e12 then
         progressFill.BackgroundColor3 = Color3.fromRGB(255, 150, 50)
@@ -239,9 +293,12 @@ local function UpdateProgressBar(strength)
 end
 
 local lastColor = nil
+local lastPerMinuteUpdate = 0
+
 local function UpdateUI()
     pcall(function()
-        local strength = Strength and Strength.Value or 0
+        if not Strength then return end
+        local strength = Strength.Value or 0
         local color = GetUIColor(strength)
         
         if color ~= lastColor then
@@ -251,6 +308,23 @@ local function UpdateUI()
         
         strengthLabel.Text = FormatNumber(strength)
         UpdateProgressBar(strength)
+        
+        -- Update per-minute and ETA every 60 seconds
+        local currentTime = os.clock()
+        if currentTime - lastPerMinuteUpdate >= 60 then
+            local perMinute = GetStrengthPerMinute()
+            perMinuteLabel.Text = string.format("⚡ %s/min", FormatNumber(perMinute))
+            
+            local eta = GetETA()
+            if eta > 0 then
+                etaLabel.Text = string.format("⏱️ ETA to 1Qa: %s", FormatTime(eta))
+            elseif eta == 0 then
+                etaLabel.Text = "✅ 1Qa REACHED!"
+            else
+                etaLabel.Text = "⏱️ ETA to 1Qa: Calculating..."
+            end
+            lastPerMinuteUpdate = currentTime
+        end
         
         if AutoThrow and AutoThrow.Value then
             Network.FireServer("Toggle Setting", "AutoThrow")
@@ -298,14 +372,11 @@ task.spawn(function()
     end
 end)
 
-task.wait(2)
-UpdateUI()
-
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        pcall(UpdateUI)
-    end
+-- Heartbeat update
+RunService.Heartbeat:Connect(function()
+    pcall(UpdateUI)
 end)
 
-print("[Train Mode] FULL SCREEN responsive UI loaded - Infinite tiers supported")
+task.wait(3)
+print("[Train Mode] Loaded - Heartbeat updates enabled")
+print("[Train Mode] Target: 1 Qa (1,000,000,000,000,000)")
