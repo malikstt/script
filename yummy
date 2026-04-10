@@ -4,23 +4,24 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualUser = game:GetService("VirtualUser")
 local VirtualInput = game:GetService("VirtualInputManager")
 local TweenService = game:GetService("TweenService")
-local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
 
 local Paper = require(ReplicatedStorage:WaitForChild("Paper"))
 local Stats = Paper.Stats
 local Network = Paper.Network
+local UniverseModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Universe)
 
 repeat task.wait() until Stats.IsLoaded(LocalPlayer)
 
-local Strength = Stats.Get("Strength")
 local AutoThrow = Stats.Get("AutoThrow")
 local AutoTrain = Stats.Get("AutoTrain")
 local mouse = LocalPlayer:GetMouse()
 
--- Strength tracking
-local strengthHistory = {}
-local lastStrength = 0
-local lastUpdateTime = os.clock()
+-- Get Strength using UniverseModule (same as working script)
+local function GetCurrentStrength()
+    return UniverseModule.GetStrengthStat(LocalPlayer, 0).Value
+end
+
 local targetStrength = 1e15 -- 1 Qa
 
 local function FormatNumber(num)
@@ -64,39 +65,36 @@ local function FormatTime(seconds)
     end
 end
 
-local function GetStrengthPerMinute()
-    local currentStrength = Strength and Strength.Value or 0
+-- Strength tracking
+local lastStrength = 0
+local lastUpdateTime = os.clock()
+local strengthPerMinute = 0
+local etaSeconds = -1
+
+local function CalculateStats()
+    local currentStrength = GetCurrentStrength()
     local currentTime = os.clock()
     local timeDiff = currentTime - lastUpdateTime
     
     if timeDiff >= 60 and lastStrength > 0 then
         local gain = currentStrength - lastStrength
+        strengthPerMinute = gain
         lastStrength = currentStrength
         lastUpdateTime = currentTime
-        return gain
+        
+        if strengthPerMinute > 0 and currentStrength < targetStrength then
+            local needed = targetStrength - currentStrength
+            local minutesNeeded = needed / strengthPerMinute
+            etaSeconds = minutesNeeded * 60
+        else
+            etaSeconds = -1
+        end
     elseif timeDiff >= 60 then
         lastStrength = currentStrength
         lastUpdateTime = currentTime
-        return 0
+        strengthPerMinute = 0
+        etaSeconds = -1
     end
-    
-    return 0
-end
-
-local function GetETA()
-    local currentStrength = Strength and Strength.Value or 0
-    if currentStrength >= targetStrength then
-        return 0
-    end
-    
-    local gainPerMinute = GetStrengthPerMinute()
-    if gainPerMinute <= 0 then
-        return -1
-    end
-    
-    local needed = targetStrength - currentStrength
-    local minutesNeeded = needed / gainPerMinute
-    return minutesNeeded * 60
 end
 
 local function GetUIColor(strength)
@@ -131,13 +129,17 @@ local function GetScale()
     return math.min(viewport.X / 1920, viewport.Y / 1080)
 end
 
-local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+-- Destroy old UI
+pcall(function()
+    local oldGui = CoreGui:FindFirstChild("TrainUI")
+    if oldGui then oldGui:Destroy() end
+end)
 
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "TrainUI"
 screenGui.ResetOnSpawn = false
 screenGui.IgnoreGuiInset = true
-screenGui.Parent = playerGui
+screenGui.Parent = CoreGui
 
 local mainFrame = Instance.new("Frame")
 mainFrame.Size = UDim2.new(1, 0, 1, 0)
@@ -293,12 +295,10 @@ local function UpdateProgressBar(strength)
 end
 
 local lastColor = nil
-local lastPerMinuteUpdate = 0
 
 local function UpdateUI()
     pcall(function()
-        if not Strength then return end
-        local strength = Strength.Value or 0
+        local strength = GetCurrentStrength()
         local color = GetUIColor(strength)
         
         if color ~= lastColor then
@@ -309,21 +309,18 @@ local function UpdateUI()
         strengthLabel.Text = FormatNumber(strength)
         UpdateProgressBar(strength)
         
-        -- Update per-minute and ETA every 60 seconds
-        local currentTime = os.clock()
-        if currentTime - lastPerMinuteUpdate >= 60 then
-            local perMinute = GetStrengthPerMinute()
-            perMinuteLabel.Text = string.format("⚡ %s/min", FormatNumber(perMinute))
-            
-            local eta = GetETA()
-            if eta > 0 then
-                etaLabel.Text = string.format("⏱️ ETA to 1Qa: %s", FormatTime(eta))
-            elseif eta == 0 then
-                etaLabel.Text = "✅ 1Qa REACHED!"
-            else
-                etaLabel.Text = "⏱️ ETA to 1Qa: Calculating..."
-            end
-            lastPerMinuteUpdate = currentTime
+        if strengthPerMinute > 0 then
+            perMinuteLabel.Text = string.format("⚡ %s/min", FormatNumber(strengthPerMinute))
+        else
+            perMinuteLabel.Text = "⚡ Calculating..."
+        end
+        
+        if etaSeconds > 0 then
+            etaLabel.Text = string.format("⏱️ ETA to 1Qa: %s", FormatTime(etaSeconds))
+        elseif strength >= targetStrength then
+            etaLabel.Text = "✅ 1Qa REACHED!"
+        else
+            etaLabel.Text = "⏱️ ETA to 1Qa: Calculating..."
         end
         
         if AutoThrow and AutoThrow.Value then
@@ -343,6 +340,7 @@ local function UpdateUI()
     end)
 end
 
+-- Anti-AFK (same as working script)
 pcall(function()
     local idledConnections = getconnections(LocalPlayer.Idled)
     for _, connection in pairs(idledConnections) do
@@ -372,11 +370,13 @@ task.spawn(function()
     end
 end)
 
--- Heartbeat update
-RunService.Heartbeat:Connect(function()
-    pcall(UpdateUI)
+-- Main loop
+task.spawn(function()
+    while true do
+        pcall(CalculateStats)
+        pcall(UpdateUI)
+        task.wait(0.5)
+    end
 end)
 
-task.wait(3)
-print("[Train Mode] Loaded - Heartbeat updates enabled")
-print("[Train Mode] Target: 1 Qa (1,000,000,000,000,000)")
+print("[Train Mode] Loaded - Using UniverseModule.GetStrengthStat")
