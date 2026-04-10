@@ -1,179 +1,31 @@
 setfpscap(3)
-task.spawn(function()
-    local Players = game:GetService("Players")
-    local LocalPlayer = Players.LocalPlayer
-    
-    local RemoteFunction = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes"):WaitForChild("__remotefunction")
-    
-    local TARGET_REBIRTH_AMOUNT = 25000000
-    
-    local function GetCurrentMoney()
-        return pcall(function()
-            local stats = LocalPlayer:FindFirstChild("leaderstats")
-            if stats then
-                local money = stats:FindFirstChild("Money") or stats:FindFirstChild("Cash")
-                if money then
-                    return money.Value
-                end
-            end
-            return 0
-        end) and 0 or 0
-    end
-    
-    local function GetRebirthCost()
-        return pcall(function()
-            local rebirthFolder = LocalPlayer:FindFirstChild("RebirthData")
-            if rebirthFolder then
-                local cost = rebirthFolder:FindFirstChild("NextRebirthCost")
-                if cost then
-                    return cost.Value
-                end
-            end
-            return TARGET_REBIRTH_AMOUNT
-        end) and TARGET_REBIRTH_AMOUNT or TARGET_REBIRTH_AMOUNT
-    end
-    
-    local function CanAffordRebirth()
-        local currentMoney = GetCurrentMoney()
-        local cost = GetRebirthCost()
-        return cost <= currentMoney and cost <= TARGET_REBIRTH_AMOUNT
-    end
-    
-    local function Rebirth()
-        return pcall(function()
-            local args = { "Rebirth", 10 }
-            return RemoteFunction:InvokeServer(unpack(args))
-        end)
-    end
-    
-    local function DestroyUIElements()
-        local guisToDestroy = {
-            "TopbarStandard",
-            "Notifications",
-            "TopbarCentered",
-            "TopbarStandardClipped",
-            "TopbarCenteredClipped"
-        }
-        
-        for _, guiName in ipairs(guisToDestroy) do
-            task.spawn(function()
-                pcall(function()
-                    local gui = LocalPlayer.PlayerGui:FindFirstChild(guiName)
-                    if gui then
-                        gui:Destroy()
-                    end
-                end)
-            end)
-        end
-    end
-    
-    task.spawn(function()
-        while true do
-            pcall(function()
-                task.wait(30)
-                
-                if CanAffordRebirth() then
-                    local success = Rebirth()
-                    if success then
-                        print("Rebirthed to 25M!")
-                    end
-                end
-            end)
-            task.wait(10)
-        end
-    end)
-    
-    task.spawn(function()
-        while true do
-            pcall(function()
-                DestroyUIElements()
-                task.wait(5)
-            end)
-            task.wait(1)
-        end
-    end)
-end)
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CoreGui = game:GetService("CoreGui")
 local VirtualUser = game:GetService("VirtualUser")
 local VirtualInput = game:GetService("VirtualInputManager")
-local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
 
 local Paper = require(ReplicatedStorage:WaitForChild("Paper"))
 local Stats = Paper.Stats
 local Network = Paper.Network
-local EasterUpgradesConfig = require(ReplicatedStorage:WaitForChild("Tables").EasterUpgrades)
-local UniverseModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Universe)
-local ObjectsTable = require(ReplicatedStorage:WaitForChild("Tables").Objects)
 
 repeat task.wait() until pcall(function() return Stats.IsLoaded(LocalPlayer) end)
 
 local Strength = Stats.Get("Strength")
-local Money = Stats.Get("Money")
-local PetCount = Stats.Get("PetCount")
-local GoldenEggs = Stats.Get("GoldenEggs")
 local AutoThrow = Stats.Get("AutoThrow")
 local AutoTrain = Stats.Get("AutoTrain")
-local Rebirths = Stats.Get("Rebirths")
-local CurrentUniverse = Stats.Get("CurrentUniverse")
-local ObjectsUnlocked = Stats.Get("ObjectsUnlocked")
-local ObjectsUnlockedEvent = Stats.Get("ObjectsUnlockedEvent")
-local CurrentWorld = Stats.Get("CurrentWorld")
-
-local StartTime = os.clock()
 local mouse = LocalPlayer:GetMouse()
-local CurrentObjectIndex = 0
-local CurrentObjectName = "None"
-local CurrentObjectMultiplier = 0
-local NextObjectIndex = 0
-local NextObjectName = "None"
-local NextObjectCost = 0
-local NextObjectMultiplier = 0
 
--- Strength threshold control
-local STRENGTH_THRESHOLD_UNDER_1M_REBIRTHS = 1000000000 -- 1B
-local STRENGTH_THRESHOLD_OVER_1M_REBIRTHS = 10000000000 -- 10B
-local isAutoTrainEnabled = false
-local isAutoThrowEnabled = false
-
+-- Destroy existing UI
 pcall(function()
     for _, gui in pairs(CoreGui:GetChildren()) do
-        if gui:IsA("ScreenGui") then
+        if gui:IsA("ScreenGui") and gui.Name == "TrainUI" then
             pcall(function() gui:Destroy() end)
         end
     end
 end)
-
-local Dashboard = nil
-local ConsoleLines = {}
-local MaxConsoleLines = 10
-
-local EasterRebirths = {
-    1, 5, 20, 50, 250, 1000, 10000, 150000, 1000000, 
-    25000000, 100000000, 1000000000, 10000000000, 
-    125000000000, 1000000000000
-}
-
-local function AddConsoleMessage(msg)
-    pcall(function()
-        local timestamp = os.date("%H:%M:%S")
-        local formatted = string.format("[%s] %s", timestamp, msg)
-        table.insert(ConsoleLines, 1, formatted)
-        if #ConsoleLines > MaxConsoleLines then
-            table.remove(ConsoleLines)
-        end
-        print(msg)
-        
-        if Dashboard and Dashboard.Console then
-            local text = ""
-            for i = #ConsoleLines, 1, -1 do
-                text = text .. ConsoleLines[i] .. "\n"
-            end
-            Dashboard.Console.Text = text
-        end
-    end)
-end
 
 local function FormatNumber(num)
     if num >= 1e12 then
@@ -189,806 +41,207 @@ local function FormatNumber(num)
     end
 end
 
-local function FormatTime(seconds)
-    local hours = math.floor(seconds / 3600)
-    local minutes = math.floor((seconds % 3600) / 60)
-    local secs = math.floor(seconds % 60)
-    if hours > 0 then
-        return string.format("%d:%02d:%02d", hours, minutes, secs)
+local function GetUIColor(strength)
+    if strength >= 1000000000000 then -- 1T or more
+        return Color3.fromRGB(180, 30, 30) -- Dark Red
+    elseif strength >= 100000000000 then -- 100B or more
+        return Color3.fromRGB(180, 180, 30) -- Dark Yellow
+    elseif strength >= 10000000000 then -- 10B or more
+        return Color3.fromRGB(30, 180, 30) -- Dark Green
     else
-        return string.format("%d:%02d", minutes, secs)
+        return Color3.fromRGB(20, 20, 25) -- Dark/Black
     end
 end
 
-local function GetScreenScale()
+-- Get screen size
+local function GetScreenSize()
     local viewportSize = workspace.CurrentCamera.ViewportSize
-    local scale = math.min(viewportSize.X / 1920, viewportSize.Y / 1080)
-    return math.clamp(scale, 0.5, 1.5)
+    return viewportSize.X, viewportSize.Y
 end
 
-local function GetCurrentRebirths()
-    return UniverseModule.GetRebirthStat(LocalPlayer, 0).Value
+-- Create FULL SCREEN UI
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "TrainUI"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.IgnoreGuiInset = true
+screenGui.Parent = CoreGui
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(1, 0, 1, 0)
+mainFrame.Position = UDim2.new(0, 0, 0, 0)
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+mainFrame.BackgroundTransparency = 0
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = screenGui
+
+-- Center container for content
+local centerContainer = Instance.new("Frame")
+centerContainer.Size = UDim2.new(0, 500, 0, 300)
+centerContainer.Position = UDim2.new(0.5, -250, 0.5, -150)
+centerContainer.BackgroundTransparency = 1
+centerContainer.Parent = mainFrame
+
+-- Title
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, 0, 0, 60)
+titleLabel.Position = UDim2.new(0, 0, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.TextScaled = false
+titleLabel.TextSize = 42
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.Text = "⚔️ TRAINING MODE"
+titleLabel.TextXAlignment = Enum.TextXAlignment.Center
+titleLabel.Parent = centerContainer
+
+-- Strength value (large)
+local strengthLabel = Instance.new("TextLabel")
+strengthLabel.Size = UDim2.new(1, 0, 0, 100)
+strengthLabel.Position = UDim2.new(0, 0, 0, 70)
+strengthLabel.BackgroundTransparency = 1
+strengthLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+strengthLabel.TextScaled = false
+strengthLabel.TextSize = 72
+strengthLabel.Font = Enum.Font.GothamBold
+strengthLabel.Text = "0"
+strengthLabel.TextXAlignment = Enum.TextXAlignment.Center
+strengthLabel.Parent = centerContainer
+
+-- Status text
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, 0, 0, 40)
+statusLabel.Position = UDim2.new(0, 0, 0, 180)
+statusLabel.BackgroundTransparency = 1
+statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+statusLabel.TextScaled = false
+statusLabel.TextSize = 20
+statusLabel.Font = Enum.Font.GothamBold
+statusLabel.Text = "AUTO-TRAIN: ENABLED"
+statusLabel.TextXAlignment = Enum.TextXAlignment.Center
+statusLabel.Parent = centerContainer
+
+-- Subtitle
+local subLabel = Instance.new("TextLabel")
+subLabel.Size = UDim2.new(1, 0, 0, 30)
+subLabel.Position = UDim2.new(0, 0, 0, 225)
+subLabel.BackgroundTransparency = 1
+subLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+subLabel.TextScaled = false
+subLabel.TextSize = 14
+subLabel.Font = Enum.Font.Gotham
+subLabel.Text = "Auto-Throw disabled | Training only"
+subLabel.TextXAlignment = Enum.TextXAlignment.Center
+subLabel.Parent = centerContainer
+
+-- Progress bar background
+local progressBg = Instance.new("Frame")
+progressBg.Size = UDim2.new(1, -40, 0, 20)
+progressBg.Position = UDim2.new(0, 20, 0, 270)
+progressBg.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+progressBg.BackgroundTransparency = 0
+progressBg.BorderSizePixel = 0
+progressBg.Parent = centerContainer
+
+local progressCorner = Instance.new("UICorner")
+progressCorner.CornerRadius = UDim.new(0, 10)
+progressCorner.Parent = progressBg
+
+-- Progress bar fill
+local progressFill = Instance.new("Frame")
+progressFill.Size = UDim2.new(0, 0, 1, 0)
+progressFill.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
+progressFill.BackgroundTransparency = 0
+progressFill.BorderSizePixel = 0
+progressFill.Parent = progressBg
+
+local fillCorner = Instance.new("UICorner")
+fillCorner.CornerRadius = UDim.new(0, 10)
+fillCorner.Parent = progressFill
+
+-- Threshold labels
+local thresholdLabels = Instance.new("Frame")
+thresholdLabels.Size = UDim2.new(1, 0, 0, 20)
+thresholdLabels.Position = UDim2.new(0, 0, 0, 295)
+thresholdLabels.BackgroundTransparency = 1
+thresholdLabels.Parent = centerContainer
+
+local thresholds = {"1B", "10B", "100B", "1T"}
+local positions = {0.25, 0.5, 0.75, 1}
+
+for i, text in ipairs(thresholds) do
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0, 60, 1, 0)
+    label.Position = UDim2.new(positions[i], -30, 0, 0)
+    label.BackgroundTransparency = 1
+    label.TextColor3 = Color3.fromRGB(120, 120, 140)
+    label.TextScaled = false
+    label.TextSize = 11
+    label.Font = Enum.Font.Gotham
+    label.Text = text
+    label.TextXAlignment = Enum.TextXAlignment.Center
+    label.Parent = thresholdLabels
 end
 
-local function GetCurrentMoney()
-    return UniverseModule.GetMoneyStat(LocalPlayer, 0).Value
-end
-
-local function GetCurrentStrength()
-    return Strength and Strength.Value or 0
-end
-
-local function GetRebirthCost(rebirthAmount)
-    local currentRebirths = GetCurrentRebirths()
-    return 5000 * (currentRebirths + 1) * rebirthAmount
-end
-
-local function GetBestAffordableRebirth()
-    local currentMoney = GetCurrentMoney()
-    local bestAffordable = 0
-    local bestCost = 0
+local function UpdateProgressBar(strength)
+    local maxStrength = 1000000000000 -- 1T
+    local percent = math.min(strength / maxStrength, 1)
+    local width = percent * (progressBg.AbsoluteSize.X - 4)
+    progressFill:TweenSize(UDim2.new(0, width, 1, 0), "Out", "Quad", 0.3, true)
     
-    for _, rebirthAmount in ipairs(EasterRebirths) do
-        local cost = GetRebirthCost(rebirthAmount)
-        if cost <= currentMoney and rebirthAmount > bestAffordable then
-            bestAffordable = rebirthAmount
-            bestCost = cost
-        end
+    -- Change fill color based on strength
+    if strength >= 1000000000000 then
+        progressFill.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
+    elseif strength >= 100000000000 then
+        progressFill.BackgroundColor3 = Color3.fromRGB(255, 255, 80)
+    elseif strength >= 10000000000 then
+        progressFill.BackgroundColor3 = Color3.fromRGB(80, 255, 80)
+    else
+        progressFill.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
     end
-    return bestAffordable, bestCost
 end
 
-local function Jump(count)
+local function UpdateUI()
     pcall(function()
-        local character = LocalPlayer.Character
-        if not character then return end
-        local humanoid = character:FindFirstChild("Humanoid")
-        if not humanoid then return end
-        for i = 1, count do
-            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-            task.wait(0.15)
-        end
-        AddConsoleMessage("Jumped " .. count .. " times")
-    end)
-end
-
-local function ResetCharacter()
-    pcall(function()
-        local character = LocalPlayer.Character
-        if character then
-            character:BreakJoints()
-            AddConsoleMessage("Character reset (BreakJoints)")
-        end
-    end)
-end
-
-local function EnableAutoTrain()
-    pcall(function()
-        if AutoTrain and not AutoTrain.Value then
-            Network.FireServer("Toggle Setting", "AutoTrain")
-            isAutoTrainEnabled = true
-            AddConsoleMessage("[AutoTrain] Enabled")
-        elseif AutoTrain and AutoTrain.Value then
-            isAutoTrainEnabled = true
-            AddConsoleMessage("[AutoTrain] Already enabled")
-        end
-    end)
-end
-
-local function DisableAutoTrain()
-    pcall(function()
-        if AutoTrain and AutoTrain.Value then
-            Network.FireServer("Toggle Setting", "AutoTrain")
-            AddConsoleMessage("[AutoTrain] Disabled")
-            task.wait(0.5)
-            ResetCharacter() -- Reset TO disable (respawn clears stuck state)
-            isAutoTrainEnabled = false
-        elseif AutoTrain and not AutoTrain.Value then
-            isAutoTrainEnabled = false
-            AddConsoleMessage("[AutoTrain] Already disabled")
-        end
-    end)
-end
-
-local function EnableAutoThrow()
-    pcall(function()
-        if AutoThrow and not AutoThrow.Value then
-            ResetCharacter() -- Reset FIRST
-            task.wait(0.5)
-            Network.FireServer("Toggle Setting", "AutoThrow") -- THEN enable
-            isAutoThrowEnabled = true
-            AddConsoleMessage("[AutoThrow] Enabled (reset THEN enable)")
-        elseif AutoThrow and AutoThrow.Value then
-            isAutoThrowEnabled = true
-            AddConsoleMessage("[AutoThrow] Already enabled")
-        end
-    end)
-end
-
-local function DisableAutoThrow()
-    pcall(function()
+        local strength = Strength and Strength.Value or 0
+        local color = GetUIColor(strength)
+        
+        -- Animate background color change
+        TweenService:Create(mainFrame, TweenInfo.new(0.5), {BackgroundColor3 = color}):Play()
+        
+        -- Update strength text with animation effect
+        strengthLabel.Text = FormatNumber(strength)
+        
+        -- Update progress bar
+        UpdateProgressBar(strength)
+        
+        -- Ensure AutoThrow is disabled
         if AutoThrow and AutoThrow.Value then
             Network.FireServer("Toggle Setting", "AutoThrow")
-            isAutoThrowEnabled = false
-            AddConsoleMessage("[AutoThrow] Disabled")
-        elseif AutoThrow and not AutoThrow.Value then
-            isAutoThrowEnabled = false
-            AddConsoleMessage("[AutoThrow] Already disabled")
-        end
-    end)
-end
-
-local function GetStrengthThreshold()
-    local rebirths = GetCurrentRebirths()
-    if rebirths < 1000000 then
-        return STRENGTH_THRESHOLD_UNDER_1M_REBIRTHS
-    else
-        return STRENGTH_THRESHOLD_OVER_1M_REBIRTHS
-    end
-end
-
-local function CheckAndControlAutoModes()
-    pcall(function()
-        local currentStrength = GetCurrentStrength()
-        local threshold = GetStrengthThreshold()
-        local rebirths = GetCurrentRebirths()
-        
-        if currentStrength < threshold then
-            -- Need more strength, enable auto-train, disable auto-throw
-            if not isAutoTrainEnabled then
-                AddConsoleMessage(string.format("Strength: %s < %s (Threshold for %s rebirths) - Starting auto-train", 
-                    FormatNumber(currentStrength), FormatNumber(threshold), FormatNumber(rebirths)))
-                EnableAutoTrain()
-            end
-            if isAutoThrowEnabled then
-                DisableAutoThrow()
-            end
-        else
-            -- Strength threshold met, disable auto-train, enable auto-throw
-            if isAutoTrainEnabled then
-                AddConsoleMessage(string.format("Strength: %s >= %s (Threshold met for %s rebirths) - Stopping auto-train", 
-                    FormatNumber(currentStrength), FormatNumber(threshold), FormatNumber(rebirths)))
-                DisableAutoTrain() -- This will disable THEN reset
-            end
-            if not isAutoThrowEnabled then
-                EnableAutoThrow() -- This will reset THEN enable
-            end
-        end
-    end)
-end
-
-local function UpdateObjectInfo()
-    pcall(function()
-        if CurrentUniverse and CurrentUniverse.Value == 0 then
-            local eventValue = ObjectsUnlockedEvent and ObjectsUnlockedEvent.Value or 0
-            CurrentObjectIndex = eventValue
-            NextObjectIndex = eventValue - 1
-            
-            local currentObj = ObjectsTable[CurrentObjectIndex]
-            local nextObj = ObjectsTable[NextObjectIndex]
-            
-            if currentObj then
-                CurrentObjectName = currentObj.Name or "None"
-                CurrentObjectMultiplier = currentObj.MoneyMultiplier or 0
-            else
-                CurrentObjectName = "None"
-                CurrentObjectMultiplier = 0
-            end
-            
-            if nextObj then
-                NextObjectName = nextObj.Name or "None"
-                NextObjectCost = nextObj.Cost or 0
-                NextObjectMultiplier = nextObj.MoneyMultiplier or 0
-            else
-                NextObjectName = "None"
-                NextObjectCost = 0
-                NextObjectMultiplier = 0
-            end
-        else
-            local unlocked = ObjectsUnlocked and ObjectsUnlocked.Value or 0
-            CurrentObjectIndex = unlocked
-            NextObjectIndex = unlocked + 1
-            
-            local currentObj = ObjectsTable[CurrentObjectIndex]
-            local nextObj = ObjectsTable[NextObjectIndex]
-            
-            if currentObj then
-                CurrentObjectName = currentObj.Name or "None"
-                CurrentObjectMultiplier = currentObj.MoneyMultiplier or 0
-            else
-                CurrentObjectName = "None"
-                CurrentObjectMultiplier = 0
-            end
-            
-            if nextObj then
-                NextObjectName = nextObj.Name or "None"
-                NextObjectCost = nextObj.Cost or 0
-                NextObjectMultiplier = nextObj.MoneyMultiplier or 0
-            else
-                NextObjectName = "None"
-                NextObjectCost = 0
-                NextObjectMultiplier = 0
-            end
-        end
-    end)
-end
-
-local function BuyNextObject()
-    pcall(function()
-        local success, result = Network.InvokeServer("Buy Next Object")
-        if success then
-            AddConsoleMessage("Bought: " .. NextObjectName .. " (x" .. FormatNumber(NextObjectMultiplier) .. ")")
-            UpdateObjectInfo()
-        end
-    end)
-end
-
-local function AutoBuyBestObject()
-    -- Only auto-buy objects if auto-throw is enabled (meaning we're not in training mode)
-    if not isAutoThrowEnabled then
-        return
-    end
-    
-    pcall(function()
-        local currentMoney = GetCurrentMoney()
-        
-        if CurrentUniverse and CurrentUniverse.Value == 0 then
-            local nextObj = ObjectsTable[NextObjectIndex]
-            if nextObj and not nextObj.IsExclusive then
-                if currentMoney >= (nextObj.Cost or 0) then
-                    AddConsoleMessage("Auto-buying: " .. nextObj.Name .. " (Cost: " .. FormatNumber(nextObj.Cost) .. ")")
-                    BuyNextObject()
-                    task.wait(1)
-                end
-            end
-        else
-            local nextObj = ObjectsTable[NextObjectIndex]
-            if nextObj and not nextObj.IsExclusive then
-                if currentMoney >= (nextObj.Cost or 0) then
-                    AddConsoleMessage("Auto-buying: " .. nextObj.Name .. " (Cost: " .. FormatNumber(nextObj.Cost) .. ")")
-                    BuyNextObject()
-                    task.wait(1)
-                end
-            end
-        end
-    end)
-end
-
-local function BuyUpgrade(upgradeName)
-    pcall(function()
-        local args = { "Easter Upgrade", upgradeName }
-        local success = Network.InvokeServer(unpack(args))
-        if success then
-            AddConsoleMessage("Purchased: " .. upgradeName)
-        end
-    end)
-end
-
-local function GetUpgradeCost(upgradeData, currentLevel)
-    if upgradeData.Max then
-        return upgradeData.UpgradeCosts(currentLevel)
-    else
-        return upgradeData.UpgradeCosts[currentLevel + 1]
-    end
-end
-
-local rebirthSkipsStopped = false
-
-local function CheckAndBuyUpgrades()
-    pcall(function()
-        for upgradeName, upgradeData in pairs(EasterUpgradesConfig or {}) do
-            if upgradeName ~= "Catagories" and not upgradeData.Hidden then
-                if upgradeName == "More Rebirth Skips" then
-                    if not rebirthSkipsStopped then
-                        local stat = Stats.Get(upgradeData.StatName)
-                        if stat then
-                            local currentLevel = stat.Value or 0
-                            local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
-                            if currentLevel < maxLevel then
-                                local cost = GetUpgradeCost(upgradeData, currentLevel)
-                                if cost > 1000 then
-                                    rebirthSkipsStopped = true
-                                elseif (GoldenEggs and GoldenEggs.Value or 0) >= cost then
-                                    BuyUpgrade(upgradeName)
-                                    task.wait(0.5)
-                                end
-                            end
-                        end
-                    end
-                else
-                    local stat = Stats.Get(upgradeData.StatName)
-                    if stat then
-                        local currentLevel = stat.Value or 0
-                        local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
-                        if currentLevel < maxLevel then
-                            local cost = GetUpgradeCost(upgradeData, currentLevel)
-                            if (GoldenEggs and GoldenEggs.Value or 0) >= cost then
-                                BuyUpgrade(upgradeName)
-                                task.wait(0.5)
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end)
-end
-
-local function CreateDashboard()
-    if Dashboard and Dashboard.Parent then
-        pcall(function() Dashboard.Parent:Destroy() end)
-    end
-    
-    local scale = GetScreenScale()
-    local username = LocalPlayer.Name or "Player"
-    
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "SimpleDashboard"
-    screenGui.ResetOnSpawn = false
-    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    screenGui.Parent = CoreGui
-    
-    local mainFrame = Instance.new("Frame")
-    mainFrame.Size = UDim2.new(0, 420 * scale, 0, 700 * scale)
-    mainFrame.Position = UDim2.new(0, 10 * scale, 0, 10 * scale)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 15)
-    mainFrame.BackgroundTransparency = 0.05
-    mainFrame.BorderSizePixel = 0
-    mainFrame.ClipsDescendants = true
-    mainFrame.Parent = screenGui
-    
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 12 * scale)
-    corner.Parent = mainFrame
-    
-    local titleBar = Instance.new("Frame")
-    titleBar.Size = UDim2.new(1, 0, 0, 40 * scale)
-    titleBar.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
-    titleBar.BackgroundTransparency = 0
-    titleBar.BorderSizePixel = 0
-    titleBar.Parent = mainFrame
-    
-    local titleCorner = Instance.new("UICorner")
-    titleCorner.CornerRadius = UDim.new(0, 12 * scale)
-    titleCorner.Parent = titleBar
-    
-    local titleText = Instance.new("TextLabel")
-    titleText.Size = UDim2.new(1, 0, 1, 0)
-    titleText.Position = UDim2.new(0, 15 * scale, 0, 0)
-    titleText.BackgroundTransparency = 1
-    titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
-    titleText.TextScaled = false
-    titleText.Font = Enum.Font.GothamBold
-    titleText.TextSize = 18 * scale
-    titleText.TextXAlignment = Enum.TextXAlignment.Left
-    titleText.Text = username .. "'s Dashboard"
-    titleText.Parent = titleBar
-    
-    local content = Instance.new("Frame")
-    content.Size = UDim2.new(1, -20 * scale, 1, -50 * scale)
-    content.Position = UDim2.new(0, 10 * scale, 0, 45 * scale)
-    content.BackgroundTransparency = 1
-    content.Parent = mainFrame
-    
-    local statsBox = Instance.new("Frame")
-    statsBox.Size = UDim2.new(1, 0, 0, 320 * scale)
-    statsBox.Position = UDim2.new(0, 0, 0, 0)
-    statsBox.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
-    statsBox.BackgroundTransparency = 0
-    statsBox.BorderSizePixel = 0
-    statsBox.Parent = content
-    
-    local statsCorner = Instance.new("UICorner")
-    statsCorner.CornerRadius = UDim.new(0, 8 * scale)
-    statsCorner.Parent = statsBox
-    
-    local statsTitle = Instance.new("TextLabel")
-    statsTitle.Size = UDim2.new(1, -10 * scale, 0, 30 * scale)
-    statsTitle.Position = UDim2.new(0, 5 * scale, 0, 5 * scale)
-    statsTitle.BackgroundTransparency = 1
-    statsTitle.TextColor3 = Color3.fromRGB(150, 200, 150)
-    statsTitle.TextScaled = false
-    statsTitle.TextSize = 14 * scale
-    statsTitle.Font = Enum.Font.GothamBold
-    statsTitle.Text = "📊 STATISTICS"
-    statsTitle.TextXAlignment = Enum.TextXAlignment.Left
-    statsTitle.Parent = statsBox
-    
-    local strengthText = Instance.new("TextLabel")
-    strengthText.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
-    strengthText.Position = UDim2.new(0, 5 * scale, 0, 38 * scale)
-    strengthText.BackgroundTransparency = 1
-    strengthText.TextColor3 = Color3.fromRGB(255, 255, 255)
-    strengthText.TextScaled = false
-    strengthText.TextSize = 13 * scale
-    strengthText.Font = Enum.Font.Gotham
-    strengthText.Text = "💪 Strength: 0"
-    strengthText.TextXAlignment = Enum.TextXAlignment.Left
-    strengthText.Parent = statsBox
-    
-    local moneyText = Instance.new("TextLabel")
-    moneyText.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
-    moneyText.Position = UDim2.new(0, 5 * scale, 0, 60 * scale)
-    moneyText.BackgroundTransparency = 1
-    moneyText.TextColor3 = Color3.fromRGB(255, 255, 255)
-    moneyText.TextScaled = false
-    moneyText.TextSize = 13 * scale
-    moneyText.Font = Enum.Font.Gotham
-    moneyText.Text = "💰 Money: 0"
-    moneyText.TextXAlignment = Enum.TextXAlignment.Left
-    moneyText.Parent = statsBox
-    
-    local goldenEggsText = Instance.new("TextLabel")
-    goldenEggsText.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
-    goldenEggsText.Position = UDim2.new(0, 5 * scale, 0, 82 * scale)
-    goldenEggsText.BackgroundTransparency = 1
-    goldenEggsText.TextColor3 = Color3.fromRGB(255, 215, 0)
-    goldenEggsText.TextScaled = false
-    goldenEggsText.TextSize = 13 * scale
-    goldenEggsText.Font = Enum.Font.Gotham
-    goldenEggsText.Text = "🥚 Golden Eggs: 0"
-    goldenEggsText.TextXAlignment = Enum.TextXAlignment.Left
-    goldenEggsText.Parent = statsBox
-    
-    local petsText = Instance.new("TextLabel")
-    petsText.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
-    petsText.Position = UDim2.new(0, 5 * scale, 0, 104 * scale)
-    petsText.BackgroundTransparency = 1
-    petsText.TextColor3 = Color3.fromRGB(255, 255, 255)
-    petsText.TextScaled = false
-    petsText.TextSize = 13 * scale
-    petsText.Font = Enum.Font.Gotham
-    petsText.Text = "🐾 Pets: 0"
-    petsText.TextXAlignment = Enum.TextXAlignment.Left
-    petsText.Parent = statsBox
-    
-    local rebirthsText = Instance.new("TextLabel")
-    rebirthsText.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
-    rebirthsText.Position = UDim2.new(0, 5 * scale, 0, 126 * scale)
-    rebirthsText.BackgroundTransparency = 1
-    rebirthsText.TextColor3 = Color3.fromRGB(255, 200, 100)
-    rebirthsText.TextScaled = false
-    rebirthsText.TextSize = 13 * scale
-    rebirthsText.Font = Enum.Font.Gotham
-    rebirthsText.Text = "🔄 Total Rebirths: 0"
-    rebirthsText.TextXAlignment = Enum.TextXAlignment.Left
-    rebirthsText.Parent = statsBox
-    
-    local affordableRebirthText = Instance.new("TextLabel")
-    affordableRebirthText.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
-    affordableRebirthText.Position = UDim2.new(0, 5 * scale, 0, 148 * scale)
-    affordableRebirthText.BackgroundTransparency = 1
-    affordableRebirthText.TextColor3 = Color3.fromRGB(100, 255, 100)
-    affordableRebirthText.TextScaled = false
-    affordableRebirthText.TextSize = 13 * scale
-    affordableRebirthText.Font = Enum.Font.GothamBold
-    affordableRebirthText.Text = "⚡ Can Rebirth: 0"
-    affordableRebirthText.TextXAlignment = Enum.TextXAlignment.Left
-    affordableRebirthText.Parent = statsBox
-    
-    local modeTitle = Instance.new("TextLabel")
-    modeTitle.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
-    modeTitle.Position = UDim2.new(0, 5 * scale, 0, 172 * scale)
-    modeTitle.BackgroundTransparency = 1
-    modeTitle.TextColor3 = Color3.fromRGB(100, 200, 255)
-    modeTitle.TextScaled = false
-    modeTitle.TextSize = 13 * scale
-    modeTitle.Font = Enum.Font.GothamBold
-    modeTitle.Text = "⚙️ CURRENT MODE"
-    modeTitle.TextXAlignment = Enum.TextXAlignment.Left
-    modeTitle.Parent = statsBox
-    
-    local modeStatusText = Instance.new("TextLabel")
-    modeStatusText.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
-    modeStatusText.Position = UDim2.new(0, 5 * scale, 0, 194 * scale)
-    modeStatusText.BackgroundTransparency = 1
-    modeStatusText.TextColor3 = Color3.fromRGB(255, 200, 100)
-    modeStatusText.TextScaled = false
-    modeStatusText.TextSize = 13 * scale
-    modeStatusText.Font = Enum.Font.Gotham
-    modeStatusText.Text = "Mode: Checking..."
-    modeStatusText.TextXAlignment = Enum.TextXAlignment.Left
-    modeStatusText.Parent = statsBox
-    
-    local strengthGoalText = Instance.new("TextLabel")
-    strengthGoalText.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
-    strengthGoalText.Position = UDim2.new(0, 5 * scale, 0, 216 * scale)
-    strengthGoalText.BackgroundTransparency = 1
-    strengthGoalText.TextColor3 = Color3.fromRGB(150, 150, 150)
-    strengthGoalText.TextScaled = false
-    strengthGoalText.TextSize = 13 * scale
-    strengthGoalText.Font = Enum.Font.Gotham
-    strengthGoalText.Text = "Goal: 0"
-    strengthGoalText.TextXAlignment = Enum.TextXAlignment.Left
-    strengthGoalText.Parent = statsBox
-    
-    local objectTitle = Instance.new("TextLabel")
-    objectTitle.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
-    objectTitle.Position = UDim2.new(0, 5 * scale, 0, 240 * scale)
-    objectTitle.BackgroundTransparency = 1
-    objectTitle.TextColor3 = Color3.fromRGB(200, 150, 100)
-    objectTitle.TextScaled = false
-    objectTitle.TextSize = 13 * scale
-    objectTitle.Font = Enum.Font.GothamBold
-    objectTitle.Text = "📦 CURRENT OBJECT"
-    objectTitle.TextXAlignment = Enum.TextXAlignment.Left
-    objectTitle.Parent = statsBox
-    
-    local currentObjectText = Instance.new("TextLabel")
-    currentObjectText.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
-    currentObjectText.Position = UDim2.new(0, 5 * scale, 0, 262 * scale)
-    currentObjectText.BackgroundTransparency = 1
-    currentObjectText.TextColor3 = Color3.fromRGB(255, 255, 255)
-    currentObjectText.TextScaled = false
-    currentObjectText.TextSize = 13 * scale
-    currentObjectText.Font = Enum.Font.Gotham
-    currentObjectText.Text = "None (x0)"
-    currentObjectText.TextXAlignment = Enum.TextXAlignment.Left
-    currentObjectText.Parent = statsBox
-    
-    local nextObjectTitle = Instance.new("TextLabel")
-    nextObjectTitle.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
-    nextObjectTitle.Position = UDim2.new(0, 5 * scale, 0, 286 * scale)
-    nextObjectTitle.BackgroundTransparency = 1
-    nextObjectTitle.TextColor3 = Color3.fromRGB(200, 150, 100)
-    nextObjectTitle.TextScaled = false
-    nextObjectTitle.TextSize = 13 * scale
-    nextObjectTitle.Font = Enum.Font.GothamBold
-    nextObjectTitle.Text = "🎯 NEXT OBJECT"
-    nextObjectTitle.TextXAlignment = Enum.TextXAlignment.Left
-    nextObjectTitle.Parent = statsBox
-    
-    local nextObjectText = Instance.new("TextLabel")
-    nextObjectText.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
-    nextObjectText.Position = UDim2.new(0, 5 * scale, 0, 308 * scale)
-    nextObjectText.BackgroundTransparency = 1
-    nextObjectText.TextColor3 = Color3.fromRGB(255, 200, 100)
-    nextObjectText.TextScaled = false
-    nextObjectText.TextSize = 13 * scale
-    nextObjectText.Font = Enum.Font.Gotham
-    nextObjectText.Text = "None (Cost: 0, x0)"
-    nextObjectText.TextXAlignment = Enum.TextXAlignment.Left
-    nextObjectText.Parent = statsBox
-    
-    local runtimeText = Instance.new("TextLabel")
-    runtimeText.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
-    runtimeText.Position = UDim2.new(0, 5 * scale, 0, 332 * scale)
-    runtimeText.BackgroundTransparency = 1
-    runtimeText.TextColor3 = Color3.fromRGB(150, 150, 150)
-    runtimeText.TextScaled = false
-    runtimeText.TextSize = 13 * scale
-    runtimeText.Font = Enum.Font.Gotham
-    runtimeText.Text = "⏱️ Runtime: 0:00"
-    runtimeText.TextXAlignment = Enum.TextXAlignment.Left
-    runtimeText.Parent = statsBox
-    
-    local upgradesBox = Instance.new("Frame")
-    upgradesBox.Size = UDim2.new(1, 0, 1, -340 * scale)
-    upgradesBox.Position = UDim2.new(0, 0, 0, 335 * scale)
-    upgradesBox.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
-    upgradesBox.BackgroundTransparency = 0
-    upgradesBox.BorderSizePixel = 0
-    upgradesBox.Parent = content
-    
-    local upgradesCorner = Instance.new("UICorner")
-    upgradesCorner.CornerRadius = UDim.new(0, 8 * scale)
-    upgradesCorner.Parent = upgradesBox
-    
-    local upgradesTitle = Instance.new("TextLabel")
-    upgradesTitle.Size = UDim2.new(1, -10 * scale, 0, 30 * scale)
-    upgradesTitle.Position = UDim2.new(0, 5 * scale, 0, 5 * scale)
-    upgradesTitle.BackgroundTransparency = 1
-    upgradesTitle.TextColor3 = Color3.fromRGB(200, 150, 200)
-    upgradesTitle.TextScaled = false
-    upgradesTitle.TextSize = 14 * scale
-    upgradesTitle.Font = Enum.Font.GothamBold
-    upgradesTitle.Text = "⬆️ UPGRADES"
-    upgradesTitle.TextXAlignment = Enum.TextXAlignment.Left
-    upgradesTitle.Parent = upgradesBox
-    
-    local upgradesList = Instance.new("ScrollingFrame")
-    upgradesList.Size = UDim2.new(1, -10 * scale, 1, -45 * scale)
-    upgradesList.Position = UDim2.new(0, 5 * scale, 0, 40 * scale)
-    upgradesList.BackgroundTransparency = 1
-    upgradesList.BorderSizePixel = 0
-    upgradesList.ScrollBarThickness = 6 * scale
-    upgradesList.CanvasSize = UDim2.new(0, 0, 0, 0)
-    upgradesList.Parent = upgradesBox
-    
-    local upgradesLayout = Instance.new("UIListLayout")
-    upgradesLayout.Padding = UDim.new(0, 5 * scale)
-    upgradesLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    upgradesLayout.Parent = upgradesList
-    
-    Dashboard = {
-        Parent = screenGui,
-        Strength = strengthText,
-        Money = moneyText,
-        GoldenEggs = goldenEggsText,
-        Pets = petsText,
-        Rebirths = rebirthsText,
-        AffordableRebirth = affordableRebirthText,
-        ModeStatus = modeStatusText,
-        StrengthGoal = strengthGoalText,
-        CurrentObject = currentObjectText,
-        NextObject = nextObjectText,
-        Runtime = runtimeText,
-        UpgradesList = upgradesList,
-        UpgradesLayout = upgradesLayout,
-        Console = nil
-    }
-    
-    AddConsoleMessage("Dashboard loaded - " .. username)
-end
-
-local function UpdateUpgradesList()
-    pcall(function()
-        if not Dashboard or not Dashboard.UpgradesList then return end
-        
-        for _, child in pairs(Dashboard.UpgradesList:GetChildren()) do
-            if child:IsA("Frame") and child.Name ~= "UIListLayout" then
-                pcall(function() child:Destroy() end)
-            end
+            statusLabel.Text = "⚠️ AUTO-THROW: DISABLED"
+            statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+            task.wait(0.3)
+            statusLabel.Text = "✅ AUTO-TRAIN: ENABLED"
+            statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
         end
         
-        local yOffset = 0
-        
-        for upgradeName, upgradeData in pairs(EasterUpgradesConfig or {}) do
-            if upgradeName ~= "Catagories" and not upgradeData.Hidden then
-                local stat = Stats.Get(upgradeData.StatName)
-                if stat then
-                    local currentLevel = stat.Value or 0
-                    local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
-                    
-                    local upgradeFrame = Instance.new("Frame")
-                    upgradeFrame.Size = UDim2.new(1, 0, 0, 45)
-                    upgradeFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
-                    upgradeFrame.BackgroundTransparency = 0
-                    upgradeFrame.BorderSizePixel = 0
-                    upgradeFrame.Parent = Dashboard.UpgradesList
-                    
-                    local frameCorner = Instance.new("UICorner")
-                    frameCorner.CornerRadius = UDim.new(0, 6)
-                    frameCorner.Parent = upgradeFrame
-                    
-                    local nameLabel = Instance.new("TextLabel")
-                    nameLabel.Size = UDim2.new(0.5, -5, 1, 0)
-                    nameLabel.Position = UDim2.new(0, 5, 0, 0)
-                    nameLabel.BackgroundTransparency = 1
-                    nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-                    nameLabel.TextScaled = false
-                    nameLabel.TextSize = 12
-                    nameLabel.Font = Enum.Font.GothamBold
-                    nameLabel.Text = upgradeName
-                    nameLabel.TextXAlignment = Enum.TextXAlignment.Left
-                    nameLabel.Parent = upgradeFrame
-                    
-                    local levelLabel = Instance.new("TextLabel")
-                    levelLabel.Size = UDim2.new(0.25, -5, 1, 0)
-                    levelLabel.Position = UDim2.new(0.5, 0, 0, 0)
-                    levelLabel.BackgroundTransparency = 1
-                    levelLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-                    levelLabel.TextScaled = false
-                    levelLabel.TextSize = 11
-                    levelLabel.Font = Enum.Font.Gotham
-                    levelLabel.Text = currentLevel .. "/" .. maxLevel
-                    levelLabel.TextXAlignment = Enum.TextXAlignment.Center
-                    levelLabel.Parent = upgradeFrame
-                    
-                    local statusLabel = Instance.new("TextLabel")
-                    statusLabel.Size = UDim2.new(0.25, -5, 1, 0)
-                    statusLabel.Position = UDim2.new(0.75, 0, 0, 0)
-                    statusLabel.BackgroundTransparency = 1
-                    statusLabel.TextScaled = false
-                    statusLabel.TextSize = 11
-                    statusLabel.Font = Enum.Font.Gotham
-                    statusLabel.TextXAlignment = Enum.TextXAlignment.Right
-                    statusLabel.Parent = upgradeFrame
-                    
-                    if currentLevel >= maxLevel then
-                        statusLabel.Text = "MAXED"
-                        statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
-                    else
-                        local cost
-                        if upgradeData.Max then
-                            cost = upgradeData.UpgradeCosts(currentLevel)
-                        else
-                            cost = upgradeData.UpgradeCosts[currentLevel + 1]
-                        end
-                        statusLabel.Text = FormatNumber(cost)
-                        if (GoldenEggs and GoldenEggs.Value or 0) >= cost then
-                            statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
-                        else
-                            statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-                        end
-                    end
-                    
-                    yOffset = yOffset + 50
-                end
-            end
+        -- Ensure AutoTrain is enabled
+        if AutoTrain and not AutoTrain.Value then
+            Network.FireServer("Toggle Setting", "AutoTrain")
+            statusLabel.Text = "✅ AUTO-TRAIN: ENABLED"
+            statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
         end
-        
-        Dashboard.UpgradesList.CanvasSize = UDim2.new(0, 0, 0, yOffset)
     end)
 end
 
-local function UpdateDashboard()
+-- Handle screen resizing
+workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
     pcall(function()
-        if not Dashboard or not Dashboard.Parent then
-            CreateDashboard()
-            task.wait(0.5)
-        end
-        
-        if Dashboard then
-            local currentStrength = GetCurrentStrength()
-            local threshold = GetStrengthThreshold()
-            local rebirths = GetCurrentRebirths()
-            
-            Dashboard.Strength.Text = "💪 Strength: " .. FormatNumber(currentStrength)
-            Dashboard.Money.Text = "💰 Money: " .. FormatNumber(GetCurrentMoney())
-            Dashboard.GoldenEggs.Text = "🥚 Golden Eggs: " .. FormatNumber(GoldenEggs and GoldenEggs.Value or 0)
-            Dashboard.Pets.Text = "🐾 Pets: " .. FormatNumber(PetCount and PetCount.Value or 0)
-            Dashboard.Rebirths.Text = "🔄 Total Rebirths: " .. FormatNumber(rebirths)
-            Dashboard.StrengthGoal.Text = "🎯 Strength Goal: " .. FormatNumber(threshold) .. " (" .. (rebirths < 1000000 and "<1M Rebirths" or "≥1M Rebirths") .. ")"
-            
-            -- Update mode status
-            if currentStrength < threshold then
-                Dashboard.ModeStatus.Text = "⚙️ Mode: TRAINING (Need " .. FormatNumber(threshold - currentStrength) .. " more strength)"
-                Dashboard.ModeStatus.TextColor3 = Color3.fromRGB(255, 200, 100)
-            else
-                Dashboard.ModeStatus.Text = "⚙️ Mode: AUTO-THROW ACTIVE"
-                Dashboard.ModeStatus.TextColor3 = Color3.fromRGB(100, 255, 100)
-            end
-            
-            local bestAffordable, bestCost = GetBestAffordableRebirth()
-            if bestAffordable > 0 then
-                Dashboard.AffordableRebirth.Text = "⚡ Can Rebirth: " .. FormatNumber(bestAffordable) .. " (Cost: " .. FormatNumber(bestCost) .. ")"
-                Dashboard.AffordableRebirth.TextColor3 = Color3.fromRGB(100, 255, 100)
-            else
-                Dashboard.AffordableRebirth.Text = "⚡ Can Rebirth: 0 (Need more money)"
-                Dashboard.AffordableRebirth.TextColor3 = Color3.fromRGB(255, 100, 100)
-            end
-            
-            UpdateObjectInfo()
-            
-            if CurrentObjectName ~= "None" then
-                Dashboard.CurrentObject.Text = CurrentObjectName .. " (x" .. FormatNumber(CurrentObjectMultiplier) .. ")"
-            else
-                Dashboard.CurrentObject.Text = "None (x0)"
-            end
-            
-            if NextObjectName ~= "None" then
-                Dashboard.NextObject.Text = NextObjectName .. " (Cost: " .. FormatNumber(NextObjectCost) .. ", x" .. FormatNumber(NextObjectMultiplier) .. ")"
-                if GetCurrentMoney() >= NextObjectCost then
-                    Dashboard.NextObject.TextColor3 = Color3.fromRGB(100, 255, 100)
-                else
-                    Dashboard.NextObject.TextColor3 = Color3.fromRGB(255, 200, 100)
-                end
-            else
-                Dashboard.NextObject.Text = "None (Max reached!)"
-                Dashboard.NextObject.TextColor3 = Color3.fromRGB(0, 255, 0)
-            end
-            
-            local runtime = os.clock() - StartTime
-            Dashboard.Runtime.Text = "⏱️ Runtime: " .. FormatTime(runtime)
-            
-            UpdateUpgradesList()
-        end
+        UpdateProgressBar(Strength and Strength.Value or 0)
     end)
-end
-
-pcall(function()
-    if workspace and workspace.CurrentCamera then
-        workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
-            pcall(function()
-                if Dashboard and Dashboard.Parent then
-                    CreateDashboard()
-                end
-            end)
-        end)
-    end
 end)
 
+-- Anti-AFK
 pcall(function()
     local idledConnections = getconnections(LocalPlayer.Idled)
     for _, connection in pairs(idledConnections) do
@@ -1001,9 +254,7 @@ LocalPlayer.Idled:Connect(function()
         VirtualUser:CaptureController()
         VirtualUser:ClickButton2(Vector2.new(0,0))
     end)
-    
     task.wait(0.1)
-    
     pcall(function()
         VirtualInput:SendMouseMotionEvent(1, 1, mouse.X, mouse.Y, game)
         task.wait(0.05)
@@ -1021,51 +272,17 @@ task.spawn(function()
 end)
 
 -- Initial setup
-pcall(function()
-    Jump(5)
-    -- Start with auto-train enabled until strength threshold is met
-    EnableAutoTrain()
-    DisableAutoThrow() -- Ensure auto-throw is off initially
-    UpdateObjectInfo()
-end)
+task.wait(2)
+UpdateUI()
 
--- Main control loop for strength-based mode switching
+-- Main loop
 task.spawn(function()
     while true do
-        task.wait(2) -- Check every 2 seconds
-        pcall(CheckAndControlAutoModes)
+        task.wait(0.5)
+        pcall(UpdateUI)
     end
 end)
 
--- Upgrade buying loop
-task.spawn(function()
-    while true do
-        task.wait(30)
-        pcall(CheckAndBuyUpgrades)
-    end
-end)
-
--- Object auto-buy loop (only runs when auto-throw is enabled)
-task.spawn(function()
-    while true do
-        task.wait(5)
-        pcall(AutoBuyBestObject)
-    end
-end)
-
--- Dashboard update loop
-task.spawn(function()
-    while true do
-        task.wait(1)
-        pcall(UpdateDashboard)
-    end
-end)
-
-AddConsoleMessage("All ScreenGuis destroyed")
-AddConsoleMessage("Script loaded - 5 jumps done")
-AddConsoleMessage("Strength-based mode control ACTIVE")
-AddConsoleMessage(string.format("Threshold: %s for %s rebirths", FormatNumber(STRENGTH_THRESHOLD_UNDER_1M_REBIRTHS), "<1M"))
-AddConsoleMessage(string.format("Threshold: %s for %s rebirths", FormatNumber(STRENGTH_THRESHOLD_OVER_1M_REBIRTHS), "≥1M"))
-AddConsoleMessage("Upgrades auto-buying active")
-AddConsoleMessage("Objects auto-buying active (only when AUTO-THROW mode)")
-AddConsoleMessage("Affordable rebirth shown in dashboard (NOT auto-rebirthing)")
+print("[Train Mode] FULL SCREEN script loaded")
+print("[Train Mode] Auto-Throw disabled | Auto-Train enabled")
+print("[Train Mode] UI covers entire screen")
