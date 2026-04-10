@@ -13,20 +13,26 @@ repeat task.wait() until Stats.IsLoaded(LocalPlayer)
 local autoThrowStat = Stats.Get("AutoThrow")
 local autoTrainStat = Stats.Get("AutoTrain")
 local Money = Stats.Get("Money")
-local CurrentUniverse = Stats.Get("CurrentUniverse")
 local CurrentWorld = Stats.Get("CurrentWorld")
 local ObjectsUnlockedEvent = Stats.Get("ObjectsUnlockedEvent")
 local GoldenEggs = Stats.Get("GoldenEggs")
+local RebirthsStat = Stats.Get("Rebirths")
 
 local Remotes = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes")
 local RemoteFunction = Remotes:WaitForChild("__remotefunction")
 local ObjectsTable = require(ReplicatedStorage:WaitForChild("Tables").Objects)
 local EasterUpgradesConfig = require(ReplicatedStorage:WaitForChild("Tables").EasterUpgrades)
+local RebirthsEaster = require(ReplicatedStorage:WaitForChild("Tables").RebirthsEaster)
+local UniverseModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Universe)
+local RebirthModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Rebirths)
+local ShopTable = require(ReplicatedStorage:WaitForChild("Tables").Shop)
 
-if autoTrainStat and autoTrainStat.Value then
-    Network.FireServer("Toggle Setting", "AutoTrain")
-    print("[AutoTrain] Toggled OFF via setting")
-end
+pcall(function()
+    if autoTrainStat and autoTrainStat.Value then
+        Network.FireServer("Toggle Setting", "AutoTrain")
+        print("[AutoTrain] Toggled OFF via setting")
+    end
+end)
 
 for i = 1, math.random(5, 10) do
     pcall(function()
@@ -50,17 +56,55 @@ end)
 
 print("[AutoTrain] Force stopped with jumps")
 
-if autoThrowStat and not autoThrowStat.Value then
-    Network.FireServer("Toggle Setting", "AutoThrow")
-    print("[AutoThrow] Enabled")
-else
-    print("[AutoThrow] Already enabled")
+pcall(function()
+    if autoThrowStat and not autoThrowStat.Value then
+        Network.FireServer("Toggle Setting", "AutoThrow")
+        print("[AutoThrow] Enabled")
+    else
+        print("[AutoThrow] Already enabled")
+    end
+end)
+
+local function GetCurrentMoney()
+    return UniverseModule.GetMoneyStat(LocalPlayer, 0).Value
 end
 
-local UniverseModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Universe)
-local RebirthModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Rebirths)
-local RebirthsEaster = require(ReplicatedStorage:WaitForChild("Tables").RebirthsEaster)
-local ShopTable = require(ReplicatedStorage:WaitForChild("Tables").Shop)
+local function GetRebirthCost(rebirthNumber)
+    return RebirthModule.GetRebirthCost(LocalPlayer, rebirthNumber, 0)
+end
+
+local function GetBestAffordableRebirth()
+    local currentMoney = GetCurrentMoney()
+    local bestAffordable = 0
+    for rebirthNumber, _ in pairs(RebirthsEaster) do
+        local cost = GetRebirthCost(rebirthNumber)
+        if cost <= currentMoney and rebirthNumber > bestAffordable then
+            bestAffordable = rebirthNumber
+        end
+    end
+    return bestAffordable
+end
+
+local function GetTotalRebirths()
+    if RebirthsStat then
+        return RebirthsStat.Value
+    end
+    return 0
+end
+
+local function UseGoldenEggPotion()
+    local args = { "Use Item", "Golden Egg Potion", 1 }
+    local success = pcall(function()
+        return RemoteFunction:InvokeServer(unpack(args))
+    end)
+    if success then
+        print("[Item] Used Golden Egg Potion")
+        return true
+    else
+        print("[Item] Failed to use Golden Egg Potion")
+        return false
+    end
+end
 
 local function BuyGoldenEggUpgrade(upgradeName)
     local success, result = pcall(function()
@@ -102,17 +146,21 @@ local function CheckAndBuyUpgrades()
 end
 
 local function PerformRebirth()
-    local args = { "Rebirth", 12 }
-    local success = pcall(function()
-        return RemoteFunction:InvokeServer(unpack(args))
-    end)
-    if success then
-        print("[Rebirth] Performed rebirth")
-        return true
-    else
-        print("[Rebirth] Failed")
-        return false
+    local bestRebirth = GetBestAffordableRebirth()
+    if bestRebirth > 0 then
+        local args = { "Rebirth", bestRebirth }
+        local success = pcall(function()
+            return RemoteFunction:InvokeServer(unpack(args))
+        end)
+        if success then
+            print("[Rebirth] Performed rebirth #" .. bestRebirth)
+            return true
+        else
+            print("[Rebirth] Failed")
+            return false
+        end
     end
+    return false
 end
 
 task.spawn(function()
@@ -124,19 +172,21 @@ end)
 
 task.spawn(function()
     while true do
+        task.wait(480)
+        pcall(UseGoldenEggPotion)
+    end
+end)
+
+task.spawn(function()
+    while true do
         task.wait(30)
         pcall(CheckAndBuyUpgrades)
     end
 end)
 
-local function GetCurrentUniverseMoney()
-    local universe = CurrentUniverse and CurrentUniverse.Value or 0
-    return UniverseModule.GetMoneyStat(LocalPlayer, universe).Value
-end
-
 local function GetNextObjectToBuy()
     local currentWorld = CurrentWorld and CurrentWorld.Value or 0
-    local currentMoney = Money.Value
+    local currentMoney = Money and Money.Value or 0
     local eventUnlocked = ObjectsUnlockedEvent and ObjectsUnlockedEvent.Value or 0
     
     local bestObject = nil
@@ -168,213 +218,4 @@ local function BuyNextObject()
         print("[Objects] Bought next object")
         return true
     else
-        print("[Objects] Failed to buy: " .. tostring(result))
-        return false
-    end
-end
-
-local function EquipObject(objectId)
-    local args = { "Equip Object", objectId }
-    local success = pcall(function()
-        return RemoteFunction:InvokeServer(unpack(args))
-    end)
-    if success then
-        print("[Objects] Equipped: " .. objectId)
-        return true
-    else
-        print("[Objects] Failed to equip: " .. objectId)
-        return false
-    end
-end
-
-local function BuyAndEquipBestObject()
-    local nextObject = GetNextObjectToBuy()
-    if nextObject then
-        print("[Objects] Trying to buy object: " .. nextObject)
-        local bought = BuyNextObject()
-        if bought then
-            task.wait(0.5)
-            EquipObject(nextObject)
-        end
-    else
-        print("[Objects] No affordable objects to buy")
-    end
-end
-
-local function GetBestObjectToBuy()
-    local currentMoney = Money.Value
-    local bestObject = nil
-    local bestPrice = 0
-    
-    for objectName, objectData in pairs(ShopTable) do
-        if objectData.Cost and objectData.Cost <= currentMoney then
-            if objectData.Cost > bestPrice then
-                bestPrice = objectData.Cost
-                bestObject = objectName
-            end
-        end
-    end
-    
-    return bestObject, bestPrice
-end
-
-local function BuyObject(objectName)
-    local args = { "Buy Object", objectName }
-    local success = pcall(function()
-        return RemoteFunction:InvokeServer(unpack(args))
-    end)
-    if success then
-        print("[Shop] Bought: " .. objectName)
-        return true
-    else
-        print("[Shop] Failed to buy: " .. objectName)
-        return false
-    end
-end
-
-local function BuyBestShopObject()
-    local bestObject, bestPrice = GetBestObjectToBuy()
-    if bestObject then
-        print("[Shop] Trying to buy best object: " .. bestObject .. " for " .. bestPrice)
-        BuyObject(bestObject)
-        return true
-    else
-        print("[Shop] No affordable objects")
-        return false
-    end
-end
-
-local function GetRebirthCost(rebirthNumber)
-    local universe = CurrentUniverse and CurrentUniverse.Value or 0
-    return RebirthModule.GetRebirthCost(LocalPlayer, rebirthNumber, universe)
-end
-
-local function GetBestAffordableRebirth()
-    local currentMoney = GetCurrentUniverseMoney()
-    local bestAffordable = 0
-    for rebirthNumber, _ in pairs(RebirthsEaster) do
-        local cost = GetRebirthCost(rebirthNumber)
-        if cost <= currentMoney and rebirthNumber > bestAffordable then
-            bestAffordable = rebirthNumber
-        end
-    end
-    return bestAffordable
-end
-
-local function GetTotalRebirths()
-    local rebirthStat = Stats.Get("Rebirths")
-    if rebirthStat then
-        return rebirthStat.Value
-    end
-    return 0
-end
-
-task.spawn(function()
-    while true do
-        task.wait(30)
-        pcall(BuyAndEquipBestObject)
-    end
-end)
-
-task.spawn(function()
-    while true do
-        task.wait(60)
-        pcall(BuyBestShopObject)
-    end
-end)
-
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "RebirthUI"
-screenGui.ResetOnSpawn = false
-screenGui.Parent = CoreGui
-
-local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 170, 0, 150)
-mainFrame.Position = UDim2.new(0, 5, 0.5, -75)
-mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-mainFrame.BackgroundTransparency = 0.1
-mainFrame.BorderSizePixel = 0
-mainFrame.Parent = screenGui
-
-local uiCorner = Instance.new("UICorner")
-uiCorner.CornerRadius = UDim.new(0, 8)
-uiCorner.Parent = mainFrame
-
-local titleLabel = Instance.new("TextLabel")
-titleLabel.Size = UDim2.new(1, 0, 0, 25)
-titleLabel.Position = UDim2.new(0, 0, 0, 0)
-titleLabel.BackgroundTransparency = 1
-titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-titleLabel.TextScaled = true
-titleLabel.Font = Enum.Font.GothamBold
-titleLabel.Text = "REBIRTH INFO"
-titleLabel.Parent = mainFrame
-
-local rebirthsLabel = Instance.new("TextLabel")
-rebirthsLabel.Size = UDim2.new(1, -10, 0, 30)
-rebirthsLabel.Position = UDim2.new(0, 5, 0, 30)
-rebirthsLabel.BackgroundTransparency = 1
-rebirthsLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
-rebirthsLabel.TextScaled = true
-rebirthsLabel.Font = Enum.Font.GothamSemibold
-rebirthsLabel.Text = "Rebirths: 0"
-rebirthsLabel.Parent = mainFrame
-
-local bestLabel = Instance.new("TextLabel")
-bestLabel.Size = UDim2.new(1, -10, 0, 30)
-bestLabel.Position = UDim2.new(0, 5, 0, 62)
-bestLabel.BackgroundTransparency = 1
-bestLabel.TextColor3 = Color3.fromRGB(0, 255, 100)
-bestLabel.TextScaled = true
-bestLabel.Font = Enum.Font.GothamSemibold
-bestLabel.Text = "Best: 0"
-bestLabel.Parent = mainFrame
-
-local goldenLabel = Instance.new("TextLabel")
-goldenLabel.Size = UDim2.new(1, -10, 0, 30)
-goldenLabel.Position = UDim2.new(0, 5, 0, 94)
-goldenLabel.BackgroundTransparency = 1
-goldenLabel.TextColor3 = Color3.fromRGB(255, 200, 50)
-goldenLabel.TextScaled = true
-goldenLabel.Font = Enum.Font.GothamSemibold
-goldenLabel.Text = "Golden: 0"
-goldenLabel.Parent = mainFrame
-
-local function UpdateUI()
-    pcall(function()
-        local totalRebirths = GetTotalRebirths()
-        local bestAffordable = GetBestAffordableRebirth()
-        local goldenEggs = GoldenEggs and GoldenEggs.Value or 0
-        
-        rebirthsLabel.Text = "Rebirths: " .. totalRebirths
-        bestLabel.Text = "Best: " .. bestAffordable
-        goldenLabel.Text = "Golden: " .. goldenEggs
-    end)
-end
-
-UpdateUI()
-
-local rebirthStat = Stats.Get("Rebirths")
-if rebirthStat then
-    rebirthStat.Changed:Connect(UpdateUI)
-end
-
-if GoldenEggs then
-    GoldenEggs.Changed:Connect(UpdateUI)
-end
-
-if CurrentUniverse then
-    CurrentUniverse.Changed:Connect(UpdateUI)
-end
-
-if ObjectsUnlockedEvent then
-    ObjectsUnlockedEvent.Changed:Connect(function()
-        pcall(BuyAndEquipBestObject)
-    end)
-end
-
-print("[AutoThrow] Setup complete - UI visible")
-print("[Objects] Auto-buy and equip next object every 30 seconds")
-print("[Shop] Auto-buy best shop object every 60 seconds")
-print("[Rebirth] Auto-rebirth every 10 minutes")
-print("[EasterUpgrades] Auto-buy upgrades every 30 seconds")
+        print("[Objects] Failed to buy: " .. tostring(result
