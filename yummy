@@ -1,41 +1,38 @@
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local CoreGui = game:GetService("CoreGui")
-local RunService = game:GetService("RunService")
 local VirtualUser = game:GetService("VirtualUser")
 local VirtualInput = game:GetService("VirtualInputManager")
+local CoreGui = game:GetService("CoreGui")
 
 local Paper = require(ReplicatedStorage:WaitForChild("Paper"))
 local Stats = Paper.Stats
 local Network = Paper.Network
 local EasterUpgradesConfig = require(ReplicatedStorage:WaitForChild("Tables").EasterUpgrades)
 local UniverseModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Universe)
-local WorldsModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Worlds)
 
-repeat task.wait() until pcall(function() return Stats.IsLoaded(LocalPlayer) end)
+repeat task.wait() until Stats.IsLoaded(LocalPlayer)
 
 local Strength = Stats.Get("Strength")
 local Money = Stats.Get("Money")
 local PetCount = Stats.Get("PetCount")
 local GoldenEggs = Stats.Get("GoldenEggs")
 local AutoThrow = Stats.Get("AutoThrow")
-local ThrowSpeedTimer = Stats.Get("ThrowSpeedTimer")
-local CurrentWorld = Stats.Get("CurrentWorld")
+local AutoTrain = Stats.Get("AutoTrain")
 local Rebirths = Stats.Get("Rebirths")
 
 local StartTime = os.clock()
 local mouse = LocalPlayer:GetMouse()
 
 for _, gui in pairs(CoreGui:GetChildren()) do
-    if gui.Name == "FullScreenDashboard" then
+    if gui:IsA("ScreenGui") then
         gui:Destroy()
     end
 end
 
 local Dashboard = nil
 local ConsoleLines = {}
-local MaxConsoleLines = 15
+local MaxConsoleLines = 12
 
 local function AddConsoleMessage(msg)
     local timestamp = os.date("%H:%M:%S")
@@ -80,237 +77,305 @@ local function FormatTime(seconds)
     end
 end
 
-local function CreateFullScreenDashboard()
+local function GetScreenScale()
+    local viewportSize = workspace.CurrentCamera.ViewportSize
+    local scale = math.min(viewportSize.X / 1920, viewportSize.Y / 1080)
+    return math.clamp(scale, 0.5, 1.5)
+end
+
+local function Jump(count)
+    pcall(function()
+        local character = LocalPlayer.Character
+        if not character then return end
+        local humanoid = character:FindFirstChild("Humanoid")
+        if not humanoid then return end
+        for i = 1, count do
+            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            task.wait(0.15)
+        end
+        AddConsoleMessage("Jumped " .. count .. " times")
+    end)
+end
+
+local function DisableAutoTrainIfEnabled()
+    pcall(function()
+        if AutoTrain and AutoTrain.Value then
+            AddConsoleMessage("AutoTrain is enabled, disabling...")
+            Network.FireServer("Stop Training")
+            LocalPlayer:SetAttribute("TrainingStation", nil)
+            Network.FireServer("Toggle Setting", "AutoTrain")
+            AddConsoleMessage("AutoTrain disabled")
+        else
+            AddConsoleMessage("AutoTrain already disabled")
+        end
+    end)
+end
+
+local function EnsureAutoThrowEnabled()
+    pcall(function()
+        if not AutoThrow.Value then
+            Network.FireServer("Toggle Setting", "AutoThrow")
+            AddConsoleMessage("AutoThrow enabled")
+        end
+    end)
+end
+
+local function BuyUpgrade(upgradeName)
+    local args = { "Easter Upgrade", upgradeName }
+    local success = pcall(function()
+        return Network.InvokeServer(unpack(args))
+    end)
+    if success then
+        AddConsoleMessage("Purchased: " .. upgradeName)
+    end
+end
+
+local function GetUpgradeCost(upgradeData, currentLevel)
+    if upgradeData.Max then
+        return upgradeData.UpgradeCosts(currentLevel)
+    else
+        return upgradeData.UpgradeCosts[currentLevel + 1]
+    end
+end
+
+local rebirthSkipsStopped = false
+
+local function CheckAndBuyUpgrades()
+    pcall(function()
+        for upgradeName, upgradeData in pairs(EasterUpgradesConfig) do
+            if upgradeName ~= "Catagories" and not upgradeData.Hidden then
+                if upgradeName == "More Rebirth Skips" then
+                    if not rebirthSkipsStopped then
+                        local stat = Stats.Get(upgradeData.StatName)
+                        if stat then
+                            local currentLevel = stat.Value
+                            local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
+                            if currentLevel < maxLevel then
+                                local cost = GetUpgradeCost(upgradeData, currentLevel)
+                                if cost > 1000 then
+                                    rebirthSkipsStopped = true
+                                elseif GoldenEggs.Value >= cost then
+                                    BuyUpgrade(upgradeName)
+                                    task.wait(0.5)
+                                end
+                            end
+                        end
+                    end
+                else
+                    local stat = Stats.Get(upgradeData.StatName)
+                    if stat then
+                        local currentLevel = stat.Value
+                        local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
+                        if currentLevel < maxLevel then
+                            local cost = GetUpgradeCost(upgradeData, currentLevel)
+                            if GoldenEggs.Value >= cost then
+                                BuyUpgrade(upgradeName)
+                                task.wait(0.5)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+local function CreateDashboard()
     pcall(function()
         if Dashboard and Dashboard.Parent then
             Dashboard.Parent:Destroy()
         end
         
+        local scale = GetScreenScale()
         local username = LocalPlayer.Name
         
         local screenGui = Instance.new("ScreenGui")
-        screenGui.Name = "FullScreenDashboard"
+        screenGui.Name = "SimpleDashboard"
         screenGui.ResetOnSpawn = false
         screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
         screenGui.Parent = CoreGui
         
         local mainFrame = Instance.new("Frame")
-        mainFrame.Size = UDim2.new(1, 0, 1, 0)
-        mainFrame.Position = UDim2.new(0, 0, 0, 0)
-        mainFrame.BackgroundColor3 = Color3.fromRGB(8, 8, 12)
+        mainFrame.Size = UDim2.new(0, 420 * scale, 0, 520 * scale)
+        mainFrame.Position = UDim2.new(0, 10 * scale, 0, 10 * scale)
+        mainFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 15)
         mainFrame.BackgroundTransparency = 0.05
         mainFrame.BorderSizePixel = 0
+        mainFrame.ClipsDescendants = true
         mainFrame.Parent = screenGui
         
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 12 * scale)
+        corner.Parent = mainFrame
+        
         local titleBar = Instance.new("Frame")
-        titleBar.Size = UDim2.new(1, 0, 0, 70)
-        titleBar.Position = UDim2.new(0, 0, 0, 0)
-        titleBar.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+        titleBar.Size = UDim2.new(1, 0, 0, 40 * scale)
+        titleBar.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
         titleBar.BackgroundTransparency = 0
         titleBar.BorderSizePixel = 0
         titleBar.Parent = mainFrame
         
+        local titleCorner = Instance.new("UICorner")
+        titleCorner.CornerRadius = UDim.new(0, 12 * scale)
+        titleCorner.Parent = titleBar
+        
         local titleText = Instance.new("TextLabel")
         titleText.Size = UDim2.new(1, 0, 1, 0)
-        titleText.Position = UDim2.new(0, 25, 0, 0)
+        titleText.Position = UDim2.new(0, 15 * scale, 0, 0)
         titleText.BackgroundTransparency = 1
         titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
         titleText.TextScaled = false
         titleText.Font = Enum.Font.GothamBold
-        titleText.TextSize = 28
+        titleText.TextSize = 18 * scale
         titleText.TextXAlignment = Enum.TextXAlignment.Left
         titleText.Text = username .. "'s Dashboard"
         titleText.Parent = titleBar
         
         local content = Instance.new("Frame")
-        content.Size = UDim2.new(1, -40, 1, -90)
-        content.Position = UDim2.new(0, 20, 0, 80)
+        content.Size = UDim2.new(1, -20 * scale, 1, -50 * scale)
+        content.Position = UDim2.new(0, 10 * scale, 0, 45 * scale)
         content.BackgroundTransparency = 1
         content.Parent = mainFrame
         
-        local leftColumn = Instance.new("Frame")
-        leftColumn.Size = UDim2.new(0.35, -10, 1, 0)
-        leftColumn.Position = UDim2.new(0, 0, 0, 0)
-        leftColumn.BackgroundTransparency = 1
-        leftColumn.Parent = content
-        
-        local rightColumn = Instance.new("Frame")
-        rightColumn.Size = UDim2.new(0.63, -10, 1, 0)
-        rightColumn.Position = UDim2.new(0.37, 0, 0, 0)
-        rightColumn.BackgroundTransparency = 1
-        rightColumn.Parent = content
-        
         local statsBox = Instance.new("Frame")
-        statsBox.Size = UDim2.new(1, 0, 0, 260)
+        statsBox.Size = UDim2.new(1, 0, 0, 180 * scale)
         statsBox.Position = UDim2.new(0, 0, 0, 0)
         statsBox.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
         statsBox.BackgroundTransparency = 0
         statsBox.BorderSizePixel = 0
-        statsBox.Parent = leftColumn
+        statsBox.Parent = content
         
         local statsCorner = Instance.new("UICorner")
-        statsCorner.CornerRadius = UDim.new(0, 12)
+        statsCorner.CornerRadius = UDim.new(0, 8 * scale)
         statsCorner.Parent = statsBox
         
         local statsTitle = Instance.new("TextLabel")
-        statsTitle.Size = UDim2.new(1, -20, 0, 45)
-        statsTitle.Position = UDim2.new(0, 10, 0, 10)
+        statsTitle.Size = UDim2.new(1, -10 * scale, 0, 30 * scale)
+        statsTitle.Position = UDim2.new(0, 5 * scale, 0, 5 * scale)
         statsTitle.BackgroundTransparency = 1
         statsTitle.TextColor3 = Color3.fromRGB(150, 200, 150)
         statsTitle.TextScaled = false
-        statsTitle.TextSize = 20
+        statsTitle.TextSize = 14 * scale
         statsTitle.Font = Enum.Font.GothamBold
         statsTitle.Text = "📊 STATISTICS"
         statsTitle.TextXAlignment = Enum.TextXAlignment.Left
         statsTitle.Parent = statsBox
         
         local strengthText = Instance.new("TextLabel")
-        strengthText.Size = UDim2.new(1, -20, 0, 38)
-        strengthText.Position = UDim2.new(0, 10, 0, 60)
+        strengthText.Size = UDim2.new(1, -10 * scale, 0, 25 * scale)
+        strengthText.Position = UDim2.new(0, 5 * scale, 0, 38 * scale)
         strengthText.BackgroundTransparency = 1
         strengthText.TextColor3 = Color3.fromRGB(255, 255, 255)
         strengthText.TextScaled = false
-        strengthText.TextSize = 18
+        strengthText.TextSize = 13 * scale
         strengthText.Font = Enum.Font.Gotham
         strengthText.Text = "💪 Strength: 0"
         strengthText.TextXAlignment = Enum.TextXAlignment.Left
         strengthText.Parent = statsBox
         
         local moneyText = Instance.new("TextLabel")
-        moneyText.Size = UDim2.new(1, -20, 0, 38)
-        moneyText.Position = UDim2.new(0, 10, 0, 98)
+        moneyText.Size = UDim2.new(1, -10 * scale, 0, 25 * scale)
+        moneyText.Position = UDim2.new(0, 5 * scale, 0, 63 * scale)
         moneyText.BackgroundTransparency = 1
         moneyText.TextColor3 = Color3.fromRGB(255, 255, 255)
         moneyText.TextScaled = false
-        moneyText.TextSize = 18
+        moneyText.TextSize = 13 * scale
         moneyText.Font = Enum.Font.Gotham
         moneyText.Text = "💰 Money: 0"
         moneyText.TextXAlignment = Enum.TextXAlignment.Left
         moneyText.Parent = statsBox
         
         local goldenEggsText = Instance.new("TextLabel")
-        goldenEggsText.Size = UDim2.new(1, -20, 0, 38)
-        goldenEggsText.Position = UDim2.new(0, 10, 0, 136)
+        goldenEggsText.Size = UDim2.new(1, -10 * scale, 0, 25 * scale)
+        goldenEggsText.Position = UDim2.new(0, 5 * scale, 0, 88 * scale)
         goldenEggsText.BackgroundTransparency = 1
         goldenEggsText.TextColor3 = Color3.fromRGB(255, 215, 0)
         goldenEggsText.TextScaled = false
-        goldenEggsText.TextSize = 18
+        goldenEggsText.TextSize = 13 * scale
         goldenEggsText.Font = Enum.Font.Gotham
         goldenEggsText.Text = "🥚 Golden Eggs: 0"
         goldenEggsText.TextXAlignment = Enum.TextXAlignment.Left
         goldenEggsText.Parent = statsBox
         
         local petsText = Instance.new("TextLabel")
-        petsText.Size = UDim2.new(1, -20, 0, 38)
-        petsText.Position = UDim2.new(0, 10, 0, 174)
+        petsText.Size = UDim2.new(1, -10 * scale, 0, 25 * scale)
+        petsText.Position = UDim2.new(0, 5 * scale, 0, 113 * scale)
         petsText.BackgroundTransparency = 1
         petsText.TextColor3 = Color3.fromRGB(255, 255, 255)
         petsText.TextScaled = false
-        petsText.TextSize = 18
+        petsText.TextSize = 13 * scale
         petsText.Font = Enum.Font.Gotham
         petsText.Text = "🐾 Pets: 0"
         petsText.TextXAlignment = Enum.TextXAlignment.Left
         petsText.Parent = statsBox
         
         local rebirthsText = Instance.new("TextLabel")
-        rebirthsText.Size = UDim2.new(1, -20, 0, 38)
-        rebirthsText.Position = UDim2.new(0, 10, 0, 212)
+        rebirthsText.Size = UDim2.new(1, -10 * scale, 0, 25 * scale)
+        rebirthsText.Position = UDim2.new(0, 5 * scale, 0, 138 * scale)
         rebirthsText.BackgroundTransparency = 1
         rebirthsText.TextColor3 = Color3.fromRGB(255, 200, 100)
         rebirthsText.TextScaled = false
-        rebirthsText.TextSize = 18
+        rebirthsText.TextSize = 13 * scale
         rebirthsText.Font = Enum.Font.Gotham
-        rebirthsText.Text = "🔄 Total Rebirths: 0"
+        rebirthsText.Text = "🔄 Rebirths: 0"
         rebirthsText.TextXAlignment = Enum.TextXAlignment.Left
         rebirthsText.Parent = statsBox
         
         local runtimeText = Instance.new("TextLabel")
-        runtimeText.Size = UDim2.new(1, -20, 0, 38)
-        runtimeText.Position = UDim2.new(0, 10, 0, 250)
+        runtimeText.Size = UDim2.new(1, -10 * scale, 0, 25 * scale)
+        runtimeText.Position = UDim2.new(0, 5 * scale, 0, 163 * scale)
         runtimeText.BackgroundTransparency = 1
         runtimeText.TextColor3 = Color3.fromRGB(150, 150, 150)
         runtimeText.TextScaled = false
-        runtimeText.TextSize = 18
+        runtimeText.TextSize = 13 * scale
         runtimeText.Font = Enum.Font.Gotham
         runtimeText.Text = "⏱️ Runtime: 0:00"
         runtimeText.TextXAlignment = Enum.TextXAlignment.Left
         runtimeText.Parent = statsBox
         
         local upgradesBox = Instance.new("Frame")
-        upgradesBox.Size = UDim2.new(1, 0, 1, -280)
-        upgradesBox.Position = UDim2.new(0, 0, 0, 280)
+        upgradesBox.Size = UDim2.new(1, 0, 1, -200 * scale)
+        upgradesBox.Position = UDim2.new(0, 0, 0, 195 * scale)
         upgradesBox.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
         upgradesBox.BackgroundTransparency = 0
         upgradesBox.BorderSizePixel = 0
-        upgradesBox.Parent = leftColumn
+        upgradesBox.Parent = content
         
         local upgradesCorner = Instance.new("UICorner")
-        upgradesCorner.CornerRadius = UDim.new(0, 12)
+        upgradesCorner.CornerRadius = UDim.new(0, 8 * scale)
         upgradesCorner.Parent = upgradesBox
         
         local upgradesTitle = Instance.new("TextLabel")
-        upgradesTitle.Size = UDim2.new(1, -20, 0, 45)
-        upgradesTitle.Position = UDim2.new(0, 10, 0, 10)
+        upgradesTitle.Size = UDim2.new(1, -10 * scale, 0, 30 * scale)
+        upgradesTitle.Position = UDim2.new(0, 5 * scale, 0, 5 * scale)
         upgradesTitle.BackgroundTransparency = 1
         upgradesTitle.TextColor3 = Color3.fromRGB(200, 150, 200)
         upgradesTitle.TextScaled = false
-        upgradesTitle.TextSize = 20
+        upgradesTitle.TextSize = 14 * scale
         upgradesTitle.Font = Enum.Font.GothamBold
         upgradesTitle.Text = "⬆️ UPGRADES"
         upgradesTitle.TextXAlignment = Enum.TextXAlignment.Left
         upgradesTitle.Parent = upgradesBox
         
         local upgradesList = Instance.new("ScrollingFrame")
-        upgradesList.Size = UDim2.new(1, -20, 1, -65)
-        upgradesList.Position = UDim2.new(0, 10, 0, 55)
+        upgradesList.Size = UDim2.new(1, -10 * scale, 1, -45 * scale)
+        upgradesList.Position = UDim2.new(0, 5 * scale, 0, 40 * scale)
         upgradesList.BackgroundTransparency = 1
         upgradesList.BorderSizePixel = 0
-        upgradesList.ScrollBarThickness = 8
+        upgradesList.ScrollBarThickness = 6 * scale
         upgradesList.CanvasSize = UDim2.new(0, 0, 0, 0)
         upgradesList.Parent = upgradesBox
         
         local upgradesLayout = Instance.new("UIListLayout")
-        upgradesLayout.Padding = UDim.new(0, 8)
+        upgradesLayout.Padding = UDim.new(0, 5 * scale)
         upgradesLayout.SortOrder = Enum.SortOrder.LayoutOrder
         upgradesLayout.Parent = upgradesList
         
         local consoleBox = Instance.new("Frame")
-        consoleBox.Size = UDim2.new(1, 0, 1, 0)
+        consoleBox.Size = UDim2.new(1, 0, 0, 0)
         consoleBox.Position = UDim2.new(0, 0, 0, 0)
-        consoleBox.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
-        consoleBox.BackgroundTransparency = 0
-        consoleBox.BorderSizePixel = 0
-        consoleBox.Parent = rightColumn
-        
-        local consoleCorner = Instance.new("UICorner")
-        consoleCorner.CornerRadius = UDim.new(0, 12)
-        consoleCorner.Parent = consoleBox
-        
-        local consoleTitle = Instance.new("TextLabel")
-        consoleTitle.Size = UDim2.new(1, -20, 0, 45)
-        consoleTitle.Position = UDim2.new(0, 10, 0, 10)
-        consoleTitle.BackgroundTransparency = 1
-        consoleTitle.TextColor3 = Color3.fromRGB(200, 200, 200)
-        consoleTitle.TextScaled = false
-        consoleTitle.TextSize = 20
-        consoleTitle.Font = Enum.Font.GothamBold
-        consoleTitle.Text = "📋 CONSOLE"
-        consoleTitle.TextXAlignment = Enum.TextXAlignment.Left
-        consoleTitle.Parent = consoleBox
-        
-        local consoleText = Instance.new("TextLabel")
-        consoleText.Size = UDim2.new(1, -20, 1, -65)
-        consoleText.Position = UDim2.new(0, 10, 0, 55)
-        consoleText.BackgroundTransparency = 1
-        consoleText.TextColor3 = Color3.fromRGB(180, 180, 180)
-        consoleText.TextScaled = false
-        consoleText.TextSize = 14
-        consoleText.Font = Enum.Font.Gotham
-        consoleText.Text = ""
-        consoleText.TextXAlignment = Enum.TextXAlignment.Left
-        consoleText.TextYAlignment = Enum.TextYAlignment.Top
-        consoleText.TextWrapped = true
-        consoleText.Parent = consoleBox
+        consoleBox.BackgroundTransparency = 1
+        consoleBox.Parent = content
         
         Dashboard = {
             Parent = screenGui,
@@ -322,7 +387,7 @@ local function CreateFullScreenDashboard()
             Runtime = runtimeText,
             UpgradesList = upgradesList,
             UpgradesLayout = upgradesLayout,
-            Console = consoleText
+            Console = nil
         }
         
         AddConsoleMessage("Dashboard loaded - " .. username)
@@ -349,52 +414,52 @@ local function UpdateUpgradesList()
                     local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
                     
                     local upgradeFrame = Instance.new("Frame")
-                    upgradeFrame.Size = UDim2.new(1, 0, 0, 55)
+                    upgradeFrame.Size = UDim2.new(1, 0, 0, 45)
                     upgradeFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
                     upgradeFrame.BackgroundTransparency = 0
                     upgradeFrame.BorderSizePixel = 0
                     upgradeFrame.Parent = Dashboard.UpgradesList
                     
                     local frameCorner = Instance.new("UICorner")
-                    frameCorner.CornerRadius = UDim.new(0, 8)
+                    frameCorner.CornerRadius = UDim.new(0, 6)
                     frameCorner.Parent = upgradeFrame
                     
                     local nameLabel = Instance.new("TextLabel")
-                    nameLabel.Size = UDim2.new(0.45, -10, 1, 0)
-                    nameLabel.Position = UDim2.new(0, 10, 0, 0)
+                    nameLabel.Size = UDim2.new(0.5, -5, 1, 0)
+                    nameLabel.Position = UDim2.new(0, 5, 0, 0)
                     nameLabel.BackgroundTransparency = 1
                     nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
                     nameLabel.TextScaled = false
-                    nameLabel.TextSize = 14
+                    nameLabel.TextSize = 12
                     nameLabel.Font = Enum.Font.GothamBold
                     nameLabel.Text = upgradeName
                     nameLabel.TextXAlignment = Enum.TextXAlignment.Left
                     nameLabel.Parent = upgradeFrame
                     
                     local levelLabel = Instance.new("TextLabel")
-                    levelLabel.Size = UDim2.new(0.3, -10, 1, 0)
-                    levelLabel.Position = UDim2.new(0.45, 0, 0, 0)
+                    levelLabel.Size = UDim2.new(0.25, -5, 1, 0)
+                    levelLabel.Position = UDim2.new(0.5, 0, 0, 0)
                     levelLabel.BackgroundTransparency = 1
                     levelLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
                     levelLabel.TextScaled = false
-                    levelLabel.TextSize = 14
+                    levelLabel.TextSize = 11
                     levelLabel.Font = Enum.Font.Gotham
-                    levelLabel.Text = "Level: " .. currentLevel .. "/" .. maxLevel
+                    levelLabel.Text = currentLevel .. "/" .. maxLevel
                     levelLabel.TextXAlignment = Enum.TextXAlignment.Center
                     levelLabel.Parent = upgradeFrame
                     
                     local statusLabel = Instance.new("TextLabel")
-                    statusLabel.Size = UDim2.new(0.25, -10, 1, 0)
+                    statusLabel.Size = UDim2.new(0.25, -5, 1, 0)
                     statusLabel.Position = UDim2.new(0.75, 0, 0, 0)
                     statusLabel.BackgroundTransparency = 1
                     statusLabel.TextScaled = false
-                    statusLabel.TextSize = 14
+                    statusLabel.TextSize = 11
                     statusLabel.Font = Enum.Font.Gotham
                     statusLabel.TextXAlignment = Enum.TextXAlignment.Right
                     statusLabel.Parent = upgradeFrame
                     
                     if currentLevel >= maxLevel then
-                        statusLabel.Text = "✓ MAXED"
+                        statusLabel.Text = "MAXED"
                         statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
                     else
                         local cost
@@ -403,7 +468,7 @@ local function UpdateUpgradesList()
                         else
                             cost = upgradeData.UpgradeCosts[currentLevel + 1]
                         end
-                        statusLabel.Text = "Cost: " .. FormatNumber(cost)
+                        statusLabel.Text = FormatNumber(cost)
                         if GoldenEggs.Value >= cost then
                             statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
                         else
@@ -411,7 +476,7 @@ local function UpdateUpgradesList()
                         end
                     end
                     
-                    yOffset = yOffset + 63
+                    yOffset = yOffset + 50
                 end
             end
         end
@@ -423,7 +488,7 @@ end
 local function UpdateDashboard()
     pcall(function()
         if not Dashboard or not Dashboard.Parent then
-            CreateFullScreenDashboard()
+            CreateDashboard()
             task.wait(0.5)
         end
         
@@ -432,9 +497,7 @@ local function UpdateDashboard()
             Dashboard.Money.Text = "💰 Money: " .. FormatNumber(UniverseModule.GetMoneyStat(LocalPlayer, 0).Value)
             Dashboard.GoldenEggs.Text = "🥚 Golden Eggs: " .. FormatNumber(GoldenEggs.Value)
             Dashboard.Pets.Text = "🐾 Pets: " .. FormatNumber(PetCount.Value)
-            
-            local rebirthsValue = Rebirths and Rebirths.Value or 0
-            Dashboard.Rebirths.Text = "🔄 Total Rebirths: " .. FormatNumber(rebirthsValue)
+            Dashboard.Rebirths.Text = "🔄 Rebirths: " .. FormatNumber(Rebirths.Value)
             
             local runtime = os.clock() - StartTime
             Dashboard.Runtime.Text = "⏱️ Runtime: " .. FormatTime(runtime)
@@ -443,6 +506,14 @@ local function UpdateDashboard()
         end
     end)
 end
+
+workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+    pcall(function()
+        if Dashboard and Dashboard.Parent then
+            CreateDashboard()
+        end
+    end)
+end)
 
 pcall(function()
     local idledConnections = getconnections(LocalPlayer.Idled)
@@ -470,92 +541,14 @@ task.spawn(function()
     while true do
         task.wait(45)
         pcall(function()
-            VirtualInput:SendMouseMotionEvent(
-                math.random(-2, 2),
-                math.random(-2, 2),
-                mouse.X,
-                mouse.Y,
-                game
-            )
+            VirtualInput:SendMouseMotionEvent(math.random(-2, 2), math.random(-2, 2), mouse.X, mouse.Y, game)
         end)
     end
 end)
 
-local function BuyUpgrade(upgradeName)
-    local args = { "Easter Upgrade", upgradeName }
-    local success = pcall(function()
-        return RemoteFunction:InvokeServer(unpack(args))
-    end)
-    if success then
-        AddConsoleMessage("Purchased: " .. upgradeName)
-    end
-end
-
-local function GetUpgradeCost(upgradeName, upgradeData, currentLevel)
-    if upgradeData.Max then
-        return upgradeData.UpgradeCosts(currentLevel)
-    else
-        return upgradeData.UpgradeCosts[currentLevel + 1]
-    end
-end
-
-local rebirthSkipsStopped = false
-
-local function CheckAndBuyUpgrades()
-    pcall(function()
-        for upgradeName, upgradeData in pairs(EasterUpgradesConfig) do
-            if upgradeName ~= "Catagories" and not upgradeData.Hidden then
-                if upgradeName == "More Rebirth Skips" then
-                    if not rebirthSkipsStopped then
-                        local stat = Stats.Get(upgradeData.StatName)
-                        if stat then
-                            local currentLevel = stat.Value
-                            local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
-                            if currentLevel < maxLevel then
-                                local cost = GetUpgradeCost(upgradeName, upgradeData, currentLevel)
-                                if cost > 1000 then
-                                    AddConsoleMessage("More Rebirth Skips cost " .. cost .. " (>1000), stopping")
-                                    rebirthSkipsStopped = true
-                                elseif GoldenEggs.Value >= cost then
-                                    BuyUpgrade(upgradeName)
-                                    task.wait(0.5)
-                                end
-                            end
-                        end
-                    end
-                else
-                    local stat = Stats.Get(upgradeData.StatName)
-                    if stat then
-                        local currentLevel = stat.Value
-                        local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
-                        
-                        if currentLevel < maxLevel then
-                            local cost = GetUpgradeCost(upgradeName, upgradeData, currentLevel)
-                            if GoldenEggs.Value >= cost then
-                                BuyUpgrade(upgradeName)
-                                task.wait(0.5)
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end)
-end
-
-local function EnsureAutoThrowEnabled()
-    if not AutoThrow.Value then
-        Network.FireServer("Toggle Setting", "AutoThrow")
-        AddConsoleMessage("AutoThrow enabled")
-    end
-end
-
-task.spawn(function()
-    while true do
-        task.wait(2)
-        pcall(EnsureAutoThrowEnabled)
-    end
-end)
+Jump(5)
+DisableAutoTrainIfEnabled()
+EnsureAutoThrowEnabled()
 
 task.spawn(function()
     while true do
@@ -571,6 +564,8 @@ task.spawn(function()
     end
 end)
 
-AddConsoleMessage("Script loaded - AutoThrow enabled")
+AddConsoleMessage("All ScreenGuis destroyed")
+AddConsoleMessage("Script loaded - 5 jumps done")
+AddConsoleMessage("AutoTrain disabled")
+AddConsoleMessage("AutoThrow enabled")
 AddConsoleMessage("Upgrades auto-buying active")
-AddConsoleMessage("Dashboard is read-only - no buttons")
