@@ -1,4 +1,3 @@
-setfpscap(3)
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -11,6 +10,7 @@ local Stats = Paper.Stats
 local Network = Paper.Network
 local EasterUpgradesConfig = require(ReplicatedStorage:WaitForChild("Tables").EasterUpgrades)
 local UniverseModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Universe)
+local ObjectsTable = require(ReplicatedStorage:WaitForChild("Tables").Objects)
 
 repeat task.wait() until Stats.IsLoaded(LocalPlayer)
 
@@ -21,9 +21,20 @@ local GoldenEggs = Stats.Get("GoldenEggs")
 local AutoThrow = Stats.Get("AutoThrow")
 local AutoTrain = Stats.Get("AutoTrain")
 local Rebirths = Stats.Get("Rebirths")
+local CurrentUniverse = Stats.Get("CurrentUniverse")
+local ObjectsUnlocked = Stats.Get("ObjectsUnlocked")
+local ObjectsUnlockedEvent = Stats.Get("ObjectsUnlockedEvent")
+local CurrentWorld = Stats.Get("CurrentWorld")
 
 local StartTime = os.clock()
 local mouse = LocalPlayer:GetMouse()
+local CurrentObjectIndex = 0
+local CurrentObjectName = "None"
+local CurrentObjectMultiplier = 0
+local NextObjectIndex = 0
+local NextObjectName = "None"
+local NextObjectCost = 0
+local NextObjectMultiplier = 0
 
 for _, gui in pairs(CoreGui:GetChildren()) do
     if gui:IsA("ScreenGui") then
@@ -116,6 +127,102 @@ local function GetBestAffordableRebirth()
         end
     end
     return bestAffordable, bestCost
+end
+
+local function UpdateObjectInfo()
+    pcall(function()
+        if CurrentUniverse.Value == 0 then
+            local eventValue = ObjectsUnlockedEvent.Value
+            CurrentObjectIndex = eventValue
+            NextObjectIndex = eventValue - 1
+            
+            local currentObj = ObjectsTable[CurrentObjectIndex]
+            local nextObj = ObjectsTable[NextObjectIndex]
+            
+            if currentObj then
+                CurrentObjectName = currentObj.Name
+                CurrentObjectMultiplier = currentObj.MoneyMultiplier
+            else
+                CurrentObjectName = "None"
+                CurrentObjectMultiplier = 0
+            end
+            
+            if nextObj then
+                NextObjectName = nextObj.Name
+                NextObjectCost = nextObj.Cost
+                NextObjectMultiplier = nextObj.MoneyMultiplier
+            else
+                NextObjectName = "None"
+                NextObjectCost = 0
+                NextObjectMultiplier = 0
+            end
+        else
+            local unlocked = ObjectsUnlocked.Value
+            CurrentObjectIndex = unlocked
+            NextObjectIndex = unlocked + 1
+            
+            local currentObj = ObjectsTable[CurrentObjectIndex]
+            local nextObj = ObjectsTable[NextObjectIndex]
+            
+            if currentObj then
+                CurrentObjectName = currentObj.Name
+                CurrentObjectMultiplier = currentObj.MoneyMultiplier
+            else
+                CurrentObjectName = "None"
+                CurrentObjectMultiplier = 0
+            end
+            
+            if nextObj then
+                NextObjectName = nextObj.Name
+                NextObjectCost = nextObj.Cost
+                NextObjectMultiplier = nextObj.MoneyMultiplier
+            else
+                NextObjectName = "None"
+                NextObjectCost = 0
+                NextObjectMultiplier = 0
+            end
+        end
+    end)
+end
+
+local function BuyNextObject()
+    pcall(function()
+        local success, result = Network.InvokeServer("Buy Next Object")
+        if success then
+            AddConsoleMessage("Bought: " .. NextObjectName .. " (x" .. NextObjectMultiplier .. ")")
+            UpdateObjectInfo()
+            return true
+        else
+            AddConsoleMessage("Failed to buy object: " .. tostring(result))
+            return false
+        end
+    end)
+end
+
+local function AutoBuyBestObject()
+    pcall(function()
+        local currentMoney = GetCurrentMoney()
+        
+        if CurrentUniverse.Value == 0 then
+            local nextObj = ObjectsTable[NextObjectIndex]
+            if nextObj and not nextObj.IsExclusive then
+                if currentMoney >= nextObj.Cost then
+                    AddConsoleMessage("Auto-buying: " .. nextObj.Name .. " (Cost: " .. FormatNumber(nextObj.Cost) .. ")")
+                    BuyNextObject()
+                    task.wait(1)
+                end
+            end
+        else
+            local nextObj = ObjectsTable[NextObjectIndex]
+            if nextObj and not nextObj.IsExclusive then
+                if currentMoney >= nextObj.Cost then
+                    AddConsoleMessage("Auto-buying: " .. nextObj.Name .. " (Cost: " .. FormatNumber(nextObj.Cost) .. ")")
+                    BuyNextObject()
+                    task.wait(1)
+                end
+            end
+        end
+    end)
 end
 
 local function Jump(count)
@@ -231,7 +338,7 @@ local function CreateDashboard()
         screenGui.Parent = CoreGui
         
         local mainFrame = Instance.new("Frame")
-        mainFrame.Size = UDim2.new(0, 420 * scale, 0, 580 * scale)
+        mainFrame.Size = UDim2.new(0, 420 * scale, 0, 620 * scale)
         mainFrame.Position = UDim2.new(0, 10 * scale, 0, 10 * scale)
         mainFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 15)
         mainFrame.BackgroundTransparency = 0.05
@@ -273,7 +380,7 @@ local function CreateDashboard()
         content.Parent = mainFrame
         
         local statsBox = Instance.new("Frame")
-        statsBox.Size = UDim2.new(1, 0, 0, 210 * scale)
+        statsBox.Size = UDim2.new(1, 0, 0, 250 * scale)
         statsBox.Position = UDim2.new(0, 0, 0, 0)
         statsBox.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
         statsBox.BackgroundTransparency = 0
@@ -297,92 +404,140 @@ local function CreateDashboard()
         statsTitle.Parent = statsBox
         
         local strengthText = Instance.new("TextLabel")
-        strengthText.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
+        strengthText.Size = UDim2.new(1, -10 * scale, 0, 20 * scale)
         strengthText.Position = UDim2.new(0, 5 * scale, 0, 38 * scale)
         strengthText.BackgroundTransparency = 1
         strengthText.TextColor3 = Color3.fromRGB(255, 255, 255)
         strengthText.TextScaled = false
-        strengthText.TextSize = 13 * scale
+        strengthText.TextSize = 12 * scale
         strengthText.Font = Enum.Font.Gotham
         strengthText.Text = "💪 Strength: 0"
         strengthText.TextXAlignment = Enum.TextXAlignment.Left
         strengthText.Parent = statsBox
         
         local moneyText = Instance.new("TextLabel")
-        moneyText.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
-        moneyText.Position = UDim2.new(0, 5 * scale, 0, 60 * scale)
+        moneyText.Size = UDim2.new(1, -10 * scale, 0, 20 * scale)
+        moneyText.Position = UDim2.new(0, 5 * scale, 0, 58 * scale)
         moneyText.BackgroundTransparency = 1
         moneyText.TextColor3 = Color3.fromRGB(255, 255, 255)
         moneyText.TextScaled = false
-        moneyText.TextSize = 13 * scale
+        moneyText.TextSize = 12 * scale
         moneyText.Font = Enum.Font.Gotham
         moneyText.Text = "💰 Money: 0"
         moneyText.TextXAlignment = Enum.TextXAlignment.Left
         moneyText.Parent = statsBox
         
         local goldenEggsText = Instance.new("TextLabel")
-        goldenEggsText.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
-        goldenEggsText.Position = UDim2.new(0, 5 * scale, 0, 82 * scale)
+        goldenEggsText.Size = UDim2.new(1, -10 * scale, 0, 20 * scale)
+        goldenEggsText.Position = UDim2.new(0, 5 * scale, 0, 78 * scale)
         goldenEggsText.BackgroundTransparency = 1
         goldenEggsText.TextColor3 = Color3.fromRGB(255, 215, 0)
         goldenEggsText.TextScaled = false
-        goldenEggsText.TextSize = 13 * scale
+        goldenEggsText.TextSize = 12 * scale
         goldenEggsText.Font = Enum.Font.Gotham
         goldenEggsText.Text = "🥚 Golden Eggs: 0"
         goldenEggsText.TextXAlignment = Enum.TextXAlignment.Left
         goldenEggsText.Parent = statsBox
         
         local petsText = Instance.new("TextLabel")
-        petsText.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
-        petsText.Position = UDim2.new(0, 5 * scale, 0, 104 * scale)
+        petsText.Size = UDim2.new(1, -10 * scale, 0, 20 * scale)
+        petsText.Position = UDim2.new(0, 5 * scale, 0, 98 * scale)
         petsText.BackgroundTransparency = 1
         petsText.TextColor3 = Color3.fromRGB(255, 255, 255)
         petsText.TextScaled = false
-        petsText.TextSize = 13 * scale
+        petsText.TextSize = 12 * scale
         petsText.Font = Enum.Font.Gotham
         petsText.Text = "🐾 Pets: 0"
         petsText.TextXAlignment = Enum.TextXAlignment.Left
         petsText.Parent = statsBox
         
         local rebirthsText = Instance.new("TextLabel")
-        rebirthsText.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
-        rebirthsText.Position = UDim2.new(0, 5 * scale, 0, 126 * scale)
+        rebirthsText.Size = UDim2.new(1, -10 * scale, 0, 20 * scale)
+        rebirthsText.Position = UDim2.new(0, 5 * scale, 0, 118 * scale)
         rebirthsText.BackgroundTransparency = 1
         rebirthsText.TextColor3 = Color3.fromRGB(255, 200, 100)
         rebirthsText.TextScaled = false
-        rebirthsText.TextSize = 13 * scale
+        rebirthsText.TextSize = 12 * scale
         rebirthsText.Font = Enum.Font.Gotham
         rebirthsText.Text = "🔄 Total Rebirths: 0"
         rebirthsText.TextXAlignment = Enum.TextXAlignment.Left
         rebirthsText.Parent = statsBox
         
         local affordableRebirthText = Instance.new("TextLabel")
-        affordableRebirthText.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
-        affordableRebirthText.Position = UDim2.new(0, 5 * scale, 0, 148 * scale)
+        affordableRebirthText.Size = UDim2.new(1, -10 * scale, 0, 20 * scale)
+        affordableRebirthText.Position = UDim2.new(0, 5 * scale, 0, 138 * scale)
         affordableRebirthText.BackgroundTransparency = 1
         affordableRebirthText.TextColor3 = Color3.fromRGB(100, 255, 100)
         affordableRebirthText.TextScaled = false
-        affordableRebirthText.TextSize = 13 * scale
+        affordableRebirthText.TextSize = 12 * scale
         affordableRebirthText.Font = Enum.Font.GothamBold
         affordableRebirthText.Text = "⚡ Can Rebirth: 0"
         affordableRebirthText.TextXAlignment = Enum.TextXAlignment.Left
         affordableRebirthText.Parent = statsBox
         
+        local objectTitle = Instance.new("TextLabel")
+        objectTitle.Size = UDim2.new(1, -10 * scale, 0, 20 * scale)
+        objectTitle.Position = UDim2.new(0, 5 * scale, 0, 160 * scale)
+        objectTitle.BackgroundTransparency = 1
+        objectTitle.TextColor3 = Color3.fromRGB(200, 150, 100)
+        objectTitle.TextScaled = false
+        objectTitle.TextSize = 12 * scale
+        objectTitle.Font = Enum.Font.GothamBold
+        objectTitle.Text = "📦 CURRENT OBJECT"
+        objectTitle.TextXAlignment = Enum.TextXAlignment.Left
+        objectTitle.Parent = statsBox
+        
+        local currentObjectText = Instance.new("TextLabel")
+        currentObjectText.Size = UDim2.new(1, -10 * scale, 0, 20 * scale)
+        currentObjectText.Position = UDim2.new(0, 5 * scale, 0, 180 * scale)
+        currentObjectText.BackgroundTransparency = 1
+        currentObjectText.TextColor3 = Color3.fromRGB(255, 255, 255)
+        currentObjectText.TextScaled = false
+        currentObjectText.TextSize = 12 * scale
+        currentObjectText.Font = Enum.Font.Gotham
+        currentObjectText.Text = "None (x0)"
+        currentObjectText.TextXAlignment = Enum.TextXAlignment.Left
+        currentObjectText.Parent = statsBox
+        
+        local nextObjectTitle = Instance.new("TextLabel")
+        nextObjectTitle.Size = UDim2.new(1, -10 * scale, 0, 20 * scale)
+        nextObjectTitle.Position = UDim2.new(0, 5 * scale, 0, 202 * scale)
+        nextObjectTitle.BackgroundTransparency = 1
+        nextObjectTitle.TextColor3 = Color3.fromRGB(200, 150, 100)
+        nextObjectTitle.TextScaled = false
+        nextObjectTitle.TextSize = 12 * scale
+        nextObjectTitle.Font = Enum.Font.GothamBold
+        nextObjectTitle.Text = "🎯 NEXT OBJECT"
+        nextObjectTitle.TextXAlignment = Enum.TextXAlignment.Left
+        nextObjectTitle.Parent = statsBox
+        
+        local nextObjectText = Instance.new("TextLabel")
+        nextObjectText.Size = UDim2.new(1, -10 * scale, 0, 20 * scale)
+        nextObjectText.Position = UDim2.new(0, 5 * scale, 0, 222 * scale)
+        nextObjectText.BackgroundTransparency = 1
+        nextObjectText.TextColor3 = Color3.fromRGB(255, 200, 100)
+        nextObjectText.TextScaled = false
+        nextObjectText.TextSize = 12 * scale
+        nextObjectText.Font = Enum.Font.Gotham
+        nextObjectText.Text = "None (Cost: 0, x0)"
+        nextObjectText.TextXAlignment = Enum.TextXAlignment.Left
+        nextObjectText.Parent = statsBox
+        
         local runtimeText = Instance.new("TextLabel")
-        runtimeText.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
-        runtimeText.Position = UDim2.new(0, 5 * scale, 0, 175 * scale)
+        runtimeText.Size = UDim2.new(1, -10 * scale, 0, 20 * scale)
+        runtimeText.Position = UDim2.new(0, 5 * scale, 0, 244 * scale)
         runtimeText.BackgroundTransparency = 1
         runtimeText.TextColor3 = Color3.fromRGB(150, 150, 150)
         runtimeText.TextScaled = false
-        runtimeText.TextSize = 13 * scale
+        runtimeText.TextSize = 12 * scale
         runtimeText.Font = Enum.Font.Gotham
         runtimeText.Text = "⏱️ Runtime: 0:00"
         runtimeText.TextXAlignment = Enum.TextXAlignment.Left
         runtimeText.Parent = statsBox
         
         local upgradesBox = Instance.new("Frame")
-        upgradesBox.Size = UDim2.new(1, 0, 1, -230 * scale)
-        upgradesBox.Position = UDim2.new(0, 0, 0, 225 * scale)
+        upgradesBox.Size = UDim2.new(1, 0, 1, -270 * scale)
+        upgradesBox.Position = UDim2.new(0, 0, 0, 265 * scale)
         upgradesBox.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
         upgradesBox.BackgroundTransparency = 0
         upgradesBox.BorderSizePixel = 0
@@ -418,12 +573,6 @@ local function CreateDashboard()
         upgradesLayout.SortOrder = Enum.SortOrder.LayoutOrder
         upgradesLayout.Parent = upgradesList
         
-        local consoleBox = Instance.new("Frame")
-        consoleBox.Size = UDim2.new(1, 0, 0, 0)
-        consoleBox.Position = UDim2.new(0, 0, 0, 0)
-        consoleBox.BackgroundTransparency = 1
-        consoleBox.Parent = content
-        
         Dashboard = {
             Parent = screenGui,
             Strength = strengthText,
@@ -432,6 +581,8 @@ local function CreateDashboard()
             Pets = petsText,
             Rebirths = rebirthsText,
             AffordableRebirth = affordableRebirthText,
+            CurrentObject = currentObjectText,
+            NextObject = nextObjectText,
             Runtime = runtimeText,
             UpgradesList = upgradesList,
             UpgradesLayout = upgradesLayout,
@@ -549,11 +700,31 @@ local function UpdateDashboard()
             
             local bestAffordable, bestCost = GetBestAffordableRebirth()
             if bestAffordable > 0 then
-                Dashboard.AffordableRebirth.Text = "⚡ Can Rebirth: " .. FormatNumber(bestAffordable) .. " (Cost: " .. FormatNumber(bestCost) .. " Money)"
+                Dashboard.AffordableRebirth.Text = "⚡ Can Rebirth: " .. FormatNumber(bestAffordable) .. " (Cost: " .. FormatNumber(bestCost) .. ")"
                 Dashboard.AffordableRebirth.TextColor3 = Color3.fromRGB(100, 255, 100)
             else
                 Dashboard.AffordableRebirth.Text = "⚡ Can Rebirth: 0 (Need more money)"
                 Dashboard.AffordableRebirth.TextColor3 = Color3.fromRGB(255, 100, 100)
+            end
+            
+            UpdateObjectInfo()
+            
+            if CurrentObjectName ~= "None" then
+                Dashboard.CurrentObject.Text = CurrentObjectName .. " (x" .. FormatNumber(CurrentObjectMultiplier) .. ")"
+            else
+                Dashboard.CurrentObject.Text = "None (x0)"
+            end
+            
+            if NextObjectName ~= "None" then
+                Dashboard.NextObject.Text = NextObjectName .. " (Cost: " .. FormatNumber(NextObjectCost) .. ", x" .. FormatNumber(NextObjectMultiplier) .. ")"
+                if GetCurrentMoney() >= NextObjectCost then
+                    Dashboard.NextObject.TextColor3 = Color3.fromRGB(100, 255, 100)
+                else
+                    Dashboard.NextObject.TextColor3 = Color3.fromRGB(255, 200, 100)
+                end
+            else
+                Dashboard.NextObject.Text = "None (Max reached!)"
+                Dashboard.NextObject.TextColor3 = Color3.fromRGB(0, 255, 0)
             end
             
             local runtime = os.clock() - StartTime
@@ -606,11 +777,19 @@ end)
 Jump(5)
 DisableAutoTrainIfEnabled()
 EnsureAutoThrowEnabled()
+UpdateObjectInfo()
 
 task.spawn(function()
     while true do
         task.wait(30)
         pcall(CheckAndBuyUpgrades)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(5)
+        pcall(AutoBuyBestObject)
     end
 end)
 
@@ -626,4 +805,5 @@ AddConsoleMessage("Script loaded - 5 jumps done")
 AddConsoleMessage("AutoTrain disabled")
 AddConsoleMessage("AutoThrow enabled")
 AddConsoleMessage("Upgrades auto-buying active")
+AddConsoleMessage("Objects auto-buying active")
 AddConsoleMessage("Affordable rebirth shown in dashboard (NOT auto-rebirthing)")
