@@ -1,3 +1,4 @@
+setfpscap(3)
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -193,48 +194,33 @@ local function GetUpgradeCost(upgradeName, upgradeData, currentLevel)
     end
 end
 
+local rebirthSkipsStopped = false
+
 local function CheckAndBuyUpgrades()
     print("[EasterUpgrade] Checking for available upgrades...")
-    
-    local moreRebirthSkipsCost = nil
-    local moreRebirthSkipsData = nil
-    local moreRebirthSkipsLevel = nil
-    
-    for upgradeName, upgradeData in pairs(EasterUpgradesConfig) do
-        if upgradeName == "More Rebirth Skips" and upgradeName ~= "Catagories" and not upgradeData.Hidden then
-            local stat = Stats.Get(upgradeData.StatName)
-            if stat then
-                local currentLevel = stat.Value
-                local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
-                if currentLevel < maxLevel then
-                    moreRebirthSkipsCost = GetUpgradeCost(upgradeName, upgradeData, currentLevel)
-                    moreRebirthSkipsData = upgradeData
-                    moreRebirthSkipsLevel = currentLevel
-                end
-            end
-            break
-        end
-    end
     
     for upgradeName, upgradeData in pairs(EasterUpgradesConfig) do
         if upgradeName ~= "Catagories" and not upgradeData.Hidden then
             if upgradeName == "More Rebirth Skips" then
-                if moreRebirthSkipsCost and moreRebirthSkipsCost > 1000 then
-                    print("[EasterUpgrade] More Rebirth Skips cost " .. moreRebirthSkipsCost .. " (>1000), skipping and buying other upgrades first")
-                else
+                if not rebirthSkipsStopped then
                     local stat = Stats.Get(upgradeData.StatName)
                     if stat then
                         local currentLevel = stat.Value
                         local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
                         if currentLevel < maxLevel then
                             local cost = GetUpgradeCost(upgradeName, upgradeData, currentLevel)
-                            if GoldenEggs.Value >= cost then
+                            if cost > 1000 then
+                                print("[EasterUpgrade] More Rebirth Skips cost " .. cost .. " (>1000), stopping permanently")
+                                rebirthSkipsStopped = true
+                            elseif GoldenEggs.Value >= cost then
                                 print("[EasterUpgrade] Purchasing: " .. upgradeName .. " (Level " .. currentLevel + 1 .. "/" .. maxLevel .. ") Cost: " .. cost)
                                 BuyUpgrade(upgradeName)
                                 task.wait(0.5)
                             end
                         end
                     end
+                else
+                    print("[EasterUpgrade] More Rebirth Skips - permanently stopped (cost exceeded 1000)")
                 end
             else
                 local stat = Stats.Get(upgradeData.StatName)
@@ -259,15 +245,6 @@ local function CheckAndBuyUpgrades()
                     print("[EasterUpgrade] Stat not found for: " .. upgradeName)
                 end
             end
-        end
-    end
-    
-    if moreRebirthSkipsCost and moreRebirthSkipsCost > 1000 then
-        print("[EasterUpgrade] Checking if More Rebirth Skips can be bought now after other upgrades...")
-        if GoldenEggs.Value >= moreRebirthSkipsCost then
-            print("[EasterUpgrade] Purchasing More Rebirth Skips (Level " .. moreRebirthSkipsLevel + 1 .. ") Cost: " .. moreRebirthSkipsCost)
-            BuyUpgrade("More Rebirth Skips")
-            task.wait(0.5)
         end
     end
 end
@@ -508,16 +485,59 @@ local function DisableAutoTrain()
     end
 end
 
-local function ForceJump()
+local lastJumpPosition = nil
+local lastJumpTime = 0
+local stuckJumpCount = 0
+
+local function SmartJump()
     pcall(function()
         local character = LocalPlayer.Character
         if not character then return end
+        local hrp = character:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+        
+        local currentPosition = hrp.Position
+        local currentTime = os.time()
+        
+        if lastJumpPosition and (currentTime - lastJumpTime) < 6 then
+            local distance = (currentPosition - lastJumpPosition).Magnitude
+            if distance < 2 then
+                stuckJumpCount = stuckJumpCount + 1
+                print("[SmartJump] Stuck detected (distance: " .. string.format("%.2f", distance) .. "), jump count: " .. stuckJumpCount)
+                
+                local humanoid = character:FindFirstChild("Humanoid")
+                if humanoid then
+                    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                    task.wait(0.05)
+                    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                end
+                
+                if stuckJumpCount >= 3 then
+                    print("[SmartJump] Severe stuck, attempting reset...")
+                    ResetCharacter()
+                    stuckJumpCount = 0
+                    lastJumpPosition = nil
+                    return
+                end
+            else
+                stuckJumpCount = 0
+            end
+        end
+        
+        lastJumpPosition = currentPosition
+        lastJumpTime = currentTime
+        
         local humanoid = character:FindFirstChild("Humanoid")
-        if not humanoid then return end
-        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-        task.wait(0.05)
-        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        if humanoid then
+            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            task.wait(0.05)
+            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
     end)
+end
+
+local function ForceJump()
+    SmartJump()
 end
 
 local function MoveOffPad()
