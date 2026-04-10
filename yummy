@@ -1,1 +1,860 @@
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualUser = game:GetService("VirtualUser")
+local VirtualInput = game:GetService("VirtualInputManager")
+local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
 
+local Paper = require(ReplicatedStorage:WaitForChild("Paper"))
+local Stats = Paper.Stats
+local Network = Paper.Network
+local EasterUpgradesConfig = require(ReplicatedStorage:WaitForChild("Tables").EasterUpgrades)
+local EasterRebirths = require(ReplicatedStorage:WaitForChild("Tables").RebirthsEaster)
+local UniverseModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Universe)
+local RebirthModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Rebirths)
+
+repeat task.wait() until Stats.IsLoaded(LocalPlayer)
+
+local Tutorial = Stats.Get("Tutorial")
+local Strength = Stats.Get("Strength")
+local Money = Stats.Get("Money")
+local PetCount = Stats.Get("PetCount")
+local Throws = Stats.Get("Throws")
+local CurrentWorld = Stats.Get("CurrentWorld")
+local WorldsUnlocked = Stats.Get("WorldsUnlocked")
+local GoldenEggs = Stats.Get("GoldenEggs")
+
+local Remotes = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes")
+local RemoteFunction = Remotes:WaitForChild("__remotefunction")
+
+local CurrentStep = Tutorial.Value
+local AutoThrowEnabled = false
+local AutoTrainEnabled = false
+local RetryCount = 0
+local MaxRetries = 3
+local TutorialComplete = false
+local StartTime = os.clock()
+local PostTutorialLoopActive = false
+
+local EggsFolder = workspace:WaitForChild("Eggs")
+local WorldsFolder = workspace:WaitForChild("Worlds")
+local SpawnFolder = WorldsFolder:WaitForChild("Spawn")
+
+local mouse = LocalPlayer:GetMouse()
+
+local idledConnections = getconnections(LocalPlayer.Idled)
+for _, connection in pairs(idledConnections) do
+    connection:Disable()
+end
+
+LocalPlayer.Idled:Connect(function()
+    pcall(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new(0,0))
+    end)
+    
+    task.wait(0.1)
+    
+    pcall(function()
+        VirtualInput:SendMouseMotionEvent(1, 1, mouse.X, mouse.Y, game)
+        task.wait(0.05)
+        VirtualInput:SendMouseMotionEvent(-1, -1, mouse.X, mouse.Y, game)
+    end)
+end)
+
+task.spawn(function()
+    while task.wait(45) do
+        pcall(function()
+            VirtualInput:SendMouseMotionEvent(
+                math.random(-2, 2),
+                math.random(-2, 2),
+                mouse.X,
+                mouse.Y,
+                game
+            )
+        end)
+    end
+end)
+
+local function GetCurrentMoney()
+    return UniverseModule.GetMoneyStat(LocalPlayer, 0).Value
+end
+
+local function GetRebirthCost(rebirthAmount)
+    return RebirthModule.GetRebirthCost(LocalPlayer, rebirthAmount, 0)
+end
+
+local function GetRebirthAmounts()
+    local amounts = {}
+    for _, amount in ipairs(EasterRebirths) do
+        table.insert(amounts, amount)
+    end
+    return amounts
+end
+
+local function GetBestAffordableRebirth()
+    local currentMoney = GetCurrentMoney()
+    local bestAffordable = 0
+    local rebirthAmounts = GetRebirthAmounts()
+    
+    for _, rebirthAmount in ipairs(rebirthAmounts) do
+        local cost = GetRebirthCost(rebirthAmount)
+        if cost <= currentMoney and rebirthAmount > bestAffordable then
+            bestAffordable = rebirthAmount
+        end
+    end
+    return bestAffordable
+end
+
+local function PerformRebirth(rebirthAmount)
+    if rebirthAmount <= 0 then
+        return false
+    end
+    
+    print("[Rebirth] Attempting rebirth with amount: " .. rebirthAmount)
+    
+    local success, result = pcall(function()
+        return Network.InvokeServer("Rebirth", rebirthAmount)
+    end)
+    
+    if success then
+        print("[Rebirth] SUCCESS! Performed rebirth with " .. rebirthAmount .. " rebirths")
+        return true
+    else
+        print("[Rebirth] FAILED: " .. tostring(result))
+        return false
+    end
+end
+
+local function BuyUpgrade(upgradeName)
+    print("[EasterUpgrade] Attempting to buy: " .. upgradeName)
+    local success, result = pcall(function()
+        return Network.InvokeServer("Easter Upgrade", upgradeName)
+    end)
+    if success then
+        print("[EasterUpgrade] SUCCESS: " .. upgradeName)
+        return true
+    else
+        print("[EasterUpgrade] FAILED: " .. upgradeName .. " - " .. tostring(result))
+        return false
+    end
+end
+
+local function CheckAndBuyUpgrades()
+    print("[EasterUpgrade] Checking for available upgrades...")
+    for upgradeName, upgradeData in pairs(EasterUpgradesConfig) do
+        if upgradeName ~= "Catagories" and not upgradeData.Hidden then
+            local stat = Stats.Get(upgradeData.StatName)
+            if stat then
+                local currentLevel = stat.Value
+                local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
+                
+                if currentLevel < maxLevel then
+                    local cost
+                    if upgradeData.Max then
+                        cost = upgradeData.UpgradeCosts(currentLevel)
+                    else
+                        cost = upgradeData.UpgradeCosts[currentLevel + 1]
+                    end
+                    
+                    if GoldenEggs.Value >= cost then
+                        print("[EasterUpgrade] Purchasing: " .. upgradeName .. " (Level " .. currentLevel + 1 .. "/" .. maxLevel .. ") Cost: " .. cost)
+                        BuyUpgrade(upgradeName)
+                        task.wait(0.5)
+                    else
+                        print("[EasterUpgrade] Cannot afford: " .. upgradeName .. " Need: " .. cost .. " Have: " .. GoldenEggs.Value)
+                    end
+                else
+                    print("[EasterUpgrade] Already maxed: " .. upgradeName)
+                end
+            else
+                print("[EasterUpgrade] Stat not found for: " .. upgradeName)
+            end
+        end
+    end
+end
+
+local function EquipBestPets()
+    print("[Pets] Equipping best pets by power...")
+    local args = {
+        "Pet",
+        {
+            Action = "EquipBest",
+            Sort = "Power"
+        }
+    }
+    local success = pcall(function()
+        return RemoteFunction:InvokeServer(unpack(args))
+    end)
+    if success then
+        print("[Pets] Successfully equipped best pets")
+    else
+        print("[Pets] Failed to equip best pets")
+    end
+end
+
+task.spawn(function()
+    while true do
+        task.wait(300)
+        pcall(EquipBestPets)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(60)
+        pcall(function()
+            print("[Rebirth Check] Checking for affordable rebirths...")
+            local bestRebirth = GetBestAffordableRebirth()
+            local currentMoney = GetCurrentMoney()
+            print("[Rebirth Check] Current money: " .. currentMoney)
+            if bestRebirth > 0 then
+                print("[Rebirth Check] Can afford " .. bestRebirth .. " rebirths! Attempting...")
+                PerformRebirth(bestRebirth)
+            else
+                print("[Rebirth Check] Cannot afford any rebirths right now")
+            end
+        end)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(30)
+        pcall(CheckAndBuyUpgrades)
+    end
+end)
+
+local function SetCurrentWorld(worldNumber)
+    print("[World] Setting world to: " .. worldNumber)
+    local args = { "Set Current World", worldNumber }
+    local success, result = pcall(function()
+        return RemoteFunction:InvokeServer(unpack(args))
+    end)
+    if success then
+        print("[World] Successfully set to world: " .. worldNumber)
+        return true
+    else
+        print("[World] Failed to set world: " .. worldNumber .. " - " .. tostring(result))
+        return false
+    end
+end
+
+local function CreateGreenScreen()
+    pcall(function()
+        local screenGui = Instance.new("ScreenGui")
+        screenGui.Name = "TutorialCompleteUI"
+        screenGui.ResetOnSpawn = false
+        screenGui.Parent = CoreGui
+        
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(1, 0, 1, 0)
+        frame.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+        frame.BackgroundTransparency = 0.7
+        frame.Parent = screenGui
+        
+        local textLabel = Instance.new("TextLabel")
+        textLabel.Size = UDim2.new(1, 0, 0.2, 0)
+        textLabel.Position = UDim2.new(0, 0, 0.4, 0)
+        textLabel.BackgroundTransparency = 1
+        textLabel.TextColor3 = Color3.fromRGB(0, 0, 0)
+        textLabel.TextScaled = true
+        textLabel.Font = Enum.Font.GothamBold
+        textLabel.Text = "TUTORIAL COMPLETE!"
+        textLabel.Parent = screenGui
+        
+        local timeLabel = Instance.new("TextLabel")
+        timeLabel.Size = UDim2.new(1, 0, 0.1, 0)
+        timeLabel.Position = UDim2.new(0, 0, 0.6, 0)
+        timeLabel.BackgroundTransparency = 1
+        timeLabel.TextColor3 = Color3.fromRGB(0, 0, 0)
+        timeLabel.TextScaled = true
+        timeLabel.Font = Enum.Font.Gotham
+        timeLabel.Parent = screenGui
+        
+        local function UpdateTime()
+            local runtime = os.clock() - StartTime
+            local hours = math.floor(runtime / 3600)
+            local minutes = math.floor((runtime % 3600) / 60)
+            local seconds = math.floor(runtime % 60)
+            timeLabel.Text = string.format("%02d:%02d:%02d", hours, minutes, seconds)
+        end
+        
+        local heartbeatConn
+        heartbeatConn = RunService.Heartbeat:Connect(function()
+            if TutorialComplete then
+                pcall(UpdateTime)
+            else
+                heartbeatConn:Disconnect()
+            end
+        end)
+        
+        UpdateTime()
+        
+        for i = 1, 10 do
+            frame.BackgroundTransparency = 0.7 - (i * 0.05)
+            task.wait(0.05)
+        end
+    end)
+end
+
+local function TeleportToPosition(position)
+    pcall(function()
+        local character = LocalPlayer.Character
+        if not character then return end
+        local hrp = character:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+        hrp.CFrame = position
+        task.wait(0.5)
+    end)
+end
+
+local function TeleportToTrainingWall()
+    pcall(function()
+        local tutorialThrow = SpawnFolder:FindFirstChild("TutorialThrow")
+        if tutorialThrow then
+            TeleportToPosition(tutorialThrow:GetPivot())
+            print("[Teleport] Moved to training wall")
+            return
+        end
+        local tutorialTrain = SpawnFolder:FindFirstChild("TutorialTrain")
+        if tutorialTrain then
+            TeleportToPosition(tutorialTrain:GetPivot())
+            print("[Teleport] Moved to training wall")
+            return
+        end
+        local spawnLocation = SpawnFolder:FindFirstChild("SpawnLocation")
+        if spawnLocation then
+            TeleportToPosition(spawnLocation:GetPivot())
+        end
+    end)
+end
+
+local function ToggleAutoThrow()
+    pcall(function()
+        local autoThrowStat = Stats.Get("AutoThrow")
+        if AutoThrowEnabled then
+            if autoThrowStat and autoThrowStat.Value then
+                Network.FireServer("Toggle Setting", "AutoThrow")
+            end
+            AutoThrowEnabled = false
+            print("[AutoThrow] Disabled")
+        else
+            if autoThrowStat and not autoThrowStat.Value then
+                Network.FireServer("Toggle Setting", "AutoThrow")
+            end
+            AutoThrowEnabled = true
+            print("[AutoThrow] Enabled")
+        end
+    end)
+end
+
+local function EnableAutoThrow()
+    if not AutoThrowEnabled then
+        ToggleAutoThrow()
+    end
+end
+
+local function DisableAutoThrow()
+    if AutoThrowEnabled then
+        ToggleAutoThrow()
+    end
+end
+
+local function ToggleAutoTrain()
+    pcall(function()
+        if AutoTrainEnabled then
+            Network.FireServer("Stop Training")
+            LocalPlayer:SetAttribute("TrainingStation", nil)
+            local autoTrainStat = Stats.Get("AutoTrain")
+            if autoTrainStat and autoTrainStat.Value then
+                Network.FireServer("Toggle Setting", "AutoTrain")
+            end
+            AutoTrainEnabled = false
+            print("[AutoTrain] Disabled")
+        else
+            local autoTrainStat = Stats.Get("AutoTrain")
+            if autoTrainStat and not autoTrainStat.Value then
+                Network.FireServer("Toggle Setting", "AutoTrain")
+            end
+            AutoTrainEnabled = true
+            print("[AutoTrain] Enabled")
+        end
+    end)
+end
+
+local function EnableAutoTrain()
+    if not AutoTrainEnabled then
+        ToggleAutoTrain()
+    end
+end
+
+local function DisableAutoTrain()
+    if AutoTrainEnabled then
+        ToggleAutoTrain()
+    end
+end
+
+local function ForceJump()
+    pcall(function()
+        local character = LocalPlayer.Character
+        if not character then return end
+        local humanoid = character:FindFirstChild("Humanoid")
+        if not humanoid then return end
+        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        task.wait(0.05)
+        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+    end)
+end
+
+local function MoveOffPad()
+    pcall(function()
+        local character = LocalPlayer.Character
+        if not character then return end
+        local hrp = character:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+        hrp.AssemblyLinearVelocity = Vector3.new(0, 20, -25)
+        task.wait(0.2)
+        hrp.AssemblyLinearVelocity = Vector3.new(0, 15, -15)
+    end)
+end
+
+local function BuyEgg()
+    print("[BuyEgg] Purchasing Basic Egg...")
+    local args = { "Hatch Egg", "Basic Egg", 1 }
+    local success, result = pcall(function()
+        return RemoteFunction:InvokeServer(unpack(args))
+    end)
+    if success then
+        print("[BuyEgg] Successfully purchased Basic Egg")
+        return true
+    else
+        print("[BuyEgg] Failed: " .. tostring(result))
+        return false
+    end
+end
+
+local function BuyNextItem()
+    print("[BuyNextItem] Purchasing next item...")
+    local args = { "Buy Next Object" }
+    local success, result = pcall(function()
+        return RemoteFunction:InvokeServer(unpack(args))
+    end)
+    if success then
+        print("[BuyNextItem] Successfully purchased next item")
+        return true
+    else
+        print("[BuyNextItem] Failed: " .. tostring(result))
+        return false
+    end
+end
+
+local function DoRebirth()
+    print("[Rebirth] Performing single rebirth...")
+    local args = { "Rebirth", 1 }
+    local success, result = pcall(function()
+        return RemoteFunction:InvokeServer(unpack(args))
+    end)
+    if success then
+        print("[Rebirth] Successfully performed rebirth")
+        return true
+    else
+        print("[Rebirth] Failed: " .. tostring(result))
+        return false
+    end
+end
+
+local function WaitForStat(stat, targetValue, timeout)
+    timeout = timeout or 60
+    local startTime = os.clock()
+    print("[WaitForStat] Waiting for " .. stat.Name .. " to reach " .. targetValue)
+    while os.clock() - startTime < timeout do
+        local success, val = pcall(function()
+            return stat.Value
+        end)
+        if success and val >= targetValue then
+            print("[WaitForStat] " .. stat.Name .. " reached " .. val)
+            return true
+        end
+        task.wait(1)
+    end
+    print("[WaitForStat] Timeout waiting for " .. stat.Name)
+    return false
+end
+
+local function farmEggsAndCodes()
+    pcall(function()
+        print("[EggHunt] Starting Egg Hunt...")
+        
+        local eggHuntConfig = require(ReplicatedStorage:WaitForChild("Tables").EggHunt)
+        
+        for eggName, _ in pairs(eggHuntConfig) do
+            pcall(function()
+                Network.InvokeServer("Claim Egg", eggName)
+            end)
+            task.wait(0.05)
+        end
+        print("[EggHunt] Egg claiming done")
+        task.wait(0.5)
+        
+        local eggHuntData = Stats.Get("EggHuntData")
+        if eggHuntData and eggHuntData.Value then
+            local foundEggs = eggHuntData.Value.FoundEggs or {}
+            local claimedEggs = eggHuntData.Value.ClaimedEggs or {}
+            
+            for eggName, _ in pairs(foundEggs) do
+                if not claimedEggs[eggName] then
+                    pcall(function()
+                        Network.InvokeServer("Claim Egg Reward", eggName)
+                    end)
+                    task.wait(0.05)
+                end
+            end
+        end
+        print("[EggHunt] Egg rewards claimed")
+        task.wait(0.5)
+        
+        print("[Codes] Redeeming codes...")
+        local codes = {
+            "update1", "update2", "update3", "update4", "update5",
+            "easter", "10kccu", "RELEASE"
+        }
+        
+        for _, code in ipairs(codes) do
+            pcall(function()
+                RemoteFunction:InvokeServer("Redeem Code", code)
+            end)
+            task.wait(0.25)
+        end
+        print("[Codes] Codes redeemed")
+    end)
+end
+
+local function StartPostTutorialLoop()
+    if PostTutorialLoopActive then return end
+    PostTutorialLoopActive = true
+    
+    print("[PostTutorial] Starting farm loop")
+    
+    pcall(function()
+        if WorldsUnlocked and WorldsUnlocked.Value > 0 or (CurrentWorld and CurrentWorld.Value == 0) then
+            SetCurrentWorld(0)
+        end
+    end)
+    
+    task.spawn(function()
+        while TutorialComplete do
+            pcall(function()
+                print("[PostTutorial] Throwing phase - 1 minute")
+                EnableAutoThrow()
+                for i = 1, 60 do
+                    if not TutorialComplete then break end
+                    task.wait(1)
+                end
+                DisableAutoThrow()
+            end)
+            
+            if not TutorialComplete then break end
+            
+            pcall(function()
+                print("[PostTutorial] Training phase - 1 minute")
+                EnableAutoTrain()
+                for i = 1, 60 do
+                    if not TutorialComplete then break end
+                    task.wait(1)
+                end
+                DisableAutoTrain()
+            end)
+        end
+    end)
+end
+
+local function HandleStep1()
+    print("[Step 1] Throw your rock")
+    TeleportToTrainingWall()
+    task.wait(1)
+    EnableAutoThrow()
+    local completed = WaitForStat(Throws, 1, 30)
+    DisableAutoThrow()
+    if completed then
+        print("[Step 1] Complete")
+        return true
+    else
+        print("[Step 1] Failed - retrying")
+        return false
+    end
+end
+
+local function HandleStep2()
+    print("[Step 2] Buy a Basic Egg")
+    TeleportToTrainingWall()
+    task.wait(1)
+    local completed = BuyEgg()
+    if completed then
+        print("[Step 2] Complete")
+        return true
+    else
+        print("[Step 2] Failed - retrying")
+        return false
+    end
+end
+
+local function HandleStep3()
+    print("[Step 3] Get 175 Strength")
+    TeleportToTrainingWall()
+    task.wait(1)
+    EnableAutoTrain()
+    local completed = WaitForStat(Strength, 175, 120)
+    DisableAutoTrain()
+    if completed then
+        print("[Step 3] Complete")
+        return true
+    else
+        print("[Step 3] Failed - retrying")
+        return false
+    end
+end
+
+local function HandleStep4()
+    print("[Step 4] Get 300 Money")
+    TeleportToTrainingWall()
+    task.wait(1)
+    EnableAutoThrow()
+    local completed = WaitForStat(Money, 300, 120)
+    DisableAutoThrow()
+    if completed then
+        print("[Step 4] Complete")
+        return true
+    else
+        print("[Step 4] Failed - retrying")
+        return false
+    end
+end
+
+local function HandleStep5()
+    print("[Step 5] Buy the next item")
+    TeleportToTrainingWall()
+    task.wait(1)
+    local completed = BuyNextItem()
+    if completed then
+        print("[Step 5] Complete")
+        return true
+    else
+        print("[Step 5] Failed - retrying")
+        return false
+    end
+end
+
+local function HandleStep6()
+    print("[Step 6] Get 225 Money")
+    TeleportToTrainingWall()
+    task.wait(1)
+    EnableAutoThrow()
+    local completed = WaitForStat(Money, 225, 120)
+    DisableAutoThrow()
+    if completed then
+        print("[Step 6] Complete")
+        return true
+    else
+        print("[Step 6] Failed - retrying")
+        return false
+    end
+end
+
+local function HandleStep7()
+    print("[Step 7] Get 3 More Pets")
+    local targetPets = PetCount.Value + 3
+    TeleportToTrainingWall()
+    task.wait(1)
+    for i = 1, 5 do
+        BuyEgg()
+        task.wait(1)
+        if PetCount.Value >= targetPets then
+            break
+        end
+    end
+    if PetCount.Value >= targetPets then
+        print("[Step 7] Complete")
+        return true
+    else
+        print("[Step 7] Failed - retrying")
+        return false
+    end
+end
+
+local function HandleStep8()
+    print("[Step 8] Get 500 Strength")
+    TeleportToTrainingWall()
+    task.wait(1)
+    EnableAutoTrain()
+    local completed = WaitForStat(Strength, 500, 180)
+    DisableAutoTrain()
+    if completed then
+        print("[Step 8] Complete")
+        return true
+    else
+        print("[Step 8] Failed - retrying")
+        return false
+    end
+end
+
+local function HandleStep9()
+    print("[Step 9] Get 750 Strength on better wall")
+    TeleportToTrainingWall()
+    task.wait(1)
+    EnableAutoTrain()
+    local completed = WaitForStat(Strength, 750, 180)
+    DisableAutoTrain()
+    if completed then
+        print("[Step 9] Complete")
+        return true
+    else
+        print("[Step 9] Failed - retrying")
+        return false
+    end
+end
+
+local function HandleStep10()
+    print("[Step 10] Throw item to afford rebirth")
+    TeleportToTrainingWall()
+    task.wait(1)
+    EnableAutoThrow()
+    task.wait(30)
+    DisableAutoThrow()
+    print("[Step 10] Complete")
+    return true
+end
+
+local function HandleStep11()
+    print("[Step 11] Buy first Rebirth")
+    local completed = DoRebirth()
+    if completed then
+        print("[Step 11] Complete")
+        return true
+    else
+        print("[Step 11] Failed - retrying")
+        return false
+    end
+end
+
+local function HandleStep12()
+    print("[Step 12] Tutorial Complete!")
+    DisableAutoThrow()
+    DisableAutoTrain()
+    
+    if not TutorialComplete then
+        TutorialComplete = true
+        local runtime = os.clock() - StartTime
+        local hours = math.floor(runtime / 3600)
+        local minutes = math.floor((runtime % 3600) / 60)
+        local seconds = math.floor(runtime % 60)
+        print("[Tutorial] Complete! Runtime: " .. string.format("%02d:%02d:%02d", hours, minutes, seconds))
+        pcall(CreateGreenScreen)
+        
+        pcall(function()
+            if WorldsUnlocked and WorldsUnlocked.Value > 0 or (CurrentWorld and CurrentWorld.Value == 0) then
+                SetCurrentWorld(0)
+            end
+        end)
+        
+        pcall(StartPostTutorialLoop)
+    end
+    return true
+end
+
+local function ExecuteStep(step)
+    RetryCount = 0
+    local handlers = {
+        [1] = HandleStep1,
+        [2] = HandleStep2,
+        [3] = HandleStep3,
+        [4] = HandleStep4,
+        [5] = HandleStep5,
+        [6] = HandleStep6,
+        [7] = HandleStep7,
+        [8] = HandleStep8,
+        [9] = HandleStep9,
+        [10] = HandleStep10,
+        [11] = HandleStep11,
+        [12] = HandleStep12,
+    }
+    local handler = handlers[step]
+    if handler then
+        local success, result = pcall(handler)
+        if success then
+            return result
+        else
+            print("[ExecuteStep] Handler error for step " .. step .. ": " .. tostring(result))
+            return false
+        end
+    end
+    return true
+end
+
+local function ProcessCurrentStep()
+    while true do
+        local currentStep = Tutorial.Value
+        if currentStep >= 12 then
+            if not TutorialComplete then
+                pcall(HandleStep12)
+            end
+            break
+        end
+        
+        print("[Tutorial] Processing step: " .. currentStep)
+        
+        local success = false
+        for retry = 1, MaxRetries do
+            local currentStepNow = Tutorial.Value
+            if currentStepNow ~= currentStep then
+                print("[Tutorial] Step changed from " .. currentStep .. " to " .. currentStepNow .. " during retry, breaking")
+                currentStep = currentStepNow
+                break
+            end
+            
+            success = ExecuteStep(currentStep)
+            
+            currentStepNow = Tutorial.Value
+            if currentStepNow ~= currentStep then
+                print("[Tutorial] Step changed from " .. currentStep .. " to " .. currentStepNow .. " after action, breaking")
+                currentStep = currentStepNow
+                break
+            end
+            
+            if success then
+                break
+            end
+            
+            print("[Tutorial] Retry " .. retry .. " for step " .. currentStep)
+            task.wait(2)
+        end
+        
+        if not success and Tutorial.Value == currentStep then
+            print("[Tutorial] Failed step " .. currentStep .. " after " .. MaxRetries .. " retries, continuing...")
+            task.wait(5)
+        end
+        
+        task.wait(1)
+    end
+end
+
+Tutorial.Changed:Connect(function()
+    local newStep = Tutorial.Value
+    if newStep ~= CurrentStep then
+        CurrentStep = newStep
+        print("[Tutorial] Step changed to: " .. newStep)
+        task.spawn(function()
+            pcall(ProcessCurrentStep)
+        end)
+    end
+end)
+
+task.spawn(function()
+    pcall(farmEggsAndCodes)
+end)
+
+pcall(ProcessCurrentStep)
+
+print("[Tutorial Auto-Complete] Loaded - monitoring tutorial steps")
+print("[Anti-AFK] Enabled - preventing idle disconnect")
