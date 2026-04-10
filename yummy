@@ -9,16 +9,34 @@ local Stats = Paper.Stats
 local Network = Paper.Network
 local UniverseModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Universe)
 
-repeat task.wait() until pcall(function() return Stats.IsLoaded(LocalPlayer) end)
+repeat task.wait() until Stats.IsLoaded(LocalPlayer)
+
+-- ✅ WAIT FOR STATS (MAIN FIX)
+local function WaitForStat(func)
+    local stat
+    repeat
+        stat = func()
+        task.wait()
+    until stat
+    return stat
+end
+
+local Universe0Rebirths = WaitForStat(function()
+    return UniverseModule.GetRebirthStat(LocalPlayer, 0)
+end)
+
+local Universe0Money = WaitForStat(function()
+    return UniverseModule.GetMoneyStat(LocalPlayer, 0)
+end)
+
+local Universe0Strength = WaitForStat(function()
+    return UniverseModule.GetStrengthStat(LocalPlayer, 0)
+end)
 
 local AutoThrow = Stats.Get("AutoThrow")
 local AutoTrain = Stats.Get("AutoTrain")
 local GoldenEggs = Stats.Get("GoldenEggs")
 local CurrentUniverse = Stats.Get("CurrentUniverse")
-
-local Universe0Rebirths = UniverseModule.GetRebirthStat(LocalPlayer, 0)
-local Universe0Money = UniverseModule.GetMoneyStat(LocalPlayer, 0)
-local Universe0Strength = UniverseModule.GetStrengthStat(LocalPlayer, 0)
 
 local Remotes = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes")
 local RemoteFunction = Remotes:WaitForChild("__remotefunction")
@@ -30,6 +48,7 @@ local TARGET_REBIRTH_AMOUNT = 1000000000
 pcall(function()
     if CurrentUniverse and CurrentUniverse.Value ~= 0 then
         Network.FireServer("Set Current Universe", 0)
+        task.wait(1)
     end
 end)
 
@@ -62,6 +81,7 @@ pcall(function()
     end
 end)
 
+-- FORMAT
 local function FormatNumber(num)
     if num >= 1e12 then
         return string.format("%.2fT", num / 1e12)
@@ -76,17 +96,16 @@ local function FormatNumber(num)
     end
 end
 
+-- REBIRTH COST
 local function GetRebirthCost()
     local success, cost = pcall(function()
         local RebirthModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Rebirths)
         return RebirthModule.GetRebirthCost(LocalPlayer, TARGET_REBIRTH_AMOUNT, 0)
     end)
-    if success then
-        return cost
-    end
-    return math.huge
+    return success and cost or math.huge
 end
 
+-- ACTIONS
 local function BuyNextObject()
     pcall(function()
         Network.InvokeServer("Buy Next Object")
@@ -95,43 +114,34 @@ end
 
 local function EquipBestPets()
     pcall(function()
-        local args = { "Pet", { Action = "EquipBest", Sort = "Power" } }
-        RemoteFunction:InvokeServer(unpack(args))
+        RemoteFunction:InvokeServer("Pet", { Action = "EquipBest", Sort = "Power" })
     end)
 end
 
 local function UseGoldenEggPotion()
     pcall(function()
-        local args = { "Use Item", "Golden Egg Potion", 1 }
-        RemoteFunction:InvokeServer(unpack(args))
+        RemoteFunction:InvokeServer("Use Item", "Golden Egg Potion", 1)
     end)
 end
 
-local function BuyUpgrade(upgradeName)
+local function BuyUpgrade(name)
     pcall(function()
-        Network.InvokeServer("Easter Upgrade", upgradeName)
+        Network.InvokeServer("Easter Upgrade", name)
     end)
 end
 
 local function CheckAndBuyUpgrades()
     pcall(function()
-        for upgradeName, upgradeData in pairs(EasterUpgradesConfig) do
-            if upgradeName ~= "Catagories" and not upgradeData.Hidden then
-                local stat = Stats.Get(upgradeData.StatName)
+        for name, data in pairs(EasterUpgradesConfig) do
+            if name ~= "Catagories" and not data.Hidden then
+                local stat = Stats.Get(data.StatName)
                 if stat then
-                    local currentLevel = stat.Value
-                    local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
-                    
-                    if currentLevel < maxLevel then
-                        local cost
-                        if upgradeData.Max then
-                            cost = upgradeData.UpgradeCosts(currentLevel)
-                        else
-                            cost = upgradeData.UpgradeCosts[currentLevel + 1]
-                        end
-                        
+                    local lvl = stat.Value
+                    local max = data.Max or #data.UpgradeCosts
+                    if lvl < max then
+                        local cost = data.Max and data.UpgradeCosts(lvl) or data.UpgradeCosts[lvl + 1]
                         if GoldenEggs and GoldenEggs.Value >= cost then
-                            BuyUpgrade(upgradeName)
+                            BuyUpgrade(name)
                             task.wait(0.5)
                         end
                     end
@@ -143,232 +153,101 @@ end
 
 local function RebirthTo1B()
     pcall(function()
-        local args = { "Rebirth", TARGET_REBIRTH_INDEX }
-        RemoteFunction:InvokeServer(unpack(args))
+        RemoteFunction:InvokeServer("Rebirth", TARGET_REBIRTH_INDEX)
     end)
 end
 
-local screenGui = Instance.new("ScreenGui")
-pcall(function()
-    screenGui.Name = "EasterFarmUI"
-    screenGui.ResetOnSpawn = false
-    screenGui.Parent = CoreGui
-end)
+-- UI
+local screenGui = Instance.new("ScreenGui", CoreGui)
+screenGui.Name = "EasterFarmUI"
+screenGui.ResetOnSpawn = false
 
-local mainFrame = Instance.new("Frame")
-pcall(function()
-    mainFrame.Size = UDim2.new(1, 0, 1, 0)
-    mainFrame.Position = UDim2.new(0, 0, 0, 0)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    mainFrame.BackgroundTransparency = 0.15
-    mainFrame.BorderSizePixel = 0
-    mainFrame.Parent = screenGui
-end)
+local mainFrame = Instance.new("Frame", screenGui)
+mainFrame.Size = UDim2.new(1,0,1,0)
+mainFrame.BackgroundTransparency = 0.15
+mainFrame.BackgroundColor3 = Color3.fromRGB(0,0,0)
 
-local title = Instance.new("TextLabel")
-pcall(function()
-    title.Size = UDim2.new(1, 0, 0, 25)
-    title.Position = UDim2.new(0, 0, 0, 0)
-    title.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-    title.BackgroundTransparency = 0.3
-    title.Text = "🐣 EASTER FARM - UNIVERSE 0 🐣"
-    title.TextColor3 = Color3.fromRGB(255, 215, 0)
-    title.Font = Enum.Font.GothamBold
-    title.TextSize = 14
-    title.Parent = mainFrame
-end)
+local function MakeLabel(y, text, size)
+    local lbl = Instance.new("TextLabel", mainFrame)
+    lbl.Size = UDim2.new(1,0,0,25)
+    lbl.Position = UDim2.new(0,0,0,y)
+    lbl.BackgroundTransparency = 1
+    lbl.TextColor3 = Color3.new(1,1,1)
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = size
+    lbl.Text = text
+    return lbl
+end
 
-local rebirthsLabel = Instance.new("TextLabel")
-pcall(function()
-    rebirthsLabel.Size = UDim2.new(1, 0, 0, 30)
-    rebirthsLabel.Position = UDim2.new(0, 0, 0, 28)
-    rebirthsLabel.BackgroundTransparency = 1
-    rebirthsLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
-    rebirthsLabel.Font = Enum.Font.GothamBold
-    rebirthsLabel.TextSize = 16
-    rebirthsLabel.Text = "💎 Rebirths: 0"
-    rebirthsLabel.Parent = mainFrame
-end)
+local rebirthsLabel = MakeLabel(20, "Rebirths: 0", 16)
+local strengthLabel = MakeLabel(45, "Strength: 0", 13)
+local goldenLabel = MakeLabel(70, "Golden: 0", 13)
+local moneyLabel = MakeLabel(95, "Money: 0", 13)
+local statusLabel = MakeLabel(120, "Status: Running", 10)
 
-local strengthLabel = Instance.new("TextLabel")
-pcall(function()
-    strengthLabel.Size = UDim2.new(1, 0, 0, 25)
-    strengthLabel.Position = UDim2.new(0, 0, 0, 58)
-    strengthLabel.BackgroundTransparency = 1
-    strengthLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-    strengthLabel.Font = Enum.Font.GothamSemibold
-    strengthLabel.TextSize = 12
-    strengthLabel.Text = "💪 Strength: 0"
-    strengthLabel.Parent = mainFrame
-end)
-
-local progressBg = Instance.new("Frame")
-pcall(function()
-    progressBg.Size = UDim2.new(0.94, 0, 0, 15)
-    progressBg.Position = UDim2.new(0.03, 0, 0, 85)
-    progressBg.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
-    progressBg.BorderSizePixel = 0
-    progressBg.Parent = mainFrame
-end)
-
-local progressBgCorner = Instance.new("UICorner")
-pcall(function()
-    progressBgCorner.CornerRadius = UDim.new(1, 0)
-    progressBgCorner.Parent = progressBg
-end)
-
-local progressFill = Instance.new("Frame")
-pcall(function()
-    progressFill.Size = UDim2.new(0, 0, 1, 0)
-    progressFill.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
-    progressFill.BorderSizePixel = 0
-    progressFill.Parent = progressBg
-end)
-
-local progressFillCorner = Instance.new("UICorner")
-pcall(function()
-    progressFillCorner.CornerRadius = UDim.new(1, 0)
-    progressFillCorner.Parent = progressFill
-end)
-
-local progressText = Instance.new("TextLabel")
-pcall(function()
-    progressText.Size = UDim2.new(0.94, 0, 0, 14)
-    progressText.Position = UDim2.new(0.03, 0, 0, 102)
-    progressText.BackgroundTransparency = 1
-    progressText.TextColor3 = Color3.fromRGB(200, 200, 200)
-    progressText.Font = Enum.Font.Gotham
-    progressText.TextSize = 9
-    progressText.Text = "0 / 1,000,000,000 (0%)"
-    progressText.Parent = mainFrame
-end)
-
-local goldenLabel = Instance.new("TextLabel")
-pcall(function()
-    goldenLabel.Size = UDim2.new(1, 0, 0, 25)
-    goldenLabel.Position = UDim2.new(0, 0, 0, 118)
-    goldenLabel.BackgroundTransparency = 1
-    goldenLabel.TextColor3 = Color3.fromRGB(255, 200, 50)
-    goldenLabel.Font = Enum.Font.GothamSemibold
-    goldenLabel.TextSize = 12
-    goldenLabel.Text = "🥚 Golden Eggs: 0"
-    goldenLabel.Parent = mainFrame
-end)
-
-local moneyLabel = Instance.new("TextLabel")
-pcall(function()
-    moneyLabel.Size = UDim2.new(1, 0, 0, 25)
-    moneyLabel.Position = UDim2.new(0, 0, 0, 143)
-    moneyLabel.BackgroundTransparency = 1
-    moneyLabel.TextColor3 = Color3.fromRGB(0, 255, 100)
-    moneyLabel.Font = Enum.Font.Gotham
-    moneyLabel.TextSize = 11
-    moneyLabel.Text = "💰 Money: 0"
-    moneyLabel.Parent = mainFrame
-end)
-
-local statusLabel = Instance.new("TextLabel")
-pcall(function()
-    statusLabel.Size = UDim2.new(1, 0, 0, 20)
-    statusLabel.Position = UDim2.new(0, 0, 0, 170)
-    statusLabel.BackgroundTransparency = 1
-    statusLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
-    statusLabel.Font = Enum.Font.Gotham
-    statusLabel.TextSize = 9
-    statusLabel.Text = "Status: Running..."
-    statusLabel.Parent = mainFrame
-end)
-
+-- UPDATE UI
 local function UpdateUI()
-    pcall(function()
-        local currentRebirths = Universe0Rebirths and Universe0Rebirths.Value or 0
-        local currentStrength = Universe0Strength and Universe0Strength.Value or 0
-        local currentGolden = GoldenEggs and GoldenEggs.Value or 0
-        local currentMoney = Universe0Money and Universe0Money.Value or 0
-        local cost = GetRebirthCost()
-        
-        rebirthsLabel.Text = "💎 Rebirths: " .. FormatNumber(currentRebirths)
-        strengthLabel.Text = "💪 Strength: " .. FormatNumber(currentStrength)
-        goldenLabel.Text = "🥚 Golden Eggs: " .. FormatNumber(currentGolden)
-        moneyLabel.Text = "💰 Money: " .. FormatNumber(currentMoney) .. " / " .. FormatNumber(cost)
-        
-        local progress = math.min(currentRebirths / TARGET_REBIRTH_AMOUNT, 1)
-        progressFill.Size = UDim2.new(progress, 0, 1, 0)
-        
-        if progress >= 1 then
-            progressFill.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
-            statusLabel.Text = "Status: ✅ TARGET REACHED!"
-        elseif progress >= 0.75 then
-            progressFill.BackgroundColor3 = Color3.fromRGB(255, 200, 0)
-        elseif progress >= 0.5 then
-            progressFill.BackgroundColor3 = Color3.fromRGB(0, 200, 255)
-        else
-            progressFill.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
-        end
-        
-        progressText.Text = string.format("%s / %s (%.2f%%)", 
-            FormatNumber(currentRebirths), 
-            FormatNumber(TARGET_REBIRTH_AMOUNT), 
-            progress * 100)
-    end)
+    local currentRebirths = Universe0Rebirths.Value
+    local currentMoney = Universe0Money.Value
+    local currentStrength = Universe0Strength.Value
+    local currentGolden = GoldenEggs and GoldenEggs.Value or 0
+
+    local cost = GetRebirthCost()
+
+    rebirthsLabel.Text = "💎 Rebirths: " .. FormatNumber(currentRebirths)
+    strengthLabel.Text = "💪 Strength: " .. FormatNumber(currentStrength)
+    goldenLabel.Text = "🥚 Golden Eggs: " .. FormatNumber(currentGolden)
+    moneyLabel.Text = "💰 Money: " .. FormatNumber(currentMoney) .. " / " .. FormatNumber(cost)
+
+    if currentRebirths >= TARGET_REBIRTH_AMOUNT then
+        statusLabel.Text = "Status: ✅ Done"
+    else
+        statusLabel.Text = "Status: Farming..."
+    end
 end
 
+-- CONNECTIONS (NOW SAFE)
+Universe0Rebirths.Changed:Connect(UpdateUI)
+Universe0Money.Changed:Connect(UpdateUI)
+Universe0Strength.Changed:Connect(UpdateUI)
+if GoldenEggs then GoldenEggs.Changed:Connect(UpdateUI) end
+
+-- LOOPS
 task.spawn(function()
     while true do
-        pcall(function()
-            task.wait(30)
-            CheckAndBuyUpgrades()
-        end)
-        task.wait(1)
+        task.wait(30)
+        CheckAndBuyUpgrades()
     end
 end)
 
 task.spawn(function()
     while true do
-        pcall(function()
-            task.wait(45)
-            BuyNextObject()
-            task.wait(1)
-            EquipBestPets()
-        end)
+        task.wait(45)
+        BuyNextObject()
         task.wait(1)
+        EquipBestPets()
     end
 end)
 
 task.spawn(function()
     while true do
-        pcall(function()
-            task.wait(480)
-            UseGoldenEggPotion()
-        end)
-        task.wait(1)
+        task.wait(480)
+        UseGoldenEggPotion()
     end
 end)
 
 task.spawn(function()
     while true do
-        pcall(function()
-            task.wait(600)
-            local currentRebirths = Universe0Rebirths and Universe0Rebirths.Value or 0
-            if currentRebirths < TARGET_REBIRTH_AMOUNT then
-                local currentMoney = Universe0Money and Universe0Money.Value or 0
-                local cost = GetRebirthCost()
-                if currentMoney >= cost then
-                    RebirthTo1B()
-                end
+        task.wait(600)
+        if Universe0Rebirths.Value < TARGET_REBIRTH_AMOUNT then
+            if Universe0Money.Value >= GetRebirthCost() then
+                RebirthTo1B()
             end
-        end)
-        task.wait(1)
+        end
     end
 end)
 
-pcall(function()
-    if Universe0Rebirths then Universe0Rebirths.Changed:Connect(UpdateUI) end
-    if Universe0Strength then Universe0Strength.Changed:Connect(UpdateUI) end
-    if GoldenEggs then GoldenEggs.Changed:Connect(UpdateUI) end
-    if Universe0Money then Universe0Money.Changed:Connect(UpdateUI) end
-end)
-
+-- backup updater
 task.spawn(function()
     while true do
         task.wait(1)
