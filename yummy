@@ -1,4 +1,3 @@
-setfpscap(3)
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -6,48 +5,35 @@ local VirtualUser = game:GetService("VirtualUser")
 local VirtualInput = game:GetService("VirtualInputManager")
 local CoreGui = game:GetService("CoreGui")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 
 local Paper = require(ReplicatedStorage:WaitForChild("Paper"))
 local Stats = Paper.Stats
 local Network = Paper.Network
 local EasterUpgradesConfig = require(ReplicatedStorage:WaitForChild("Tables").EasterUpgrades)
-local EasterRebirths = require(ReplicatedStorage:WaitForChild("Tables").RebirthsEaster)
 local UniverseModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Universe)
-local RebirthModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Rebirths)
 
 local Remotes = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes")
 local RemoteFunction = Remotes:WaitForChild("__remotefunction")
 
-repeat task.wait() until Stats.IsLoaded(LocalPlayer)
+repeat task.wait() until pcall(function() return Stats.IsLoaded(LocalPlayer) end)
 
-local Tutorial = Stats.Get("Tutorial")
 local Strength = Stats.Get("Strength")
 local Money = Stats.Get("Money")
 local PetCount = Stats.Get("PetCount")
-local Throws = Stats.Get("Throws")
-local CurrentWorld = Stats.Get("CurrentWorld")
-local WorldsUnlocked = Stats.Get("WorldsUnlocked")
 local GoldenEggs = Stats.Get("GoldenEggs")
 
-local CurrentStep = Tutorial.Value
 local AutoThrowEnabled = false
-local AutoTrainEnabled = false
-local RetryCount = 0
-local MaxRetries = 3
-local TutorialComplete = false
 local StartTime = os.clock()
-local PostTutorialLoopActive = false
-
-local EggsFolder = workspace:WaitForChild("Eggs")
-local WorldsFolder = workspace:WaitForChild("Worlds")
-local SpawnFolder = WorldsFolder:WaitForChild("Spawn")
 
 local mouse = LocalPlayer:GetMouse()
 
-local idledConnections = getconnections(LocalPlayer.Idled)
-for _, connection in pairs(idledConnections) do
-    connection:Disable()
-end
+pcall(function()
+    local idledConnections = getconnections(LocalPlayer.Idled)
+    for _, connection in pairs(idledConnections) do
+        connection:Disable()
+    end
+end)
 
 LocalPlayer.Idled:Connect(function()
     pcall(function()
@@ -65,7 +51,8 @@ LocalPlayer.Idled:Connect(function()
 end)
 
 task.spawn(function()
-    while task.wait(45) do
+    while true do
+        task.wait(45)
         pcall(function()
             VirtualInput:SendMouseMotionEvent(
                 math.random(-2, 2),
@@ -78,18 +65,423 @@ task.spawn(function()
     end
 end)
 
+local Dashboard = nil
+local ConsoleLines = {}
+local MaxConsoleLines = 8
+
+local function AddConsoleMessage(msg)
+    local timestamp = os.date("%H:%M:%S")
+    local formatted = string.format("[%s] %s", timestamp, msg)
+    table.insert(ConsoleLines, 1, formatted)
+    if #ConsoleLines > MaxConsoleLines then
+        table.remove(ConsoleLines)
+    end
+    print(msg)
+    
+    if Dashboard and Dashboard.Console then
+        local text = ""
+        for i = #ConsoleLines, 1, -1 do
+            text = text .. ConsoleLines[i] .. "\n"
+        end
+        Dashboard.Console.Text = text
+    end
+end
+
+local function FormatNumber(num)
+    if num >= 1e12 then
+        return string.format("%.2fT", num / 1e12)
+    elseif num >= 1e9 then
+        return string.format("%.2fB", num / 1e9)
+    elseif num >= 1e6 then
+        return string.format("%.2fM", num / 1e6)
+    elseif num >= 1e3 then
+        return string.format("%.2fK", num / 1e3)
+    else
+        return tostring(math.floor(num))
+    end
+end
+
+local function FormatTime(seconds)
+    local hours = math.floor(seconds / 3600)
+    local minutes = math.floor((seconds % 3600) / 60)
+    local secs = math.floor(seconds % 60)
+    if hours > 0 then
+        return string.format("%d:%02d:%02d", hours, minutes, secs)
+    else
+        return string.format("%d:%02d", minutes, secs)
+    end
+end
+
+local function GetScreenScale()
+    local viewportSize = workspace.CurrentCamera.ViewportSize
+    local scale = math.min(viewportSize.X / 1920, viewportSize.Y / 1080)
+    return math.clamp(scale, 0.5, 1.5)
+end
+
+local function CreateDashboard()
+    pcall(function()
+        if Dashboard and Dashboard.Parent then
+            Dashboard.Parent:Destroy()
+        end
+        
+        local scale = GetScreenScale()
+        local username = LocalPlayer.Name
+        
+        local screenGui = Instance.new("ScreenGui")
+        screenGui.Name = "Dashboard"
+        screenGui.ResetOnSpawn = false
+        screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        screenGui.Parent = CoreGui
+        
+        local mainFrame = Instance.new("Frame")
+        mainFrame.Size = UDim2.new(0, 380 * scale, 0, 420 * scale)
+        mainFrame.Position = UDim2.new(0, 10 * scale, 0, 10 * scale)
+        mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+        mainFrame.BackgroundTransparency = 0.05
+        mainFrame.BorderSizePixel = 0
+        mainFrame.ClipsDescendants = true
+        mainFrame.Parent = screenGui
+        
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 12 * scale)
+        corner.Parent = mainFrame
+        
+        local stroke = Instance.new("UIStroke")
+        stroke.Thickness = 1 * scale
+        stroke.Color = Color3.fromRGB(60, 60, 70)
+        stroke.Parent = mainFrame
+        
+        local titleBar = Instance.new("Frame")
+        titleBar.Size = UDim2.new(1, 0, 0, 40 * scale)
+        titleBar.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+        titleBar.BackgroundTransparency = 0
+        titleBar.BorderSizePixel = 0
+        titleBar.Parent = mainFrame
+        
+        local titleCorner = Instance.new("UICorner")
+        titleCorner.CornerRadius = UDim.new(0, 12 * scale)
+        titleCorner.Parent = titleBar
+        
+        local titleText = Instance.new("TextLabel")
+        titleText.Size = UDim2.new(1, -80 * scale, 1, 0)
+        titleText.Position = UDim2.new(0, 15 * scale, 0, 0)
+        titleText.BackgroundTransparency = 1
+        titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+        titleText.TextScaled = false
+        titleText.Font = Enum.Font.GothamBold
+        titleText.TextSize = 18 * scale
+        titleText.TextXAlignment = Enum.TextXAlignment.Left
+        titleText.Text = username .. "'s Dashboard"
+        titleText.Parent = titleBar
+        
+        local closeBtn = Instance.new("TextButton")
+        closeBtn.Size = UDim2.new(0, 30 * scale, 0, 30 * scale)
+        closeBtn.Position = UDim2.new(1, -40 * scale, 0, 5 * scale)
+        closeBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+        closeBtn.BackgroundTransparency = 0
+        closeBtn.BorderSizePixel = 0
+        closeBtn.Text = "✕"
+        closeBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+        closeBtn.TextSize = 18 * scale
+        closeBtn.Font = Enum.Font.GothamBold
+        closeBtn.Parent = titleBar
+        
+        local closeCorner = Instance.new("UICorner")
+        closeCorner.CornerRadius = UDim.new(0, 6 * scale)
+        closeCorner.Parent = closeBtn
+        
+        closeBtn.MouseButton1Click:Connect(function()
+            screenGui:Destroy()
+        end)
+        
+        local content = Instance.new("Frame")
+        content.Size = UDim2.new(1, -20 * scale, 1, -50 * scale)
+        content.Position = UDim2.new(0, 10 * scale, 0, 45 * scale)
+        content.BackgroundTransparency = 1
+        content.Parent = mainFrame
+        
+        local statsBox = Instance.new("Frame")
+        statsBox.Size = UDim2.new(1, 0, 0, 130 * scale)
+        statsBox.Position = UDim2.new(0, 0, 0, 0)
+        statsBox.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+        statsBox.BackgroundTransparency = 0
+        statsBox.BorderSizePixel = 0
+        statsBox.Parent = content
+        
+        local statsCorner = Instance.new("UICorner")
+        statsCorner.CornerRadius = UDim.new(0, 8 * scale)
+        statsCorner.Parent = statsBox
+        
+        local statsTitle = Instance.new("TextLabel")
+        statsTitle.Size = UDim2.new(1, -10 * scale, 0, 25 * scale)
+        statsTitle.Position = UDim2.new(0, 5 * scale, 0, 5 * scale)
+        statsTitle.BackgroundTransparency = 1
+        statsTitle.TextColor3 = Color3.fromRGB(150, 200, 150)
+        statsTitle.TextScaled = false
+        statsTitle.TextSize = 14 * scale
+        statsTitle.Font = Enum.Font.GothamBold
+        statsTitle.Text = "📊 STATISTICS"
+        statsTitle.TextXAlignment = Enum.TextXAlignment.Left
+        statsTitle.Parent = statsBox
+        
+        local strengthText = Instance.new("TextLabel")
+        strengthText.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
+        strengthText.Position = UDim2.new(0, 5 * scale, 0, 32 * scale)
+        strengthText.BackgroundTransparency = 1
+        strengthText.TextColor3 = Color3.fromRGB(255, 255, 255)
+        strengthText.TextScaled = false
+        strengthText.TextSize = 13 * scale
+        strengthText.Font = Enum.Font.Gotham
+        strengthText.Text = "💪 Strength: 0"
+        strengthText.TextXAlignment = Enum.TextXAlignment.Left
+        strengthText.Parent = statsBox
+        
+        local moneyText = Instance.new("TextLabel")
+        moneyText.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
+        moneyText.Position = UDim2.new(0, 5 * scale, 0, 54 * scale)
+        moneyText.BackgroundTransparency = 1
+        moneyText.TextColor3 = Color3.fromRGB(255, 255, 255)
+        moneyText.TextScaled = false
+        moneyText.TextSize = 13 * scale
+        moneyText.Font = Enum.Font.Gotham
+        moneyText.Text = "💰 Money: 0"
+        moneyText.TextXAlignment = Enum.TextXAlignment.Left
+        moneyText.Parent = statsBox
+        
+        local goldenEggsText = Instance.new("TextLabel")
+        goldenEggsText.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
+        goldenEggsText.Position = UDim2.new(0, 5 * scale, 0, 76 * scale)
+        goldenEggsText.BackgroundTransparency = 1
+        goldenEggsText.TextColor3 = Color3.fromRGB(255, 215, 0)
+        goldenEggsText.TextScaled = false
+        goldenEggsText.TextSize = 13 * scale
+        goldenEggsText.Font = Enum.Font.Gotham
+        goldenEggsText.Text = "🥚 Golden Eggs: 0"
+        goldenEggsText.TextXAlignment = Enum.TextXAlignment.Left
+        goldenEggsText.Parent = statsBox
+        
+        local petsText = Instance.new("TextLabel")
+        petsText.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
+        petsText.Position = UDim2.new(0, 5 * scale, 0, 98 * scale)
+        petsText.BackgroundTransparency = 1
+        petsText.TextColor3 = Color3.fromRGB(255, 255, 255)
+        petsText.TextScaled = false
+        petsText.TextSize = 13 * scale
+        petsText.Font = Enum.Font.Gotham
+        petsText.Text = "🐾 Pets: 0"
+        petsText.TextXAlignment = Enum.TextXAlignment.Left
+        petsText.Parent = statsBox
+        
+        local statusBox = Instance.new("Frame")
+        statusBox.Size = UDim2.new(1, 0, 0, 100 * scale)
+        statusBox.Position = UDim2.new(0, 0, 0, 138 * scale)
+        statusBox.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+        statusBox.BackgroundTransparency = 0
+        statusBox.BorderSizePixel = 0
+        statusBox.Parent = content
+        
+        local statusCorner = Instance.new("UICorner")
+        statusCorner.CornerRadius = UDim.new(0, 8 * scale)
+        statusCorner.Parent = statusBox
+        
+        local statusTitle = Instance.new("TextLabel")
+        statusTitle.Size = UDim2.new(1, -10 * scale, 0, 25 * scale)
+        statusTitle.Position = UDim2.new(0, 5 * scale, 0, 5 * scale)
+        statusTitle.BackgroundTransparency = 1
+        statusTitle.TextColor3 = Color3.fromRGB(150, 200, 200)
+        statusTitle.TextScaled = false
+        statusTitle.TextSize = 14 * scale
+        statusTitle.Font = Enum.Font.GothamBold
+        statusTitle.Text = "🟢 STATUS"
+        statusTitle.TextXAlignment = Enum.TextXAlignment.Left
+        statusTitle.Parent = statusBox
+        
+        local autoThrowStatus = Instance.new("TextLabel")
+        autoThrowStatus.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
+        autoThrowStatus.Position = UDim2.new(0, 5 * scale, 0, 32 * scale)
+        autoThrowStatus.BackgroundTransparency = 1
+        autoThrowStatus.TextScaled = false
+        autoThrowStatus.TextSize = 13 * scale
+        autoThrowStatus.Font = Enum.Font.Gotham
+        autoThrowStatus.Text = "🟢 AutoThrow: ON"
+        autoThrowStatus.TextXAlignment = Enum.TextXAlignment.Left
+        autoThrowStatus.Parent = statusBox
+        
+        local runtimeStatus = Instance.new("TextLabel")
+        runtimeStatus.Size = UDim2.new(1, -10 * scale, 0, 22 * scale)
+        runtimeStatus.Position = UDim2.new(0, 5 * scale, 0, 54 * scale)
+        runtimeStatus.BackgroundTransparency = 1
+        runtimeStatus.TextColor3 = Color3.fromRGB(150, 150, 150)
+        runtimeStatus.TextScaled = false
+        runtimeStatus.TextSize = 13 * scale
+        runtimeStatus.Font = Enum.Font.Gotham
+        runtimeStatus.Text = "⏱️ Runtime: 0:00"
+        runtimeStatus.TextXAlignment = Enum.TextXAlignment.Left
+        runtimeStatus.Parent = statusBox
+        
+        local controlsBox = Instance.new("Frame")
+        controlsBox.Size = UDim2.new(1, 0, 0, 100 * scale)
+        controlsBox.Position = UDim2.new(0, 0, 0, 246 * scale)
+        controlsBox.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+        controlsBox.BackgroundTransparency = 0
+        controlsBox.BorderSizePixel = 0
+        controlsBox.Parent = content
+        
+        local controlsCorner = Instance.new("UICorner")
+        controlsCorner.CornerRadius = UDim.new(0, 8 * scale)
+        controlsCorner.Parent = controlsBox
+        
+        local controlsTitle = Instance.new("TextLabel")
+        controlsTitle.Size = UDim2.new(1, -10 * scale, 0, 25 * scale)
+        controlsTitle.Position = UDim2.new(0, 5 * scale, 0, 5 * scale)
+        controlsTitle.BackgroundTransparency = 1
+        controlsTitle.TextColor3 = Color3.fromRGB(200, 150, 200)
+        controlsTitle.TextScaled = false
+        controlsTitle.TextSize = 14 * scale
+        controlsTitle.Font = Enum.Font.GothamBold
+        controlsTitle.Text = "🎮 CONTROLS"
+        controlsTitle.TextXAlignment = Enum.TextXAlignment.Left
+        controlsTitle.Parent = controlsBox
+        
+        local forceRebirthBtn = Instance.new("TextButton")
+        forceRebirthBtn.Size = UDim2.new(0.9, 0, 0, 28 * scale)
+        forceRebirthBtn.Position = UDim2.new(0.05, 0, 0, 32 * scale)
+        forceRebirthBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+        forceRebirthBtn.BackgroundTransparency = 0
+        forceRebirthBtn.BorderSizePixel = 0
+        forceRebirthBtn.Text = "⚡ Force AutoThrow"
+        forceRebirthBtn.TextColor3 = Color3.fromRGB(255, 215, 0)
+        forceRebirthBtn.TextSize = 12 * scale
+        forceRebirthBtn.Font = Enum.Font.GothamBold
+        forceRebirthBtn.Parent = controlsBox
+        
+        local forceCorner = Instance.new("UICorner")
+        forceCorner.CornerRadius = UDim.new(0, 6 * scale)
+        forceCorner.Parent = forceRebirthBtn
+        
+        forceRebirthBtn.MouseButton1Click:Connect(function()
+            pcall(function()
+                if not AutoThrowEnabled then
+                    ToggleAutoThrow()
+                end
+                AddConsoleMessage("AutoThrow force enabled")
+            end)
+        end)
+        
+        local resetCharBtn = Instance.new("TextButton")
+        resetCharBtn.Size = UDim2.new(0.9, 0, 0, 28 * scale)
+        resetCharBtn.Position = UDim2.new(0.05, 0, 0, 65 * scale)
+        resetCharBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+        resetCharBtn.BackgroundTransparency = 0
+        resetCharBtn.BorderSizePixel = 0
+        resetCharBtn.Text = "🔄 Reset Character"
+        resetCharBtn.TextColor3 = Color3.fromRGB(255, 100, 100)
+        resetCharBtn.TextSize = 12 * scale
+        resetCharBtn.Font = Enum.Font.GothamBold
+        resetCharBtn.Parent = controlsBox
+        
+        local resetCorner = Instance.new("UICorner")
+        resetCorner.CornerRadius = UDim.new(0, 6 * scale)
+        resetCorner.Parent = resetCharBtn
+        
+        resetCharBtn.MouseButton1Click:Connect(function()
+            ResetCharacter()
+        end)
+        
+        local consoleBox = Instance.new("Frame")
+        consoleBox.Size = UDim2.new(1, 0, 0, 130 * scale)
+        consoleBox.Position = UDim2.new(0, 0, 0, 354 * scale)
+        consoleBox.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+        consoleBox.BackgroundTransparency = 0
+        consoleBox.BorderSizePixel = 0
+        consoleBox.Parent = content
+        
+        local consoleCorner = Instance.new("UICorner")
+        consoleCorner.CornerRadius = UDim.new(0, 8 * scale)
+        consoleCorner.Parent = consoleBox
+        
+        local consoleTitle = Instance.new("TextLabel")
+        consoleTitle.Size = UDim2.new(1, -10 * scale, 0, 25 * scale)
+        consoleTitle.Position = UDim2.new(0, 5 * scale, 0, 5 * scale)
+        consoleTitle.BackgroundTransparency = 1
+        consoleTitle.TextColor3 = Color3.fromRGB(200, 200, 200)
+        consoleTitle.TextScaled = false
+        consoleTitle.TextSize = 12 * scale
+        consoleTitle.Font = Enum.Font.GothamBold
+        consoleTitle.Text = "📋 CONSOLE"
+        consoleTitle.TextXAlignment = Enum.TextXAlignment.Left
+        consoleTitle.Parent = consoleBox
+        
+        local consoleText = Instance.new("TextLabel")
+        consoleText.Size = UDim2.new(1, -10 * scale, 0, 95 * scale)
+        consoleText.Position = UDim2.new(0, 5 * scale, 0, 28 * scale)
+        consoleText.BackgroundTransparency = 1
+        consoleText.TextColor3 = Color3.fromRGB(180, 180, 180)
+        consoleText.TextScaled = false
+        consoleText.TextSize = 10 * scale
+        consoleText.Font = Enum.Font.Gotham
+        consoleText.Text = ""
+        consoleText.TextXAlignment = Enum.TextXAlignment.Left
+        consoleText.TextYAlignment = Enum.TextYAlignment.Top
+        consoleText.TextWrapped = true
+        consoleText.Parent = consoleBox
+        
+        Dashboard = {
+            Parent = screenGui,
+            Strength = strengthText,
+            Money = moneyText,
+            GoldenEggs = goldenEggsText,
+            Pets = petsText,
+            AutoThrow = autoThrowStatus,
+            Runtime = runtimeStatus,
+            Console = consoleText
+        }
+        
+        AddConsoleMessage("Dashboard loaded - " .. username)
+    end)
+end
+
+local function UpdateDashboard()
+    pcall(function()
+        if not Dashboard or not Dashboard.Parent then
+            CreateDashboard()
+            task.wait(0.5)
+        end
+        
+        if Dashboard then
+            Dashboard.Strength.Text = "💪 Strength: " .. FormatNumber(Strength.Value)
+            Dashboard.Money.Text = "💰 Money: " .. FormatNumber(UniverseModule.GetMoneyStat(LocalPlayer, 0).Value)
+            Dashboard.GoldenEggs.Text = "🥚 Golden Eggs: " .. FormatNumber(GoldenEggs.Value)
+            Dashboard.Pets.Text = "🐾 Pets: " .. FormatNumber(PetCount.Value)
+            
+            Dashboard.AutoThrow.Text = AutoThrowEnabled and "🟢 AutoThrow: ON" or "🔴 AutoThrow: OFF"
+            
+            local runtime = os.clock() - StartTime
+            Dashboard.Runtime.Text = "⏱️ Runtime: " .. FormatTime(runtime)
+        end
+    end)
+end
+
+workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+    pcall(function()
+        if Dashboard and Dashboard.Parent then
+            CreateDashboard()
+        end
+    end)
+end)
+
 local lastResetTime = 0
 local resetCooldown = 420
 
 local function ResetCharacter()
-    local currentTime = os.time()
-    if currentTime - lastResetTime < resetCooldown then
-        print("[Reset] Skipped - cooldown active (" .. resetCooldown - (currentTime - lastResetTime) .. " seconds remaining)")
-        return false
-    end
-    
-    print("[Reset] Attempting to reset character...")
     pcall(function()
+        local currentTime = os.time()
+        if currentTime - lastResetTime < resetCooldown then
+            AddConsoleMessage("Reset skipped - cooldown active")
+            return false
+        end
+        
+        AddConsoleMessage("Resetting character...")
         local character = LocalPlayer.Character
         if character then
             local humanoid = character:FindFirstChild("Humanoid")
@@ -100,322 +492,85 @@ local function ResetCharacter()
         end
         LocalPlayer:LoadCharacter()
         lastResetTime = currentTime
-        print("[Reset] Character reset successfully")
+        AddConsoleMessage("Character reset successfully")
     end)
     return true
 end
 
 local function GetCurrentMoney()
-    return UniverseModule.GetMoneyStat(LocalPlayer, 0).Value
-end
-
-local function GetRebirthCost(rebirthAmount)
-    return RebirthModule.GetRebirthCost(LocalPlayer, rebirthAmount, 0)
-end
-
-local function GetRebirthAmounts()
-    local amounts = {}
-    for _, amount in ipairs(EasterRebirths) do
-        table.insert(amounts, amount)
-    end
-    return amounts
-end
-
-local function GetRebirthIndex(rebirthAmount)
-    for index, amount in ipairs(EasterRebirths) do
-        if amount == rebirthAmount then
-            return index
-        end
-    end
-    return nil
-end
-
-local function GetBestAffordableRebirth()
-    local currentMoney = GetCurrentMoney()
-    local bestAffordable = 0
-    local rebirthAmounts = GetRebirthAmounts()
-    
-    for _, rebirthAmount in ipairs(rebirthAmounts) do
-        local cost = GetRebirthCost(rebirthAmount)
-        if cost <= currentMoney and rebirthAmount > bestAffordable then
-            bestAffordable = rebirthAmount
-        end
-    end
-    return bestAffordable
-end
-
-local function PerformRebirth(rebirthAmount)
-    if rebirthAmount <= 0 then
-        return false
-    end
-    
-    local rebirthIndex = GetRebirthIndex(rebirthAmount)
-    if not rebirthIndex then
-        print("[Rebirth] Invalid rebirth amount: " .. rebirthAmount)
-        return false
-    end
-    
-    print("[Rebirth] Attempting rebirth with amount " .. rebirthAmount .. " (index: " .. rebirthIndex .. ")")
-    
-    local args = { "Rebirth", rebirthIndex }
-    local success, result = pcall(function()
-        return RemoteFunction:InvokeServer(unpack(args))
-    end)
-    
-    if success then
-        print("[Rebirth] SUCCESS! Performed rebirth with " .. rebirthAmount .. " rebirths")
-        return true
-    else
-        print("[Rebirth] FAILED: " .. tostring(result))
-        return false
-    end
+    return pcall(function()
+        return UniverseModule.GetMoneyStat(LocalPlayer, 0).Value
+    end) or 0
 end
 
 local function BuyUpgrade(upgradeName)
-    print("[EasterUpgrade] Attempting to buy: " .. upgradeName)
+    AddConsoleMessage("Attempting to buy: " .. upgradeName)
     local args = { "Easter Upgrade", upgradeName }
     local success, result = pcall(function()
         return RemoteFunction:InvokeServer(unpack(args))
     end)
     if success then
-        print("[EasterUpgrade] SUCCESS: " .. upgradeName)
+        AddConsoleMessage("SUCCESS: " .. upgradeName)
         return true
     else
-        print("[EasterUpgrade] FAILED: " .. upgradeName .. " - " .. tostring(result))
+        AddConsoleMessage("FAILED: " .. upgradeName .. " - " .. tostring(result))
         return false
     end
 end
 
 local function GetUpgradeCost(upgradeName, upgradeData, currentLevel)
-    if upgradeData.Max then
-        return upgradeData.UpgradeCosts(currentLevel)
-    else
-        return upgradeData.UpgradeCosts[currentLevel + 1]
-    end
+    return pcall(function()
+        if upgradeData.Max then
+            return upgradeData.UpgradeCosts(currentLevel)
+        else
+            return upgradeData.UpgradeCosts[currentLevel + 1]
+        end
+    end) or math.huge
 end
 
 local rebirthSkipsStopped = false
 
 local function CheckAndBuyUpgrades()
-    print("[EasterUpgrade] Checking for available upgrades...")
-    
-    for upgradeName, upgradeData in pairs(EasterUpgradesConfig) do
-        if upgradeName ~= "Catagories" and not upgradeData.Hidden then
-            if upgradeName == "More Rebirth Skips" then
-                if not rebirthSkipsStopped then
+    pcall(function()
+        for upgradeName, upgradeData in pairs(EasterUpgradesConfig) do
+            if upgradeName ~= "Catagories" and not upgradeData.Hidden then
+                if upgradeName == "More Rebirth Skips" then
+                    if not rebirthSkipsStopped then
+                        local stat = Stats.Get(upgradeData.StatName)
+                        if stat then
+                            local currentLevel = stat.Value
+                            local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
+                            if currentLevel < maxLevel then
+                                local cost = GetUpgradeCost(upgradeName, upgradeData, currentLevel)
+                                if cost > 1000 then
+                                    AddConsoleMessage("More Rebirth Skips cost " .. cost .. " (>1000), stopping permanently")
+                                    rebirthSkipsStopped = true
+                                elseif GoldenEggs.Value >= cost then
+                                    AddConsoleMessage("Purchasing More Rebirth Skips (Level " .. currentLevel + 1 .. ")")
+                                    BuyUpgrade(upgradeName)
+                                    task.wait(0.5)
+                                end
+                            end
+                        end
+                    end
+                else
                     local stat = Stats.Get(upgradeData.StatName)
                     if stat then
                         local currentLevel = stat.Value
                         local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
+                        
                         if currentLevel < maxLevel then
                             local cost = GetUpgradeCost(upgradeName, upgradeData, currentLevel)
-                            if cost > 1000 then
-                                print("[EasterUpgrade] More Rebirth Skips cost " .. cost .. " (>1000), stopping permanently")
-                                rebirthSkipsStopped = true
-                            elseif GoldenEggs.Value >= cost then
-                                print("[EasterUpgrade] Purchasing: " .. upgradeName .. " (Level " .. currentLevel + 1 .. "/" .. maxLevel .. ") Cost: " .. cost)
+                            
+                            if GoldenEggs.Value >= cost then
+                                AddConsoleMessage("Purchasing " .. upgradeName .. " (Level " .. currentLevel + 1 .. ")")
                                 BuyUpgrade(upgradeName)
                                 task.wait(0.5)
                             end
                         end
                     end
-                else
-                    print("[EasterUpgrade] More Rebirth Skips - permanently stopped (cost exceeded 1000)")
-                end
-            else
-                local stat = Stats.Get(upgradeData.StatName)
-                if stat then
-                    local currentLevel = stat.Value
-                    local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
-                    
-                    if currentLevel < maxLevel then
-                        local cost = GetUpgradeCost(upgradeName, upgradeData, currentLevel)
-                        
-                        if GoldenEggs.Value >= cost then
-                            print("[EasterUpgrade] Purchasing: " .. upgradeName .. " (Level " .. currentLevel + 1 .. "/" .. maxLevel .. ") Cost: " .. cost)
-                            BuyUpgrade(upgradeName)
-                            task.wait(0.5)
-                        else
-                            print("[EasterUpgrade] Cannot afford: " .. upgradeName .. " Need: " .. cost .. " Have: " .. GoldenEggs.Value)
-                        end
-                    else
-                        print("[EasterUpgrade] Already maxed: " .. upgradeName)
-                    end
-                else
-                    print("[EasterUpgrade] Stat not found for: " .. upgradeName)
                 end
             end
-        end
-    end
-end
-
-local function EquipBestPets()
-    print("[Pets] Equipping best pets by power...")
-    local args = {
-        "Pet",
-        {
-            Action = "EquipBest",
-            Sort = "Power"
-        }
-    }
-    local success = pcall(function()
-        return RemoteFunction:InvokeServer(unpack(args))
-    end)
-    if success then
-        print("[Pets] Successfully equipped best pets")
-    else
-        print("[Pets] Failed to equip best pets")
-    end
-end
-
-task.spawn(function()
-    while true do
-        task.wait(300)
-        pcall(EquipBestPets)
-    end
-end)
-
-local rebirthFailCount = 0
-
-task.spawn(function()
-    while true do
-        task.wait(600)
-        pcall(function()
-            print("[Rebirth Check] Checking for affordable rebirths...")
-            local bestRebirth = GetBestAffordableRebirth()
-            local currentMoney = GetCurrentMoney()
-            print("[Rebirth Check] Current money: " .. currentMoney)
-            if bestRebirth > 0 then
-                print("[Rebirth Check] Can afford " .. bestRebirth .. " rebirths! Attempting...")
-                local success = PerformRebirth(bestRebirth)
-                if success then
-                    rebirthFailCount = 0
-                else
-                    rebirthFailCount = rebirthFailCount + 1
-                    print("[Rebirth Check] Failed " .. rebirthFailCount .. " time(s)")
-                    if rebirthFailCount >= 5 then
-                        print("[Rebirth Check] Too many failures, resetting character...")
-                        ResetCharacter()
-                        rebirthFailCount = 0
-                        task.wait(5)
-                    end
-                end
-            else
-                print("[Rebirth Check] Cannot afford any rebirths right now")
-                rebirthFailCount = 0
-            end
-        end)
-    end
-end)
-
-task.spawn(function()
-    while true do
-        task.wait(30)
-        pcall(CheckAndBuyUpgrades)
-    end
-end)
-
-local function SetCurrentWorld(worldNumber)
-    print("[World] Setting world to: " .. worldNumber)
-    local args = { "Set Current World", worldNumber }
-    local success, result = pcall(function()
-        return RemoteFunction:InvokeServer(unpack(args))
-    end)
-    if success then
-        print("[World] Successfully set to world: " .. worldNumber)
-        return true
-    else
-        print("[World] Failed to set world: " .. worldNumber .. " - " .. tostring(result))
-        return false
-    end
-end
-
-local function CreateGreenScreen()
-    pcall(function()
-        local screenGui = Instance.new("ScreenGui")
-        screenGui.Name = "TutorialCompleteUI"
-        screenGui.ResetOnSpawn = false
-        screenGui.Parent = CoreGui
-        
-        local frame = Instance.new("Frame")
-        frame.Size = UDim2.new(1, 0, 1, 0)
-        frame.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
-        frame.BackgroundTransparency = 0.7
-        frame.Parent = screenGui
-        
-        local textLabel = Instance.new("TextLabel")
-        textLabel.Size = UDim2.new(1, 0, 0.2, 0)
-        textLabel.Position = UDim2.new(0, 0, 0.4, 0)
-        textLabel.BackgroundTransparency = 1
-        textLabel.TextColor3 = Color3.fromRGB(0, 0, 0)
-        textLabel.TextScaled = true
-        textLabel.Font = Enum.Font.GothamBold
-        textLabel.Text = "TUTORIAL COMPLETE!"
-        textLabel.Parent = screenGui
-        
-        local timeLabel = Instance.new("TextLabel")
-        timeLabel.Size = UDim2.new(1, 0, 0.1, 0)
-        timeLabel.Position = UDim2.new(0, 0, 0.6, 0)
-        timeLabel.BackgroundTransparency = 1
-        timeLabel.TextColor3 = Color3.fromRGB(0, 0, 0)
-        timeLabel.TextScaled = true
-        timeLabel.Font = Enum.Font.Gotham
-        timeLabel.Parent = screenGui
-        
-        local function UpdateTime()
-            local runtime = os.clock() - StartTime
-            local hours = math.floor(runtime / 3600)
-            local minutes = math.floor((runtime % 3600) / 60)
-            local seconds = math.floor(runtime % 60)
-            timeLabel.Text = string.format("%02d:%02d:%02d", hours, minutes, seconds)
-        end
-        
-        local heartbeatConn
-        heartbeatConn = RunService.Heartbeat:Connect(function()
-            if TutorialComplete then
-                pcall(UpdateTime)
-            else
-                heartbeatConn:Disconnect()
-            end
-        end)
-        
-        UpdateTime()
-        
-        for i = 1, 10 do
-            frame.BackgroundTransparency = 0.7 - (i * 0.05)
-            task.wait(0.05)
-        end
-    end)
-end
-
-local function TeleportToPosition(position)
-    pcall(function()
-        local character = LocalPlayer.Character
-        if not character then return end
-        local hrp = character:FindFirstChild("HumanoidRootPart")
-        if not hrp then return end
-        hrp.CFrame = position
-        task.wait(0.5)
-    end)
-end
-
-local function TeleportToTrainingWall()
-    pcall(function()
-        local tutorialThrow = SpawnFolder:FindFirstChild("TutorialThrow")
-        if tutorialThrow then
-            TeleportToPosition(tutorialThrow:GetPivot())
-            print("[Teleport] Moved to training wall")
-            return
-        end
-        local tutorialTrain = SpawnFolder:FindFirstChild("TutorialTrain")
-        if tutorialTrain then
-            TeleportToPosition(tutorialTrain:GetPivot())
-            print("[Teleport] Moved to training wall")
-            return
-        end
-        local spawnLocation = SpawnFolder:FindFirstChild("SpawnLocation")
-        if spawnLocation then
-            TeleportToPosition(spawnLocation:GetPivot())
         end
     end)
 end
@@ -428,558 +583,117 @@ local function ToggleAutoThrow()
                 Network.FireServer("Toggle Setting", "AutoThrow")
             end
             AutoThrowEnabled = false
-            print("[AutoThrow] Disabled")
+            AddConsoleMessage("AutoThrow Disabled")
         else
             if autoThrowStat and not autoThrowStat.Value then
                 Network.FireServer("Toggle Setting", "AutoThrow")
             end
             AutoThrowEnabled = true
-            print("[AutoThrow] Enabled")
+            AddConsoleMessage("AutoThrow Enabled")
         end
     end)
 end
 
-local function EnableAutoThrow()
+local function EnsureAutoThrowEnabled()
     if not AutoThrowEnabled then
         ToggleAutoThrow()
     end
 end
 
-local function DisableAutoThrow()
-    if AutoThrowEnabled then
-        ToggleAutoThrow()
-    end
-end
-
 local lastStrengthValue = 0
-local strengthStuckCount = 0
+local stuckJumpCount = 0
 
-local function ToggleAutoTrain()
+local function DisableAndFixTraining()
     pcall(function()
-        if AutoTrainEnabled then
-            print("[AutoTrain] Disabling...")
-            Network.FireServer("Stop Training")
-            LocalPlayer:SetAttribute("TrainingStation", nil)
-            local autoTrainStat = Stats.Get("AutoTrain")
-            if autoTrainStat and autoTrainStat.Value then
-                Network.FireServer("Toggle Setting", "AutoTrain")
-            end
-            AutoTrainEnabled = false
+        AddConsoleMessage("Disabling training...")
+        
+        Network.FireServer("Stop Training")
+        LocalPlayer:SetAttribute("TrainingStation", nil)
+        
+        local autoTrainStat = Stats.Get("AutoTrain")
+        if autoTrainStat and autoTrainStat.Value then
+            Network.FireServer("Toggle Setting", "AutoTrain")
+        end
+        
+        task.wait(2)
+        
+        local currentStrength = Strength.Value
+        if currentStrength > lastStrengthValue then
+            stuckJumpCount = stuckJumpCount + 1
+            AddConsoleMessage("Training still active! Strength increased from " .. lastStrengthValue .. " to " .. currentStrength .. " (Attempt " .. stuckJumpCount .. ")")
             
-            task.spawn(function()
-                task.wait(3)
-                local currentStrength = Strength.Value
-                if currentStrength > lastStrengthValue then
-                    strengthStuckCount = strengthStuckCount + 1
-                    print("[AutoTrain] WARNING - Strength increased from " .. lastStrengthValue .. " to " .. currentStrength .. " after disable! (Count: " .. strengthStuckCount .. ")")
-                    
-                    if strengthStuckCount >= 3 then
-                        print("[AutoTrain] Too many stuck detections, resetting character...")
-                        ResetCharacter()
-                        strengthStuckCount = 0
-                    else
-                        print("[AutoTrain] Attempting to fix by jumping...")
-                        local character = LocalPlayer.Character
-                        if character then
-                            local humanoid = character:FindFirstChild("Humanoid")
-                            if humanoid then
-                                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                                task.wait(0.1)
-                                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                            end
-                        end
+            local character = LocalPlayer.Character
+            if character then
+                local humanoid = character:FindFirstChild("Humanoid")
+                if humanoid then
+                    for i = 1, 5 do
+                        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                        task.wait(0.2)
                     end
-                else
-                    print("[AutoTrain] Clean stop - Strength did not increase")
-                    strengthStuckCount = 0
+                    AddConsoleMessage("Jumped 5 times to fix training")
                 end
-                lastStrengthValue = Strength.Value
-            end)
+            end
+            
+            if stuckJumpCount >= 3 then
+                AddConsoleMessage("Too many stuck detections, resetting character...")
+                ResetCharacter()
+                stuckJumpCount = 0
+            end
         else
-            lastStrengthValue = Strength.Value
-            print("[AutoTrain] Enabling...")
-            local autoTrainStat = Stats.Get("AutoTrain")
-            if autoTrainStat and not autoTrainStat.Value then
-                Network.FireServer("Toggle Setting", "AutoTrain")
-            end
-            AutoTrainEnabled = true
-            strengthStuckCount = 0
+            AddConsoleMessage("Training disabled successfully")
+            stuckJumpCount = 0
         end
-    end)
-end
-
-local function EnableAutoTrain()
-    if not AutoTrainEnabled then
-        ToggleAutoTrain()
-    end
-end
-
-local function DisableAutoTrain()
-    if AutoTrainEnabled then
-        ToggleAutoTrain()
-    end
-end
-
-local function ForceJump()
-    pcall(function()
-        local character = LocalPlayer.Character
-        if not character then return end
-        local humanoid = character:FindFirstChild("Humanoid")
-        if not humanoid then return end
-        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-        task.wait(0.05)
-        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-    end)
-end
-
-local function MoveOffPad()
-    pcall(function()
-        local character = LocalPlayer.Character
-        if not character then return end
-        local hrp = character:FindFirstChild("HumanoidRootPart")
-        if not hrp then return end
-        hrp.AssemblyLinearVelocity = Vector3.new(0, 20, -25)
-        task.wait(0.2)
-        hrp.AssemblyLinearVelocity = Vector3.new(0, 15, -15)
-    end)
-end
-
-local function BuyEgg()
-    print("[BuyEgg] Purchasing Basic Egg...")
-    local args = { "Hatch Egg", "Basic Egg", 1 }
-    local success, result = pcall(function()
-        return RemoteFunction:InvokeServer(unpack(args))
-    end)
-    if success then
-        print("[BuyEgg] Successfully purchased Basic Egg")
-        return true
-    else
-        print("[BuyEgg] Failed: " .. tostring(result))
-        return false
-    end
-end
-
-local function BuyNextItem()
-    print("[BuyNextItem] Purchasing next item...")
-    local args = { "Buy Next Object" }
-    local success, result = pcall(function()
-        return RemoteFunction:InvokeServer(unpack(args))
-    end)
-    if success then
-        print("[BuyNextItem] Successfully purchased next item")
-        return true
-    else
-        print("[BuyNextItem] Failed: " .. tostring(result))
-        return false
-    end
-end
-
-local function DoRebirth()
-    print("[Rebirth] Performing single rebirth...")
-    local args = { "Rebirth", 1 }
-    local success, result = pcall(function()
-        return RemoteFunction:InvokeServer(unpack(args))
-    end)
-    if success then
-        print("[Rebirth] Successfully performed rebirth")
-        return true
-    else
-        print("[Rebirth] Failed: " .. tostring(result))
-        return false
-    end
-end
-
-local function WaitForStat(stat, targetValue, timeout)
-    timeout = timeout or 60
-    local startTime = os.clock()
-    print("[WaitForStat] Waiting for " .. stat.Name .. " to reach " .. targetValue)
-    while os.clock() - startTime < timeout do
-        local success, val = pcall(function()
-            return stat.Value
-        end)
-        if success and val >= targetValue then
-            print("[WaitForStat] " .. stat.Name .. " reached " .. val)
-            return true
-        end
-        task.wait(1)
-    end
-    print("[WaitForStat] Timeout waiting for " .. stat.Name)
-    return false
-end
-
-local function farmEggsAndCodes()
-    pcall(function()
-        print("[EggHunt] Starting Egg Hunt...")
         
-        local eggHuntConfig = require(ReplicatedStorage:WaitForChild("Tables").EggHunt)
-        
-        for eggName, _ in pairs(eggHuntConfig) do
-            pcall(function()
-                Network.InvokeServer("Claim Egg", eggName)
-            end)
-            task.wait(0.05)
-        end
-        print("[EggHunt] Egg claiming done")
-        task.wait(0.5)
-        
-        local eggHuntData = Stats.Get("EggHuntData")
-        if eggHuntData and eggHuntData.Value then
-            local foundEggs = eggHuntData.Value.FoundEggs or {}
-            local claimedEggs = eggHuntData.Value.ClaimedEggs or {}
-            
-            for eggName, _ in pairs(foundEggs) do
-                if not claimedEggs[eggName] then
-                    pcall(function()
-                        Network.InvokeServer("Claim Egg Reward", eggName)
-                    end)
-                    task.wait(0.05)
-                end
-            end
-        end
-        print("[EggHunt] Egg rewards claimed")
-        task.wait(0.5)
-        
-        print("[Codes] Redeeming codes...")
-        local codes = {
-            "update1", "update2", "update3", "update4", "update5",
-            "easter", "10kccu", "RELEASE"
-        }
-        
-        for _, code in ipairs(codes) do
-            pcall(function()
-                RemoteFunction:InvokeServer("Redeem Code", code)
-            end)
-            task.wait(0.25)
-        end
-        print("[Codes] Codes redeemed")
+        lastStrengthValue = Strength.Value
     end)
 end
 
-local function StartPostTutorialLoop()
-    if PostTutorialLoopActive then return end
-    PostTutorialLoopActive = true
-    
-    print("[PostTutorial] Starting farm loop")
-    
-    pcall(function()
-        if WorldsUnlocked and WorldsUnlocked.Value > 0 or (CurrentWorld and CurrentWorld.Value == 0) then
-            SetCurrentWorld(0)
-        end
-    end)
-    
-    task.spawn(function()
-        while TutorialComplete do
-            pcall(function()
-                print("[PostTutorial] Throwing phase - 1 minute")
-                EnableAutoThrow()
-                for i = 1, 60 do
-                    if not TutorialComplete then break end
-                    task.wait(1)
-                end
-                DisableAutoThrow()
-            end)
-            
-            if not TutorialComplete then break end
-            
-            pcall(function()
-                print("[PostTutorial] Training phase - 1 minute")
-                EnableAutoTrain()
-                for i = 1, 60 do
-                    if not TutorialComplete then break end
-                    task.wait(1)
-                end
-                DisableAutoTrain()
-            end)
-        end
-    end)
-end
-
-local function HandleStep1()
-    print("[Step 1] Throw your rock")
-    TeleportToTrainingWall()
-    task.wait(1)
-    EnableAutoThrow()
-    local completed = WaitForStat(Throws, 1, 30)
-    DisableAutoThrow()
-    if completed then
-        print("[Step 1] Complete")
-        return true
-    else
-        print("[Step 1] Failed - retrying")
-        return false
-    end
-end
-
-local function HandleStep2()
-    print("[Step 2] Buy a Basic Egg")
-    TeleportToTrainingWall()
-    task.wait(1)
-    local completed = BuyEgg()
-    if completed then
-        print("[Step 2] Complete")
-        return true
-    else
-        print("[Step 2] Failed - retrying")
-        return false
-    end
-end
-
-local function HandleStep3()
-    print("[Step 3] Get 175 Strength")
-    TeleportToTrainingWall()
-    task.wait(1)
-    EnableAutoTrain()
-    local completed = WaitForStat(Strength, 175, 120)
-    DisableAutoTrain()
-    if completed then
-        print("[Step 3] Complete")
-        return true
-    else
-        print("[Step 3] Failed - retrying")
-        return false
-    end
-end
-
-local function HandleStep4()
-    print("[Step 4] Get 300 Money")
-    TeleportToTrainingWall()
-    task.wait(1)
-    EnableAutoThrow()
-    local completed = WaitForStat(Money, 300, 120)
-    DisableAutoThrow()
-    if completed then
-        print("[Step 4] Complete")
-        return true
-    else
-        print("[Step 4] Failed - retrying")
-        return false
-    end
-end
-
-local function HandleStep5()
-    print("[Step 5] Buy the next item")
-    TeleportToTrainingWall()
-    task.wait(1)
-    local completed = BuyNextItem()
-    if completed then
-        print("[Step 5] Complete")
-        return true
-    else
-        print("[Step 5] Failed - retrying")
-        return false
-    end
-end
-
-local function HandleStep6()
-    print("[Step 6] Get 225 Money")
-    TeleportToTrainingWall()
-    task.wait(1)
-    EnableAutoThrow()
-    local completed = WaitForStat(Money, 225, 120)
-    DisableAutoThrow()
-    if completed then
-        print("[Step 6] Complete")
-        return true
-    else
-        print("[Step 6] Failed - retrying")
-        return false
-    end
-end
-
-local function HandleStep7()
-    print("[Step 7] Get 3 More Pets")
-    local targetPets = PetCount.Value + 3
-    TeleportToTrainingWall()
-    task.wait(1)
-    for i = 1, 5 do
-        BuyEgg()
-        task.wait(1)
-        if PetCount.Value >= targetPets then
-            break
-        end
-    end
-    if PetCount.Value >= targetPets then
-        print("[Step 7] Complete")
-        return true
-    else
-        print("[Step 7] Failed - retrying")
-        return false
-    end
-end
-
-local function HandleStep8()
-    print("[Step 8] Get 500 Strength")
-    TeleportToTrainingWall()
-    task.wait(1)
-    EnableAutoTrain()
-    local completed = WaitForStat(Strength, 500, 180)
-    DisableAutoTrain()
-    if completed then
-        print("[Step 8] Complete")
-        return true
-    else
-        print("[Step 8] Failed - retrying")
-        return false
-    end
-end
-
-local function HandleStep9()
-    print("[Step 9] Get 750 Strength on better wall")
-    TeleportToTrainingWall()
-    task.wait(1)
-    EnableAutoTrain()
-    local completed = WaitForStat(Strength, 750, 180)
-    DisableAutoTrain()
-    if completed then
-        print("[Step 9] Complete")
-        return true
-    else
-        print("[Step 9] Failed - retrying")
-        return false
-    end
-end
-
-local function HandleStep10()
-    print("[Step 10] Throw item to afford rebirth")
-    TeleportToTrainingWall()
-    task.wait(1)
-    EnableAutoThrow()
-    task.wait(30)
-    DisableAutoThrow()
-    print("[Step 10] Complete")
-    return true
-end
-
-local function HandleStep11()
-    print("[Step 11] Buy first Rebirth")
-    local completed = DoRebirth()
-    if completed then
-        print("[Step 11] Complete")
-        return true
-    else
-        print("[Step 11] Failed - retrying")
-        return false
-    end
-end
-
-local function HandleStep12()
-    print("[Step 12] Tutorial Complete!")
-    DisableAutoThrow()
-    DisableAutoTrain()
-    
-    if not TutorialComplete then
-        TutorialComplete = true
-        local runtime = os.clock() - StartTime
-        local hours = math.floor(runtime / 3600)
-        local minutes = math.floor((runtime % 3600) / 60)
-        local seconds = math.floor(runtime % 60)
-        print("[Tutorial] Complete! Runtime: " .. string.format("%02d:%02d:%02d", hours, minutes, seconds))
-        pcall(CreateGreenScreen)
-        
-        pcall(function()
-            if WorldsUnlocked and WorldsUnlocked.Value > 0 or (CurrentWorld and CurrentWorld.Value == 0) then
-                SetCurrentWorld(0)
-            end
-        end)
-        
-        pcall(StartPostTutorialLoop)
-    end
-    return true
-end
-
-local function ExecuteStep(step)
-    RetryCount = 0
-    local handlers = {
-        [1] = HandleStep1,
-        [2] = HandleStep2,
-        [3] = HandleStep3,
-        [4] = HandleStep4,
-        [5] = HandleStep5,
-        [6] = HandleStep6,
-        [7] = HandleStep7,
-        [8] = HandleStep8,
-        [9] = HandleStep9,
-        [10] = HandleStep10,
-        [11] = HandleStep11,
-        [12] = HandleStep12,
-    }
-    local handler = handlers[step]
-    if handler then
-        local success, result = pcall(handler)
-        if success then
-            return result
-        else
-            print("[ExecuteStep] Handler error for step " .. step .. ": " .. tostring(result))
-            return false
-        end
-    end
-    return true
-end
-
-local function ProcessCurrentStep()
+task.spawn(function()
     while true do
-        local currentStep = Tutorial.Value
-        if currentStep >= 12 then
-            if not TutorialComplete then
-                pcall(HandleStep12)
-            end
-            break
-        end
-        
-        print("[Tutorial] Processing step: " .. currentStep)
-        
-        local success = false
-        for retry = 1, MaxRetries do
-            local currentStepNow = Tutorial.Value
-            if currentStepNow ~= currentStep then
-                print("[Tutorial] Step changed from " .. currentStep .. " to " .. currentStepNow .. " during retry, breaking")
-                currentStep = currentStepNow
-                break
-            end
-            
-            success = ExecuteStep(currentStep)
-            
-            currentStepNow = Tutorial.Value
-            if currentStepNow ~= currentStep then
-                print("[Tutorial] Step changed from " .. currentStep .. " to " .. currentStepNow .. " after action, breaking")
-                currentStep = currentStepNow
-                break
-            end
-            
-            if success then
-                break
-            end
-            
-            print("[Tutorial] Retry " .. retry .. " for step " .. currentStep)
-            task.wait(2)
-        end
-        
-        if not success and Tutorial.Value == currentStep then
-            print("[Tutorial] Failed step " .. currentStep .. " after " .. MaxRetries .. " retries, resetting character...")
-            ResetCharacter()
+        local success, err = pcall(function()
             task.wait(5)
-        end
-        
-        task.wait(1)
-    end
-end
-
-Tutorial.Changed:Connect(function()
-    local newStep = Tutorial.Value
-    if newStep ~= CurrentStep then
-        CurrentStep = newStep
-        print("[Tutorial] Step changed to: " .. newStep)
-        task.spawn(function()
-            pcall(ProcessCurrentStep)
+            DisableAndFixTraining()
         end)
+        if not success then
+            AddConsoleMessage("Disable training error: " .. tostring(err))
+            task.wait(10)
+        end
     end
 end)
 
 task.spawn(function()
-    pcall(farmEggsAndCodes)
+    while true do
+        local success, err = pcall(function()
+            task.wait(2)
+            EnsureAutoThrowEnabled()
+        end)
+        if not success then
+            AddConsoleMessage("AutoThrow check error: " .. tostring(err))
+            task.wait(5)
+        end
+    end
 end)
 
-pcall(ProcessCurrentStep)
+task.spawn(function()
+    while true do
+        local success, err = pcall(function()
+            task.wait(30)
+            CheckAndBuyUpgrades()
+        end)
+        if not success then
+            AddConsoleMessage("Upgrade loop error: " .. tostring(err))
+            task.wait(10)
+        end
+    end
+end)
 
-print("[Tutorial Auto-Complete] Loaded - monitoring tutorial steps")
-print("[Anti-AFK] Enabled - preventing idle disconnect")
+task.spawn(function()
+    while true do
+        task.wait(1)
+        pcall(UpdateDashboard)
+    end
+end)
+
+AddConsoleMessage("Script loaded - AutoThrow will stay enabled")
+AddConsoleMessage("Training will be disabled and fixed if stuck")
+AddConsoleMessage("Upgrades will be purchased automatically")
