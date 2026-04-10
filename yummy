@@ -1,1 +1,311 @@
-setfpscap(60)
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualUser = game:GetService("VirtualUser")
+local VirtualInput = game:GetService("VirtualInputManager")
+local TweenService = game:GetService("TweenService")
+
+local Paper = require(ReplicatedStorage:WaitForChild("Paper"))
+local Stats = Paper.Stats
+local Network = Paper.Network
+
+repeat task.wait() until pcall(function() return Stats.IsLoaded(LocalPlayer) end)
+
+local Strength = Stats.Get("Strength")
+local AutoThrow = Stats.Get("AutoThrow")
+local AutoTrain = Stats.Get("AutoTrain")
+local mouse = LocalPlayer:GetMouse()
+
+local function FormatNumber(num)
+    if num >= 1e33 then
+        return string.format("%.2fe%d", num / 1e33, 33)
+    elseif num >= 1e30 then
+        return string.format("%.2fN", num / 1e30)
+    elseif num >= 1e27 then
+        return string.format("%.2fOc", num / 1e27)
+    elseif num >= 1e24 then
+        return string.format("%.2fSp", num / 1e24)
+    elseif num >= 1e21 then
+        return string.format("%.2fSx", num / 1e21)
+    elseif num >= 1e18 then
+        return string.format("%.2fQi", num / 1e18)
+    elseif num >= 1e15 then
+        return string.format("%.2fQa", num / 1e15)
+    elseif num >= 1e12 then
+        return string.format("%.2fT", num / 1e12)
+    elseif num >= 1e9 then
+        return string.format("%.2fB", num / 1e9)
+    elseif num >= 1e6 then
+        return string.format("%.2fM", num / 1e6)
+    elseif num >= 1e3 then
+        return string.format("%.2fK", num / 1e3)
+    else
+        return tostring(math.floor(num))
+    end
+end
+
+local function GetUIColor(strength)
+    if strength >= 1e33 then
+        -- Rainbow cycling for extreme values
+        local hue = (tick() % 5) / 5
+        return Color3.fromHSV(hue, 1, 0.7)
+    elseif strength >= 1e30 then
+        return Color3.fromRGB(200, 100, 255) -- Purple
+    elseif strength >= 1e27 then
+        return Color3.fromRGB(100, 200, 255) -- Cyan
+    elseif strength >= 1e24 then
+        return Color3.fromRGB(255, 100, 200) -- Pink
+    elseif strength >= 1e21 then
+        return Color3.fromRGB(160, 80, 240) -- Dark Purple
+    elseif strength >= 1e18 then
+        return Color3.fromRGB(255, 50, 50) -- Dark Red
+    elseif strength >= 1e15 then
+        return Color3.fromRGB(255, 100, 100) -- Red
+    elseif strength >= 1e12 then
+        return Color3.fromRGB(255, 150, 50) -- Orange
+    elseif strength >= 1e11 then
+        return Color3.fromRGB(255, 255, 80) -- Yellow
+    elseif strength >= 1e10 then
+        return Color3.fromRGB(80, 255, 80) -- Green
+    else
+        return Color3.fromRGB(20, 20, 25) -- Dark/Black
+    end
+end
+
+local function GetScale()
+    local viewport = workspace.CurrentCamera.ViewportSize
+    return math.min(viewport.X / 1920, viewport.Y / 1080)
+end
+
+local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "TrainUI"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.Parent = playerGui
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(1, 0, 1, 0)
+mainFrame.Position = UDim2.new(0, 0, 0, 0)
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = screenGui
+
+local centerContainer = Instance.new("Frame")
+centerContainer.Size = UDim2.new(0, 500, 0, 400)
+centerContainer.Position = UDim2.new(0.5, -250, 0.5, -200)
+centerContainer.BackgroundTransparency = 1
+centerContainer.Parent = mainFrame
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, 0, 0, 60)
+titleLabel.BackgroundTransparency = 1
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.TextSize = 42
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.Text = "⚔️ TRAINING MODE"
+titleLabel.TextXAlignment = Enum.TextXAlignment.Center
+titleLabel.Parent = centerContainer
+
+local strengthLabel = Instance.new("TextLabel")
+strengthLabel.Size = UDim2.new(1, 0, 0, 100)
+strengthLabel.Position = UDim2.new(0, 0, 0, 70)
+strengthLabel.BackgroundTransparency = 1
+strengthLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+strengthLabel.TextSize = 72
+strengthLabel.Font = Enum.Font.GothamBold
+strengthLabel.Text = "0"
+strengthLabel.TextXAlignment = Enum.TextXAlignment.Center
+strengthLabel.Parent = centerContainer
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, 0, 0, 40)
+statusLabel.Position = UDim2.new(0, 0, 0, 180)
+statusLabel.BackgroundTransparency = 1
+statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+statusLabel.TextSize = 20
+statusLabel.Font = Enum.Font.GothamBold
+statusLabel.Text = "AUTO-TRAIN: ENABLED"
+statusLabel.TextXAlignment = Enum.TextXAlignment.Center
+statusLabel.Parent = centerContainer
+
+local subLabel = Instance.new("TextLabel")
+subLabel.Size = UDim2.new(1, 0, 0, 30)
+subLabel.Position = UDim2.new(0, 0, 0, 225)
+subLabel.BackgroundTransparency = 1
+subLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+subLabel.TextSize = 14
+subLabel.Font = Enum.Font.Gotham
+subLabel.Text = "Auto-Throw disabled | Training only"
+subLabel.TextXAlignment = Enum.TextXAlignment.Center
+subLabel.Parent = centerContainer
+
+local progressBg = Instance.new("Frame")
+progressBg.Size = UDim2.new(1, -40, 0, 20)
+progressBg.Position = UDim2.new(0, 20, 0, 270)
+progressBg.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+progressBg.BorderSizePixel = 0
+progressBg.Parent = centerContainer
+
+local progressCorner = Instance.new("UICorner")
+progressCorner.CornerRadius = UDim.new(0, 10)
+progressCorner.Parent = progressBg
+
+local progressFill = Instance.new("Frame")
+progressFill.Size = UDim2.new(0, 0, 1, 0)
+progressFill.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
+progressFill.BorderSizePixel = 0
+progressFill.Parent = progressBg
+
+local fillCorner = Instance.new("UICorner")
+fillCorner.CornerRadius = UDim.new(0, 10)
+fillCorner.Parent = progressFill
+
+local thresholdLabels = Instance.new("Frame")
+thresholdLabels.Size = UDim2.new(1, 0, 0, 20)
+thresholdLabels.Position = UDim2.new(0, 0, 0, 295)
+thresholdLabels.BackgroundTransparency = 1
+thresholdLabels.Parent = centerContainer
+
+local thresholds = {"1B", "10B", "100B", "1T", "1Qa", "1Qi", "1Sx", "1Sp"}
+local positions = {0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1}
+
+for i, text in ipairs(thresholds) do
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0, 60, 1, 0)
+    label.Position = UDim2.new(positions[i], -30, 0, 0)
+    label.BackgroundTransparency = 1
+    label.TextColor3 = Color3.fromRGB(120, 120, 140)
+    label.TextSize = 11
+    label.Font = Enum.Font.Gotham
+    label.Text = text
+    label.TextXAlignment = Enum.TextXAlignment.Center
+    label.Parent = thresholdLabels
+end
+
+local function OnScreenResize()
+    local scale = GetScale()
+    titleLabel.TextSize = 42 * scale
+    strengthLabel.TextSize = 72 * scale
+    statusLabel.TextSize = 20 * scale
+    subLabel.TextSize = 14 * scale
+    centerContainer.Size = UDim2.new(0, 500 * scale, 0, 400 * scale)
+    centerContainer.Position = UDim2.new(0.5, -250 * scale, 0.5, -200 * scale)
+end
+
+workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(OnScreenResize)
+OnScreenResize()
+
+local function GetMaxStrength()
+    -- Dynamic max based on current strength (logarithmic scale for progress bar)
+    local strength = Strength and Strength.Value or 0
+    if strength < 1e12 then
+        return 1e12 -- 1T
+    elseif strength < 1e15 then
+        return 1e15 -- 1Qa
+    elseif strength < 1e18 then
+        return 1e18 -- 1Qi
+    elseif strength < 1e21 then
+        return 1e21 -- 1Sx
+    elseif strength < 1e24 then
+        return 1e24 -- 1Sp
+    else
+        return strength * 2
+    end
+end
+
+local function UpdateProgressBar(strength)
+    local maxStrength = GetMaxStrength()
+    local percent = math.min(strength / maxStrength, 1)
+    local width = percent * (progressBg.AbsoluteSize.X - 4)
+    progressFill:TweenSize(UDim2.new(0, width, 1, 0), "Out", "Quad", 0.3, true)
+    
+    if strength >= 1e21 then
+        progressFill.BackgroundColor3 = Color3.fromRGB(160, 80, 240)
+    elseif strength >= 1e18 then
+        progressFill.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+    elseif strength >= 1e15 then
+        progressFill.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
+    elseif strength >= 1e12 then
+        progressFill.BackgroundColor3 = Color3.fromRGB(255, 150, 50)
+    elseif strength >= 1e11 then
+        progressFill.BackgroundColor3 = Color3.fromRGB(255, 255, 80)
+    elseif strength >= 1e10 then
+        progressFill.BackgroundColor3 = Color3.fromRGB(80, 255, 80)
+    else
+        progressFill.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+    end
+end
+
+local lastColor = nil
+local function UpdateUI()
+    pcall(function()
+        local strength = Strength and Strength.Value or 0
+        local color = GetUIColor(strength)
+        
+        if color ~= lastColor then
+            TweenService:Create(mainFrame, TweenInfo.new(0.5), {BackgroundColor3 = color}):Play()
+            lastColor = color
+        end
+        
+        strengthLabel.Text = FormatNumber(strength)
+        UpdateProgressBar(strength)
+        
+        if AutoThrow and AutoThrow.Value then
+            Network.FireServer("Toggle Setting", "AutoThrow")
+            statusLabel.Text = "⚠️ AUTO-THROW: DISABLED"
+            statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+            task.wait(0.3)
+            statusLabel.Text = "✅ AUTO-TRAIN: ENABLED"
+            statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+        end
+        
+        if AutoTrain and not AutoTrain.Value then
+            Network.FireServer("Toggle Setting", "AutoTrain")
+            statusLabel.Text = "✅ AUTO-TRAIN: ENABLED"
+            statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+        end
+    end)
+end
+
+pcall(function()
+    local idledConnections = getconnections(LocalPlayer.Idled)
+    for _, connection in pairs(idledConnections) do
+        pcall(function() connection:Disable() end)
+    end
+end)
+
+LocalPlayer.Idled:Connect(function()
+    pcall(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new(0,0))
+    end)
+    task.wait(0.1)
+    pcall(function()
+        VirtualInput:SendMouseMotionEvent(1, 1, mouse.X, mouse.Y, game)
+        task.wait(0.05)
+        VirtualInput:SendMouseMotionEvent(-1, -1, mouse.X, mouse.Y, game)
+    end)
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(45)
+        pcall(function()
+            VirtualInput:SendMouseMotionEvent(math.random(-2, 2), math.random(-2, 2), mouse.X, mouse.Y, game)
+        end)
+    end
+end)
+
+task.wait(2)
+UpdateUI()
+
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        pcall(UpdateUI)
+    end
+end)
+
+print("[Train Mode] FULL SCREEN responsive UI loaded - Infinite tiers supported")
