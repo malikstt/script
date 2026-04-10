@@ -77,6 +77,33 @@ task.spawn(function()
     end
 end)
 
+local lastResetTime = 0
+local resetCooldown = 420
+
+local function ResetCharacter()
+    local currentTime = os.time()
+    if currentTime - lastResetTime < resetCooldown then
+        print("[Reset] Skipped - cooldown active (" .. resetCooldown - (currentTime - lastResetTime) .. " seconds remaining)")
+        return false
+    end
+    
+    print("[Reset] Attempting to reset character...")
+    pcall(function()
+        local character = LocalPlayer.Character
+        if character then
+            local humanoid = character:FindFirstChild("Humanoid")
+            if humanoid then
+                humanoid.Health = 0
+                task.wait(0.5)
+            end
+        end
+        LocalPlayer:LoadCharacter()
+        lastResetTime = currentTime
+        print("[Reset] Character reset successfully")
+    end)
+    return true
+end
+
 local function GetCurrentMoney()
     return UniverseModule.GetMoneyStat(LocalPlayer, 0).Value
 end
@@ -158,36 +185,89 @@ local function BuyUpgrade(upgradeName)
     end
 end
 
+local function GetUpgradeCost(upgradeName, upgradeData, currentLevel)
+    if upgradeData.Max then
+        return upgradeData.UpgradeCosts(currentLevel)
+    else
+        return upgradeData.UpgradeCosts[currentLevel + 1]
+    end
+end
+
 local function CheckAndBuyUpgrades()
     print("[EasterUpgrade] Checking for available upgrades...")
+    
+    local moreRebirthSkipsCost = nil
+    local moreRebirthSkipsData = nil
+    local moreRebirthSkipsLevel = nil
+    
     for upgradeName, upgradeData in pairs(EasterUpgradesConfig) do
-        if upgradeName ~= "Catagories" and not upgradeData.Hidden then
+        if upgradeName == "More Rebirth Skips" and upgradeName ~= "Catagories" and not upgradeData.Hidden then
             local stat = Stats.Get(upgradeData.StatName)
             if stat then
                 local currentLevel = stat.Value
                 local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
-                
                 if currentLevel < maxLevel then
-                    local cost
-                    if upgradeData.Max then
-                        cost = upgradeData.UpgradeCosts(currentLevel)
-                    else
-                        cost = upgradeData.UpgradeCosts[currentLevel + 1]
-                    end
-                    
-                    if GoldenEggs.Value >= cost then
-                        print("[EasterUpgrade] Purchasing: " .. upgradeName .. " (Level " .. currentLevel + 1 .. "/" .. maxLevel .. ") Cost: " .. cost)
-                        BuyUpgrade(upgradeName)
-                        task.wait(0.5)
-                    else
-                        print("[EasterUpgrade] Cannot afford: " .. upgradeName .. " Need: " .. cost .. " Have: " .. GoldenEggs.Value)
-                    end
+                    moreRebirthSkipsCost = GetUpgradeCost(upgradeName, upgradeData, currentLevel)
+                    moreRebirthSkipsData = upgradeData
+                    moreRebirthSkipsLevel = currentLevel
+                end
+            end
+            break
+        end
+    end
+    
+    for upgradeName, upgradeData in pairs(EasterUpgradesConfig) do
+        if upgradeName ~= "Catagories" and not upgradeData.Hidden then
+            if upgradeName == "More Rebirth Skips" then
+                if moreRebirthSkipsCost and moreRebirthSkipsCost > 1000 then
+                    print("[EasterUpgrade] More Rebirth Skips cost " .. moreRebirthSkipsCost .. " (>1000), skipping and buying other upgrades first")
                 else
-                    print("[EasterUpgrade] Already maxed: " .. upgradeName)
+                    local stat = Stats.Get(upgradeData.StatName)
+                    if stat then
+                        local currentLevel = stat.Value
+                        local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
+                        if currentLevel < maxLevel then
+                            local cost = GetUpgradeCost(upgradeName, upgradeData, currentLevel)
+                            if GoldenEggs.Value >= cost then
+                                print("[EasterUpgrade] Purchasing: " .. upgradeName .. " (Level " .. currentLevel + 1 .. "/" .. maxLevel .. ") Cost: " .. cost)
+                                BuyUpgrade(upgradeName)
+                                task.wait(0.5)
+                            end
+                        end
+                    end
                 end
             else
-                print("[EasterUpgrade] Stat not found for: " .. upgradeName)
+                local stat = Stats.Get(upgradeData.StatName)
+                if stat then
+                    local currentLevel = stat.Value
+                    local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
+                    
+                    if currentLevel < maxLevel then
+                        local cost = GetUpgradeCost(upgradeName, upgradeData, currentLevel)
+                        
+                        if GoldenEggs.Value >= cost then
+                            print("[EasterUpgrade] Purchasing: " .. upgradeName .. " (Level " .. currentLevel + 1 .. "/" .. maxLevel .. ") Cost: " .. cost)
+                            BuyUpgrade(upgradeName)
+                            task.wait(0.5)
+                        else
+                            print("[EasterUpgrade] Cannot afford: " .. upgradeName .. " Need: " .. cost .. " Have: " .. GoldenEggs.Value)
+                        end
+                    else
+                        print("[EasterUpgrade] Already maxed: " .. upgradeName)
+                    end
+                else
+                    print("[EasterUpgrade] Stat not found for: " .. upgradeName)
+                end
             end
+        end
+    end
+    
+    if moreRebirthSkipsCost and moreRebirthSkipsCost > 1000 then
+        print("[EasterUpgrade] Checking if More Rebirth Skips can be bought now after other upgrades...")
+        if GoldenEggs.Value >= moreRebirthSkipsCost then
+            print("[EasterUpgrade] Purchasing More Rebirth Skips (Level " .. moreRebirthSkipsLevel + 1 .. ") Cost: " .. moreRebirthSkipsCost)
+            BuyUpgrade("More Rebirth Skips")
+            task.wait(0.5)
         end
     end
 end
@@ -218,9 +298,11 @@ task.spawn(function()
     end
 end)
 
+local rebirthFailCount = 0
+
 task.spawn(function()
     while true do
-        task.wait(60)
+        task.wait(600)
         pcall(function()
             print("[Rebirth Check] Checking for affordable rebirths...")
             local bestRebirth = GetBestAffordableRebirth()
@@ -228,9 +310,22 @@ task.spawn(function()
             print("[Rebirth Check] Current money: " .. currentMoney)
             if bestRebirth > 0 then
                 print("[Rebirth Check] Can afford " .. bestRebirth .. " rebirths! Attempting...")
-                PerformRebirth(bestRebirth)
+                local success = PerformRebirth(bestRebirth)
+                if success then
+                    rebirthFailCount = 0
+                else
+                    rebirthFailCount = rebirthFailCount + 1
+                    print("[Rebirth Check] Failed " .. rebirthFailCount .. " time(s)")
+                    if rebirthFailCount >= 5 then
+                        print("[Rebirth Check] Too many failures, resetting character...")
+                        ResetCharacter()
+                        rebirthFailCount = 0
+                        task.wait(5)
+                    end
+                end
             else
                 print("[Rebirth Check] Cannot afford any rebirths right now")
+                rebirthFailCount = 0
             end
         end)
     end
@@ -848,7 +943,8 @@ local function ProcessCurrentStep()
         end
         
         if not success and Tutorial.Value == currentStep then
-            print("[Tutorial] Failed step " .. currentStep .. " after " .. MaxRetries .. " retries, continuing...")
+            print("[Tutorial] Failed step " .. currentStep .. " after " .. MaxRetries .. " retries, resetting character...")
+            ResetCharacter()
             task.wait(5)
         end
         
