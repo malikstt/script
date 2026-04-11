@@ -58,6 +58,91 @@ local function applyGameSettings()
     end)
 end
 
+local Paper = require(ReplicatedStorage:WaitForChild("Paper"))
+local Stats = Paper.Stats
+local Network = Paper.Network
+
+repeat task.wait() until Stats.IsLoaded(LocalPlayer)
+
+local AutoThrow = Stats.Get("AutoThrow")
+local AutoTrain = Stats.Get("AutoTrain")
+
+print("[DEBUG] Starting disable sequence...")
+
+pcall(function()
+    if AutoTrain and AutoTrain.Value then
+        Network.FireServer("Toggle Setting", "AutoTrain")
+        print("[AutoTrain] Toggled OFF")
+    end
+end)
+
+pcall(function()
+    if AutoThrow and AutoThrow.Value then
+        Network.FireServer("Toggle Setting", "AutoThrow")
+        print("[AutoThrow] Toggled OFF")
+    end
+end)
+
+for i = 1, math.random(8, 15) do
+    pcall(function()
+        local character = LocalPlayer.Character
+        if character then
+            local humanoid = character:FindFirstChild("Humanoid")
+            if humanoid then
+                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            end
+        end
+        UserInputService:SetKeyDown(true, Enum.KeyCode.Space)
+        task.wait(0.05)
+        UserInputService:SetKeyDown(false, Enum.KeyCode.Space)
+    end)
+    task.wait(math.random(1, 3) / 10)
+end
+
+pcall(function()
+    LocalPlayer:SetAttribute("TrainingStation", nil)
+end)
+
+pcall(function()
+    Network.FireServer("Stop Training")
+end)
+
+task.wait(0.5)
+
+pcall(function()
+    if AutoTrain and AutoTrain.Value then
+        Network.FireServer("Toggle Setting", "AutoTrain")
+        print("[AutoTrain] Forced OFF again")
+    end
+end)
+
+pcall(function()
+    if AutoThrow and AutoThrow.Value then
+        Network.FireServer("Toggle Setting", "AutoThrow")
+        print("[AutoThrow] Forced OFF again")
+    end
+end)
+
+print("[DEBUG] Both AutoTrain and AutoThrow should be OFF")
+print("[Status] AutoTrain: " .. tostring(AutoTrain and AutoTrain.Value or "nil"))
+print("[Status] AutoThrow: " .. tostring(AutoThrow and AutoThrow.Value or "nil"))
+
+task.wait(2)
+pcall(applyGameSettings)
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    task.wait(0.5)
+    pcall(function()
+        for _, v in ipairs(char:GetDescendants()) do
+            if v:IsA("Animator") then
+                v:Destroy()
+            end
+        end
+    end)
+    task.wait(1)
+    pcall(applyGameSettings)
+end)
+
 pcall(function()
     local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
     for _, gui in ipairs(PlayerGui:GetChildren()) do
@@ -71,6 +156,54 @@ end)
 
 print("Optimized loaded")
 
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local hrp = character:WaitForChild("HumanoidRootPart")
+local starryEgg = workspace.Eggs["Starry Egg"].EggModel
+local remoteFunction = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes"):WaitForChild("__remotefunction")
+local eggPosition = starryEgg:GetPivot()
+
+local function teleportToEgg()
+    return pcall(function()
+        hrp.CFrame = eggPosition * CFrame.new(0, 0, 1)
+        print("Teleported to egg")
+    end)
+end
+
+while not teleportToEgg() do
+    task.wait(1)
+end
+
+task.spawn(function()
+    while true do
+        task.wait(120)
+        while not teleportToEgg() do
+            task.wait(1)
+        end
+    end
+end)
+
+task.spawn(function()
+    pcall(function()
+        local rs = game:GetService("ReplicatedStorage")
+        local paper = require(rs:WaitForChild("Paper"))
+        local stats = paper.Stats
+        local remote = rs:WaitForChild("Paper"):WaitForChild("Remotes"):WaitForChild("__remotefunction")
+        while true do
+            local items = stats.Get("Items").Value
+            for itemName, amount in pairs(items) do
+                if type(itemName) == "string" and string.find(itemName, "Luck Potion") and amount > 0 then
+                    pcall(function()
+                        remote:InvokeServer("Use Item", itemName, 1)
+                        print("Used luck potion: " .. itemName)
+                    end)
+                end
+            end
+            task.wait(300)
+        end
+    end)
+end)
+
 task.spawn(function()
     task.wait(10)
     pcall(function()
@@ -79,69 +212,10 @@ task.spawn(function()
     end)
 end)
 
--- Simple Ordered Achievement Claimer
-local Paper = require(ReplicatedStorage.Paper)
-local AchievementsData = require(ReplicatedStorage.Tables.Achievements)
-
-local RemoteFunction = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes"):WaitForChild("__remotefunction")
-local isBusy = false
-
-local function claimAchievement(id, rank)
-    local success, result = pcall(function()
-        return RemoteFunction:InvokeServer("Claim Achievement", id, rank)
-    end)
-    return success and result == true
-end
-
--- Claim achievements for ONE achievement at a time, in order
-local function claimAchievementChain(id, data)
-    local currentRank = Paper.Stats.Get(data.AchievementStat).Value
-    local progress = Paper.Stats.Get(data.Stat).Value
-    
-    for rank = currentRank + 1, #data.Rewards do
-        local reward = data.Rewards[rank]
-        if progress >= reward.Requirement then
-            print("[AutoClaim] Trying to claim " .. id .. " Rank " .. rank)
-            if claimAchievement(id, rank) then
-                print("[AutoClaim] Claimed! Moving to next rank...")
-                task.wait(0.5)
-            else
-                print("[AutoClaim] Failed - needs previous rank or not ready")
-                break -- Stop this achievement, try again later
-            end
-        else
-            break -- Not enough progress for this rank
-        end
-    end
-end
-
--- Scan and claim one achievement at a time
-local function scanAndClaim()
-    if isBusy then return end
-    isBusy = true
-    
-    for id, data in AchievementsData do
-        claimAchievementChain(id, data)
-        task.wait(0.3) -- Small delay between different achievements
-    end
-    
-    isBusy = false
-end
-
--- Monitor stats
-for _, data in AchievementsData do
-    local stat = Paper.Stats.Get(data.Stat)
-    if stat then
-        stat.Changed:Connect(function() task.wait(0.5); scanAndClaim() end)
-    end
-end
-
--- Initial run
-task.wait(2)
-scanAndClaim()
-
--- Keep trying every minute
 while true do
-    task.wait(60)
-    scanAndClaim()
+    pcall(function()
+        local args = {"Hatch Egg", "Starry Egg", "Max"}
+        remoteFunction:InvokeServer(unpack(args))
+    end)
+    task.wait(1)
 end
