@@ -1,7 +1,5 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
-local TweenService = game:GetService("TweenService")
 local Paper = require(ReplicatedStorage.Paper)
 local AchievementsData = require(ReplicatedStorage.Tables.Achievements)
 local EasterBasketData = require(ReplicatedStorage.Tables.EasterBasket)
@@ -10,43 +8,10 @@ local EggsTable = require(ReplicatedStorage.Tables.Eggs)
 local RemoteFunction = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes"):WaitForChild("__remotefunction")
 local LocalPlayer = Players.LocalPlayer
 local isBusy = false
-local lastTeleportTime = 0
-local autoDeleteConfigured = false
-
-local function teleportToEgg()
-    pcall(function()
-        local starryEgg = Workspace.Eggs and Workspace.Eggs["Starry Egg"]
-        if starryEgg and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-            local hrp = LocalPlayer.Character.HumanoidRootPart
-            local targetPos = starryEgg.Position + Vector3.new(0, 3, 0)
-            local tween = TweenService:Create(hrp, TweenInfo.new(0.5), {CFrame = CFrame.new(targetPos)})
-            tween:Play()
-            tween.Completed:Wait()
-        end
-    end)
-end
 
 local function equipBestPets()
     pcall(function()
-        local args = {
-            "Pet",
-            {
-                Action = "EquipBest",
-                Sort = "Event"
-            }
-        }
-        RemoteFunction:InvokeServer(unpack(args))
-    end)
-end
-
-local function hatchStarryEggs()
-    pcall(function()
-        local args = {
-            "Hatch Egg",
-            "Starry Egg",
-            "Max"
-        }
-        RemoteFunction:InvokeServer(unpack(args))
+        RemoteFunction:InvokeServer("Pet", {Action = "EquipBest", Sort = "Event"})
     end)
 end
 
@@ -65,9 +30,7 @@ local function claimAchievementChain(id, data)
         for rank = currentRank + 1, #data.Rewards do
             local reward = data.Rewards[rank]
             if progress >= reward.Requirement then
-                print("[AutoClaim] Trying to claim " .. id .. " Rank " .. rank)
                 if claimAchievement(id, rank) then
-                    print("[AutoClaim] Claimed! Moving to next rank...")
                     task.wait(0.5)
                 else
                     break
@@ -92,17 +55,16 @@ local function scanAndClaimAchievements()
 end
 
 local function buyBasketRank()
-    local success, result = pcall(function()
+    local success = pcall(function()
         return RemoteFunction:InvokeServer("Buy Basket Rank")
     end)
-    return success and result == true
+    return success
 end
 
-local function claimBasketReward(isPremium)
-    local success, result = pcall(function()
-        return RemoteFunction:InvokeServer("Claim Easter Basket", isPremium)
+local function claimBasketReward()
+    pcall(function()
+        RemoteFunction:InvokeServer("Claim Easter Basket", false)
     end)
-    return success and result == true
 end
 
 local function processEasterBasket()
@@ -110,16 +72,12 @@ local function processEasterBasket()
         local goldenEggs = Paper.Stats.Get("GoldenEggs").Value
         local basketRank = Paper.Stats.Get("EasterBasketRank").Value
         local freeClaimed = Paper.Stats.Get("EasterFreeClaimed").Value
-        local premiumClaimed = Paper.Stats.Get("EasterPremiumClaimed").Value
-        local hasPremium = Paper.Stats.Get("PremiumEasterBasket").Value
         
         for rank = basketRank + 1, #EasterBasketData do
             local rankData = EasterBasketData[rank]
             if goldenEggs >= rankData.Cost then
-                print("[EasterBasket] Buying rank " .. rank .. " for " .. rankData.Cost .. " eggs")
                 if buyBasketRank() then
                     goldenEggs = goldenEggs - rankData.Cost
-                    print("[EasterBasket] Bought rank " .. rank)
                     task.wait(0.5)
                 else
                     break
@@ -131,24 +89,11 @@ local function processEasterBasket()
         
         local currentRank = Paper.Stats.Get("EasterBasketRank").Value
         local currentFreeClaimed = Paper.Stats.Get("EasterFreeClaimed").Value
-        local currentPremiumClaimed = Paper.Stats.Get("EasterPremiumClaimed").Value
-        local currentHasPremium = Paper.Stats.Get("PremiumEasterBasket").Value
         
         for rank = 1, currentRank do
             if currentFreeClaimed < rank then
-                print("[EasterBasket] Claiming free reward for rank " .. rank)
-                if claimBasketReward(false) then
-                    print("[EasterBasket] Claimed free rank " .. rank)
-                    task.wait(0.5)
-                end
-            end
-            
-            if currentHasPremium and currentPremiumClaimed < rank then
-                print("[EasterBasket] Claiming premium reward for rank " .. rank)
-                if claimBasketReward(true) then
-                    print("[EasterBasket] Claimed premium rank " .. rank)
-                    task.wait(0.5)
-                end
+                claimBasketReward()
+                task.wait(0.5)
             end
         end
     end)
@@ -167,10 +112,9 @@ local function getPetLuckLevel(pet)
 end
 
 local function enchantPet(petGuid)
-    return Paper.Network.InvokeServer("Pet", {
-        Action = "Enchant",
-        Pet = petGuid
-    })
+    pcall(function()
+        RemoteFunction:InvokeServer("Pet", {Action = "Enchant", Pet = petGuid})
+    end)
 end
 
 local function progressiveLuckEnchant()
@@ -179,9 +123,6 @@ local function progressiveLuckEnchant()
         local enchantGems = Paper.Stats.Get("EnchantGems")
         
         if not equippedPets or not enchantGems then return end
-        
-        local rerollCount = 0
-        local lastGems = enchantGems.Value
         
         while enchantGems.Value > 0 do
             local petsWithLuck3 = {}
@@ -205,7 +146,6 @@ local function progressiveLuckEnchant()
             local totalPets = #petsWithLuck3 + #petsWithLuck2 + #petsWithLuck1 + #petsWithNoLuck
             
             if #petsWithLuck3 == totalPets then
-                print("[Enchant] ALL PETS HAVE LUCK III!")
                 break
             end
             
@@ -219,16 +159,9 @@ local function progressiveLuckEnchant()
             end
             
             if targetPet then
-                local guid = targetPet.Name
-                enchantPet(guid)
-                rerollCount = rerollCount + 1
+                enchantPet(targetPet.Name)
                 task.wait(0.25)
             end
-            
-            if lastGems == enchantGems.Value and rerollCount > 10 then
-                break
-            end
-            lastGems = enchantGems.Value
             
             task.wait(0.1)
         end
@@ -249,87 +182,22 @@ local function setupAutoDelete()
                 
                 if chance >= oneInAMillion then
                     if autoDeleteStat.Value[petName] == nil then
-                        print("Auto-deleting: " .. petName .. " (" .. chance .. "%)")
-                        local args = {"Pet", {Pet = petName, Action = "AutoDelete", Tier = "all"}}
-                        pcall(function() RemoteFunction:InvokeServer(unpack(args)) end)
+                        RemoteFunction:InvokeServer("Pet", {Pet = petName, Action = "AutoDelete", Tier = "all"})
                         task.wait(0.05)
                     end
                 else
                     if autoDeleteStat.Value[petName] ~= nil then
-                        print("REMOVING auto-delete from rare pet: " .. petName .. " (" .. chance .. "%)")
-                        local args = {"Pet", {Pet = petName, Action = "AutoDelete", Tier = "all"}}
-                        pcall(function() RemoteFunction:InvokeServer(unpack(args)) end)
+                        RemoteFunction:InvokeServer("Pet", {Pet = petName, Action = "AutoDelete", Tier = "all"})
                         task.wait(0.05)
                     end
                 end
             end
         end
-        autoDeleteConfigured = true
     end)
-end
-
-local function disableAutoSettings()
-    pcall(function()
-        local Stats = Paper.Stats
-        local Network = Paper.Network
-        local AutoThrow = Stats.Get("AutoThrow")
-        local AutoTrain = Stats.Get("AutoTrain")
-
-        if AutoTrain and AutoTrain.Value then
-            Network.FireServer("Toggle Setting", "AutoTrain")
-            print("[Settings] Disabled AutoTrain")
-        end
-
-        if AutoThrow and AutoThrow.Value then
-            Network.FireServer("Toggle Setting", "AutoThrow")
-            print("[Settings] Disabled AutoThrow")
-        end
-    end)
-end
-
-task.spawn(function()
-    while true do
-        task.wait(1)
-        pcall(function()
-            local Stats = Paper.Stats
-            local Network = Paper.Network
-            local AutoThrow = Stats.Get("AutoThrow")
-            local AutoTrain = Stats.Get("AutoTrain")
-
-            if AutoTrain and AutoTrain.Value then
-                Network.FireServer("Toggle Setting", "AutoTrain")
-            end
-
-            if AutoThrow and AutoThrow.Value then
-                Network.FireServer("Toggle Setting", "AutoThrow")
-            end
-        end)
-    end
-end)
-
-for _, data in AchievementsData do
-    local stat = Paper.Stats.Get(data.Stat)
-    if stat then
-        stat.Changed:Connect(function() task.wait(0.5); pcall(function() scanAndClaimAchievements(); processEasterBasket() end) end)
-    end
-end
-
-local goldenEggsStat = Paper.Stats.Get("GoldenEggs")
-if goldenEggsStat then
-    goldenEggsStat.Changed:Connect(function() task.wait(0.5); pcall(processEasterBasket) end)
-end
-
-local basketRankStat = Paper.Stats.Get("EasterBasketRank")
-if basketRankStat then
-    basketRankStat.Changed:Connect(function() task.wait(0.5); pcall(processEasterBasket) end)
 end
 
 task.spawn(function()
     task.wait(2)
-    disableAutoSettings()
-    task.wait(1)
-    teleportToEgg()
-    task.wait(1)
     scanAndClaimAchievements()
     task.wait(1)
     processEasterBasket()
@@ -359,21 +227,5 @@ task.spawn(function()
         pcall(scanAndClaimAchievements)
         task.wait(1)
         pcall(processEasterBasket)
-    end
-end)
-
-task.spawn(function()
-    while true do
-        task.wait(60)
-        if autoDeleteConfigured then
-            pcall(hatchStarryEggs)
-        end
-    end
-end)
-
-task.spawn(function()
-    while true do
-        task.wait(120)
-        pcall(teleportToEgg)
     end
 end)
