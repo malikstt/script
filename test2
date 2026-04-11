@@ -1,509 +1,218 @@
-local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
-
 local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
-local Workspace = game:GetService("Workspace")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
-local player = Players.LocalPlayer
-local remoteEvents = ReplicatedStorage:WaitForChild("RemoteEvents")
-local stepRemote = remoteEvents:WaitForChild("StepTaken")
-local duelRemote = remoteEvents:WaitForChild("DuelEnd")
-local updateUI = remoteEvents:WaitForChild("UpdateUI")
-local doRebirth = remoteEvents:WaitForChild("DoRebirth")
-local rebirthSuccess = remoteEvents:WaitForChild("RebirthSuccess")
-local bookEquip = remoteEvents:WaitForChild("BookEquip")
+local Paper = require(ReplicatedStorage:WaitForChild("Paper"))
+local Stats = Paper.Stats
+local Network = Paper.Network
+local UniverseModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Universe)
+local RebirthModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Rebirths)
 
-local Window = Rayfield:CreateWindow({
-    Name = "Auto Farm Hub",
-    LoadingTitle = "Loading...",
-    LoadingSubtitle = "Please wait",
-    ConfigurationSaving = {
-        Enabled = true,
-        FolderName = "AutoFarmHub",
-        FileName = "Settings"
-    }
-})
+repeat task.wait() until Stats.IsLoaded(LocalPlayer)
 
-local mainTab = Window:CreateTab("Main")
-local rebirthTab = Window:CreateTab("Rebirth")
-local booksTab = Window:CreateTab("Books")
-local settingsTab = Window:CreateTab("Settings")
+local Remotes = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes")
+local RemoteFunction = Remotes:WaitForChild("__remotefunction")
 
-local speedEnabled = false
-local autoWinEnabled = false
-local stepEnabled = false
-local autoRebirthEnabled = false
-local autoDuelEnabled = false
-local walkSpeedValue = 80
-local currentData = nil
-local selectedWinPartPath = nil
-local autoWinConnection = nil
+local AutoTrain = Stats.Get("AutoTrain")
+local AutoThrow = Stats.Get("AutoThrow")
+local CurrentUniverse = Stats.Get("CurrentUniverse")
 
--- Auto Duel variables
-local duelMinValue = 1
-local duelMaxValue = 10
-local currentDuelValue = 1
-local duelIncreasing = true
+local RebirthsEaster = require(ReplicatedStorage:WaitForChild("Tables").RebirthsEaster)
+local RebirthsUni1 = require(ReplicatedStorage:WaitForChild("Tables").Rebirths)
+local RebirthsUni2 = require(ReplicatedStorage:WaitForChild("Tables").RebirthsUni2)
 
-local unlockedBooks = {}
-local equippedBook = 0
-local booksList = {}
-local autoBookEnabled = false
-local forceBookEnabled = false
-local forceBookId = nil
+local function GetRebirthTable()
+    local universe = CurrentUniverse and CurrentUniverse.Value or 0
+    if universe == 0 then
+        return RebirthsEaster
+    elseif universe == 1 then
+        return RebirthsUni1
+    elseif universe == 2 then
+        return RebirthsUni2
+    end
+    return RebirthsEaster
+end
 
-local function scanBooksFromWorkspace()
-    booksList = {}
-    for i = 1, 100 do
-        local part = Workspace:FindFirstChild("EquipPart" .. i)
-        if part then
-            local billboard = part:FindFirstChildOfClass("BillboardGui")
-            local displayName = "Book " .. i
-            if billboard then
-                local textLabel = billboard:FindFirstChildOfClass("TextLabel")
-                if textLabel and textLabel.Text ~= "" then
-                    displayName = textLabel.Text
+local function GetCurrentMoney()
+    local universe = CurrentUniverse and CurrentUniverse.Value or 0
+    return UniverseModule.GetMoneyStat(LocalPlayer, universe)
+end
+
+local function GetRebirthSkips()
+    local universe = CurrentUniverse and CurrentUniverse.Value or 0
+    return UniverseModule.GetRebirthSkipsStat(LocalPlayer, universe)
+end
+
+local function GetRebirthCost(rebirthAmount)
+    local universe = CurrentUniverse and CurrentUniverse.Value or 0
+    return RebirthModule.GetRebirthCost(LocalPlayer, rebirthAmount, universe)
+end
+
+local function GetMaxUnlockedRebirthIndex()
+    local skipsStat = GetRebirthSkips()
+    local skips = skipsStat and skipsStat.Value or 0
+    local universe = CurrentUniverse and CurrentUniverse.Value or 0
+    local extra = (universe == 2 or universe == 0) and 1 or 8
+    return skips + extra
+end
+
+local function GetBestAffordableRebirth()
+    local moneyStat = GetCurrentMoney()
+    local currentMoney = moneyStat and moneyStat.Value or 0
+    local rebirthTable = GetRebirthTable()
+    local maxUnlocked = GetMaxUnlockedRebirthIndex()
+    local bestAmount = 0
+    local bestIndex = 0
+    
+    for index, amount in ipairs(rebirthTable) do
+        if index <= maxUnlocked then
+            local cost = GetRebirthCost(amount)
+            if cost <= currentMoney and amount > bestAmount then
+                bestAmount = amount
+                bestIndex = index
+            end
+        end
+    end
+    
+    return bestAmount, bestIndex
+end
+
+local function PerformRebirth(rebirthIndex)
+    pcall(function()
+        local args = { "Rebirth", rebirthIndex }
+        RemoteFunction:InvokeServer(unpack(args))
+        print("[Rebirth] Performed rebirth with index:", rebirthIndex)
+    end)
+end
+
+local function AutoRebirthBest()
+    local bestAmount, bestIndex = GetBestAffordableRebirth()
+    if bestIndex > 0 then
+        print(string.format("[Rebirth] Best affordable: %s (index %s)", bestAmount, bestIndex))
+        PerformRebirth(bestIndex)
+        return true
+    else
+        print("[Rebirth] Cannot afford any unlocked rebirth")
+        return false
+    end
+end
+
+local function DisableAutoTrain()
+    if AutoTrain and AutoTrain.Value then
+        Network.FireServer("Toggle Setting", "AutoTrain")
+        print("[AutoTrain] Disabled")
+    end
+    
+    for i = 1, 5 do
+        pcall(function()
+            local character = LocalPlayer.Character
+            if character then
+                local humanoid = character:FindFirstChild("Humanoid")
+                if humanoid then
+                    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
                 end
             end
-            table.insert(booksList, {id = i, displayName = displayName})
-        end
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+            task.wait(0.05)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+        end)
+        task.wait(0.1)
     end
-    table.sort(booksList, function(a,b) return a.id < b.id end)
+    
+    LocalPlayer:SetAttribute("TrainingStation", nil)
+    task.wait(0.5)
 end
 
-local function getBestAvailableBook()
-    local best = nil
-    for _, book in ipairs(booksList) do
-        if unlockedBooks[tostring(book.id)] == true then
-            best = book
-        end
-    end
-    return best
-end
-
-local function autoEquipBestBook()
-    if not autoBookEnabled then return end
-    local best = getBestAvailableBook()
-    if best and best.id ~= equippedBook then
-        bookEquip:FireServer(best.id)
-    end
-end
-
-local function updateBookUI()
-    if not bookStatsLabel then return end
-    local selectedBook = nil
-    for _, book in ipairs(booksList) do
-        if book.id == forceBookId then
-            selectedBook = book
-            break
-        end
-    end
-    if selectedBook then
-        local isUnlocked = unlockedBooks[tostring(selectedBook.id)] == true
-        local isEquipped = (equippedBook == selectedBook.id)
-        bookStatsLabel:Set("ID: " .. selectedBook.id .. " | " .. selectedBook.displayName .. " | Unlocked: " .. (isUnlocked and "Yes" or "No") .. " | Equipped: " .. (isEquipped and "Yes" or "No"))
+local function EnableAutoThrow()
+    if AutoThrow and not AutoThrow.Value then
+        Network.FireServer("Toggle Setting", "AutoThrow")
+        print("[AutoThrow] Enabled")
     else
-        bookStatsLabel:Set("No book selected")
+        print("[AutoThrow] Already enabled")
     end
 end
 
-local function calculateProgress(level, maxLevel)
-    if not level or not maxLevel or maxLevel <= 0 then return 0 end
-    return (level / maxLevel) * 100
-end
-
-local function getNextDuelValue()
-    if duelIncreasing then
-        currentDuelValue = currentDuelValue + 1
-        if currentDuelValue >= duelMaxValue then
-            currentDuelValue = duelMaxValue
-            duelIncreasing = false
-        end
-    else
-        currentDuelValue = currentDuelValue - 1
-        if currentDuelValue <= duelMinValue then
-            currentDuelValue = duelMinValue
-            duelIncreasing = true
-        end
-    end
-    return currentDuelValue
-end
-
-local function getPartFromPath(path)
-    if not path then return nil end
-    -- path format: "WinModel19.WinPart"
-    local modelName = string.match(path, "(WinModel%d+)%.WinPart")
-    if not modelName then return nil end
+local function TrainOnly()
+    print("[Cycle] Starting training phase (60 seconds)...")
     
-    local model = Workspace:FindFirstChild(modelName)
-    if not model then return nil end
-    
-    return model:FindFirstChild("WinPart")
-end
-
-local function scanAllWinParts()
-    local parts = {}
-    
-    for _, obj in ipairs(Workspace:GetChildren()) do
-        if string.match(obj.Name, "^WinModel%d+$") then
-            local winPart = obj:FindFirstChild("WinPart")
-            if winPart and winPart:IsA("BasePart") then
-                table.insert(parts, obj.Name .. ".WinPart")
-            end
-        end
+    if AutoTrain and not AutoTrain.Value then
+        Network.FireServer("Toggle Setting", "AutoTrain")
+        print("[AutoTrain] Enabled")
     end
     
-    table.sort(parts, function(a, b)
-        local numA = tonumber(string.match(a, "WinModel(%d+)"))
-        local numB = tonumber(string.match(b, "WinModel(%d+)"))
-        return numA < numB
+    for i = 60, 1, -1 do
+        if i % 10 == 0 then
+            print("[Train] " .. i .. " seconds remaining")
+        end
+        task.wait(1)
+    end
+    
+    print("[Cycle] Training phase complete")
+end
+
+local function ThrowOnly()
+    print("[Cycle] Starting throwing phase (90 seconds)...")
+    
+    DisableAutoTrain()
+    EnableAutoThrow()
+    
+    for i = 90, 1, -1 do
+        if i % 15 == 0 then
+            print("[Throw] " .. i .. " seconds remaining")
+        end
+        task.wait(1)
+    end
+    
+    print("[Cycle] Throwing phase complete")
+end
+
+local actions = {
+    { args = {"Upgrade", "More Rebirth Skips"} },
+    { args = {"Unlock Next World"} },
+    { args = {"Buy Next Object"} }
+}
+
+local lastActionIndex = nil
+
+local function fireRandomAction()
+    local availableIndices = {}
+    
+    for i = 1, #actions do
+        if i ~= lastActionIndex then
+            table.insert(availableIndices, i)
+        end
+    end
+    
+    local randomIndex = availableIndices[math.random(1, #availableIndices)]
+    local selectedAction = actions[randomIndex]
+    
+    pcall(function()
+        RemoteFunction:InvokeServer(unpack(selectedAction.args))
+        print("[Action] Fired:", unpack(selectedAction.args))
     end)
     
-    return parts
+    lastActionIndex = randomIndex
 end
 
-scanBooksFromWorkspace()
-local winParts = scanAllWinParts()
-if #winParts > 0 then
-    selectedWinPartPath = winParts[1]
-end
-
-mainTab:CreateToggle({
-    Name = "Speed Boost",
-    CurrentValue = false,
-    Callback = function(value)
-        speedEnabled = value
-    end
-})
-
-mainTab:CreateSlider({
-    Name = "Walk Speed",
-    Range = {16, 250},
-    Increment = 1,
-    Suffix = "Speed",
-    CurrentValue = 80,
-    Callback = function(value)
-        walkSpeedValue = value
-    end
-})
-
-mainTab:CreateToggle({
-    Name = "Auto Step",
-    CurrentValue = false,
-    Callback = function(value)
-        stepEnabled = value
-    end
-})
-
-mainTab:CreateSection("Auto Duel")
-
-local minSlider = mainTab:CreateSlider({
-    Name = "Duel Min Value",
-    Range = {1, 100},
-    Increment = 1,
-    Suffix = "Min",
-    CurrentValue = 1,
-    Callback = function(value)
-        duelMinValue = value
-        if duelMinValue > duelMaxValue then
-            duelMaxValue = duelMinValue
-            if maxSlider then maxSlider:Set(duelMaxValue) end
-        end
-        currentDuelValue = duelMinValue
-    end
-})
-
-local maxSlider = mainTab:CreateSlider({
-    Name = "Duel Max Value",
-    Range = {1, 100},
-    Increment = 1,
-    Suffix = "Max",
-    CurrentValue = 10,
-    Callback = function(value)
-        duelMaxValue = value
-        if duelMaxValue < duelMinValue then
-            duelMinValue = duelMaxValue
-            if minSlider then minSlider:Set(duelMinValue) end
-        end
-        currentDuelValue = duelMinValue
-    end
-})
-
-mainTab:CreateToggle({
-    Name = "Auto Duel (Cycle Mode)",
-    CurrentValue = false,
-    Callback = function(value)
-        autoDuelEnabled = value
-        if value then
-            currentDuelValue = duelMinValue
-            duelIncreasing = true
-        end
-    end
-})
-
-mainTab:CreateSection("Auto Win")
-
-local winPartDropdown = nil
-if #winParts > 0 then
-    winPartDropdown = mainTab:CreateDropdown({
-        Name = "Select Win Part",
-        Options = winParts,
-        CurrentOption = selectedWinPartPath,
-        Callback = function(option)
-            selectedWinPartPath = option
-        end
-    })
-end
-
-mainTab:CreateToggle({
-    Name = "Auto Win (Touch)",
-    CurrentValue = false,
-    Callback = function(value)
-        autoWinEnabled = value
-        
-        if value then
-            if autoWinConnection then autoWinConnection:Disconnect() end
-            autoWinConnection = RunService.Heartbeat:Connect(function()
-                local char = player.Character
-                if not char then return end
-                local hrp = char:FindFirstChild("HumanoidRootPart")
-                if not hrp then return end
-                
-                local part = getPartFromPath(selectedWinPartPath)
-                if not part then return end
-                
-                firetouchinterest(hrp, part, 0)
-                firetouchinterest(hrp, part, 1)
-                hrp.Velocity = Vector3.zero
-            end)
-        else
-            if autoWinConnection then
-                autoWinConnection:Disconnect()
-                autoWinConnection = nil
-            end
-        end
-    end
-})
-
-mainTab:CreateButton({
-    Name = "Refresh Part List",
-    Callback = function()
-        local newParts = scanAllWinParts()
-        if #newParts > 0 and winPartDropdown then
-            if not table.find(newParts, selectedWinPartPath) then
-                selectedWinPartPath = newParts[1]
-            end
-            winPartDropdown:SetOptions(newParts)
-            winPartDropdown:SetCurrentOption(selectedWinPartPath)
-        end
-    end
-})
-
-local statusLabel = rebirthTab:CreateLabel("Status: Waiting...")
-local progressLabel = rebirthTab:CreateLabel("Progress: 0%")
-local multiLabel = rebirthTab:CreateLabel("Multiplier: x0")
-local levelLabel = rebirthTab:CreateLabel("Level: 0/0")
-
-rebirthTab:CreateToggle({
-    Name = "Auto Rebirth",
-    CurrentValue = false,
-    Callback = function(value)
-        autoRebirthEnabled = value
-    end
-})
-
-rebirthTab:CreateButton({
-    Name = "Manual Rebirth",
-    Callback = function()
-        if currentData and currentData.CanRebirth then
-            doRebirth:FireServer()
-        end
-    end
-})
-
-booksTab:CreateSection("Book Management")
-
-booksTab:CreateToggle({
-    Name = "Auto Equip Best Available Book",
-    CurrentValue = false,
-    Callback = function(value)
-        autoBookEnabled = value
-        if value then
-            forceBookEnabled = false
-            if forceBookToggle then
-                forceBookToggle:Set(false)
-            end
-            autoEquipBestBook()
-        end
-    end
-})
-
-local bookOptions = {}
-for _, book in ipairs(booksList) do
-    table.insert(bookOptions, book.displayName .. " (ID: " .. book.id .. ")")
-end
-if #bookOptions == 0 then
-    table.insert(bookOptions, "No books found")
-end
-
-local bookDropdown = booksTab:CreateDropdown({
-    Name = "Select Book",
-    Options = bookOptions,
-    CurrentOption = bookOptions[1],
-    Callback = function(option)
-        for _, book in ipairs(booksList) do
-            if option == book.displayName .. " (ID: " .. book.id .. ")" then
-                forceBookId = book.id
-                if forceBookEnabled then
-                    bookEquip:FireServer(forceBookId)
-                end
-                updateBookUI()
-                break
-            end
-        end
-    end
-})
-
-local forceBookToggle = booksTab:CreateToggle({
-    Name = "Force Equip Selected Book",
-    CurrentValue = false,
-    Callback = function(value)
-        forceBookEnabled = value
-        if value then
-            autoBookEnabled = false
-            if forceBookId then
-                bookEquip:FireServer(forceBookId)
-            end
-        end
-    end
-})
-
-local bookStatsLabel = booksTab:CreateLabel("No book selected")
-
-booksTab:CreateButton({
-    Name = "Refresh Book List",
-    Callback = function()
-        scanBooksFromWorkspace()
-        local newOptions = {}
-        for _, book in ipairs(booksList) do
-            table.insert(newOptions, book.displayName .. " (ID: " .. book.id .. ")")
-        end
-        if #newOptions > 0 then
-            bookDropdown:SetOptions(newOptions)
-            bookDropdown:SetCurrentOption(newOptions[1])
-        end
-        updateBookUI()
-    end
-})
-
-booksTab:CreateButton({
-    Name = "Unequip Current Book",
-    Callback = function()
-        bookEquip:FireServer(0)
-        if forceBookToggle then forceBookToggle:Set(false) end
-        forceBookEnabled = false
-    end
-})
-
-settingsTab:CreateButton({
-    Name = "Destroy UI",
-    Callback = function()
-        Rayfield:Destroy()
-    end
-})
-
-settingsTab:CreateButton({
-    Name = "Toggle UI",
-    Callback = function()
-        Rayfield:Toggle()
-    end
-})
-
-RunService.Heartbeat:Connect(function()
-    if speedEnabled and player.Character and player.Character:FindFirstChild("Humanoid") then
-        player.Character.Humanoid.WalkSpeed = walkSpeedValue
-    end
-    
-    if stepEnabled then
-        stepRemote:FireServer()
+task.spawn(function()
+    while true do
+        task.wait(10)
+        pcall(AutoRebirthBest)
     end
 end)
 
 task.spawn(function()
+    fireRandomAction()
     while true do
-        if autoDuelEnabled then
-            local valueToSend = getNextDuelValue()
-            local args = { true, valueToSend }
-            duelRemote:FireServer(unpack(args))
-        end
-        task.wait(0.3)
+        task.wait(5)
+        fireRandomAction()
     end
 end)
 
-task.spawn(function()
-    while true do
-        if autoBookEnabled then
-            autoEquipBestBook()
-        end
-        task.wait(2)
-    end
-end)
+print("[Farm] Starting loop: Train 60s -> Throw 90s")
 
-updateUI.OnClientEvent:Connect(function(data)
-    if data.RebirthCount ~= nil then
-        currentData = data
-        local progress = calculateProgress(data.Level, data.MaxLevel)
-        
-        statusLabel:Set("Status: " .. (data.CanRebirth and "READY TO REBIRTH!" or "Leveling..."))
-        progressLabel:Set("Progress: " .. string.format("%.1f", progress) .. "%")
-        multiLabel:Set("Multiplier: x" .. string.format("%.1f", data.RebirthMulti))
-        levelLabel:Set("Level: " .. data.Level .. "/" .. data.MaxLevel)
-        
-        if autoRebirthEnabled and data.CanRebirth then
-            task.wait(0.5)
-            doRebirth:FireServer()
-        end
-    end
-    
-    if data.EquippedBook ~= nil then
-        equippedBook = data.EquippedBook
-        updateBookUI()
-    end
-    
-    if data.UnlockedBooks then
-        unlockedBooks = data.UnlockedBooks
-        updateBookUI()
-        if autoBookEnabled then
-            autoEquipBestBook()
-        end
-    end
-end)
-
-bookEquip.OnClientEvent:Connect(function(bookId, action)
-    if action == "equipped" then
-        equippedBook = bookId
-        updateBookUI()
-        if autoBookEnabled then
-            task.wait(1)
-            autoEquipBestBook()
-        end
-    elseif action == "unequipped" then
-        equippedBook = 0
-        updateBookUI()
-    end
-end)
-
-rebirthSuccess.OnClientEvent:Connect(function()
-    if autoRebirthEnabled and currentData and currentData.CanRebirth then
-        task.wait(1)
-        doRebirth:FireServer()
-    end
-end)
-
-player.CharacterAdded:Connect(function()
-    task.wait(1)
-    scanBooksFromWorkspace()
-end)
-
-Rayfield:Notify({Title = "Auto Farm Hub", Content = "Loaded Successfully!", Duration = 3})
+while true do
+    TrainOnly()
+    ThrowOnly()
+end
