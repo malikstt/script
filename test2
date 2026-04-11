@@ -35,37 +35,9 @@ local function GetRebirthTable()
     return RebirthsEaster
 end
 
-local function GetCurrentMoney()
-    local universe = CurrentUniverse and CurrentUniverse.Value or 0
-    local success, result = pcall(function()
-        return UniverseModule.GetMoneyStat(LocalPlayer, universe)
-    end)
-    if success and result then
-        return result
-    end
-    return { Value = 0 }
-end
-
 local function GetRebirthSkips()
     local universe = CurrentUniverse and CurrentUniverse.Value or 0
-    local success, result = pcall(function()
-        return UniverseModule.GetRebirthSkipsStat(LocalPlayer, universe)
-    end)
-    if success and result then
-        return result
-    end
-    return { Value = 0 }
-end
-
-local function GetRebirthCost(rebirthAmount)
-    local universe = CurrentUniverse and CurrentUniverse.Value or 0
-    local success, cost = pcall(function()
-        return RebirthModule.GetRebirthCost(LocalPlayer, rebirthAmount, universe)
-    end)
-    if success and cost then
-        return cost
-    end
-    return math.huge
+    return UniverseModule.GetRebirthSkipsStat(LocalPlayer, universe)
 end
 
 local function GetMaxUnlockedRebirthIndex()
@@ -76,24 +48,16 @@ local function GetMaxUnlockedRebirthIndex()
     return skips + extra
 end
 
-local function GetBestAffordableRebirth()
-    local moneyStat = GetCurrentMoney()
-    local currentMoney = moneyStat and moneyStat.Value or 0
+local function GetBestUnlockedRebirth()
     local rebirthTable = GetRebirthTable()
     local maxUnlocked = GetMaxUnlockedRebirthIndex()
     local bestAmount = 0
     local bestIndex = 0
     
-    print(string.format("[Debug] Current Money: %s, Max Unlocked Index: %s", tostring(currentMoney), tostring(maxUnlocked)))
-    
     for index, amount in ipairs(rebirthTable) do
-        if index <= maxUnlocked then
-            local cost = GetRebirthCost(amount)
-            print(string.format("[Debug] Index %s: Amount=%s, Cost=%s, CanAfford=%s", index, amount, cost, cost <= currentMoney))
-            if cost <= currentMoney and amount > bestAmount then
-                bestAmount = amount
-                bestIndex = index
-            end
+        if index <= maxUnlocked and amount > bestAmount then
+            bestAmount = amount
+            bestIndex = index
         end
     end
     
@@ -109,13 +73,13 @@ local function PerformRebirth(rebirthIndex)
 end
 
 local function AutoRebirthBest()
-    local bestAmount, bestIndex = GetBestAffordableRebirth()
+    local bestAmount, bestIndex = GetBestUnlockedRebirth()
     if bestIndex > 0 then
-        print(string.format("[Rebirth] Best affordable: %s (index %s)", bestAmount, bestIndex))
+        print(string.format("[Rebirth] Best unlocked: %s (index %s)", bestAmount, bestIndex))
         PerformRebirth(bestIndex)
         return true
     else
-        print("[Rebirth] Cannot afford any unlocked rebirth")
+        print("[Rebirth] No unlocked rebirths found")
         return false
     end
 end
@@ -124,12 +88,14 @@ local function StopTraining()
     pcall(function()
         local args = { "Stop Training" }
         RemoteEvent:FireServer(unpack(args))
+        print("[AutoTrain] Stopped training")
     end)
 end
 
 local function DisableAutoTrain()
     if AutoTrain and AutoTrain.Value then
         Network.FireServer("Toggle Setting", "AutoTrain")
+        print("[AutoTrain] Disabled")
     end
     StopTraining()
 end
@@ -137,24 +103,34 @@ end
 local function EnableAutoTrain()
     if AutoTrain and not AutoTrain.Value then
         Network.FireServer("Toggle Setting", "AutoTrain")
+        print("[AutoTrain] Enabled")
     end
 end
 
 local function EnableAutoThrow()
     if AutoThrow and not AutoThrow.Value then
         Network.FireServer("Toggle Setting", "AutoThrow")
+        print("[AutoThrow] Enabled")
     end
 end
 
 local function TrainOnly()
+    print("[Cycle] Starting training phase (10 seconds)...")
     EnableAutoTrain()
-    task.wait(10)
+    for i = 10, 1, -1 do
+        task.wait(1)
+    end
+    print("[Cycle] Training phase complete")
 end
 
 local function ThrowOnly()
+    print("[Cycle] Starting throwing phase (10 seconds)...")
     DisableAutoTrain()
     EnableAutoThrow()
-    task.wait(10)
+    for i = 10, 1, -1 do
+        task.wait(1)
+    end
+    print("[Cycle] Throwing phase complete")
 end
 
 local actions = {
@@ -179,6 +155,7 @@ local function fireRandomAction()
     
     pcall(function()
         RemoteFunction:InvokeServer(unpack(selectedAction.args))
+        print("[Action] Fired:", unpack(selectedAction.args))
     end)
     
     lastActionIndex = randomIndex
@@ -198,6 +175,8 @@ task.spawn(function()
         fireRandomAction()
     end
 end)
+
+print("[Farm] Starting loop: Train 10s -> Throw 10s")
 
 while true do
     TrainOnly()
