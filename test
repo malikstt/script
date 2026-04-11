@@ -1,433 +1,137 @@
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local Paper = require(ReplicatedStorage.Paper)
-local AchievementsData = require(ReplicatedStorage.Tables.Achievements)
-local EasterBasketData = require(ReplicatedStorage.Tables.EasterBasket)
-local EggsTable = require(ReplicatedStorage.Tables.Eggs)
-
-local RemoteFunction = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes"):WaitForChild("__remotefunction")
+local Lighting = game:GetService("Lighting")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local UserSettings = UserSettings()
+local Graphics = UserSettings:GetService("UserGameSettings")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
-local isBusy = false
 
-local function log(msg, type)
-    type = type or "INFO"
-    print(string.format("[%s] %s", type, msg))
-end
+pcall(function()
+    sethiddenproperty(Graphics, "SavedQualityLevel", 0)
+    sethiddenproperty(Graphics, "GraphicsQualityLevel", 0)
+    sethiddenproperty(Graphics, "MeshRenderMode", 0)
+    sethiddenproperty(Graphics, "TextureQuality", 0)
+    Graphics.MaterialQuality = Enum.MaterialQuality.Lowest
+end)
 
-local function equipBestPets()
-    local success, err = pcall(function()
-        RemoteFunction:InvokeServer("Pet", {Action = "EquipBest", Sort = "Event"})
-    end)
-    if not success then
-        log("EquipBest failed: " .. tostring(err), "ERROR")
-    end
-end
+pcall(function()
+    RunService:Set3dRenderingEnabled(false)
+end)
 
-local function claimAchievement(id, rank)
-    local success, result = pcall(function()
-        return RemoteFunction:InvokeServer("Claim Achievement", id, rank)
-    end)
-    if not success then
-        log("Claim achievement " .. id .. " rank " .. rank .. " failed: " .. tostring(result), "ERROR")
-        return false
-    end
-    return result == true
-end
+Lighting.GlobalShadows = false
+Lighting.FogEnd = 0
+Lighting.Technology = Enum.Technology.Compatibility
 
-local function claimAchievementChain(id, data)
-    local success, err = pcall(function()
-        local currentRank = Paper.Stats.Get(data.AchievementStat).Value
-        local progress = Paper.Stats.Get(data.Stat).Value
-        
-        for rank = currentRank + 1, #data.Rewards do
-            local reward = data.Rewards[rank]
-            if progress >= reward.Requirement then
-                log("Trying to claim " .. id .. " Rank " .. rank, "ACHIEVEMENT")
-                if claimAchievement(id, rank) then
-                    log("Claimed " .. id .. " Rank " .. rank, "ACHIEVEMENT")
-                    task.wait(0.5)
-                else
-                    log("Failed to claim " .. id .. " Rank " .. rank .. " (may need previous rank)", "WARN")
-                    break
-                end
-            else
-                break
-            end
-        end
-    end)
-    if not success then
-        log("Achievement chain error for " .. id .. ": " .. tostring(err), "ERROR")
-    end
-end
+pcall(function()
+    Workspace.StreamingTargetRadius = 64
+    Workspace.StreamingPauseMode = Enum.StreamingPauseMode.ClientPhysicsPause
+end)
 
-local function scanAndClaimAchievements()
-    if isBusy then 
-        log("Achievement scan already running, skipping", "DEBUG")
-        return 
-    end
-    isBusy = true
-    local success, err = pcall(function()
-        for id, data in AchievementsData do
-            claimAchievementChain(id, data)
-            task.wait(0.3)
-        end
-    end)
-    if not success then
-        log("Scan achievements error: " .. tostring(err), "ERROR")
-    end
-    isBusy = false
-end
+pcall(function()
+    Workspace.Terrain.WaterWaveSize = 0
+    Workspace.Terrain.WaterWaveSpeed = 0
+    Workspace.Terrain.WaterReflectance = 0
+    Workspace.Terrain.WaterTransparency = 1
+end)
 
-local function buyBasketRank()
-    local success, result = pcall(function()
-        return RemoteFunction:InvokeServer("Buy Basket Rank")
-    end)
-    if not success then
-        log("Buy basket rank failed: " .. tostring(result), "ERROR")
-        return false
-    end
-    return result == true
-end
-
-local function claimBasketReward()
-    local success, result = pcall(function()
-        RemoteFunction:InvokeServer("Claim Easter Basket", false)
-    end)
-    if not success then
-        log("Claim basket reward failed: " .. tostring(result), "ERROR")
-    end
-    return success
-end
-
-local function processEasterBasket()
-    local success, err = pcall(function()
-        local goldenEggs = Paper.Stats.Get("GoldenEggs").Value
-        local basketRank = Paper.Stats.Get("EasterBasketRank").Value
-        local freeClaimed = Paper.Stats.Get("EasterFreeClaimed").Value
-        
-        log("Easter Basket - Golden Eggs: " .. goldenEggs .. ", Current Rank: " .. basketRank .. ", Free Claimed: " .. freeClaimed, "BASKET")
-        
-        for rank = basketRank + 1, #EasterBasketData do
-            local rankData = EasterBasketData[rank]
-            if goldenEggs >= rankData.Cost then
-                log("Buying rank " .. rank .. " for " .. rankData.Cost .. " eggs", "BASKET")
-                if buyBasketRank() then
-                    goldenEggs = goldenEggs - rankData.Cost
-                    log("Bought rank " .. rank, "BASKET")
-                    task.wait(0.5)
-                else
-                    log("Failed to buy rank " .. rank, "WARN")
-                    break
-                end
-            else
-                log("Not enough eggs for rank " .. rank .. " (need " .. rankData.Cost .. ")", "BASKET")
-                break
-            end
-        end
-        
-        local currentRank = Paper.Stats.Get("EasterBasketRank").Value
-        local currentFreeClaimed = Paper.Stats.Get("EasterFreeClaimed").Value
-        
-        for rank = 1, currentRank do
-            if currentFreeClaimed < rank then
-                log("Claiming free reward for rank " .. rank, "BASKET")
-                claimBasketReward()
-                task.wait(0.5)
-            end
-        end
-    end)
-    if not success then
-        log("Process Easter Basket error: " .. tostring(err), "ERROR")
-    end
-end
-
-local function getEnchantName(pet)
-    local success, enchant = pcall(function()
-        return pet:GetAttribute("Enchant1")
-    end)
-    if not success then
-        return nil
-    end
-    return enchant
-end
-
-local function isLuckEnchant(enchantName)
-    if not enchantName then return false end
-    local lowerName = string.lower(enchantName)
-    return string.find(lowerName, "luck") ~= nil
-end
-
-local function getLuckLevel(enchantName)
-    if not enchantName or not isLuckEnchant(enchantName) then return 0 end
-    if string.find(enchantName, "III") then return 3
-    elseif string.find(enchantName, "II") then return 2
-    elseif string.find(enchantName, "I") then return 1 end
-    return 0
-end
-
-local function getPetLuckLevel(pet)
-    local enchant = getEnchantName(pet)
-    return getLuckLevel(enchant)
-end
-
-local function hasLuckEnchant(pet)
-    local enchant = getEnchantName(pet)
-    return isLuckEnchant(enchant)
-end
-
-local function enchantPet(petGuid)
-    local success, err = pcall(function()
-        RemoteFunction:InvokeServer("Pet", {Action = "Enchant", Pet = petGuid})
-    end)
-    if not success then
-        log("Enchant pet " .. petGuid .. " failed: " .. tostring(err), "ERROR")
-    end
-    return success
-end
-
-local function progressiveLuckEnchant()
-    local success, err = pcall(function()
-        local equippedPets = Paper.Stats.Get("Equipped Pets")
-        local enchantGems = Paper.Stats.Get("EnchantGems")
-        
-        if not equippedPets or not enchantGems then
-            log("Cannot get equipped pets or enchant gems stats", "WARN")
-            return
-        end
-        
-        local gemsAvailable = enchantGems.Value
-        log("Enchanting - Gems available: " .. gemsAvailable, "ENCHANT")
-        
-        if gemsAvailable == 0 then
-            log("No enchant gems available", "ENCHANT")
-            return
-        end
-        
-        local rerollCount = 0
-        local maxRerolls = gemsAvailable * 2
-        
-        while enchantGems.Value > 0 and rerollCount < maxRerolls do
-            local petsWithLuck3 = {}
-            local petsWithLuck2 = {}
-            local petsWithLuck1 = {}
-            local petsWithNoLuck = {}
-            local petsWithOtherEnchant = {}
-            
-            for _, pet in pairs(equippedPets:GetChildren()) do
-                local enchantName = getEnchantName(pet)
-                local luckLevel = getLuckLevel(enchantName)
-                
-                if luckLevel == 3 then
-                    table.insert(petsWithLuck3, pet)
-                elseif luckLevel == 2 then
-                    table.insert(petsWithLuck2, pet)
-                elseif luckLevel == 1 then
-                    table.insert(petsWithLuck1, pet)
-                elseif enchantName and not isLuckEnchant(enchantName) then
-                    table.insert(petsWithOtherEnchant, pet)
-                else
-                    table.insert(petsWithNoLuck, pet)
-                end
-            end
-            
-            local totalPets = #petsWithLuck3 + #petsWithLuck2 + #petsWithLuck1 + #petsWithOtherEnchant + #petsWithNoLuck
-            
-            if totalPets == 0 then
-                log("No pets found", "WARN")
-                break
-            end
-            
-            local luck3Count = #petsWithLuck3
-            log(string.format("Pet status - Luck3: %d, Luck2: %d, Luck1: %d, Other: %d, NoLuck: %d", 
-                luck3Count, #petsWithLuck2, #petsWithLuck1, #petsWithOtherEnchant, #petsWithNoLuck), "ENCHANT")
-            
-            if luck3Count == totalPets then
-                log("ALL PETS HAVE LUCK III ENCHANT!", "SUCCESS")
-                break
-            end
-            
-            local targetPet = nil
-            local targetType = ""
-            
-            if #petsWithLuck2 > 0 then
-                targetPet = petsWithLuck2[1]
-                targetType = "Luck2 -> Luck3"
-            elseif #petsWithLuck1 > 0 then
-                targetPet = petsWithLuck1[1]
-                targetType = "Luck1 -> Luck2+"
-            elseif #petsWithOtherEnchant > 0 then
-                targetPet = petsWithOtherEnchant[1]
-                targetType = "Other -> Luck"
-            elseif #petsWithNoLuck > 0 then
-                targetPet = petsWithNoLuck[1]
-                targetType = "NoLuck -> Any"
-            end
-            
-            if targetPet then
-                local guid = targetPet.Name
-                local oldEnchant = getEnchantName(targetPet) or "None"
-                local oldLuckLevel = getLuckLevel(oldEnchant)
-                
-                log(string.format("Enchanting %s [%s] (Current: %s, Luck Level: %d) - Target: %s", 
-                    guid, targetType, oldEnchant, oldLuckLevel, targetType), "ENCHANT")
-                
-                enchantPet(guid)
-                rerollCount = rerollCount + 1
-                task.wait(0.25)
-                
-                local newEnchant = getEnchantName(targetPet) or "None"
-                local newLuckLevel = getLuckLevel(newEnchant)
-                
-                if newLuckLevel > oldLuckLevel then
-                    log(string.format("✓ UPGRADED %s: %s -> %s (Luck %d -> %d)", 
-                        guid, oldEnchant, newEnchant, oldLuckLevel, newLuckLevel), "ENCHANT")
-                elseif newLuckLevel > 0 and newLuckLevel == oldLuckLevel then
-                    log(string.format("~ SAME LEVEL %s: still %s (Luck %d)", 
-                        guid, newEnchant, newLuckLevel), "ENCHANT")
-                elseif newLuckLevel == 0 and isLuckEnchant(newEnchant) == false and newEnchant ~= "None" then
-                    log(string.format("~ GOT OTHER ENCHANT %s: %s (not luck)", guid, newEnchant), "ENCHANT")
-                elseif newEnchant == "None" then
-                    log(string.format("~ LOST ENCHANT %s: now has no enchant", guid), "ENCHANT")
-                end
-            else
-                log("No target pet found to enchant", "WARN")
-                break
-            end
-            
-            task.wait(0.1)
-        end
-        
-        log("Enchanting finished - Total rerolls: " .. rerollCount .. ", Gems remaining: " .. enchantGems.Value, "ENCHANT")
-    end)
-    if not success then
-        log("Progressive enchant error: " .. tostring(err), "ERROR")
-    end
-end
-
-local function setupAutoDelete()
-    local success, err = pcall(function()
+local function applyGameSettings()
+    local Stats = ReplicatedStorage:FindFirstChild("Paper")
+    if Stats then
+        local Paper = require(Stats)
         Paper.Stats.Loaded()
-        local autoDeleteStat = Paper.Stats.Get("AutoDelete")
-        local starryEgg = EggsTable["Starry Egg"]
-        local oneInAMillion = 0.0001
         
-        if not starryEgg or not starryEgg.Pets then
-            log("Starry Egg data not found", "WARN")
-            return
-        end
+        local settings = {
+            {stat = "Show Your Pets", value = false},
+            {stat = "Show Other Pets", value = false},
+            {stat = "Egg Particles", value = false},
+            {stat = "ShowGlobalHatches", value = true},
+            {stat = "MusicVolume", value = 0},
+            {stat = "SFXVolume", value = 0},
+            {stat = "HighlightBestTrainer", value = false},
+        }
         
-        log("Setting up auto-delete for Starry Egg pets...", "AUTODELETE")
-        
-        for _, petInfo in ipairs(starryEgg.Pets) do
-            local petName = petInfo.Pet
-            local chance = petInfo.Chance
-            
-            if chance >= oneInAMillion then
-                if autoDeleteStat.Value[petName] == nil then
-                    log("Auto-deleting: " .. petName .. " (" .. (chance * 100) .. "%)", "AUTODELETE")
-                    local success2, err2 = pcall(function()
-                        RemoteFunction:InvokeServer("Pet", {Pet = petName, Action = "AutoDelete", Tier = "all"})
-                    end)
-                    if not success2 then
-                        log("Failed to set auto-delete for " .. petName .. ": " .. tostring(err2), "ERROR")
-                    end
-                    task.wait(0.05)
-                else
-                    log("Already auto-deleting: " .. petName, "AUTODELETE")
-                end
-            else
-                if autoDeleteStat.Value[petName] ~= nil then
-                    log("REMOVING auto-delete from rare pet: " .. petName .. " (" .. (chance * 100) .. "%)", "AUTODELETE")
-                    local success2, err2 = pcall(function()
-                        RemoteFunction:InvokeServer("Pet", {Pet = petName, Action = "AutoDelete", Tier = "all"})
-                    end)
-                    if not success2 then
-                        log("Failed to remove auto-delete for " .. petName .. ": " .. tostring(err2), "ERROR")
-                    end
-                    task.wait(0.05)
-                else
-                    log("Keeping (not auto-deleted): " .. petName .. " (" .. (chance * 100) .. "%)", "AUTODELETE")
+        for _, setting in ipairs(settings) do
+            local stat = Paper.Stats.Get(setting.stat)
+            if stat then
+                if stat.ClassName == "BoolValue" and stat.Value ~= setting.value then
+                    Paper.Network.FireServer("Toggle Setting", setting.stat)
+                elseif stat.ClassName == "NumberValue" and stat.Value ~= setting.value then
+                    Paper.Network.FireServer("Change Setting", setting.stat, setting.value)
                 end
             end
         end
-        
-        log("Auto-delete setup complete!", "AUTODELETE")
-    end)
-    if not success then
-        log("Setup auto-delete error: " .. tostring(err), "ERROR")
     end
 end
 
-local statConnectionError = false
-for id, data in AchievementsData do
-    local stat = Paper.Stats.Get(data.Stat)
-    if stat then
-        local success, err = pcall(function()
-            stat.Changed:Connect(function() 
-                task.wait(0.5)
-                pcall(scanAndClaimAchievements)
-                pcall(processEasterBasket)
-            end)
-        end)
-        if not success and not statConnectionError then
-            log("Failed to connect stat change for " .. id .. ": " .. tostring(err), "ERROR")
-            statConnectionError = true
+task.wait(2)
+pcall(applyGameSettings)
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    task.wait(0.5)
+    for _, v in ipairs(char:GetDescendants()) do
+        if v:IsA("Animator") then
+            v:Destroy()
         end
     end
-end
-
-local goldenEggsStat = Paper.Stats.Get("GoldenEggs")
-if goldenEggsStat then
-    pcall(function()
-        goldenEggsStat.Changed:Connect(function() 
-            task.wait(0.5)
-            pcall(processEasterBasket)
-        end)
-    end)
-end
-
-local basketRankStat = Paper.Stats.Get("EasterBasketRank")
-if basketRankStat then
-    pcall(function()
-        basketRankStat.Changed:Connect(function() 
-            task.wait(0.5)
-            pcall(processEasterBasket)
-        end)
-    end)
-end
-
-task.spawn(function()
-    task.wait(3)
-    log("Starting main sequence...", "START")
-    scanAndClaimAchievements()
     task.wait(1)
-    processEasterBasket()
-    task.wait(1)
-    setupAutoDelete()
-    task.wait(1)
-    equipBestPets()
-    task.wait(1)
-    progressiveLuckEnchant()
-    log("Initial setup complete! Entering loop mode...", "START")
+    pcall(applyGameSettings)
 end)
+
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+for _, gui in ipairs(PlayerGui:GetChildren()) do
+    if gui.Name ~= "CoreGui" then gui.Enabled = false end
+end
+
+print("loaded")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local hrp = character:WaitForChild("HumanoidRootPart")
+local starryEgg = workspace.Eggs["Starry Egg"].EggModel
+local remoteFunction = game:GetService("ReplicatedStorage"):WaitForChild("Paper"):WaitForChild("Remotes"):WaitForChild("__remotefunction")
+
+local eggPosition = starryEgg:GetPivot()
+hrp.CFrame = eggPosition * CFrame.new(0, 0, 1)
 
 task.spawn(function()
     while true do
-        task.wait(60)
-        log("Running hourly tasks...", "LOOP")
-        pcall(equipBestPets)
-        task.wait(5)
-        pcall(progressiveLuckEnchant)
+        task.wait(120)
+        hrp.CFrame = eggPosition * CFrame.new(0, 0, 1)
     end
 end)
 
 task.spawn(function()
+    local rs = game:GetService("ReplicatedStorage")
+    local paper = require(rs:WaitForChild("Paper"))
+    local stats = paper.Stats
+    local remote = rs:WaitForChild("Paper"):WaitForChild("Remotes"):WaitForChild("__remotefunction")
+
+    local function useLuckPotions()
+        local items = stats.Get("Items").Value
+
+        for itemName, amount in pairs(items) do
+            if type(itemName) == "string" and string.find(itemName, "Luck Potion") and amount > 0 then
+                print("Using:", itemName, "x1")
+                pcall(function()
+                    remote:InvokeServer("Use Item", itemName, 1)
+                end)
+            end
+        end
+    end
+
     while true do
-        task.wait(30)
-        pcall(scanAndClaimAchievements)
-        task.wait(2)
-        pcall(processEasterBasket)
+        useLuckPotions()
+        task.wait(300)
     end
 end)
 
-log("Script loaded successfully! All systems running.", "INIT")
+while true do
+    local args = {
+        "Hatch Egg",
+        "Starry Egg",
+        "Max"
+    }
+    remoteFunction:InvokeServer(unpack(args))
+    task.wait(1)
+end
