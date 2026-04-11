@@ -1,326 +1,445 @@
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService = game:GetService("UserInputService")
-local VirtualUser = game:GetService("VirtualUser")
-local VirtualInput = game:GetService("VirtualInputManager")
+local Players = game:GetService("Players")
+local Paper = require(ReplicatedStorage.Paper)
+local AchievementsData = require(ReplicatedStorage.Tables.Achievements)
+local EasterBasketData = require(ReplicatedStorage.Tables.EasterBasket)
+local EggsTable = require(ReplicatedStorage.Tables.Eggs)
 
-local Paper = require(ReplicatedStorage:WaitForChild("Paper"))
-local Stats = Paper.Stats
-local Network = Paper.Network
-local UniverseModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Universe)
+local RemoteFunction = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes"):WaitForChild("__remotefunction")
+local LocalPlayer = Players.LocalPlayer
+local isBusy = false
 
-repeat task.wait() until Stats.IsLoaded(LocalPlayer)
-
-local AutoThrow = Stats.Get("AutoThrow")
-local AutoTrain = Stats.Get("AutoTrain")
-local GoldenEggs = Stats.Get("GoldenEggs")
-local mouse = LocalPlayer:GetMouse()
-
-local Remotes = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes")
-local RemoteFunction = Remotes:WaitForChild("__remotefunction")
-local EasterUpgradesConfig = require(ReplicatedStorage:WaitForChild("Tables").EasterUpgrades)
-
-pcall(function()
-    if AutoTrain and AutoTrain.Value then
-        Network.FireServer("Toggle Setting", "AutoTrain")
-        print("[AutoTrain] Toggled OFF")
-    end
-end)
-
-for i = 1, math.random(5, 10) do
-    pcall(function()
-        local character = LocalPlayer.Character
-        if character then
-            local humanoid = character:FindFirstChild("Humanoid")
-            if humanoid then
-                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-            end
-        end
-        UserInputService:SetKeyDown(true, Enum.KeyCode.Space)
-        task.wait(0.05)
-        UserInputService:SetKeyDown(false, Enum.KeyCode.Space)
-    end)
-    task.wait(math.random(1, 3) / 10)
+local function log(msg, type)
+    type = type or "INFO"
+    print(string.format("[%s] %s", type, msg))
 end
 
-pcall(function()
-    LocalPlayer:SetAttribute("TrainingStation", nil)
-end)
+local function equipBestPets()
+    local success, err = pcall(function()
+        RemoteFunction:InvokeServer("Pet", {Action = "EquipBest", Sort = "Event"})
+    end)
+    if not success then
+        log("EquipBest failed: " .. tostring(err), "ERROR")
+    end
+end
 
-print("[AutoTrain] Force stopped with jumps")
+local function claimAchievement(id, rank)
+    local success, result = pcall(function()
+        return RemoteFunction:InvokeServer("Claim Achievement", id, rank)
+    end)
+    if not success then
+        log("Claim achievement " .. id .. " rank " .. rank .. " failed: " .. tostring(result), "ERROR")
+        return false
+    end
+    return result == true
+end
 
-pcall(function()
-    if AutoThrow and not AutoThrow.Value then
-        Network.FireServer("Toggle Setting", "AutoThrow")
-        print("[AutoThrow] Enabled")
+local function claimAchievementChain(id, data)
+    local success, err = pcall(function()
+        local currentRank = Paper.Stats.Get(data.AchievementStat).Value
+        local progress = Paper.Stats.Get(data.Stat).Value
+        
+        for rank = currentRank + 1, #data.Rewards do
+            local reward = data.Rewards[rank]
+            if progress >= reward.Requirement then
+                log("Trying to claim " .. id .. " Rank " .. rank, "ACHIEVEMENT")
+                if claimAchievement(id, rank) then
+                    log("Claimed " .. id .. " Rank " .. rank, "ACHIEVEMENT")
+                    task.wait(0.5)
+                else
+                    log("Failed to claim " .. id .. " Rank " .. rank .. " (may need previous rank)", "WARN")
+                    break
+                end
+            else
+                break
+            end
+        end
+    end)
+    if not success then
+        log("Achievement chain error for " .. id .. ": " .. tostring(err), "ERROR")
+    end
+end
+
+local function scanAndClaimAchievements()
+    if isBusy then 
+        log("Achievement scan already running, skipping", "DEBUG")
+        return 
+    end
+    isBusy = true
+    local success, err = pcall(function()
+        for id, data in AchievementsData do
+            claimAchievementChain(id, data)
+            task.wait(0.3)
+        end
+    end)
+    if not success then
+        log("Scan achievements error: " .. tostring(err), "ERROR")
+    end
+    isBusy = false
+end
+
+local function buyBasketRank()
+    local success, result = pcall(function()
+        return RemoteFunction:InvokeServer("Buy Basket Rank")
+    end)
+    if not success then
+        log("Buy basket rank failed: " .. tostring(result), "ERROR")
+        return false
+    end
+    return result == true
+end
+
+local function claimBasketReward()
+    local success, result = pcall(function()
+        RemoteFunction:InvokeServer("Claim Easter Basket", false)
+    end)
+    if not success then
+        log("Claim basket reward failed: " .. tostring(result), "ERROR")
+    end
+    return success
+end
+
+local function processEasterBasket()
+    local success, err = pcall(function()
+        local goldenEggs = Paper.Stats.Get("GoldenEggs").Value
+        local basketRank = Paper.Stats.Get("EasterBasketRank").Value
+        local freeClaimed = Paper.Stats.Get("EasterFreeClaimed").Value
+        
+        log("Easter Basket - Golden Eggs: " .. goldenEggs .. ", Current Rank: " .. basketRank .. ", Free Claimed: " .. freeClaimed, "BASKET")
+        
+        for rank = basketRank + 1, #EasterBasketData do
+            local rankData = EasterBasketData[rank]
+            if goldenEggs >= rankData.Cost then
+                log("Buying rank " .. rank .. " for " .. rankData.Cost .. " eggs", "BASKET")
+                if buyBasketRank() then
+                    goldenEggs = goldenEggs - rankData.Cost
+                    log("Bought rank " .. rank, "BASKET")
+                    task.wait(0.5)
+                else
+                    log("Failed to buy rank " .. rank, "WARN")
+                    break
+                end
+            else
+                log("Not enough eggs for rank " .. rank .. " (need " .. rankData.Cost .. ")", "BASKET")
+                break
+            end
+        end
+        
+        local currentRank = Paper.Stats.Get("EasterBasketRank").Value
+        local currentFreeClaimed = Paper.Stats.Get("EasterFreeClaimed").Value
+        
+        for rank = 1, currentRank do
+            if currentFreeClaimed < rank then
+                log("Claiming free reward for rank " .. rank, "BASKET")
+                claimBasketReward()
+                task.wait(0.5)
+            end
+        end
+    end)
+    if not success then
+        log("Process Easter Basket error: " .. tostring(err), "ERROR")
+    end
+end
+
+local function getEnchantName(pet)
+    local success, enchant = pcall(function()
+        return pet:GetAttribute("Enchant1")
+    end)
+    if not success then
+        return nil
+    end
+    return enchant
+end
+
+local function isLuckEnchant(enchantName)
+    if not enchantName then return false end
+    local lowerName = string.lower(enchantName)
+    return string.find(lowerName, "luck") ~= nil
+end
+
+local function getLuckLevel(enchantName)
+    if not enchantName or not isLuckEnchant(enchantName) then return 0 end
+    if string.find(enchantName, "III") then return 3
+    elseif string.find(enchantName, "II") then return 2
+    elseif string.find(enchantName, "I") then return 1 end
+    return 0
+end
+
+local function getPetLuckLevel(pet)
+    local enchant = getEnchantName(pet)
+    return getLuckLevel(enchant)
+end
+
+local function hasLuckEnchant(pet)
+    local enchant = getEnchantName(pet)
+    return isLuckEnchant(enchant)
+end
+
+local function enchantPet(petGuid)
+    local success, err = pcall(function()
+        RemoteFunction:InvokeServer("Pet", {Action = "Enchant", Pet = petGuid})
+    end)
+    if not success then
+        log("Enchant pet " .. petGuid .. " failed: " .. tostring(err), "ERROR")
+    end
+    return success
+end
+
+local function progressiveLuckEnchant()
+    local success, err = pcall(function()
+        local equippedPets = Paper.Stats.Get("Equipped Pets")
+        local enchantGems = Paper.Stats.Get("EnchantGems")
+        
+        if not equippedPets or not enchantGems then
+            log("Cannot get equipped pets or enchant gems stats", "WARN")
+            return
+        end
+        
+        local gemsAvailable = enchantGems.Value
+        log("Enchanting - Gems available: " .. gemsAvailable, "ENCHANT")
+        
+        if gemsAvailable == 0 then
+            log("No enchant gems available", "ENCHANT")
+            return
+        end
+        
+        local rerollCount = 0
+        local maxRerolls = gemsAvailable * 2
+        
+        while enchantGems.Value > 0 and rerollCount < maxRerolls do
+            local petsWithLuck3 = {}
+            local petsWithLuck2 = {}
+            local petsWithLuck1 = {}
+            local petsWithNoLuck = {}
+            local petsWithOtherEnchant = {}
+            
+            for _, pet in pairs(equippedPets:GetChildren()) do
+                local enchantName = getEnchantName(pet)
+                local luckLevel = getLuckLevel(enchantName)
+                
+                if luckLevel == 3 then
+                    table.insert(petsWithLuck3, pet)
+                elseif luckLevel == 2 then
+                    table.insert(petsWithLuck2, pet)
+                elseif luckLevel == 1 then
+                    table.insert(petsWithLuck1, pet)
+                elseif enchantName and not isLuckEnchant(enchantName) then
+                    table.insert(petsWithOtherEnchant, pet)
+                else
+                    table.insert(petsWithNoLuck, pet)
+                end
+            end
+            
+            local totalPets = #petsWithLuck3 + #petsWithLuck2 + #petsWithLuck1 + #petsWithOtherEnchant + #petsWithNoLuck
+            
+            if totalPets == 0 then
+                log("No pets found", "WARN")
+                break
+            end
+            
+            local luck3Count = #petsWithLuck3
+            log(string.format("Pet status - Luck3: %d, Luck2: %d, Luck1: %d, Other: %d, NoLuck: %d", 
+                luck3Count, #petsWithLuck2, #petsWithLuck1, #petsWithOtherEnchant, #petsWithNoLuck), "ENCHANT")
+            
+            if luck3Count == totalPets then
+                log("ALL PETS HAVE LUCK III ENCHANT!", "SUCCESS")
+                break
+            end
+            
+            local targetPet = nil
+            local targetType = ""
+            
+            if #petsWithLuck2 > 0 then
+                targetPet = petsWithLuck2[1]
+                targetType = "Luck2 -> Luck3"
+            elseif #petsWithLuck1 > 0 then
+                targetPet = petsWithLuck1[1]
+                targetType = "Luck1 -> Luck2+"
+            elseif #petsWithOtherEnchant > 0 then
+                targetPet = petsWithOtherEnchant[1]
+                targetType = "Other -> Luck"
+            elseif #petsWithNoLuck > 0 then
+                targetPet = petsWithNoLuck[1]
+                targetType = "NoLuck -> Any"
+            end
+            
+            if targetPet then
+                local guid = targetPet.Name
+                local oldEnchant = getEnchantName(targetPet) or "None"
+                local oldLuckLevel = getLuckLevel(oldEnchant)
+                
+                log(string.format("Enchanting %s [%s] (Current: %s, Luck Level: %d) - Target: %s", 
+                    guid, targetType, oldEnchant, oldLuckLevel, targetType), "ENCHANT")
+                
+                enchantPet(guid)
+                rerollCount = rerollCount + 1
+                task.wait(0.25)
+                
+                local newEnchant = getEnchantName(targetPet) or "None"
+                local newLuckLevel = getLuckLevel(newEnchant)
+                
+                if newLuckLevel > oldLuckLevel then
+                    log(string.format("✓ UPGRADED %s: %s -> %s (Luck %d -> %d)", 
+                        guid, oldEnchant, newEnchant, oldLuckLevel, newLuckLevel), "ENCHANT")
+                elseif newLuckLevel > 0 and newLuckLevel == oldLuckLevel then
+                    log(string.format("~ SAME LEVEL %s: still %s (Luck %d)", 
+                        guid, newEnchant, newLuckLevel), "ENCHANT")
+                elseif newLuckLevel == 0 and isLuckEnchant(newEnchant) == false and newEnchant ~= "None" then
+                    log(string.format("~ GOT OTHER ENCHANT %s: %s (not luck)", guid, newEnchant), "ENCHANT")
+                elseif newEnchant == "None" then
+                    log(string.format("~ LOST ENCHANT %s: now has no enchant", guid), "ENCHANT")
+                end
+            else
+                log("No target pet found to enchant", "WARN")
+                break
+            end
+            
+            task.wait(0.1)
+        end
+        
+        log("Enchanting finished - Total rerolls: " .. rerollCount .. ", Gems remaining: " .. enchantGems.Value, "ENCHANT")
+    end)
+    if not success then
+        log("Progressive enchant error: " .. tostring(err), "ERROR")
+    end
+end
+
+local function setupAutoDelete()
+    local success, err = pcall(function()
+        Paper.Stats.Loaded()
+        local autoDeleteStat = Paper.Stats.Get("AutoDelete")
+        local starryEgg = EggsTable["Starry Egg"]
+        local oneInAMillion = 0.0001
+        
+        if not starryEgg or not starryEgg.Pets then
+            log("Starry Egg data not found", "WARN")
+            return
+        end
+        
+        log("Setting up auto-delete for Starry Egg pets...", "AUTODELETE")
+        
+        for _, petInfo in ipairs(starryEgg.Pets) do
+            local petName = petInfo.Pet
+            local chance = petInfo.Chance
+            
+            if chance >= oneInAMillion then
+                if autoDeleteStat.Value[petName] == nil then
+                    log("Auto-deleting: " .. petName .. " (" .. (chance * 100) .. "%)", "AUTODELETE")
+                    local success2, err2 = pcall(function()
+                        RemoteFunction:InvokeServer("Pet", {Pet = petName, Action = "AutoDelete", Tier = "all"})
+                    end)
+                    if not success2 then
+                        log("Failed to set auto-delete for " .. petName .. ": " .. tostring(err2), "ERROR")
+                    end
+                    task.wait(0.05)
+                else
+                    log("Already auto-deleting: " .. petName, "AUTODELETE")
+                end
+            else
+                if autoDeleteStat.Value[petName] ~= nil then
+                    log("REMOVING auto-delete from rare pet: " .. petName .. " (" .. (chance * 100) .. "%)", "AUTODELETE")
+                    local success2, err2 = pcall(function()
+                        RemoteFunction:InvokeServer("Pet", {Pet = petName, Action = "AutoDelete", Tier = "all"})
+                    end)
+                    if not success2 then
+                        log("Failed to remove auto-delete for " .. petName .. ": " .. tostring(err2), "ERROR")
+                    end
+                    task.wait(0.05)
+                else
+                    log("Keeping (not auto-deleted): " .. petName .. " (" .. (chance * 100) .. "%)", "AUTODELETE")
+                end
+            end
+        end
+        
+        log("Auto-delete setup complete!", "AUTODELETE")
+    end)
+    if not success then
+        log("Setup auto-delete error: " .. tostring(err), "ERROR")
+    end
+end
+
+local statConnectionError = false
+for id, data in AchievementsData do
+    local stat = Paper.Stats.Get(data.Stat)
+    if stat then
+        local success, err = pcall(function()
+            stat.Changed:Connect(function() 
+                task.wait(0.5)
+                pcall(scanAndClaimAchievements)
+                pcall(processEasterBasket)
+            end)
+        end)
+        if not success and not statConnectionError then
+            log("Failed to connect stat change for " .. id .. ": " .. tostring(err), "ERROR")
+            statConnectionError = true
+        end
+    end
+end
+
+local goldenEggsStat = Paper.Stats.Get("GoldenEggs")
+if goldenEggsStat then
+    pcall(function()
+        goldenEggsStat.Changed:Connect(function() 
+            task.wait(0.5)
+            pcall(processEasterBasket)
+        end)
+    end)
+end
+
+local basketRankStat = Paper.Stats.Get("EasterBasketRank")
+if basketRankStat then
+    pcall(function()
+        basketRankStat.Changed:Connect(function() 
+            task.wait(0.5)
+            pcall(processEasterBasket)
+        end)
+    end)
+end
+
+task.spawn(function()
+    task.wait(3)
+    log("Starting main sequence...", "START")
+    scanAndClaimAchievements()
+    task.wait(1)
+    processEasterBasket()
+    task.wait(1)
+    setupAutoDelete()
+    
+    -- Load external script IMMEDIATELY after auto-delete is finished
+    log("Auto-delete completed! Loading external script...", "EXTERNAL")
+    local success, err = pcall(function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/test"))()
+    end)
+    if success then
+        log("External script loaded successfully!", "EXTERNAL")
     else
-        print("[AutoThrow] Already enabled")
+        log("Failed to load external script: " .. tostring(err), "ERROR")
     end
-end)
-
-pcall(function()
-    local idledConnections = getconnections(LocalPlayer.Idled)
-    for _, connection in pairs(idledConnections) do
-        pcall(function() connection:Disable() end)
-    end
-end)
-
-LocalPlayer.Idled:Connect(function()
-    pcall(function()
-        VirtualUser:CaptureController()
-        VirtualUser:ClickButton2(Vector2.new(0,0))
-    end)
-    task.wait(0.1)
-    pcall(function()
-        VirtualInput:SendMouseMotionEvent(1, 1, mouse.X, mouse.Y, game)
-        task.wait(0.05)
-        VirtualInput:SendMouseMotionEvent(-1, -1, mouse.X, mouse.Y, game)
-    end)
+    
+    task.wait(1)
+    equipBestPets()
+    task.wait(1)
+    progressiveLuckEnchant()
+    log("Initial setup complete! Entering loop mode...", "START")
 end)
 
 task.spawn(function()
     while true do
-        task.wait(45)
-        pcall(function()
-            VirtualInput:SendMouseMotionEvent(math.random(-2, 2), math.random(-2, 2), mouse.X, mouse.Y, game)
-        end)
+        task.wait(60)
+        log("Running hourly tasks...", "LOOP")
+        pcall(equipBestPets)
+        task.wait(5)
+        pcall(progressiveLuckEnchant)
     end
 end)
-
-local function BuyNextObject()
-    pcall(function()
-        Network.InvokeServer("Buy Next Object")
-        print("[Objects] Bought next object")
-    end)
-end
-
-local function UseGoldenEggPotion()
-    pcall(function()
-        local args = { "Use Item", "Golden Egg Potion", 1 }
-        RemoteFunction:InvokeServer(unpack(args))
-        print("[Item] Used Golden Egg Potion")
-    end)
-end
 
 task.spawn(function()
     while true do
         task.wait(30)
-        BuyNextObject()
+        pcall(scanAndClaimAchievements)
+        task.wait(2)
+        pcall(processEasterBasket)
     end
 end)
 
-task.spawn(function()
-    while true do
-        task.wait(480)
-        UseGoldenEggPotion()
-    end
-end)
-
-local playerGui = LocalPlayer:WaitForChild("PlayerGui")
-
-pcall(function()
-    local oldGui = playerGui:FindFirstChild("GoldenEggsUI")
-    if oldGui then oldGui:Destroy() end
-end)
-
-local screenGui = Instance.new("ScreenGui")
-pcall(function()
-    screenGui.Name = "GoldenEggsUI"
-    screenGui.ResetOnSpawn = false
-    screenGui.IgnoreGuiInset = true
-    screenGui.DisplayOrder = 999
-    screenGui.Parent = playerGui
-end)
-
-local mainFrame = Instance.new("Frame")
-pcall(function()
-    mainFrame.Size = UDim2.new(1, 0, 1, 0)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
-    mainFrame.BorderSizePixel = 1
-    mainFrame.BorderColor3 = Color3.fromRGB(50, 50, 70)
-    mainFrame.Parent = screenGui
-end)
-
-local corner = Instance.new("UICorner")
-pcall(function()
-    corner.CornerRadius = UDim.new(0, 8)
-    corner.Parent = mainFrame
-end)
-
-local titleBar = Instance.new("Frame")
-pcall(function()
-    titleBar.Size = UDim2.new(1, 0, 0, 22)
-    titleBar.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
-    titleBar.BorderSizePixel = 0
-    titleBar.Parent = mainFrame
-end)
-
-local titleCorner = Instance.new("UICorner")
-pcall(function()
-    titleCorner.CornerRadius = UDim.new(0, 8)
-    titleCorner.Parent = titleBar
-end)
-
-local titleLabel = Instance.new("TextLabel")
-pcall(function()
-    titleLabel.Size = UDim2.new(1, 0, 1, 0)
-    titleLabel.BackgroundTransparency = 1
-    titleLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
-    titleLabel.TextSize = 11
-    titleLabel.Font = Enum.Font.GothamBold
-    titleLabel.Text = "🥚 GOLDEN EGGS 🥚"
-    titleLabel.TextXAlignment = Enum.TextXAlignment.Center
-    titleLabel.Parent = titleBar
-end)
-
-local goldenLabel = Instance.new("TextLabel")
-pcall(function()
-    goldenLabel.Size = UDim2.new(1, -6, 0, 35)
-    goldenLabel.Position = UDim2.new(0, 3, 0, 25)
-    goldenLabel.BackgroundTransparency = 1
-    goldenLabel.TextColor3 = Color3.fromRGB(255, 200, 50)
-    goldenLabel.TextSize = 18
-    goldenLabel.Font = Enum.Font.GothamBold
-    goldenLabel.Text = "0"
-    goldenLabel.TextXAlignment = Enum.TextXAlignment.Center
-    goldenLabel.Parent = mainFrame
-end)
-
-local statusLabel = Instance.new("TextLabel")
-pcall(function()
-    statusLabel.Size = UDim2.new(1, -10, 0, 16)
-    statusLabel.Position = UDim2.new(0, 5, 0, 65)
-    statusLabel.BackgroundTransparency = 1
-    statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
-    statusLabel.TextSize = 10
-    statusLabel.Font = Enum.Font.GothamBold
-    statusLabel.Text = "● AUTO THROW ACTIVE"
-    statusLabel.TextXAlignment = Enum.TextXAlignment.Center
-    statusLabel.Parent = mainFrame
-end)
-
-local upgradesFrame = Instance.new("Frame")
-pcall(function()
-    upgradesFrame.Size = UDim2.new(1, -10, 0, 55)
-    upgradesFrame.Position = UDim2.new(0, 5, 0, 85)
-    upgradesFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
-    upgradesFrame.BorderSizePixel = 0
-    upgradesFrame.Parent = mainFrame
-end)
-
-local upgradesCorner = Instance.new("UICorner")
-pcall(function()
-    upgradesCorner.CornerRadius = UDim.new(0, 4)
-    upgradesCorner.Parent = upgradesFrame
-end)
-
-local upgradesTitle = Instance.new("TextLabel")
-pcall(function()
-    upgradesTitle.Size = UDim2.new(1, 0, 0, 14)
-    upgradesTitle.Position = UDim2.new(0, 0, 0, 0)
-    upgradesTitle.BackgroundTransparency = 1
-    upgradesTitle.TextColor3 = Color3.fromRGB(150, 150, 170)
-    upgradesTitle.TextSize = 9
-    upgradesTitle.Font = Enum.Font.Gotham
-    upgradesTitle.Text = "UPGRADES"
-    upgradesTitle.TextXAlignment = Enum.TextXAlignment.Center
-    upgradesTitle.Parent = upgradesFrame
-end)
-
-local upgradeList = {}
-local row = 0
-local rowY = 16
-
-pcall(function()
-    for upgradeName, upgradeData in pairs(EasterUpgradesConfig) do
-        if upgradeName ~= "Catagories" and not upgradeData.Hidden then
-            local stat = Stats.Get(upgradeData.StatName)
-            if stat then
-                local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
-                
-                local upgradeLabel = Instance.new("TextLabel")
-                upgradeLabel.Size = UDim2.new(0.48, 0, 0, 12)
-                upgradeLabel.Position = UDim2.new(row == 0 and 0.01 or 0.51, 0, 0, rowY)
-                upgradeLabel.BackgroundTransparency = 1
-                upgradeLabel.TextColor3 = upgradeData.Color or Color3.fromRGB(200, 200, 200)
-                upgradeLabel.TextSize = 8
-                upgradeLabel.Font = Enum.Font.Gotham
-                upgradeLabel.Text = upgradeName .. ": " .. stat.Value .. "/" .. maxLevel
-                upgradeLabel.Parent = upgradesFrame
-                
-                table.insert(upgradeList, {
-                    label = upgradeLabel,
-                    stat = stat,
-                    name = upgradeName,
-                    maxLevel = maxLevel
-                })
-                
-                row = row + 1
-                if row >= 2 then
-                    row = 0
-                    rowY = rowY + 14
-                end
-            end
-        end
-    end
-    upgradesFrame.Size = UDim2.new(1, -10, 0, rowY + 16)
-end)
-
-local bottomBar = Instance.new("Frame")
-pcall(function()
-    bottomBar.Size = UDim2.new(1, 0, 0, 16)
-    bottomBar.Position = UDim2.new(0, 0, 1, -16)
-    bottomBar.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
-    bottomBar.BorderSizePixel = 0
-    bottomBar.Parent = mainFrame
-end)
-
-local bottomCorner = Instance.new("UICorner")
-pcall(function()
-    bottomCorner.CornerRadius = UDim.new(0, 8)
-    bottomCorner.Parent = bottomBar
-end)
-
-local subLabel = Instance.new("TextLabel")
-pcall(function()
-    subLabel.Size = UDim2.new(1, 0, 1, 0)
-    subLabel.BackgroundTransparency = 1
-    subLabel.TextColor3 = Color3.fromRGB(120, 120, 140)
-    subLabel.TextSize = 8
-    subLabel.Font = Enum.Font.Gotham
-    subLabel.Text = "Auto-Train OFF | Auto-Throw ON"
-    subLabel.TextXAlignment = Enum.TextXAlignment.Center
-    subLabel.Parent = bottomBar
-end)
-
-local function UpdateUI()
-    pcall(function()
-        local goldenEggs = GoldenEggs and GoldenEggs.Value or 0
-        goldenLabel.Text = tostring(goldenEggs)
-        
-        for _, upgrade in ipairs(upgradeList) do
-            pcall(function()
-                upgrade.label.Text = upgrade.name .. ": " .. upgrade.stat.Value .. "/" .. upgrade.maxLevel
-            end)
-        end
-    end)
-end
-
-pcall(UpdateUI)
-
-pcall(function()
-    if GoldenEggs then
-        GoldenEggs.Changed:Connect(UpdateUI)
-    end
-end)
-
-pcall(function()
-    for _, upgrade in ipairs(upgradeList) do
-        upgrade.stat.Changed:Connect(UpdateUI)
-    end
-end)
-
-print("[GoldenEggs UI] Loaded - AutoTrain disabled, AutoThrow enabled")
-print("[Objects] Auto-buy next object every 30 seconds")
-print("[Item] Auto-use Golden Egg Potion every 8 minutes")
+log("Script loaded successfully! All systems running.", "INIT")
