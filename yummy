@@ -1,387 +1,345 @@
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local CoreGui = game:GetService("CoreGui")
-local UserInputService = game:GetService("UserInputService")
+local VirtualUser = game:GetService("VirtualUser")
+local VirtualInput = game:GetService("VirtualInputManager")
 
 local Paper = require(ReplicatedStorage:WaitForChild("Paper"))
 local Stats = Paper.Stats
 local Network = Paper.Network
 local UniverseModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Universe)
 
-repeat task.wait() until pcall(function() return Stats.IsLoaded(LocalPlayer) end)
+repeat task.wait() until Stats.IsLoaded(LocalPlayer)
 
 local AutoThrow = Stats.Get("AutoThrow")
 local AutoTrain = Stats.Get("AutoTrain")
-local GoldenEggs = Stats.Get("GoldenEggs")
-local CurrentUniverse = Stats.Get("CurrentUniverse")
+local mouse = LocalPlayer:GetMouse()
 
-local Universe0Rebirths = UniverseModule.GetRebirthStat(LocalPlayer, 0)
-local Universe0Money = UniverseModule.GetMoneyStat(LocalPlayer, 0)
-local Universe0Strength = UniverseModule.GetStrengthStat(LocalPlayer, 0)
+local targetStrength = 1e15
 
-local Remotes = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes")
-local RemoteFunction = Remotes:WaitForChild("__remotefunction")
-local EasterUpgradesConfig = require(ReplicatedStorage:WaitForChild("Tables").EasterUpgrades)
-
-local TARGET_REBIRTH_INDEX = 12
-local TARGET_REBIRTH_AMOUNT = 1000000000
-
-pcall(function()
-    if CurrentUniverse and CurrentUniverse.Value ~= 0 then
-        Network.FireServer("Set Current Universe", 0)
-    end
-end)
-
-pcall(function()
-    if AutoTrain and AutoTrain.Value then
-        Network.FireServer("Toggle Setting", "AutoTrain")
-    end
-    LocalPlayer:SetAttribute("TrainingStation", nil)
-end)
-
-for i = 1, 5 do
-    pcall(function()
-        local character = LocalPlayer.Character
-        if character then
-            local humanoid = character:FindFirstChild("Humanoid")
-            if humanoid then
-                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-            end
-        end
-        UserInputService:SetKeyDown(true, Enum.KeyCode.Space)
-        task.wait(0.05)
-        UserInputService:SetKeyDown(false, Enum.KeyCode.Space)
-    end)
-    task.wait(0.1)
-end
-
-pcall(function()
-    if AutoThrow and not AutoThrow.Value then
-        Network.FireServer("Toggle Setting", "AutoThrow")
-    end
-end)
-
-local function FormatNumber(num)
-    if num >= 1e12 then
-        return string.format("%.2fT", num / 1e12)
+local function FormatNumberShort(num)
+    if num >= 1e15 then
+        return string.format("%.1fQa", num / 1e15)
+    elseif num >= 1e12 then
+        return string.format("%.1fT", num / 1e12)
     elseif num >= 1e9 then
-        return string.format("%.2fB", num / 1e9)
+        return string.format("%.1fB", num / 1e9)
     elseif num >= 1e6 then
-        return string.format("%.2fM", num / 1e6)
+        return string.format("%.1fM", num / 1e6)
     elseif num >= 1e3 then
-        return string.format("%.2fK", num / 1e3)
+        return string.format("%.1fK", num / 1e3)
     else
         return tostring(math.floor(num))
     end
 end
 
-local function GetRebirthCost()
-    local success, cost = pcall(function()
-        local RebirthModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Rebirths)
-        return RebirthModule.GetRebirthCost(LocalPlayer, TARGET_REBIRTH_AMOUNT, 0)
-    end)
-    if success then
-        return cost
+local function GetCurrentStrength()
+    return UniverseModule.GetStrengthStat(LocalPlayer, 0).Value
+end
+
+-- Destroy old UI
+pcall(function()
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if playerGui then
+        local oldGui = playerGui:FindFirstChild("TrainUI")
+        if oldGui then oldGui:Destroy() end
     end
-    return math.huge
-end
+end)
 
-local function BuyNextObject()
-    pcall(function()
-        Network.InvokeServer("Buy Next Object")
-    end)
-end
-
-local function EquipBestPets()
-    pcall(function()
-        local args = { "Pet", { Action = "EquipBest", Sort = "Power" } }
-        RemoteFunction:InvokeServer(unpack(args))
-    end)
-end
-
-local function UseGoldenEggPotion()
-    pcall(function()
-        local args = { "Use Item", "Golden Egg Potion", 1 }
-        RemoteFunction:InvokeServer(unpack(args))
-    end)
-end
-
-local function BuyUpgrade(upgradeName)
-    pcall(function()
-        Network.InvokeServer("Easter Upgrade", upgradeName)
-    end)
-end
-
-local function CheckAndBuyUpgrades()
-    pcall(function()
-        for upgradeName, upgradeData in pairs(EasterUpgradesConfig) do
-            if upgradeName ~= "Catagories" and not upgradeData.Hidden then
-                local stat = Stats.Get(upgradeData.StatName)
-                if stat then
-                    local currentLevel = stat.Value
-                    local maxLevel = upgradeData.Max or #upgradeData.UpgradeCosts
-                    
-                    if currentLevel < maxLevel then
-                        local cost
-                        if upgradeData.Max then
-                            cost = upgradeData.UpgradeCosts(currentLevel)
-                        else
-                            cost = upgradeData.UpgradeCosts[currentLevel + 1]
-                        end
-                        
-                        if GoldenEggs and GoldenEggs.Value >= cost then
-                            BuyUpgrade(upgradeName)
-                            task.wait(0.5)
-                        end
-                    end
-                end
-            end
-        end
-    end)
-end
-
-local function RebirthTo1B()
-    pcall(function()
-        local args = { "Rebirth", TARGET_REBIRTH_INDEX }
-        RemoteFunction:InvokeServer(unpack(args))
-    end)
-end
+local playerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 local screenGui = Instance.new("ScreenGui")
-pcall(function()
-    screenGui.Name = "EasterFarmUI"
-    screenGui.ResetOnSpawn = false
-    screenGui.Parent = CoreGui
-end)
+screenGui.Name = "TrainUI"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.DisplayOrder = 999
+screenGui.Parent = playerGui
 
+-- Main frame - fills entire 170x150
 local mainFrame = Instance.new("Frame")
-pcall(function()
-    mainFrame.Size = UDim2.new(1, 0, 1, 0)
-    mainFrame.Position = UDim2.new(0, 0, 0, 0)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    mainFrame.BackgroundTransparency = 0.15
-    mainFrame.BorderSizePixel = 0
-    mainFrame.Parent = screenGui
-end)
+mainFrame.Size = UDim2.new(1, 0, 1, 0)
+mainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+mainFrame.BorderSizePixel = 1
+mainFrame.BorderColor3 = Color3.fromRGB(50, 50, 70)
+mainFrame.Parent = screenGui
 
-local title = Instance.new("TextLabel")
-pcall(function()
-    title.Size = UDim2.new(1, 0, 0, 25)
-    title.Position = UDim2.new(0, 0, 0, 0)
-    title.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-    title.BackgroundTransparency = 0.3
-    title.Text = "🐣 EASTER FARM - UNIVERSE 0 🐣"
-    title.TextColor3 = Color3.fromRGB(255, 215, 0)
-    title.Font = Enum.Font.GothamBold
-    title.TextSize = 14
-    title.Parent = mainFrame
-end)
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 8)
+corner.Parent = mainFrame
 
-local rebirthsLabel = Instance.new("TextLabel")
-pcall(function()
-    rebirthsLabel.Size = UDim2.new(1, 0, 0, 30)
-    rebirthsLabel.Position = UDim2.new(0, 0, 0, 28)
-    rebirthsLabel.BackgroundTransparency = 1
-    rebirthsLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
-    rebirthsLabel.Font = Enum.Font.GothamBold
-    rebirthsLabel.TextSize = 16
-    rebirthsLabel.Text = "💎 Rebirths: 0"
-    rebirthsLabel.Parent = mainFrame
-end)
+-- Title bar (compact)
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 22)
+titleBar.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+titleBar.BorderSizePixel = 0
+titleBar.Parent = mainFrame
 
+local titleCorner = Instance.new("UICorner")
+titleCorner.CornerRadius = UDim.new(0, 8)
+titleCorner.Parent = titleBar
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, 0, 1, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
+titleLabel.TextSize = 11
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.Text = "⚔️ TRAIN"
+titleLabel.TextXAlignment = Enum.TextXAlignment.Center
+titleLabel.Parent = titleBar
+
+-- Strength value (big for this size)
 local strengthLabel = Instance.new("TextLabel")
-pcall(function()
-    strengthLabel.Size = UDim2.new(1, 0, 0, 25)
-    strengthLabel.Position = UDim2.new(0, 0, 0, 58)
-    strengthLabel.BackgroundTransparency = 1
-    strengthLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
-    strengthLabel.Font = Enum.Font.GothamSemibold
-    strengthLabel.TextSize = 12
-    strengthLabel.Text = "💪 Strength: 0"
-    strengthLabel.Parent = mainFrame
-end)
+strengthLabel.Size = UDim2.new(1, -6, 0, 28)
+strengthLabel.Position = UDim2.new(0, 3, 0, 24)
+strengthLabel.BackgroundTransparency = 1
+strengthLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+strengthLabel.TextSize = 16
+strengthLabel.Font = Enum.Font.GothamBold
+strengthLabel.Text = "0"
+strengthLabel.TextXAlignment = Enum.TextXAlignment.Center
+strengthLabel.Parent = mainFrame
 
+-- Progress bar (thin)
 local progressBg = Instance.new("Frame")
-pcall(function()
-    progressBg.Size = UDim2.new(0.94, 0, 0, 15)
-    progressBg.Position = UDim2.new(0.03, 0, 0, 85)
-    progressBg.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
-    progressBg.BorderSizePixel = 0
-    progressBg.Parent = mainFrame
-end)
+progressBg.Size = UDim2.new(1, -10, 0, 8)
+progressBg.Position = UDim2.new(0, 5, 0, 55)
+progressBg.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+progressBg.BorderSizePixel = 0
+progressBg.Parent = mainFrame
 
-local progressBgCorner = Instance.new("UICorner")
-pcall(function()
-    progressBgCorner.CornerRadius = UDim.new(1, 0)
-    progressBgCorner.Parent = progressBg
-end)
+local progressCorner = Instance.new("UICorner")
+progressCorner.CornerRadius = UDim.new(0, 4)
+progressCorner.Parent = progressBg
 
 local progressFill = Instance.new("Frame")
-pcall(function()
-    progressFill.Size = UDim2.new(0, 0, 1, 0)
-    progressFill.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
-    progressFill.BorderSizePixel = 0
-    progressFill.Parent = progressBg
-end)
+progressFill.Size = UDim2.new(0, 0, 1, 0)
+progressFill.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
+progressFill.BorderSizePixel = 0
+progressFill.Parent = progressBg
 
-local progressFillCorner = Instance.new("UICorner")
-pcall(function()
-    progressFillCorner.CornerRadius = UDim.new(1, 0)
-    progressFillCorner.Parent = progressFill
-end)
+local fillCorner = Instance.new("UICorner")
+fillCorner.CornerRadius = UDim.new(0, 4)
+fillCorner.Parent = progressFill
 
-local progressText = Instance.new("TextLabel")
-pcall(function()
-    progressText.Size = UDim2.new(0.94, 0, 0, 14)
-    progressText.Position = UDim2.new(0.03, 0, 0, 102)
-    progressText.BackgroundTransparency = 1
-    progressText.TextColor3 = Color3.fromRGB(200, 200, 200)
-    progressText.Font = Enum.Font.Gotham
-    progressText.TextSize = 9
-    progressText.Text = "0 / 1,000,000,000 (0%)"
-    progressText.Parent = mainFrame
-end)
+-- Goal text
+local goalLabel = Instance.new("TextLabel")
+goalLabel.Size = UDim2.new(1, 0, 0, 14)
+goalLabel.Position = UDim2.new(0, 0, 0, 66)
+goalLabel.BackgroundTransparency = 1
+goalLabel.TextColor3 = Color3.fromRGB(150, 150, 170)
+goalLabel.TextSize = 9
+goalLabel.Font = Enum.Font.Gotham
+goalLabel.Text = "Target: 1Qa"
+goalLabel.TextXAlignment = Enum.TextXAlignment.Center
+goalLabel.Parent = mainFrame
 
-local goldenLabel = Instance.new("TextLabel")
-pcall(function()
-    goldenLabel.Size = UDim2.new(1, 0, 0, 25)
-    goldenLabel.Position = UDim2.new(0, 0, 0, 118)
-    goldenLabel.BackgroundTransparency = 1
-    goldenLabel.TextColor3 = Color3.fromRGB(255, 200, 50)
-    goldenLabel.Font = Enum.Font.GothamSemibold
-    goldenLabel.TextSize = 12
-    goldenLabel.Text = "🥚 Golden Eggs: 0"
-    goldenLabel.Parent = mainFrame
-end)
-
-local moneyLabel = Instance.new("TextLabel")
-pcall(function()
-    moneyLabel.Size = UDim2.new(1, 0, 0, 25)
-    moneyLabel.Position = UDim2.new(0, 0, 0, 143)
-    moneyLabel.BackgroundTransparency = 1
-    moneyLabel.TextColor3 = Color3.fromRGB(0, 255, 100)
-    moneyLabel.Font = Enum.Font.Gotham
-    moneyLabel.TextSize = 11
-    moneyLabel.Text = "💰 Money: 0"
-    moneyLabel.Parent = mainFrame
-end)
-
+-- Status indicator
 local statusLabel = Instance.new("TextLabel")
-pcall(function()
-    statusLabel.Size = UDim2.new(1, 0, 0, 20)
-    statusLabel.Position = UDim2.new(0, 0, 0, 170)
-    statusLabel.BackgroundTransparency = 1
-    statusLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
-    statusLabel.Font = Enum.Font.Gotham
-    statusLabel.TextSize = 9
-    statusLabel.Text = "Status: Running..."
-    statusLabel.Parent = mainFrame
-end)
+statusLabel.Size = UDim2.new(1, -10, 0, 16)
+statusLabel.Position = UDim2.new(0, 5, 0, 83)
+statusLabel.BackgroundTransparency = 1
+statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+statusLabel.TextSize = 10
+statusLabel.Font = Enum.Font.GothamBold
+statusLabel.Text = "● TRAINING"
+statusLabel.TextXAlignment = Enum.TextXAlignment.Center
+statusLabel.Parent = mainFrame
+
+-- Rate per minute (compact)
+local rateLabel = Instance.new("TextLabel")
+rateLabel.Size = UDim2.new(0.5, -5, 0, 14)
+rateLabel.Position = UDim2.new(0, 5, 0, 102)
+rateLabel.BackgroundTransparency = 1
+rateLabel.TextColor3 = Color3.fromRGB(200, 200, 100)
+rateLabel.TextSize = 8
+rateLabel.Font = Enum.Font.Gotham
+rateLabel.Text = "⚡ 0/min"
+rateLabel.TextXAlignment = Enum.TextXAlignment.Left
+rateLabel.Parent = mainFrame
+
+-- ETA (compact)
+local etaLabel = Instance.new("TextLabel")
+etaLabel.Size = UDim2.new(0.5, -5, 0, 14)
+etaLabel.Position = UDim2.new(0.5, 0, 0, 102)
+etaLabel.BackgroundTransparency = 1
+etaLabel.TextColor3 = Color3.fromRGB(100, 200, 255)
+etaLabel.TextSize = 8
+etaLabel.Font = Enum.Font.Gotham
+etaLabel.Text = "ETA: --"
+etaLabel.TextXAlignment = Enum.TextXAlignment.Right
+etaLabel.Parent = mainFrame
+
+-- Bottom info bar
+local bottomBar = Instance.new("Frame")
+bottomBar.Size = UDim2.new(1, 0, 0, 16)
+bottomBar.Position = UDim2.new(0, 0, 1, -16)
+bottomBar.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
+bottomBar.BorderSizePixel = 0
+bottomBar.Parent = mainFrame
+
+local bottomCorner = Instance.new("UICorner")
+bottomCorner.CornerRadius = UDim.new(0, 8)
+bottomCorner.Parent = bottomBar
+
+local subLabel = Instance.new("TextLabel")
+subLabel.Size = UDim2.new(1, 0, 1, 0)
+subLabel.BackgroundTransparency = 1
+subLabel.TextColor3 = Color3.fromRGB(120, 120, 140)
+subLabel.TextSize = 8
+subLabel.Font = Enum.Font.Gotham
+subLabel.Text = "Auto-Throw OFF"
+subLabel.TextXAlignment = Enum.TextXAlignment.Center
+subLabel.Parent = bottomBar
+
+-- Stats tracking
+local lastStrength = 0
+local lastUpdateTime = os.clock()
+local strengthPerMinute = 0
+local etaSeconds = -1
+
+local function FormatTimeShort(seconds)
+    if seconds < 0 then return "?" end
+    if seconds < 60 then
+        return string.format("%.0fs", seconds)
+    elseif seconds < 3600 then
+        return string.format("%.0fm", seconds / 60)
+    else
+        return string.format("%.0fh", seconds / 3600)
+    end
+end
+
+local function CalculateStats()
+    local currentStrength = GetCurrentStrength()
+    local currentTime = os.clock()
+    local timeDiff = currentTime - lastUpdateTime
+    
+    if timeDiff >= 60 and lastStrength > 0 then
+        local gain = currentStrength - lastStrength
+        strengthPerMinute = gain
+        lastStrength = currentStrength
+        lastUpdateTime = currentTime
+        
+        if strengthPerMinute > 0 and currentStrength < targetStrength then
+            local needed = targetStrength - currentStrength
+            local minutesNeeded = needed / strengthPerMinute
+            etaSeconds = minutesNeeded * 60
+        else
+            etaSeconds = -1
+        end
+    elseif timeDiff >= 60 then
+        lastStrength = currentStrength
+        lastUpdateTime = currentTime
+        strengthPerMinute = 0
+        etaSeconds = -1
+    end
+end
+
+local function UpdateProgressBar(strength)
+    local percent = math.min(strength / targetStrength, 1)
+    local width = percent * (progressBg.AbsoluteSize.X - 4)
+    progressFill:TweenSize(UDim2.new(0, math.max(0, width), 1, 0), "Out", "Quad", 0.2, true)
+    
+    if strength >= 1e15 then
+        progressFill.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
+    elseif strength >= 1e12 then
+        progressFill.BackgroundColor3 = Color3.fromRGB(255, 150, 50)
+    elseif strength >= 1e9 then
+        progressFill.BackgroundColor3 = Color3.fromRGB(255, 255, 80)
+    else
+        progressFill.BackgroundColor3 = Color3.fromRGB(80, 255, 80)
+    end
+end
 
 local function UpdateUI()
     pcall(function()
-        local currentRebirths = Universe0Rebirths and Universe0Rebirths.Value or 0
-        local currentStrength = Universe0Strength and Universe0Strength.Value or 0
-        local currentGolden = GoldenEggs and GoldenEggs.Value or 0
-        local currentMoney = Universe0Money and Universe0Money.Value or 0
-        local cost = GetRebirthCost()
+        local strength = GetCurrentStrength()
         
-        rebirthsLabel.Text = "💎 Rebirths: " .. FormatNumber(currentRebirths)
-        strengthLabel.Text = "💪 Strength: " .. FormatNumber(currentStrength)
-        goldenLabel.Text = "🥚 Golden Eggs: " .. FormatNumber(currentGolden)
-        moneyLabel.Text = "💰 Money: " .. FormatNumber(currentMoney) .. " / " .. FormatNumber(cost)
+        strengthLabel.Text = FormatNumberShort(strength)
+        UpdateProgressBar(strength)
         
-        local progress = math.min(currentRebirths / TARGET_REBIRTH_AMOUNT, 1)
-        progressFill.Size = UDim2.new(progress, 0, 1, 0)
-        
-        if currentRebirths >= TARGET_REBIRTH_AMOUNT then
-            mainFrame.BackgroundColor3 = Color3.fromRGB(0, 100, 0)
-            mainFrame.BackgroundTransparency = 0.3
-            title.BackgroundColor3 = Color3.fromRGB(0, 80, 0)
-            statusLabel.Text = "Status: ✅ TARGET REACHED!"
-            progressFill.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+        if strengthPerMinute > 0 then
+            rateLabel.Text = string.format("⚡ %s/min", FormatNumberShort(strengthPerMinute))
         else
-            mainFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-            mainFrame.BackgroundTransparency = 0.15
-            title.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-            if progress >= 0.75 then
-                progressFill.BackgroundColor3 = Color3.fromRGB(255, 200, 0)
-            elseif progress >= 0.5 then
-                progressFill.BackgroundColor3 = Color3.fromRGB(0, 200, 255)
-            else
-                progressFill.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
-            end
+            rateLabel.Text = "⚡ ---/min"
         end
         
-        progressText.Text = string.format("%s / %s (%.2f%%)", 
-            FormatNumber(currentRebirths), 
-            FormatNumber(TARGET_REBIRTH_AMOUNT), 
-            progress * 100)
+        if etaSeconds and etaSeconds > 0 then
+            etaLabel.Text = string.format("ETA: %s", FormatTimeShort(etaSeconds))
+        elseif strength >= targetStrength then
+            etaLabel.Text = "✓ DONE!"
+        else
+            etaLabel.Text = "ETA: ..."
+        end
+        
+        -- Handle AutoThrow disable
+        if AutoThrow and AutoThrow.Value then
+            Network.FireServer("Toggle Setting", "AutoThrow")
+            statusLabel.Text = "⚠️ NO THROW"
+            statusLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+            subLabel.Text = "Throw OFF"
+            task.wait(0.2)
+            statusLabel.Text = "● TRAINING"
+            statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+            subLabel.Text = "Auto-Throw OFF"
+        end
+        
+        -- Handle AutoTrain enable
+        if AutoTrain and not AutoTrain.Value then
+            Network.FireServer("Toggle Setting", "AutoTrain")
+            statusLabel.Text = "● TRAINING"
+            statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+        end
+        
+        -- Color based on progress
+        local percent = strength / targetStrength
+        if percent >= 1 then
+            mainFrame.BackgroundColor3 = Color3.fromRGB(30, 20, 25)
+        elseif percent >= 0.75 then
+            mainFrame.BackgroundColor3 = Color3.fromRGB(35, 25, 25)
+        else
+            mainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+        end
     end)
 end
 
-task.spawn(function()
-    while true do
-        pcall(function()
-            task.wait(30)
-            CheckAndBuyUpgrades()
-        end)
-        task.wait(1)
-    end
-end)
-
-task.spawn(function()
-    while true do
-        pcall(function()
-            task.wait(45)
-            BuyNextObject()
-            task.wait(1)
-            EquipBestPets()
-        end)
-        task.wait(1)
-    end
-end)
-
-task.spawn(function()
-    while true do
-        pcall(function()
-            task.wait(480)
-            UseGoldenEggPotion()
-        end)
-        task.wait(1)
-    end
-end)
-
-task.spawn(function()
-    while true do
-        pcall(function()
-            task.wait(600)
-            local currentRebirths = Universe0Rebirths and Universe0Rebirths.Value or 0
-            if currentRebirths < TARGET_REBIRTH_AMOUNT then
-                local currentMoney = Universe0Money and Universe0Money.Value or 0
-                local cost = GetRebirthCost()
-                if currentMoney >= cost then
-                    RebirthTo1B()
-                end
-            end
-        end)
-        task.wait(1)
-    end
-end)
-
+-- Anti-AFK
 pcall(function()
-    if Universe0Rebirths then Universe0Rebirths.Changed:Connect(UpdateUI) end
-    if Universe0Strength then Universe0Strength.Changed:Connect(UpdateUI) end
-    if GoldenEggs then GoldenEggs.Changed:Connect(UpdateUI) end
-    if Universe0Money then Universe0Money.Changed:Connect(UpdateUI) end
+    local idledConnections = getconnections(LocalPlayer.Idled)
+    for _, connection in pairs(idledConnections) do
+        pcall(function() connection:Disable() end)
+    end
+end)
+
+LocalPlayer.Idled:Connect(function()
+    pcall(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new(0,0))
+    end)
+    task.wait(0.1)
+    pcall(function()
+        VirtualInput:SendMouseMotionEvent(1, 1, mouse.X, mouse.Y, game)
+        task.wait(0.05)
+        VirtualInput:SendMouseMotionEvent(-1, -1, mouse.X, mouse.Y, game)
+    end)
 end)
 
 task.spawn(function()
     while true do
-        task.wait(1)
-        UpdateUI()
+        task.wait(45)
+        pcall(function()
+            VirtualInput:SendMouseMotionEvent(math.random(-2, 2), math.random(-2, 2), mouse.X, mouse.Y, game)
+        end)
     end
 end)
 
-UpdateUI()
+-- Main loop
+task.spawn(function()
+    while true do
+        pcall(CalculateStats)
+        pcall(UpdateUI)
+        task.wait(0.5)
+    end
+end)
+
+print("[Train Mode] Loaded - Compact 170x150 version")
