@@ -1,16 +1,43 @@
 local TextChatService = game:GetService("TextChatService")
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local webhookUrl = "https://discord.com/api/webhooks/1492622522339037315/wC2sJfo1IepeHxG4sLAb9226eLBu91EKFmjb6TFi5CBXaSsbSRRUGp84MpZIzOFsIAZd"
 local pingUserId = "198241023866961920"
 
-local petChances = {
-	["Horror Book"] = "1 in 50",
-	["Cursed Hell Eye"] = "1 in 100",
-	["Horror Monster"] = "1 in 1,000",
-	["Enchanted Inferno"] = "1 in 1,000"
+local petData = {
+	["Cursed Hell Eye"] = {
+		Icon = "9798871377",
+		IconGold = "9798870708",
+		Rarity = "Secret",
+		Power = 100000,
+		Boost = 120,
+		Chance = "1 in 100"
+	},
+	["Enchanted Inferno"] = {
+		Icon = "9798871665",
+		IconGold = "9798870151",
+		Rarity = "Celestial",
+		Power = 230000,
+		Boost = 235,
+		Chance = "1 in 1,000"
+	},
+	["Horror Book"] = {
+		Icon = "18712520695",
+		IconGold = "18712520509",
+		Rarity = "Secret",
+		Power = 150000,
+		Boost = 150,
+		Chance = "1 in 50"
+	},
+	["Horror Monster"] = {
+		Icon = "18712536391",
+		IconGold = "18712535766",
+		Rarity = "Celestial",
+		Power = 350000,
+		Boost = 350,
+		Chance = "1 in 1,000"
+	},
 }
 
 local allowedPets = {
@@ -37,28 +64,6 @@ local function extractPlayerName(text)
 	return string.sub(text, startPos, endPos - 1)
 end
 
-local function findPetData(petName)
-	local petsFolder = ReplicatedStorage:FindFirstChild("Pets")
-	if not petsFolder then 
-		print("Pets folder not found in ReplicatedStorage")
-		return nil 
-	end
-	
-	for _, petModule in pairs(petsFolder:GetChildren()) do
-		local success, petInfo = pcall(require, petModule)
-		if success and petInfo.PetName == petName then
-			return petInfo
-		end
-	end
-	print("Could not find pet data for:", petName)
-	return nil
-end
-
-local function extractAssetId(str)
-	if not str or str == "" then return nil end
-	return tostring(str):match("%d+")
-end
-
 local function getAssetImageUrl(assetId)
 	if not assetId then return nil end
 	
@@ -81,15 +86,15 @@ local function getAssetImageUrl(assetId)
 	return nil
 end
 
-local function getPetImageUrl(petInfo, variant)
-	if not petInfo then return nil end
+local function getPetImageUrl(petName, variant)
+	local pet = petData[petName]
+	if not pet then return nil end
 	
 	local assetId = nil
-	
-	if variant == "Golden" and petInfo.IconGold then
-		assetId = extractAssetId(petInfo.IconGold)
-	elseif petInfo.Icon then
-		assetId = extractAssetId(petInfo.Icon)
+	if variant == "Golden" and pet.IconGold then
+		assetId = pet.IconGold
+	else
+		assetId = pet.Icon
 	end
 	
 	if not assetId then return nil end
@@ -154,7 +159,10 @@ local function getVariantDisplay(variant)
 end
 
 local function getModifiedChanceText(petName, variant)
-	local originalChance = petChances[petName] or "Unknown"
+	local pet = petData[petName]
+	if not pet then return "Unknown" end
+	
+	local originalChance = pet.Chance
 	
 	if variant == "Rainbow" then
 		if originalChance == "1 in 50" then
@@ -181,15 +189,21 @@ local function getModifiedChanceText(petName, variant)
 	end
 end
 
-local function sendWebhook(playerName, petName, variant, petInfo, userId)
+local function sendWebhook(playerName, petName, variant, userId)
 	print(string.format("[WEBHOOK] Starting for %s - %s (%s)", playerName, petName, variant))
+	
+	local pet = petData[petName]
+	if not pet then
+		print(string.format("[ERROR] Pet %s not found in petData", petName))
+		return
+	end
 	
 	local imageUrl = nil
 	local avatarUrl = nil
 	
 	print("[WEBHOOK] Loading pet image...")
 	repeat
-		imageUrl = getPetImageUrl(petInfo, variant)
+		imageUrl = getPetImageUrl(petName, variant)
 		if not imageUrl then
 			task.wait(0.5)
 		end
@@ -205,24 +219,8 @@ local function sendWebhook(playerName, petName, variant, petInfo, userId)
 	until avatarUrl
 	print("[WEBHOOK] Avatar loaded successfully")
 	
-	local finalImageUrl = imageUrl
-	
-	local displayPetName = petName
-	local rarityText = "Unknown"
-	local boostText = "Unknown"
 	local chanceText = getModifiedChanceText(petName, variant)
-	local powerValue = 0
-	local boostValue = 0
-	
-	if petInfo then
-		displayPetName = petInfo.PetName or petName
-		rarityText = petInfo.Rarity or "Unknown"
-		boostValue = petInfo.Boost or 0
-		powerValue = petInfo.Power or 0
-		boostText = string.format("+%d%% / %s", boostValue, string.format("%.0f", powerValue))
-	else
-		boostText = "Unknown"
-	end
+	local boostText = string.format("+%d%% / %s", pet.Boost, string.format("%.0f", pet.Power))
 	
 	local pingText = string.format("<@%s>", pingUserId)
 	
@@ -230,10 +228,10 @@ local function sendWebhook(playerName, petName, variant, petInfo, userId)
 		username = "Pet Hatch Monitor",
 		content = pingText,
 		embeds = {{
-			description = string.format("Hatched **%s** %s!", displayPetName, chanceText),
+			description = string.format("Hatched **%s** %s!", petName, chanceText),
 			color = 0xFFD700,
 			thumbnail = {
-				url = finalImageUrl
+				url = imageUrl
 			},
 			author = {
 				name = playerName,
@@ -242,7 +240,7 @@ local function sendWebhook(playerName, petName, variant, petInfo, userId)
 			fields = {
 				{
 					name = "Rarity",
-					value = rarityText,
+					value = pet.Rarity,
 					inline = true
 				},
 				{
@@ -271,9 +269,9 @@ local function sendWebhook(playerName, petName, variant, petInfo, userId)
 	end)
 	
 	if success then
-		print(string.format("[WEBHOOK] ✅ Sent successfully for %s - %s (%s)", playerName, displayPetName, variant))
+		print(string.format("[WEBHOOK] ✅ Sent successfully for %s - %s (%s)", playerName, petName, variant))
 	else
-		print(string.format("[WEBHOOK] ❌ Failed to send for %s - %s (%s): %s", playerName, displayPetName, variant, err))
+		print(string.format("[WEBHOOK] ❌ Failed to send for %s - %s (%s): %s", playerName, petName, variant, err))
 	end
 end
 
@@ -328,11 +326,6 @@ TextChatService.OnIncomingMessage = function(message)
 		
 		print(string.format("[DETECT] %s hatched %s (%s)", playerName, detectedPet, variant))
 		
-		local petInfo = findPetData(detectedPet)
-		if not petInfo then
-			print(string.format("[WARNING] No pet data found for %s, sending with Unknown values", detectedPet))
-		end
-		
 		print("[USERID] Fetching UserId for " .. playerName)
 		local userId = nil
 		local attempts = 0
@@ -344,11 +337,11 @@ TextChatService.OnIncomingMessage = function(message)
 		
 		if not userId then
 			print(string.format("[ERROR] Could not find UserId for %s after 5 attempts, sending without avatar", playerName))
-			sendWebhook(playerName, detectedPet, variant, petInfo, nil)
+			sendWebhook(playerName, detectedPet, variant, nil)
 			return
 		end
 		
 		print(string.format("[USERID] Found UserId %s for %s", userId, playerName))
-		sendWebhook(playerName, detectedPet, variant, petInfo, userId)
+		sendWebhook(playerName, detectedPet, variant, userId)
 	end)
 end
