@@ -1,676 +1,347 @@
--- Set current world to 1
-local args = {
-    "Set Current World",
-    1
-}
-game:GetService("ReplicatedStorage"):WaitForChild("Paper"):WaitForChild("Remotes"):WaitForChild("__remotefunction"):InvokeServer(unpack(args))
-
--- Wait 5 seconds
-task.wait(5)
-
--- Farm script
+local TextChatService = game:GetService("TextChatService")
+local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
 
-local Paper = require(ReplicatedStorage:WaitForChild("Paper"))
-local Stats = Paper.Stats
-local Network = Paper.Network
-local UniverseModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Universe)
-local RebirthModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Rebirths)
+local webhookUrl = "https://discord.com/api/webhooks/1492622522339037315/wC2sJfo1IepeHxG4sLAb9226eLBu91EKFmjb6TFi5CBXaSsbSRRUGp84MpZIzOFsIAZd"
+local pingUserId = "198241023866961920"
 
-repeat task.wait() until Stats.IsLoaded(LocalPlayer)
-
-local Remotes = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes")
-local RemoteFunction = Remotes:WaitForChild("__remotefunction")
-local RemoteEvent = Remotes:WaitForChild("__remoteevent")
-
-local AutoTrain = Stats.Get("AutoTrain")
-local AutoThrow = Stats.Get("AutoThrow")
-local CurrentUniverse = Stats.Get("CurrentUniverse")
-
--- Rebirth tables
-local RebirthsEaster = require(ReplicatedStorage:WaitForChild("Tables").RebirthsEaster)
-local RebirthsUni1 = require(ReplicatedStorage:WaitForChild("Tables").Rebirths)
-local RebirthsUni2 = require(ReplicatedStorage:WaitForChild("Tables").RebirthsUni2)
-
--- Upgrade data
-local UpgradeData = require(ReplicatedStorage:WaitForChild("Tables").Upgrades)
-
--- FIXED number formatter (displays 1000x MORE than actual value)
-local suffixes = {"", "K", "M", "B", "T", "Qd", "Qn", "Sx", "Sp", "Oc", "No", "Dc", "Ud", "Dd", "Td", "Qad", "Qnd", "Sxd", "Spd", "Ocd", "Nod", "Vg", "Uvg"}
-
-local function formatNumber(num)
-    if type(num) ~= "number" then
-        num = tonumber(num) or 0
-    end
-    
-    -- Multiply by 1000 to display 1000x more
-    num = num * 1000
-    
-    if num < 1000 then
-        return tostring(math.floor(num))
-    end
-    
-    local index = 0
-    local tempNum = num
-    
-    while tempNum >= 1000 and index < #suffixes - 1 do
-        tempNum = tempNum / 1000
-        index = index + 1
-    end
-    
-    if tempNum >= 100 then
-        return string.format("%.0f%s", tempNum, suffixes[index])
-    elseif tempNum >= 10 then
-        return string.format("%.1f%s", tempNum, suffixes[index])
-    else
-        return string.format("%.2f%s", tempNum, suffixes[index])
-    end
-end
-
--- ========== AUTO UPGRADE SYSTEM (Upgrades all until maxed) ==========
-local upgradesToMax = {
-    "More Egg Luck",
-    "More Gold Chance", 
-    "More Rainbow Chance",
-    "Faster Egg Hatch",
-    "Train Speed",
-    "Walk Speed"
+local petData = {
+	["Cursed Hell Eye"] = {
+		Icon = "9798871377",
+		IconGold = "9798870708",
+		Rarity = "Secret",
+		Power = 100000,
+		Boost = 120,
+		Chance = "1 in 100"
+	},
+	["Enchanted Inferno"] = {
+		Icon = "9798871665",
+		IconGold = "9798870151",
+		Rarity = "Celestial",
+		Power = 230000,
+		Boost = 235,
+		Chance = "1 in 1,000"
+	},
+	["Horror Book"] = {
+		Icon = "18712520695",
+		IconGold = "18712520509",
+		Rarity = "Secret",
+		Power = 150000,
+		Boost = 150,
+		Chance = "1 in 50"
+	},
+	["Horror Monster"] = {
+		Icon = "18712536391",
+		IconGold = "18712535766",
+		Rarity = "Celestial",
+		Power = 350000,
+		Boost = 350,
+		Chance = "1 in 1,000"
+	},
 }
 
-local function getUpgradeLevel(upgradeName)
-    local success, data = pcall(function()
-        return UpgradeData[upgradeName]
-    end)
-    if not success or not data then return 0 end
-    
-    local success2, stat = pcall(function()
-        return Stats.Get(data.StatName)
-    end)
-    if not success2 or not stat then return 0 end
-    
-    return stat.Value or 0
-end
-
-local function isMaxed(upgradeName)
-    local success, data = pcall(function()
-        return UpgradeData[upgradeName]
-    end)
-    if not success or not data then return true end
-    
-    local currentLevel = getUpgradeLevel(upgradeName)
-    
-    if data.Max then
-        return currentLevel >= data.Max
-    elseif data.OneTimeUpgrade then
-        return currentLevel >= 1
-    else
-        local maxLevel = 0
-        if type(data.UpgradeCosts) == "table" then
-            maxLevel = #data.UpgradeCosts
-        end
-        return currentLevel >= maxLevel
-    end
-end
-
-local function purchaseUpgrade(upgradeName)
-    local success, result = pcall(function()
-        return Network.InvokeServer("Upgrade", upgradeName)
-    end)
-    if success and result then
-        print("✓ Upgraded: " .. upgradeName)
-        return true, nil
-    else
-        return false, tostring(result)
-    end
-end
-
-local function autoUpgradeAll()
-    print("[AutoUpgrade] Starting to max out upgrades...")
-    
-    local maxAttempts = 500
-    local attempts = 0
-    
-    while attempts < maxAttempts do
-        attempts = attempts + 1
-        
-        -- Check if all are maxed
-        local allMaxed = true
-        for _, name in ipairs(upgradesToMax) do
-            local success, maxed = pcall(function()
-                return isMaxed(name)
-            end)
-            if not success or not maxed then
-                allMaxed = false
-                break
-            end
-        end
-        
-        if allMaxed then
-            print("[AutoUpgrade] ✓ All upgrades are MAXED!")
-            return true
-        end
-        
-        -- Try to upgrade each one in order
-        local upgraded = false
-        for _, name in ipairs(upgradesToMax) do
-            local success, maxed = pcall(function()
-                return isMaxed(name)
-            end)
-            
-            if success and not maxed then
-                local level = getUpgradeLevel(name)
-                print("[AutoUpgrade] Attempting " .. name .. " (level " .. level .. ")")
-                
-                local purchaseSuccess, err = purchaseUpgrade(name)
-                if purchaseSuccess then
-                    upgraded = true
-                    task.wait(0.1)
-                    break
-                elseif err and string.find(err, "points") then
-                    print("[AutoUpgrade] Not enough Upgrade Points for " .. name)
-                    return false
-                end
-            end
-        end
-        
-        if not upgraded then
-            print("[AutoUpgrade] No upgrades could be purchased (need more points)")
-            return false
-        end
-        
-        task.wait(0.05)
-    end
-    
-    print("[AutoUpgrade] Max attempts reached")
-    return false
-end
-
--- ========== DISABLE AUTO TRAIN, ENABLE AUTO THROW ONLY ==========
-local function setupAutoThrowOnly()
-    pcall(function()
-        -- Disable Auto Train if enabled
-        if AutoTrain and AutoTrain.Value then
-            Network.FireServer("Toggle Setting", "AutoTrain")
-            print("[AutoThrow] Disabled Auto Train")
-        end
-        
-        -- Stop any ongoing training
-        task.wait(0.5)
-        pcall(function()
-            RemoteEvent:FireServer("Stop Training")
-            print("[AutoThrow] Stopped training")
-        end)
-        
-        -- Enable Auto Throw if disabled
-        task.wait(0.5)
-        if AutoThrow and not AutoThrow.Value then
-            Network.FireServer("Toggle Setting", "AutoThrow")
-            print("[AutoThrow] Enabled Auto Throw")
-        end
-    end)
-end
-
--- ========== UI FOR REBIRTH DISPLAY ==========
-local Universe1Rebirths = UniverseModule.GetRebirthStat(LocalPlayer, 1)
-local Universe1Money = UniverseModule.GetMoneyStat(LocalPlayer, 1)
-
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "RebirthDisplayUI"
-screenGui.ResetOnSpawn = false
-screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-
-local mainFrame = Instance.new("Frame")
-mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(1, 0, 1, 0)
-mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
-mainFrame.BackgroundTransparency = 0
-mainFrame.BorderSizePixel = 0
-mainFrame.Parent = screenGui
-
-local gradient = Instance.new("UIGradient")
-gradient.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(25, 25, 35)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(15, 15, 25))
-})
-gradient.Parent = mainFrame
-
-local topBar = Instance.new("Frame")
-topBar.Size = UDim2.new(1, 0, 0, 25)
-topBar.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
-topBar.BorderSizePixel = 0
-topBar.Parent = mainFrame
-
-local titleLabel = Instance.new("TextLabel")
-titleLabel.Size = UDim2.new(1, 0, 1, 0)
-titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "REBIRTHS (Universe 1)"
-titleLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
-titleLabel.TextScaled = true
-titleLabel.Font = Enum.Font.GothamBold
-titleLabel.TextXAlignment = Enum.TextXAlignment.Center
-titleLabel.Parent = topBar
-
-local closeButton = Instance.new("TextButton")
-closeButton.Size = UDim2.new(0, 20, 0, 20)
-closeButton.Position = UDim2.new(1, -25, 0, 2)
-closeButton.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
-closeButton.Text = "✕"
-closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-closeButton.TextScaled = true
-closeButton.Font = Enum.Font.GothamBold
-closeButton.BorderSizePixel = 0
-closeButton.Parent = topBar
-
-local closeCorner = Instance.new("UICorner")
-closeCorner.CornerRadius = UDim.new(0, 4)
-closeCorner.Parent = closeButton
-
-local contentFrame = Instance.new("Frame")
-contentFrame.Size = UDim2.new(1, 0, 1, -25)
-contentFrame.Position = UDim2.new(0, 0, 0, 25)
-contentFrame.BackgroundTransparency = 1
-contentFrame.Parent = mainFrame
-
-local rebirthCountFrame = Instance.new("Frame")
-rebirthCountFrame.Size = UDim2.new(1, -20, 0, 60)
-rebirthCountFrame.Position = UDim2.new(0, 10, 0, 15)
-rebirthCountFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-rebirthCountFrame.BorderSizePixel = 0
-rebirthCountFrame.ClipsDescendants = true
-rebirthCountFrame.Parent = contentFrame
-
-local rebirthCountCorner = Instance.new("UICorner")
-rebirthCountCorner.CornerRadius = UDim.new(0, 8)
-rebirthCountCorner.Parent = rebirthCountFrame
-
-local rebirthCountLabel = Instance.new("TextLabel")
-rebirthCountLabel.Size = UDim2.new(1, 0, 0.4, 0)
-rebirthCountLabel.Position = UDim2.new(0, 0, 0, 5)
-rebirthCountLabel.BackgroundTransparency = 1
-rebirthCountLabel.Text = "Current Rebirths"
-rebirthCountLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
-rebirthCountLabel.TextScaled = true
-rebirthCountLabel.Font = Enum.Font.GothamMedium
-rebirthCountLabel.Parent = rebirthCountFrame
-
-local rebirthValue = Instance.new("TextLabel")
-rebirthValue.Size = UDim2.new(1, 0, 0.5, 0)
-rebirthValue.Position = UDim2.new(0, 0, 0.4, 0)
-rebirthValue.BackgroundTransparency = 1
-rebirthValue.Text = "0"
-rebirthValue.TextColor3 = Color3.fromRGB(100, 255, 150)
-rebirthValue.TextScaled = true
-rebirthValue.Font = Enum.Font.GothamBlack
-rebirthValue.Parent = rebirthCountFrame
-
-local nextRebirthFrame = Instance.new("Frame")
-nextRebirthFrame.Size = UDim2.new(1, -20, 0, 60)
-nextRebirthFrame.Position = UDim2.new(0, 10, 0, 90)
-nextRebirthFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-nextRebirthFrame.BorderSizePixel = 0
-nextRebirthFrame.ClipsDescendants = true
-nextRebirthFrame.Parent = contentFrame
-
-local nextRebirthCorner = Instance.new("UICorner")
-nextRebirthCorner.CornerRadius = UDim.new(0, 8)
-nextRebirthCorner.Parent = nextRebirthFrame
-
-local nextRebirthLabel = Instance.new("TextLabel")
-nextRebirthLabel.Size = UDim2.new(1, 0, 0.4, 0)
-nextRebirthLabel.Position = UDim2.new(0, 0, 0, 5)
-nextRebirthLabel.BackgroundTransparency = 1
-nextRebirthLabel.Text = "Next Rebirth"
-nextRebirthLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
-nextRebirthLabel.TextScaled = true
-nextRebirthLabel.Font = Enum.Font.GothamMedium
-nextRebirthLabel.Parent = nextRebirthFrame
-
-local nextRebirthValue = Instance.new("TextLabel")
-nextRebirthValue.Size = UDim2.new(1, 0, 0.5, 0)
-nextRebirthValue.Position = UDim2.new(0, 0, 0.4, 0)
-nextRebirthValue.BackgroundTransparency = 1
-nextRebirthValue.Text = "0"
-nextRebirthValue.TextColor3 = Color3.fromRGB(255, 150, 100)
-nextRebirthValue.TextScaled = true
-nextRebirthValue.Font = Enum.Font.GothamBlack
-nextRebirthValue.Parent = nextRebirthFrame
-
-local moneyFrame = Instance.new("Frame")
-moneyFrame.Size = UDim2.new(1, -20, 0, 40)
-moneyFrame.Position = UDim2.new(0, 10, 0, 160)
-moneyFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-moneyFrame.BorderSizePixel = 0
-moneyFrame.ClipsDescendants = true
-moneyFrame.Parent = contentFrame
-
-local moneyCorner = Instance.new("UICorner")
-moneyCorner.CornerRadius = UDim.new(0, 8)
-moneyCorner.Parent = moneyFrame
-
-local moneyLabel = Instance.new("TextLabel")
-moneyLabel.Size = UDim2.new(1, 0, 0.5, 0)
-moneyLabel.Position = UDim2.new(0, 0, 0, 2)
-moneyLabel.BackgroundTransparency = 1
-moneyLabel.Text = "Money"
-moneyLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
-moneyLabel.TextScaled = true
-moneyLabel.Font = Enum.Font.GothamMedium
-moneyLabel.Parent = moneyFrame
-
-local moneyValue = Instance.new("TextLabel")
-moneyValue.Size = UDim2.new(1, 0, 0.5, 0)
-moneyValue.Position = UDim2.new(0, 0, 0.5, 0)
-moneyValue.BackgroundTransparency = 1
-moneyValue.Text = "0"
-moneyValue.TextColor3 = Color3.fromRGB(255, 200, 100)
-moneyValue.TextScaled = true
-moneyValue.Font = Enum.Font.GothamBold
-moneyValue.Parent = moneyFrame
-
-local uiEnabled = true
-local toggleKey = Enum.KeyCode.R
-
-closeButton.MouseButton1Click:Connect(function()
-    screenGui.Enabled = false
-    uiEnabled = false
-end)
-
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if input.KeyCode == toggleKey then
-        uiEnabled = not uiEnabled
-        screenGui.Enabled = uiEnabled
-    end
-end)
-
-local function updateDisplay()
-    pcall(function()
-        if Universe1Rebirths then
-            local currentRebirths = Universe1Rebirths.Value or 0
-            rebirthValue.Text = formatNumber(currentRebirths)
-            
-            local nextRebirthAmount = RebirthsUni1[currentRebirths + 1] or 0
-            if nextRebirthAmount > 0 then
-                nextRebirthValue.Text = formatNumber(nextRebirthAmount)
-            else
-                nextRebirthValue.Text = "MAX"
-            end
-        end
-        
-        if Universe1Money then
-            moneyValue.Text = formatNumber(Universe1Money.Value or 0)
-        end
-    end)
-end
-
--- ========== AUTO CLAIM REWARD + AUTO DELETE PETS ==========
-local freeRewardTimer = Stats.Get("FreeRewardTimer")
-local remote = RemoteFunction
-
-local petsToDelete = {
-    ["King Ben"] = true,
-    ["Goo Axolotl"] = true,
-    ["Ultra Capybara"] = true,
-    ["Mystical Cat"] = true
+local allowedPets = {
+	["Horror Book"] = true,
+	["Cursed Hell Eye"] = true,
+	["Horror Monster"] = true,
+	["Enchanted Inferno"] = true
 }
 
-local function getInventoryPets()
-    local pets = {}
-    local success, petsFolder = pcall(function()
-        return Stats.Get(LocalPlayer, "Pets")
-    end)
-    if success and petsFolder then
-        for _, pet in pairs(petsFolder:GetChildren()) do
-            table.insert(pets, pet)
-        end
-    end
-    return pets
+local sentMessages = {}
+
+print("Started - Monitoring for pet names in chat fr")
+
+local function stripFontTags(str)
+	return str:gsub("<.->","")
 end
 
-local function deletePet(petId)
-    local success, result = pcall(function()
-        return remote:InvokeServer("Pet", {
-            Action = "Delete",
-            Pets = {petId}
-        })
-    end)
-    if success then
-        print("Deleted pet: " .. petId)
-    else
-        print("Failed to delete: " .. tostring(result))
-    end
+local function extractPlayerName(text)
+	local atIndex = string.find(text, "@")
+	if not atIndex then return nil end
+	local startPos = atIndex + 1
+	local endPos = string.find(text, " ", startPos)
+	if not endPos then return nil end
+	return string.sub(text, startPos, endPos - 1)
 end
 
-local function checkAndDeletePets()
-    local success, pets = pcall(getInventoryPets)
-    if not success then return end
-    
-    for _, pet in pairs(pets) do
-        local petName = pet:GetAttribute("PetName")
-        if petsToDelete[petName] then
-            print("Found " .. petName .. " - Deleting...")
-            deletePet(pet.Name)
-        end
-    end
+local function getAssetImageUrl(assetId)
+	if not assetId then return nil end
+	
+	local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetId.."&size=420x420&format=Png&isCircular=false"
+	
+	local success, response = pcall(function()
+		return request({
+			Url = url,
+			Method = "GET"
+		})
+	end)
+	
+	if success and response and response.Success then
+		local data = HttpService:JSONDecode(response.Body)
+		if data and data.data and data.data[1] and data.data[1].imageUrl then
+			return data.data[1].imageUrl
+		end
+	end
+	
+	return nil
 end
 
-local function autoClaim()
-    pcall(function()
-        if freeRewardTimer and freeRewardTimer.Value >= 900 then
-            print("Claiming free reward...")
-            local success, result = remote:InvokeServer("Claim Free Reward")
-            print("Claim response:", success, result)
-            if success then
-                task.wait(1)
-                checkAndDeletePets()
-            end
-        end
-    end)
+local function getPetImageUrl(petName, variant)
+	local pet = petData[petName]
+	if not pet then return nil end
+	
+	local assetId = nil
+	if variant == "Golden" and pet.IconGold then
+		assetId = pet.IconGold
+	else
+		assetId = pet.Icon
+	end
+	
+	if not assetId then return nil end
+	
+	return getAssetImageUrl(assetId)
 end
 
-if freeRewardTimer then
-    freeRewardTimer.Changed:Connect(autoClaim)
-    autoClaim()
+local function getPlayerAvatarUrl(userId)
+	local url = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds="..userId.."&size=420x420&format=Png&isCircular=true"
+	
+	local success, response = pcall(function()
+		return request({
+			Url = url,
+			Method = "GET"
+		})
+	end)
+	
+	if success and response and response.Success then
+		local data = HttpService:JSONDecode(response.Body)
+		if data and data.data and data.data[1] and data.data[1].imageUrl then
+			return data.data[1].imageUrl
+		end
+	end
+	
+	return nil
 end
 
--- Scan for pets to delete every 60 seconds
-task.spawn(function()
-    while true do
-        task.wait(60)
-        pcall(checkAndDeletePets)
-    end
-end)
-
--- ========== LUCKY BLOCK AUTO-CLAIMER ==========
-local claimed = {}
-
-local function claimBlock(blockName)
-    if claimed[blockName] then return end
-
-    local tries = 0
-    local success = false
-
-    while tries < 5 and not success do
-        tries = tries + 1
-        local ok, result = pcall(function()
-            return Network.InvokeServer("Claim LuckyBlock", blockName)
-        end)
-        if ok and result then
-            success = true
-            claimed[blockName] = true
-            print("Claimed Lucky Block:", blockName)
-        else
-            task.wait(0.5)
-        end
-    end
+local function getUserIdFromUsername(username)
+	local url = "https://users.roblox.com/v1/usernames/users"
+	local body = {
+		usernames = {username}
+	}
+	
+	local success, response = pcall(function()
+		return request({
+			Url = url,
+			Method = "POST",
+			Headers = {
+				["Content-Type"] = "application/json"
+			},
+			Body = HttpService:JSONEncode(body)
+		})
+	end)
+	
+	if success and response and response.Success then
+		local data = HttpService:JSONDecode(response.Body)
+		if data.data and data.data[1] then
+			return data.data[1].id
+		end
+	end
+	return nil
 end
 
-local luckyBlockConnection
-luckyBlockConnection = Network.OnClientEvent("LuckyBlock Spawned", function(name, tier, timestamp)
-    task.spawn(function()
-        pcall(function() claimBlock(name) end)
-    end)
-end)
-
-print("Lucky Block Auto-Claimer loaded")
-
--- ========== REBIRTH FUNCTIONS ==========
-
-local function GetRebirthTable()
-    local universe = CurrentUniverse and CurrentUniverse.Value or 0
-    if universe == 0 then
-        return RebirthsEaster
-    elseif universe == 1 then
-        return RebirthsUni1
-    elseif universe == 2 then
-        return RebirthsUni2
-    end
-    return RebirthsEaster
+local function getVariantDisplay(variant)
+	if variant == "Rainbow" then
+		return "🌈 Rainbow"
+	elseif variant == "Golden" then
+		return "⭐ Golden"
+	else
+		return "None (Normal)"
+	end
 end
 
-local function GetRebirthSkips()
-    local universe = CurrentUniverse and CurrentUniverse.Value or 0
-    return UniverseModule.GetRebirthSkipsStat(LocalPlayer, universe)
+local function getModifiedChanceText(petName, variant)
+	local pet = petData[petName]
+	if not pet then return "Unknown" end
+	
+	local originalChance = pet.Chance
+	
+	if variant == "Rainbow" then
+		if originalChance == "1 in 50" then
+			return "1 in 5,000"
+		elseif originalChance == "1 in 100" then
+			return "1 in 10,000"
+		elseif originalChance == "1 in 1,000" then
+			return "1 in 100,000"
+		else
+			return "Unknown"
+		end
+	elseif variant == "Golden" then
+		if originalChance == "1 in 50" then
+			return "1 in 1,000"
+		elseif originalChance == "1 in 100" then
+			return "1 in 2,000"
+		elseif originalChance == "1 in 1,000" then
+			return "1 in 20,000"
+		else
+			return "Unknown"
+		end
+	else
+		return originalChance
+	end
 end
 
-local function GetMaxUnlockedRebirthIndex()
-    local skipsStat = GetRebirthSkips()
-    local skips = skipsStat and skipsStat.Value or 0
-    local universe = CurrentUniverse and CurrentUniverse.Value or 0
-    local extra = (universe == 2 or universe == 0) and 1 or 8
-    return skips + extra
+local function sendWebhook(playerName, petName, variant, userId)
+	print(string.format("[WEBHOOK] Starting for %s - %s (%s)", playerName, petName, variant))
+	
+	local pet = petData[petName]
+	if not pet then
+		print(string.format("[ERROR] Pet %s not found in petData", petName))
+		return
+	end
+	
+	local imageUrl = nil
+	local avatarUrl = nil
+	
+	print("[WEBHOOK] Loading pet image...")
+	repeat
+		imageUrl = getPetImageUrl(petName, variant)
+		if not imageUrl then
+			task.wait(0.5)
+		end
+	until imageUrl
+	print("[WEBHOOK] Pet image loaded successfully")
+	
+	print("[WEBHOOK] Loading avatar...")
+	repeat
+		avatarUrl = getPlayerAvatarUrl(userId)
+		if not avatarUrl then
+			task.wait(0.5)
+		end
+	until avatarUrl
+	print("[WEBHOOK] Avatar loaded successfully")
+	
+	local chanceText = getModifiedChanceText(petName, variant)
+	local boostText = string.format("+%d%% / %s", pet.Boost, string.format("%.0f", pet.Power))
+	
+	local pingText = string.format("<@%s>", pingUserId)
+	
+	local payload = {
+		username = "S",
+		content = pingText,
+		embeds = {{
+			description = string.format("Hatched **%s** %s!", petName, chanceText),
+			color = 0xFFD700,
+			thumbnail = {
+				url = imageUrl
+			},
+			author = {
+				name = playerName,
+				icon_url = avatarUrl
+			},
+			fields = {
+				{
+					name = "Rarity",
+					value = pet.Rarity,
+					inline = true
+				},
+				{
+					name = "Variant",
+					value = getVariantDisplay(variant),
+					inline = true
+				},
+				{
+					name = "Stats",
+					value = boostText,
+					inline = true
+				}
+			}
+		}}
+	}
+	
+	local success, err = pcall(function()
+		request({
+			Url = webhookUrl,
+			Method = "POST",
+			Headers = {
+				["Content-Type"] = "application/json"
+			},
+			Body = HttpService:JSONEncode(payload)
+		})
+	end)
+	
+	if success then
+		print(string.format("[WEBHOOK] ✅ Sent successfully for %s - %s (%s)", playerName, petName, variant))
+	else
+		print(string.format("[WEBHOOK] ❌ Failed to send for %s - %s (%s): %s", playerName, petName, variant, err))
+	end
 end
 
-local function GetBestUnlockedRebirth()
-    local rebirthTable = GetRebirthTable()
-    local maxUnlocked = GetMaxUnlockedRebirthIndex()
-    local bestAmount = 0
-    local bestIndex = 0
-    
-    for index, amount in ipairs(rebirthTable) do
-        if index <= maxUnlocked and amount > bestAmount then
-            bestAmount = amount
-            bestIndex = index
-        end
-    end
-    
-    return bestAmount, bestIndex
-end
-
-local function PerformRebirth(rebirthIndex)
-    pcall(function()
-        RemoteFunction:InvokeServer("Rebirth", rebirthIndex)
-        print("[Rebirth] Performed rebirth with index:", rebirthIndex)
-    end)
-end
-
-local function AutoRebirthBest()
-    local success, bestAmount, bestIndex = pcall(GetBestUnlockedRebirth)
-    if success and bestIndex and bestIndex > 0 then
-        print(string.format("[Rebirth] Best unlocked: %s (index %s)", formatNumber(bestAmount), bestIndex))
-        PerformRebirth(bestIndex)
-        return true
-    end
-    return false
-end
-
--- ========== FIRE RANDOM ACTIONS ==========
-local actions = {
-    { args = {"Upgrade", "More Rebirth Skips"} },
-    { args = {"Unlock Next World"} },
-    { args = {"Buy Next Object"} }
-}
-
-local lastActionIndex = nil
-
-local function fireRandomAction()
-    pcall(function()
-        local availableIndices = {}
-        for i = 1, #actions do
-            if i ~= lastActionIndex then
-                table.insert(availableIndices, i)
-            end
-        end
-        if #availableIndices == 0 then
-            for i = 1, #actions do
-                table.insert(availableIndices, i)
-            end
-        end
-        local randomIndex = availableIndices[math.random(1, #availableIndices)]
-        local selectedAction = actions[randomIndex]
-        RemoteFunction:InvokeServer(unpack(selectedAction.args))
-        print("[Action] Fired:", unpack(selectedAction.args))
-        lastActionIndex = randomIndex
-    end)
-end
-
--- ========== START EVERYTHING ==========
-
--- Setup auto throw only (disable auto train, enable auto throw)
-setupAutoThrowOnly()
-
--- Start auto upgrade system
-task.spawn(function()
-    task.wait(2)
-    while true do
-        local success, result = pcall(autoUpgradeAll)
-        if not success then
-            print("[AutoUpgrade] Error occurred, retrying in 30 seconds...")
-        end
-        task.wait(30) -- Check every 30 seconds for new upgrade opportunities
-    end
-end)
-
--- Start rebirth checker
-task.spawn(function()
-    while true do
-        task.wait(10)
-        pcall(AutoRebirthBest)
-    end
-end)
-
--- Start random actions
-task.spawn(function()
-    task.wait(1)
-    fireRandomAction()
-    while true do
-        task.wait(5)
-        fireRandomAction()
-    end
-end)
-
--- Start UI display updates
-updateDisplay()
-
-if Universe1Rebirths then
-    Universe1Rebirths.Changed:Connect(updateDisplay)
-end
-
-if Universe1Money then
-    Universe1Money.Changed:Connect(updateDisplay)
-end
-
-task.spawn(function()
-    while true do
-        task.wait(2)
-        pcall(updateDisplay)
-    end
-end)
-
-print("========================================")
-print("✓ Auto Train DISABLED")
-print("✓ Auto Throw ENABLED")
-print("✓ Auto Upgrade System ACTIVE")
-print("✓ Rebirth Display UI Loaded (Press R to toggle)")
-print("✓ Auto Rebirth ACTIVE")
-print("========================================")
-
--- Keep script alive
-while true do
-    task.wait(60)
+TextChatService.OnIncomingMessage = function(message)
+	if not message.Text then return end
+	
+	pcall(function()
+		local text = stripFontTags(message.Text)
+		local loweredText = string.lower(text)
+		
+		local playerName = extractPlayerName(text)
+		if not playerName then 
+			print("[SKIP] No player name found in message")
+			return 
+		end
+		
+		local detectedPet = nil
+		for petName in pairs(allowedPets) do
+			if string.find(loweredText, string.lower(petName), 1, true) then
+				detectedPet = petName
+				break
+			end
+		end
+		
+		if not detectedPet then
+			print(string.format("[SKIP] No matching pet found in message from %s", playerName))
+			return
+		end
+		
+		local variant = "Normal"
+		if string.find(loweredText, "rainbow") then
+			variant = "Rainbow"
+		elseif string.find(loweredText, "golden") then
+			variant = "Golden"
+		end
+		
+		local messageKey = playerName .. "_" .. detectedPet .. "_" .. variant
+		
+		if sentMessages[messageKey] then
+			print(string.format("[SKIP] Duplicate detected for %s - %s (%s)", playerName, detectedPet, variant))
+			return
+		end
+		
+		sentMessages[messageKey] = os.time()
+		
+		local currentTime = os.time()
+		for key, timestamp in pairs(sentMessages) do
+			if currentTime - timestamp > 5 then
+				sentMessages[key] = nil
+			end
+		end
+		
+		print(string.format("[DETECT] %s hatched %s (%s)", playerName, detectedPet, variant))
+		
+		print("[USERID] Fetching UserId for " .. playerName)
+		local userId = nil
+		local attempts = 0
+		while not userId and attempts < 5 do
+			task.wait(0.5)
+			attempts = attempts + 1
+			userId = getUserIdFromUsername(playerName)
+		end
+		
+		if not userId then
+			print(string.format("[ERROR] Could not find UserId for %s after 5 attempts, sending without avatar", playerName))
+			sendWebhook(playerName, detectedPet, variant, nil)
+			return
+		end
+		
+		print(string.format("[USERID] Found UserId %s for %s", userId, playerName))
+		sendWebhook(playerName, detectedPet, variant, userId)
+	end)
 end
