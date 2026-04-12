@@ -83,9 +83,6 @@ local upgradesToMax = {
     "Auto Delete Relic"
 }
 
--- Skip "More Rebirth Skips" as requested (or handle separately if needed)
--- Note: "More Rebirth Skips" exists but we're not auto-upgrading it
-
 local function getUpgradeLevel(upgradeName)
     local success, data = pcall(function()
         return EssenceUpgradeData[upgradeName]
@@ -113,7 +110,7 @@ local function isMaxed(upgradeName)
     elseif data.OneTimeUpgrade then
         return currentLevel >= 1
     else
-        return false -- No max defined, keep upgrading
+        return false
     end
 end
 
@@ -138,7 +135,6 @@ local function autoUpgradeAll()
     while attempts < maxAttempts do
         attempts = attempts + 1
         
-        -- Check if all are maxed
         local allMaxed = true
         for _, name in ipairs(upgradesToMax) do
             local success, maxed = pcall(function()
@@ -155,7 +151,6 @@ local function autoUpgradeAll()
             return true
         end
         
-        -- Try to upgrade each one in priority order
         local upgraded = false
         for _, name in ipairs(upgradesToMax) do
             local success, maxed = pcall(function()
@@ -193,20 +188,17 @@ end
 -- ========== DISABLE AUTO TRAIN, ENABLE AUTO THROW ONLY ==========
 local function setupAutoThrowOnly()
     pcall(function()
-        -- Disable Auto Train if enabled
         if AutoTrain and AutoTrain.Value then
             Network.FireServer("Toggle Setting", "AutoTrain")
             print("[AutoThrow] Disabled Auto Train")
         end
         
-        -- Stop any ongoing training
         task.wait(0.5)
         pcall(function()
             RemoteEvent:FireServer("Stop Training")
             print("[AutoThrow] Stopped training")
         end)
         
-        -- Enable Auto Throw if disabled
         task.wait(0.5)
         if AutoThrow and not AutoThrow.Value then
             Network.FireServer("Toggle Setting", "AutoThrow")
@@ -218,6 +210,7 @@ end
 -- ========== UI FOR REBIRTH DISPLAY (Universe 2) ==========
 local Universe2Rebirths = UniverseModule.GetRebirthStat(LocalPlayer, 2)
 local Universe2Essence = Stats.Get("Essence")
+local Universe2Money = UniverseModule.GetMoneyStat(LocalPlayer, 2)
 
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "RebirthDisplayUI_Universe2"
@@ -341,9 +334,41 @@ nextRebirthValue.TextScaled = true
 nextRebirthValue.Font = Enum.Font.GothamBlack
 nextRebirthValue.Parent = nextRebirthFrame
 
+local moneyFrame = Instance.new("Frame")
+moneyFrame.Size = UDim2.new(1, -20, 0, 40)
+moneyFrame.Position = UDim2.new(0, 10, 0, 160)
+moneyFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+moneyFrame.BorderSizePixel = 0
+moneyFrame.ClipsDescendants = true
+moneyFrame.Parent = contentFrame
+
+local moneyCorner = Instance.new("UICorner")
+moneyCorner.CornerRadius = UDim.new(0, 8)
+moneyCorner.Parent = moneyFrame
+
+local moneyLabel = Instance.new("TextLabel")
+moneyLabel.Size = UDim2.new(1, 0, 0.5, 0)
+moneyLabel.Position = UDim2.new(0, 0, 0, 2)
+moneyLabel.BackgroundTransparency = 1
+moneyLabel.Text = "Money"
+moneyLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
+moneyLabel.TextScaled = true
+moneyLabel.Font = Enum.Font.GothamMedium
+moneyLabel.Parent = moneyFrame
+
+local moneyValue = Instance.new("TextLabel")
+moneyValue.Size = UDim2.new(1, 0, 0.5, 0)
+moneyValue.Position = UDim2.new(0, 0, 0.5, 0)
+moneyValue.BackgroundTransparency = 1
+moneyValue.Text = "0"
+moneyValue.TextColor3 = Color3.fromRGB(100, 200, 255)
+moneyValue.TextScaled = true
+moneyValue.Font = Enum.Font.GothamBold
+moneyValue.Parent = moneyFrame
+
 local essenceFrame = Instance.new("Frame")
 essenceFrame.Size = UDim2.new(1, -20, 0, 40)
-essenceFrame.Position = UDim2.new(0, 10, 0, 160)
+essenceFrame.Position = UDim2.new(0, 10, 0, 210)
 essenceFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
 essenceFrame.BorderSizePixel = 0
 essenceFrame.ClipsDescendants = true
@@ -401,6 +426,10 @@ local function updateDisplay()
             else
                 nextRebirthValue.Text = "MAX"
             end
+        end
+        
+        if Universe2Money then
+            moneyValue.Text = formatNumber(Universe2Money.Value or 0)
         end
         
         if Universe2Essence then
@@ -479,7 +508,6 @@ if freeRewardTimer then
     autoClaim()
 end
 
--- Scan for pets to delete every 60 seconds
 task.spawn(function()
     while true do
         task.wait(60)
@@ -520,50 +548,67 @@ end)
 
 print("Lucky Block Auto-Claimer loaded")
 
--- ========== REBIRTH FUNCTIONS FOR UNIVERSE 2 ==========
+-- ========== REBIRTH FUNCTIONS FOR UNIVERSE 2 (EVERY 10 MINUTES) ==========
 
 local function GetRebirthSkipsUni2()
-    local universe = CurrentUniverse and CurrentUniverse.Value or 0
+    local universe = CurrentUniverse and CurrentUniverse.Value or 2
     return UniverseModule.GetRebirthSkipsStat(LocalPlayer, universe)
 end
 
-local function GetMaxUnlockedRebirthIndexUni2()
+local function GetBestAffordableRebirthUni2()
+    -- Get current rebirth count
+    local currentRebirths = Universe2Rebirths and Universe2Rebirths.Value or 0
+    
+    -- Get current money
+    local currentMoney = Universe2Money and Universe2Money.Value or 0
+    
+    -- Get unlocked rebirths from skips
     local skipsStat = GetRebirthSkipsUni2()
     local skips = skipsStat and skipsStat.Value or 0
-    -- Universe 2 has different skip logic
-    return skips + 1
-end
-
-local function GetBestUnlockedRebirthUni2()
-    local maxUnlocked = GetMaxUnlockedRebirthIndexUni2()
-    local bestAmount = 0
-    local bestIndex = 0
+    local maxUnlockedIndex = skips + 1  -- Can rebirth up to this index (skip count + 1)
     
-    for index, amount in ipairs(RebirthsUni2) do
-        if index <= maxUnlocked and amount > bestAmount then
-            bestAmount = amount
+    local bestIndex = 0
+    local bestAmount = 0
+    
+    -- Check from next rebirth onward, but only up to unlocked index
+    for index = currentRebirths + 1, #RebirthsUni2 do
+        -- Stop if we've reached beyond what's unlocked
+        if index > maxUnlockedIndex then
+            break
+        end
+        
+        local requiredAmount = RebirthsUni2[index]
+        if requiredAmount and currentMoney >= requiredAmount then
             bestIndex = index
+            bestAmount = requiredAmount
+        else
+            break  -- Can't afford higher ones if this one is too expensive
         end
     end
     
     return bestAmount, bestIndex
 end
 
-local function PerformRebirth(rebirthIndex)
-    pcall(function()
-        RemoteFunction:InvokeServer("Rebirth", rebirthIndex)
-        print("[Rebirth-Universe2] Performed rebirth with index:", rebirthIndex)
-    end)
-end
-
-local function AutoRebirthBest()
-    local success, bestAmount, bestIndex = pcall(GetBestUnlockedRebirthUni2)
-    if success and bestIndex and bestIndex > 0 then
-        print(string.format("[Rebirth-Universe2] Best unlocked: %s (index %s)", formatNumber(bestAmount), bestIndex))
-        PerformRebirth(bestIndex)
+local function PerformAffordableRebirthUni2()
+    local success, amount, index = pcall(GetBestAffordableRebirthUni2)
+    if success and index and index > 0 then
+        local currentRebirths = Universe2Rebirths and Universe2Rebirths.Value or 0
+        print(string.format("[Rebirth-Universe2] Best affordable unlocked rebirth: %s (index %s) | Current: %s", 
+            formatNumber(amount), index, formatNumber(currentRebirths)))
+        
+        pcall(function()
+            RemoteFunction:InvokeServer("Rebirth", index)
+            print("[Rebirth-Universe2] ✓ Performed rebirth at index:", index)
+        end)
         return true
+    else
+        local currentRebirths = Universe2Rebirths and Universe2Rebirths.Value or 0
+        local nextRequired = RebirthsUni2[currentRebirths + 1] or 0
+        local currentMoney = Universe2Money and Universe2Money.Value or 0
+        print(string.format("[Rebirth-Universe2] No affordable rebirth | Need: %s | Have: %s", 
+            formatNumber(nextRequired), formatNumber(currentMoney)))
+        return false
     end
-    return false
 end
 
 -- ========== FIRE RANDOM ACTIONS ==========
@@ -598,10 +643,10 @@ end
 
 -- ========== START EVERYTHING ==========
 
--- Setup auto throw only (disable auto train, enable auto throw)
+-- Setup auto throw only
 setupAutoThrowOnly()
 
--- Start auto upgrade system for Universe 2 (Essence upgrades)
+-- Start auto upgrade system for Universe 2
 task.spawn(function()
     task.wait(2)
     while true do
@@ -609,15 +654,18 @@ task.spawn(function()
         if not success then
             print("[AutoUpgrade-Universe2] Error occurred, retrying in 30 seconds...")
         end
-        task.wait(30) -- Check every 30 seconds for new upgrade opportunities
+        task.wait(30)
     end
 end)
 
--- Start rebirth checker for Universe 2
+-- Start rebirth checker for Universe 2 (EVERY 10 MINUTES = 600 SECONDS)
 task.spawn(function()
+    task.wait(10)  -- Wait 10 seconds before first check
     while true do
-        task.wait(10)
-        pcall(AutoRebirthBest)
+        print("[Rebirth-Universe2] Checking for best affordable unlocked rebirth...")
+        pcall(PerformAffordableRebirthUni2)
+        print("[Rebirth-Universe2] Next check in 10 minutes...")
+        task.wait(600)  -- 600 seconds = 10 minutes
     end
 end)
 
@@ -638,6 +686,10 @@ if Universe2Rebirths then
     Universe2Rebirths.Changed:Connect(updateDisplay)
 end
 
+if Universe2Money then
+    Universe2Money.Changed:Connect(updateDisplay)
+end
+
 if Universe2Essence then
     Universe2Essence.Changed:Connect(updateDisplay)
 end
@@ -655,7 +707,8 @@ print("✓ Auto Train DISABLED")
 print("✓ Auto Throw ENABLED")
 print("✓ Essence Upgrade System ACTIVE")
 print("✓ Rebirth Display UI Loaded (Press R to toggle)")
-print("✓ Auto Rebirth ACTIVE")
+print("✓ Auto Rebirth EVERY 10 MINUTES ACTIVE")
+print("✓ Will only rebirth if AFFORDABLE & UNLOCKED")
 print("========================================")
 
 -- Keep script alive
