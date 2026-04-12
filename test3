@@ -6,6 +6,13 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local webhookUrl = "https://discord.com/api/webhooks/1492622522339037315/wC2sJfo1IepeHxG4sLAb9226eLBu91EKFmjb6TFi5CBXaSsbSRRUGp84MpZIzOFsIAZd"
 local pingUserId = "198241023866961920"
 
+local petChances = {
+	["Horror Book"] = "1 in 50",
+	["Cursed Hell Eye"] = "1 in 100",
+	["Horror Monster"] = "1 in 1,000",
+	["Enchanted Inferno"] = "1 in 1,000"
+}
+
 local allowedPets = {
 	["Horror Book"] = true,
 	["Cursed Hell Eye"] = true,
@@ -28,33 +35,6 @@ local function extractPlayerName(text)
 	return string.sub(text, startPos, endPos - 1)
 end
 
--- NEW: Get UserId from username using Roblox API
-local function getUserIdFromUsername(username)
-	local url = "https://users.roblox.com/v1/usernames/users"
-	local body = {
-		usernames = {username}
-	}
-	
-	local success, response = pcall(function()
-		return HttpService:RequestAsync({
-			Url = url,
-			Method = "POST",
-			Headers = {
-				["Content-Type"] = "application/json"
-			},
-			Body = HttpService:JSONEncode(body)
-		})
-	end)
-	
-	if success and response.Success then
-		local data = HttpService:JSONDecode(response.Body)
-		if data.data and data.data[1] then
-			return data.data[1].id
-		end
-	end
-	return nil
-end
-
 local function findPetData(petName)
 	local petsFolder = ReplicatedStorage:FindFirstChild("Pets")
 	if not petsFolder then 
@@ -72,9 +52,19 @@ local function findPetData(petName)
 	return nil
 end
 
-local function getAssetImageUrl(assetId)
+local function extractAssetIdFromIcon(iconString)
+	if not iconString then return nil end
+	local assetId = iconString:match("rbxassetid://(%d+)")
+	if not assetId then
+		assetId = iconString:match("(%d+)")
+	end
+	return assetId
+end
+
+local function getAssetImageUrlFromIcon(iconString)
+	local assetId = extractAssetIdFromIcon(iconString)
 	if not assetId then return nil end
-	assetId = tostring(assetId):match("%d+")
+	
 	local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetId.."&size=420x420&format=Png&isCircular=false"
 	
 	local success, response = pcall(function()
@@ -112,6 +102,32 @@ local function getPlayerAvatarUrl(userId)
 	return nil
 end
 
+local function getUserIdFromUsername(username)
+	local url = "https://users.roblox.com/v1/usernames/users"
+	local body = {
+		usernames = {username}
+	}
+	
+	local success, response = pcall(function()
+		return HttpService:RequestAsync({
+			Url = url,
+			Method = "POST",
+			Headers = {
+				["Content-Type"] = "application/json"
+			},
+			Body = HttpService:JSONEncode(body)
+		})
+	end)
+	
+	if success and response.Success then
+		local data = HttpService:JSONDecode(response.Body)
+		if data.data and data.data[1] then
+			return data.data[1].id
+		end
+	end
+	return nil
+end
+
 local function getVariantDisplay(variant)
 	if variant == "Rainbow" then
 		return "🌈 Rainbow"
@@ -122,24 +138,25 @@ local function getVariantDisplay(variant)
 	end
 end
 
--- MODIFIED: Accept playerName string instead of player object
 local function sendWebhook(playerName, petName, variant, petInfo, userId)
 	local imageUrl = nil
 	local avatarUrl = nil
 	
 	if petInfo then
+		local iconToUse = nil
 		if variant == "Golden" and petInfo.IconGold then
-			imageUrl = getAssetImageUrl(petInfo.IconGold)
+			iconToUse = petInfo.IconGold
 		else
-			imageUrl = getAssetImageUrl(petInfo.Icon or petInfo.AssetId)
+			iconToUse = petInfo.Icon
+		end
+		
+		if iconToUse then
+			imageUrl = getAssetImageUrlFromIcon(iconToUse)
 		end
 	end
 	
-	-- Get avatar using userId from API
 	if userId then
 		avatarUrl = getPlayerAvatarUrl(userId)
-		
-		-- Keep trying for avatar
 		local attempts = 0
 		while not avatarUrl and attempts < 10 do
 			task.wait(0.5)
@@ -148,20 +165,23 @@ local function sendWebhook(playerName, petName, variant, petInfo, userId)
 		end
 	end
 	
-	-- Fallback avatar
 	if not avatarUrl then
 		avatarUrl = "https://www.roblox.com/headshot-thumbnail/image?userId=1&width=420&height=420&format=png"
 	end
 	
-	local attemptCount = 0
-	while not imageUrl and attemptCount < 10 do
+	local attempts = 0
+	while not imageUrl and attempts < 10 do
 		task.wait(0.5)
-		attemptCount = attemptCount + 1
+		attempts = attempts + 1
 		if petInfo then
+			local iconToUse = nil
 			if variant == "Golden" and petInfo.IconGold then
-				imageUrl = getAssetImageUrl(petInfo.IconGold)
+				iconToUse = petInfo.IconGold
 			else
-				imageUrl = getAssetImageUrl(petInfo.Icon or petInfo.AssetId)
+				iconToUse = petInfo.Icon
+			end
+			if iconToUse then
+				imageUrl = getAssetImageUrlFromIcon(iconToUse)
 			end
 		end
 	end
@@ -169,7 +189,7 @@ local function sendWebhook(playerName, petName, variant, petInfo, userId)
 	local displayPetName = petName
 	local rarityText = "Unknown"
 	local boostText = "Unknown"
-	local chanceText = "Unknown"
+	local chanceText = petChances[petName] or "Unknown"
 	local powerValue = 0
 	local boostValue = 0
 	
@@ -178,7 +198,6 @@ local function sendWebhook(playerName, petName, variant, petInfo, userId)
 		rarityText = petInfo.Rarity or "Unknown"
 		boostValue = petInfo.Boost or 0
 		powerValue = petInfo.Power or 0
-		chanceText = petInfo.Chance or "Unknown"
 		boostText = string.format("+%d%% / %s", boostValue, string.format("%.0f", powerValue))
 	else
 		boostText = "Unknown"
@@ -238,7 +257,6 @@ local function sendWebhook(playerName, petName, variant, petInfo, userId)
 	end
 end
 
--- Main chat listener
 TextChatService.OnIncomingMessage = function(message)
 	if not message.Text then return end
 	
@@ -275,11 +293,9 @@ TextChatService.OnIncomingMessage = function(message)
 			print("WARNING: No pet data found for " .. detectedPet .. ", sending with Unknown values")
 		end
 		
-		-- Get UserId from the username via API
 		local userId = getUserIdFromUsername(playerName)
 		if not userId then
 			print("Could not find UserId for:", playerName)
-			-- Still send webhook without avatar
 			sendWebhook(playerName, detectedPet, variant, petInfo, nil)
 			return
 		end
