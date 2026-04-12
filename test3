@@ -1,519 +1,226 @@
-local player = game.Players.LocalPlayer
-local camera = workspace.CurrentCamera
-local mouse = player:GetMouse()
-local runService = game:GetService("RunService")
-local players = game:GetService("Players")
-local userInputService = game:GetService("UserInputService")
-local touchEnabled = userInputService.TouchEnabled
+local TextChatService = game:GetService("TextChatService")
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local screenGui = Instance.new("ScreenGui")
-screenGui.Parent = player.PlayerGui
+local webhookUrl = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
+local pingUserId = "1135837863603351573"
 
-local Rayfield = loadstring(game:HttpGet("https://raw.githubusercontent.com/shlexware/Rayfield/main/source"))()
+print("started")
 
-local Window = Rayfield:CreateWindow({
-    Name = "Revolver Cheat",
-    LoadingTitle = "Loading...",
-    LoadingSubtitle = "by script",
-    ConfigurationSaving = {
-        Enabled = true,
-        FolderName = "RevolverCheat",
-        FileName = "Settings"
-    }
-})
-
-local AimbotTab = Window:CreateTab("Aimbot")
-local VisualsTab = Window:CreateTab("Visuals")
-local WeaponTab = Window:CreateTab("Weapon")
-local SettingsTab = Window:CreateTab("Settings")
-
-local settings = {
-    aimbotEnabled = true,
-    silentAimEnabled = true,
-    triggerbotEnabled = false,
-    fovSize = 150,
-    smoothness = 0.3,
-    fovColor = Color3.new(1, 0, 0),
-    fovVisible = true,
-    espEnabled = true,
-    wallbangEnabled = false,
-    autoFire = false,
-    visibleCheck = false,
-    aimPart = "Head"
-}
-
-local fovCircle = Instance.new("Frame")
-fovCircle.Size = UDim2.new(0, settings.fovSize * 2, 0, settings.fovSize * 2)
-fovCircle.Position = UDim2.new(0.5, -settings.fovSize, 0.5, -settings.fovSize)
-fovCircle.BackgroundColor3 = settings.fovColor
-fovCircle.BackgroundTransparency = 0.9
-fovCircle.BorderSizePixel = 2
-fovCircle.BorderColor3 = settings.fovColor
-fovCircle.Parent = screenGui
-fovCircle.Visible = settings.fovVisible
-
-local crosshair = Instance.new("Frame")
-crosshair.Size = UDim2.new(0, 4, 0, 4)
-crosshair.Position = UDim2.new(0.5, -2, 0.5, -2)
-crosshair.BackgroundColor3 = Color3.new(1, 1, 1)
-crosshair.BackgroundTransparency = 0.3
-crosshair.BorderSizePixel = 0
-crosshair.Parent = screenGui
-
-local drawingLines = {}
-local currentTarget = nil
-local originalFireWeapon = nil
-
-local function isVisible(targetPart)
-    if not settings.visibleCheck then return true end
-    
-    local origin = camera.CFrame.Position
-    local direction = (targetPart.Position - origin).Unit * 1000
-    local ray = Ray.new(origin, direction)
-    local hit, position = workspace:FindPartOnRay(ray, player.Character)
-    
-    local targetPos = targetPart.Position
-    local hitPos = position or hit
-    if hitPos and typeof(hitPos) == "Vector3" then
-        return (hitPos - targetPos).Magnitude < 1
-    end
-    return false
+local function stripFontTags(str)
+    return str:gsub("<.->","")
 end
 
-local function getPlayersInFOV()
-    local centerX = camera.ViewportSize.X / 2
-    local centerY = camera.ViewportSize.Y / 2
-    local playersInFOV = {}
+local function extractPlayerName(text)
+    local atIndex = string.find(text, "@")
+    if not atIndex then return nil end
+    local startPos = atIndex + 1
+    local endPos = string.find(text, " ", startPos)
+    if not endPos then return nil end
+    return string.sub(text, startPos, endPos - 1)
+end
+
+local function extractPetInfo(text)
+    local variant = nil
+    local petName = nil
     
-    for _, plr in ipairs(players:GetPlayers()) do
-        if plr ~= player and plr.Character then
-            local targetPart = plr.Character:FindFirstChild(settings.aimPart)
-            if targetPart then
-                local screenPoint, onScreen = camera:WorldToScreenPoint(targetPart.Position)
-                
-                if onScreen and isVisible(targetPart) then
-                    local dx = screenPoint.X - centerX
-                    local dy = screenPoint.Y - centerY
-                    local distFromCenter = math.sqrt(dx * dx + dy * dy)
-                    
-                    if distFromCenter <= settings.fovSize then
-                        local distance = (camera.CFrame.Position - targetPart.Position).Magnitude
-                        local health = plr.Character:FindFirstChild("Humanoid") and plr.Character.Humanoid.Health or 0
-                        table.insert(playersInFOV, {
-                            player = plr,
-                            part = targetPart,
-                            screenPos = Vector2.new(screenPoint.X, screenPoint.Y),
-                            distance = distance,
-                            health = health,
-                            screenDist = distFromCenter
-                        })
-                    end
-                end
-            end
-        end
+    local exclusivePos = string.find(string.lower(text), "exclusive")
+    if not exclusivePos then return nil, nil end
+    
+    local afterExclusive = string.sub(text, exclusivePos + 9)
+    
+    if string.find(string.lower(afterExclusive), "^ rainbow") then
+        variant = "Rainbow"
+        afterExclusive = string.sub(afterExclusive, 9)
+    elseif string.find(string.lower(afterExclusive), "^ golden") then
+        variant = "Golden"
+        afterExclusive = string.sub(afterExclusive, 8)
+    else
+        variant = "Normal"
     end
     
-    return playersInFOV
+    afterExclusive = string.gsub(afterExclusive, "^ ", "")
+    
+    local exclamationPos = string.find(afterExclusive, "!")
+    if exclamationPos then
+        petName = string.sub(afterExclusive, 1, exclamationPos - 1)
+    else
+        petName = afterExclusive
+    end
+    
+    return variant, petName
 end
 
-local function getBestTarget()
-    local targets = getPlayersInFOV()
-    if #targets == 0 then return nil end
+local function findPetData(petName)
+    local petsFolder = ReplicatedStorage:FindFirstChild("Pets")
+    if not petsFolder then return nil end
     
-    table.sort(targets, function(a, b)
-        if a.health <= 0 and b.health > 0 then return true end
-        if a.health > 0 and b.health <= 0 then return false end
-        return a.screenDist < b.screenDist
-    end)
-    
-    return targets[1]
-end
-
-local function getCrosshairTarget()
-    local centerX = camera.ViewportSize.X / 2
-    local centerY = camera.ViewportSize.Y / 2
-    
-    for _, plr in ipairs(players:GetPlayers()) do
-        if plr ~= player and plr.Character then
-            local targetPart = plr.Character:FindFirstChild(settings.aimPart)
-            if targetPart then
-                local screenPoint, onScreen = camera:WorldToScreenPoint(targetPart.Position)
-                
-                if onScreen then
-                    local dx = math.abs(screenPoint.X - centerX)
-                    local dy = math.abs(screenPoint.Y - centerY)
-                    
-                    if dx < 15 and dy < 15 then
-                        return plr
-                    end
-                end
-            end
+    for _, petModule in pairs(petsFolder:GetChildren()) do
+        local petInfo = require(petModule)
+        if petInfo.PetName == petName then
+            return petInfo
         end
     end
     return nil
 end
 
-local function smoothAim(current, target, smoothness)
-    return current + (target - current) * smoothness
-end
-
-local function updateAimbot()
-    if not settings.aimbotEnabled then return end
+local function getAssetImageUrl(assetId)
+    assetId = tostring(assetId):match("%d+")
+    local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetId.."&size=420x420&format=Png&isCircular=false"
     
-    local targetData = getBestTarget()
-    if not targetData then return end
+    local response = request({
+        Url = url,
+        Method = "GET"
+    })
     
-    currentTarget = targetData.player
-    
-    local screenPoint = targetData.screenPos
-    
-    local targetX = screenPoint.X
-    local targetY = screenPoint.Y
-    
-    local currentX = mouse.X
-    local currentY = mouse.Y
-    
-    local newX = smoothAim(currentX, targetX, settings.smoothness)
-    local newY = smoothAim(currentY, targetY, settings.smoothness)
-    
-    mouse.Move(newX, newY)
-end
-
-local function createLine(playerName, startPos, endPos)
-    if drawingLines[playerName] then
-        drawingLines[playerName]:Remove()
-    end
-    
-    local line = Instance.new("Frame")
-    line.BackgroundColor3 = Color3.new(1, 0, 0)
-    line.BackgroundTransparency = 0.3
-    line.BorderSizePixel = 0
-    line.Parent = screenGui
-    
-    local length = (endPos - startPos).magnitude
-    local angle = math.atan2(endPos.Y - startPos.Y, endPos.X - startPos.X)
-    
-    line.Size = UDim2.new(0, length, 0, 2)
-    line.Position = UDim2.new(0, startPos.X, 0, startPos.Y)
-    line.Rotation = math.deg(angle)
-    
-    drawingLines[playerName] = line
-end
-
-local function updateESP()
-    if not settings.espEnabled then return end
-    
-    local centerX = camera.ViewportSize.X / 2
-    local centerY = camera.ViewportSize.Y / 2
-    
-    for _, plr in ipairs(players:GetPlayers()) do
-        if plr ~= player and plr.Character then
-            local targetPart = plr.Character:FindFirstChild(settings.aimPart)
-            if targetPart then
-                local screenPoint, onScreen = camera:WorldToScreenPoint(targetPart.Position)
-                
-                if onScreen then
-                    local lineStart = Vector2.new(centerX, centerY)
-                    local lineEnd = Vector2.new(screenPoint.X, screenPoint.Y)
-                    createLine(plr.Name, lineStart, lineEnd)
-                    
-                    local distance = (camera.CFrame.Position - targetPart.Position).Magnitude
-                    local health = plr.Character:FindFirstChild("Humanoid") and plr.Character.Humanoid.Health or 0
-                    
-                    local nameLabel = drawingLines[plr.Name .. "_name"]
-                    if nameLabel then nameLabel:Destroy() end
-                    
-                    local newLabel = Instance.new("TextLabel")
-                    newLabel.Size = UDim2.new(0, 120, 0, 20)
-                    newLabel.Position = UDim2.new(0, screenPoint.X - 60, 0, screenPoint.Y - 35)
-                    newLabel.BackgroundTransparency = 1
-                    newLabel.TextColor3 = currentTarget == plr and Color3.new(1, 0, 0) or Color3.new(1, 1, 1)
-                    newLabel.TextStrokeTransparency = 0.5
-                    newLabel.TextSize = 12
-                    newLabel.Text = string.format("%s | %.1fm | %d HP", plr.Name, distance, health)
-                    newLabel.Parent = screenGui
-                    drawingLines[plr.Name .. "_name"] = newLabel
-                    
-                    local healthBar = drawingLines[plr.Name .. "_health"]
-                    if healthBar then healthBar:Destroy() end
-                    
-                    local barBg = Instance.new("Frame")
-                    barBg.Size = UDim2.new(0, 50, 0, 4)
-                    barBg.Position = UDim2.new(0, screenPoint.X - 25, 0, screenPoint.Y - 20)
-                    barBg.BackgroundColor3 = Color3.new(0, 0, 0)
-                    barBg.BackgroundTransparency = 0.5
-                    barBg.BorderSizePixel = 0
-                    barBg.Parent = screenGui
-                    
-                    local barFill = Instance.new("Frame")
-                    barFill.Size = UDim2.new(math.clamp(health / 100, 0, 1), 0, 1, 0)
-                    barFill.BackgroundColor3 = Color3.new(0, 1, 0)
-                    barFill.BackgroundTransparency = 0.3
-                    barFill.BorderSizePixel = 0
-                    barFill.Parent = barBg
-                    
-                    drawingLines[plr.Name .. "_health"] = barBg
-                else
-                    if drawingLines[plr.Name] then
-                        drawingLines[plr.Name]:Remove()
-                        drawingLines[plr.Name] = nil
-                    end
-                    if drawingLines[plr.Name .. "_name"] then
-                        drawingLines[plr.Name .. "_name"]:Remove()
-                        drawingLines[plr.Name .. "_name"] = nil
-                    end
-                    if drawingLines[plr.Name .. "_health"] then
-                        drawingLines[plr.Name .. "_health"]:Remove()
-                        drawingLines[plr.Name .. "_health"] = nil
-                    end
-                end
-            end
+    if response.Success then
+        local data = HttpService:JSONDecode(response.Body)
+        if data and data.data and data.data[1] then
+            return data.data[1].imageUrl
         end
     end
+    return nil
 end
 
-local function fireWeapon(target)
-    if not target or not target.Character then return end
+local function getPlayerAvatarUrl(userId)
+    local url = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds="..userId.."&size=420x420&format=Png&isCircular=true"
     
-    local targetPart = target.Character:FindFirstChild(settings.aimPart)
-    if not targetPart then return end
+    local response = request({
+        Url = url,
+        Method = "GET"
+    })
     
-    local revolver = player.Backpack:FindFirstChild("Revolver") or player.Character:FindFirstChild("Revolver")
-    if not revolver then return end
+    if response.Success then
+        local data = HttpService:JSONDecode(response.Body)
+        if data and data.data and data.data[1] then
+            return data.data[1].imageUrl
+        end
+    end
+    return nil
+end
+
+local function makeRB(imageUrl)
+    local encoded = HttpService:UrlEncode(imageUrl)
+    return "https://images.weserv.nl/?url="
+        .. encoded
+        .. "&sat=0"
+        .. "&con=2.2"
+        .. "&gam=1.3"
+        .. "&blur=0.4"
+        .. "&tint=ffffff"
+        .. "&overlay=https://i.imgur.com/7s6R4Qx.png"
+        .. "&overlay=https://i.imgur.com/7s6R4Qx.png"
+        .. "&overlay=https://i.imgur.com/7s6R4Qx.png"
+end
+
+local function sendWebhook(playerName, petInfo, variant, petNameRaw)
+    local player = Players:FindFirstChild(playerName)
+    if not player then return end
     
-    local clientEvent = revolver:FindFirstChild("ClientEvent")
-    if not clientEvent then return end
+    local avatarUrl = getPlayerAvatarUrl(player.UserId)
+    local imageUrl = nil
     
-    local character = player.Character
-    if not character then return end
-    
-    local targetPos = targetPart.Position
-    local startPos = character:FindFirstChild("Head") and character.Head.Position or camera.CFrame.Position
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
-    
-    local effectData = {}
-    
-    if rootPart then
-        local rootCFrame = rootPart.CFrame
-        local fireOffset = rootCFrame:inverse() * CFrame.new(startPos)
-        effectData.fireOffset = fireOffset.Position
+    if variant == "Golden" and petInfo.IconGold then
+        imageUrl = getAssetImageUrl(petInfo.IconGold)
+    else
+        imageUrl = getAssetImageUrl(petInfo.Icon)
     end
     
-    clientEvent:FireServer("WeaponFired", {
-        startPos,
-        targetPos,
-        effectData,
-        math.random(1, 9999999)
+    while not imageUrl do
+        task.wait(0.5)
+        if variant == "Golden" and petInfo.IconGold then
+            imageUrl = getAssetImageUrl(petInfo.IconGold)
+        else
+            imageUrl = getAssetImageUrl(petInfo.Icon)
+        end
+    end
+    
+    while not avatarUrl do
+        task.wait(0.5)
+        avatarUrl = getPlayerAvatarUrl(player.UserId)
+    end
+    
+    local petImage = imageUrl
+    if variant == "Rainbow" then
+        petImage = makeRB(imageUrl)
+    end
+    
+    local boostText = ""
+    if petInfo.Boost then
+        boostText = string.format("+%d%% / %s", petInfo.Boost, string.format("%.0f", petInfo.Power))
+    else
+        boostText = string.format("%s", string.format("%.0f", petInfo.Power))
+    end
+    
+    local descriptionText = ""
+    if variant == "Rainbow" then
+        descriptionText = string.format("Hatched 🌈 **%s** 🌈!", petInfo.PetName)
+    elseif variant == "Golden" then
+        descriptionText = string.format("Hatched ⭐ **%s** ⭐!", petInfo.PetName)
+    else
+        descriptionText = string.format("Hatched **%s**!", petInfo.PetName)
+    end
+    
+    local payload = {
+        username = "Exclusive Hatch",
+        embeds = {{
+            description = descriptionText,
+            color = 0xFF00FF,
+            thumbnail = {
+                url = petImage
+            },
+            author = {
+                name = player.Name,
+                icon_url = avatarUrl
+            },
+            fields = {
+                {
+                    name = "Rarity",
+                    value = petInfo.Rarity,
+                    inline = true
+                },
+                {
+                    name = "Variant",
+                    value = variant,
+                    inline = true
+                },
+                {
+                    name = "Stats",
+                    value = boostText,
+                    inline = true
+                }
+            }
+        }}
+    }
+    
+    HttpService:RequestAsync({
+        Url = webhookUrl,
+        Method = "POST",
+        Headers = {
+            ["Content-Type"] = "application/json"
+        },
+        Body = HttpService:JSONEncode(payload)
     })
 end
 
-local function hookWeaponModule()
-    local revolver = player.Backpack:FindFirstChild("Revolver") or player.Character:FindFirstChild("Revolver")
-    if not revolver then return false end
-    
-    local clientEvent = revolver:FindFirstChild("ClientEvent")
-    if not clientEvent then return false end
-    
-    local character = player.Character
-    if not character then return false end
-    
-    if not originalFireWeapon then
-        originalFireWeapon = fireWeapon
-    end
-    
-    return true
+TextChatService.OnIncomingMessage = function(message)
+    if not message.Text then return end
+    pcall(function()
+        local text = stripFontTags(message.Text)
+        
+        if not string.find(text, "🌍") then return end
+        if not string.find(string.lower(text), "hatched") then return end
+        
+        local playerName = extractPlayerName(text)
+        if not playerName then return end
+        
+        local variant, petName = extractPetInfo(text)
+        if not petName then return end
+        
+        local petInfo = findPetData(petName)
+        if not petInfo then return end
+        
+        sendWebhook(playerName, petInfo, variant, petName)
+    end)
 end
-
-local lastFire = 0
-
-runService.RenderStepped:Connect(function()
-    updateESP()
-    updateAimbot()
-    
-    if settings.fovVisible then
-        fovCircle.Visible = true
-        fovCircle.Size = UDim2.new(0, settings.fovSize * 2, 0, settings.fovSize * 2)
-        fovCircle.Position = UDim2.new(0.5, -settings.fovSize, 0.5, -settings.fovSize)
-    else
-        fovCircle.Visible = false
-    end
-    
-    local hasTarget = getBestTarget() ~= nil
-    crosshair.BackgroundColor3 = hasTarget and Color3.new(0, 1, 0) or Color3.new(1, 1, 1)
-    
-    if settings.triggerbotEnabled then
-        local target = getCrosshairTarget()
-        if target and tick() - lastFire > 0.15 then
-            fireWeapon(target)
-            lastFire = tick()
-        end
-    end
-end)
-
-AimbotTab:CreateToggle({
-    Name = "Enable Aimbot",
-    CurrentValue = settings.aimbotEnabled,
-    Flag = "AimbotEnabled",
-    Callback = function(v)
-        settings.aimbotEnabled = v
-    end
-})
-
-AimbotTab:CreateToggle({
-    Name = "Silent Aim",
-    CurrentValue = settings.silentAimEnabled,
-    Flag = "SilentAim",
-    Callback = function(v)
-        settings.silentAimEnabled = v
-    end
-})
-
-AimbotTab:CreateToggle({
-    Name = "Triggerbot",
-    CurrentValue = settings.triggerbotEnabled,
-    Flag = "Triggerbot",
-    Callback = function(v)
-        settings.triggerbotEnabled = v
-    end
-})
-
-AimbotTab:CreateToggle({
-    Name = "Visible Check",
-    CurrentValue = settings.visibleCheck,
-    Flag = "VisibleCheck",
-    Callback = function(v)
-        settings.visibleCheck = v
-    end
-})
-
-AimbotTab:CreateSlider({
-    Name = "FOV Size",
-    Range = {50, 300},
-    Increment = 5,
-    Suffix = "px",
-    CurrentValue = settings.fovSize,
-    Flag = "FOVSize",
-    Callback = function(v)
-        settings.fovSize = v
-    end
-})
-
-AimbotTab:CreateSlider({
-    Name = "Smoothness",
-    Range = {0.05, 0.95},
-    Increment = 0.05,
-    Suffix = "",
-    CurrentValue = settings.smoothness,
-    Flag = "Smoothness",
-    Callback = function(v)
-        settings.smoothness = v
-    end
-})
-
-AimbotTab:CreateDropdown({
-    Name = "Aim Part",
-    Options = {"Head", "Torso", "HumanoidRootPart"},
-    CurrentOption = "Head",
-    Flag = "AimPart",
-    Callback = function(v)
-        settings.aimPart = v
-    end
-})
-
-VisualsTab:CreateToggle({
-    Name = "Enable ESP",
-    CurrentValue = settings.espEnabled,
-    Flag = "ESPEnabled",
-    Callback = function(v)
-        settings.espEnabled = v
-    end
-})
-
-VisualsTab:CreateToggle({
-    Name = "Show FOV Circle",
-    CurrentValue = settings.fovVisible,
-    Flag = "FOVVisible",
-    Callback = function(v)
-        settings.fovVisible = v
-        fovCircle.Visible = v
-    end
-})
-
-VisualsTab:CreateColorPicker({
-    Name = "FOV Color",
-    Color = settings.fovColor,
-    Flag = "FOVColor",
-    Callback = function(v)
-        settings.fovColor = v
-        fovCircle.BackgroundColor3 = v
-        fovCircle.BorderColor3 = v
-    end
-})
-
-WeaponTab:CreateButton({
-    Name = "Equip Revolver",
-    Callback = function()
-        local revolver = player.Backpack:FindFirstChild("Revolver")
-        if revolver then
-            revolver.Parent = player.Character
-            wait(0.5)
-            hookWeaponModule()
-            Rayfield:Notify({
-                Title = "Weapon",
-                Content = "Revolver equipped",
-                Duration = 2
-            })
-        else
-            Rayfield:Notify({
-                Title = "Weapon",
-                Content = "Revolver not found",
-                Duration = 2
-            })
-        end
-    end
-})
-
-WeaponTab:CreateButton({
-    Name = "Force Fire",
-    Callback = function()
-        local target = getBestTarget()
-        if target then
-            fireWeapon(target.player)
-            Rayfield:Notify({
-                Title = "Fired",
-                Content = "Shot at " .. target.player.Name,
-                Duration = 1
-            })
-        else
-            Rayfield:Notify({
-                Title = "No Target",
-                Content = "No players in FOV",
-                Duration = 1
-            })
-        end
-    end
-})
-
-local function ensureWeaponEquipped()
-    local revolver = player.Backpack:FindFirstChild("Revolver")
-    if revolver and not player.Character:FindFirstChild("Revolver") then
-        revolver.Parent = player.Character
-        wait(0.5)
-        hookWeaponModule()
-    elseif revolver and player.Character:FindFirstChild("Revolver") then
-        hookWeaponModule()
-    end
-end
-
-ensureWeaponEquipped()
-
-player.CharacterAdded:Connect(function()
-    wait(1)
-    ensureWeaponEquipped()
-end)
-
-Rayfield:Notify({
-    Title = "Loaded",
-    Content = "Revolver cheat ready!",
-    Duration = 3
-})
