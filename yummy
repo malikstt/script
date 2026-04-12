@@ -36,13 +36,19 @@ local RebirthsEaster = require(ReplicatedStorage:WaitForChild("Tables").Rebirths
 local RebirthsUni1 = require(ReplicatedStorage:WaitForChild("Tables").Rebirths)
 local RebirthsUni2 = require(ReplicatedStorage:WaitForChild("Tables").RebirthsUni2)
 
--- FIXED number formatter (proper suffixes)
+-- Upgrade data
+local UpgradeData = require(ReplicatedStorage:WaitForChild("Tables").Upgrades)
+
+-- FIXED number formatter (displays 1000x MORE than actual value)
 local suffixes = {"", "K", "M", "B", "T", "Qd", "Qn", "Sx", "Sp", "Oc", "No", "Dc", "Ud", "Dd", "Td", "Qad", "Qnd", "Sxd", "Spd", "Ocd", "Nod", "Vg", "Uvg"}
 
 local function formatNumber(num)
     if type(num) ~= "number" then
         num = tonumber(num) or 0
     end
+    
+    -- Multiply by 1000 to display 1000x more
+    num = num * 1000
     
     if num < 1000 then
         return tostring(math.floor(num))
@@ -63,6 +69,148 @@ local function formatNumber(num)
     else
         return string.format("%.2f%s", tempNum, suffixes[index])
     end
+end
+
+-- ========== AUTO UPGRADE SYSTEM (Upgrades all until maxed) ==========
+local upgradesToMax = {
+    "More Egg Luck",
+    "More Gold Chance", 
+    "More Rainbow Chance",
+    "Faster Egg Hatch",
+    "Train Speed",
+    "Walk Speed"
+}
+
+local function getUpgradeLevel(upgradeName)
+    local success, data = pcall(function()
+        return UpgradeData[upgradeName]
+    end)
+    if not success or not data then return 0 end
+    
+    local success2, stat = pcall(function()
+        return Stats.Get(data.StatName)
+    end)
+    if not success2 or not stat then return 0 end
+    
+    return stat.Value or 0
+end
+
+local function isMaxed(upgradeName)
+    local success, data = pcall(function()
+        return UpgradeData[upgradeName]
+    end)
+    if not success or not data then return true end
+    
+    local currentLevel = getUpgradeLevel(upgradeName)
+    
+    if data.Max then
+        return currentLevel >= data.Max
+    elseif data.OneTimeUpgrade then
+        return currentLevel >= 1
+    else
+        local maxLevel = 0
+        if type(data.UpgradeCosts) == "table" then
+            maxLevel = #data.UpgradeCosts
+        end
+        return currentLevel >= maxLevel
+    end
+end
+
+local function purchaseUpgrade(upgradeName)
+    local success, result = pcall(function()
+        return Network.InvokeServer("Upgrade", upgradeName)
+    end)
+    if success and result then
+        print("✓ Upgraded: " .. upgradeName)
+        return true, nil
+    else
+        return false, tostring(result)
+    end
+end
+
+local function autoUpgradeAll()
+    print("[AutoUpgrade] Starting to max out upgrades...")
+    
+    local maxAttempts = 500
+    local attempts = 0
+    
+    while attempts < maxAttempts do
+        attempts = attempts + 1
+        
+        -- Check if all are maxed
+        local allMaxed = true
+        for _, name in ipairs(upgradesToMax) do
+            local success, maxed = pcall(function()
+                return isMaxed(name)
+            end)
+            if not success or not maxed then
+                allMaxed = false
+                break
+            end
+        end
+        
+        if allMaxed then
+            print("[AutoUpgrade] ✓ All upgrades are MAXED!")
+            return true
+        end
+        
+        -- Try to upgrade each one in order
+        local upgraded = false
+        for _, name in ipairs(upgradesToMax) do
+            local success, maxed = pcall(function()
+                return isMaxed(name)
+            end)
+            
+            if success and not maxed then
+                local level = getUpgradeLevel(name)
+                print("[AutoUpgrade] Attempting " .. name .. " (level " .. level .. ")")
+                
+                local purchaseSuccess, err = purchaseUpgrade(name)
+                if purchaseSuccess then
+                    upgraded = true
+                    task.wait(0.1)
+                    break
+                elseif err and string.find(err, "points") then
+                    print("[AutoUpgrade] Not enough Upgrade Points for " .. name)
+                    return false
+                end
+            end
+        end
+        
+        if not upgraded then
+            print("[AutoUpgrade] No upgrades could be purchased (need more points)")
+            return false
+        end
+        
+        task.wait(0.05)
+    end
+    
+    print("[AutoUpgrade] Max attempts reached")
+    return false
+end
+
+-- ========== DISABLE AUTO THROW, ENABLE AUTO TRAIN ==========
+local function setupAutoTrainOnly()
+    pcall(function()
+        -- Disable Auto Throw if enabled
+        if AutoThrow and AutoThrow.Value then
+            Network.FireServer("Toggle Setting", "AutoThrow")
+            print("[AutoTrain] Disabled Auto Throw")
+        end
+        
+        -- Enable Auto Train if disabled
+        if AutoTrain and not AutoTrain.Value then
+            Network.FireServer("Toggle Setting", "AutoTrain")
+            print("[AutoTrain] Enabled Auto Train")
+        end
+        
+        -- Make sure training is active
+        task.wait(1)
+        pcall(function()
+            RemoteEvent:FireServer("Start Training")
+            print("[AutoTrain] Started training")
+        end)
+    end)
 end
 
 -- ========== UI FOR REBIRTH DISPLAY ==========
@@ -272,8 +420,10 @@ local petsToDelete = {
 
 local function getInventoryPets()
     local pets = {}
-    local petsFolder = Stats.Get(LocalPlayer, "Pets")
-    if petsFolder then
+    local success, petsFolder = pcall(function()
+        return Stats.Get(LocalPlayer, "Pets")
+    end)
+    if success and petsFolder then
         for _, pet in pairs(petsFolder:GetChildren()) do
             table.insert(pets, pet)
         end
@@ -282,10 +432,12 @@ local function getInventoryPets()
 end
 
 local function deletePet(petId)
-    local success, result = remote:InvokeServer("Pet", {
-        Action = "Delete",
-        Pets = {petId}
-    })
+    local success, result = pcall(function()
+        return remote:InvokeServer("Pet", {
+            Action = "Delete",
+            Pets = {petId}
+        })
+    end)
     if success then
         print("Deleted pet: " .. petId)
     else
@@ -294,7 +446,9 @@ local function deletePet(petId)
 end
 
 local function checkAndDeletePets()
-    local pets = getInventoryPets()
+    local success, pets = pcall(getInventoryPets)
+    if not success then return end
+    
     for _, pet in pairs(pets) do
         local petName = pet:GetAttribute("PetName")
         if petsToDelete[petName] then
@@ -305,15 +459,17 @@ local function checkAndDeletePets()
 end
 
 local function autoClaim()
-    if freeRewardTimer and freeRewardTimer.Value >= 900 then
-        print("Claiming free reward...")
-        local success, result = remote:InvokeServer("Claim Free Reward")
-        print("Claim response:", success, result)
-        if success then
-            task.wait(1)
-            checkAndDeletePets()
+    pcall(function()
+        if freeRewardTimer and freeRewardTimer.Value >= 900 then
+            print("Claiming free reward...")
+            local success, result = remote:InvokeServer("Claim Free Reward")
+            print("Claim response:", success, result)
+            if success then
+                task.wait(1)
+                checkAndDeletePets()
+            end
         end
-    end
+    end)
 end
 
 if freeRewardTimer then
@@ -325,7 +481,7 @@ end
 task.spawn(function()
     while true do
         task.wait(60)
-        checkAndDeletePets()
+        pcall(checkAndDeletePets)
     end
 end)
 
@@ -353,15 +509,16 @@ local function claimBlock(blockName)
     end
 end
 
-Network.OnClientEvent("LuckyBlock Spawned", function(name, tier, timestamp)
+local luckyBlockConnection
+luckyBlockConnection = Network.OnClientEvent("LuckyBlock Spawned", function(name, tier, timestamp)
     task.spawn(function()
-        claimBlock(name)
+        pcall(function() claimBlock(name) end)
     end)
 end)
 
 print("Lucky Block Auto-Claimer loaded")
 
--- ========== FARM SCRIPT FUNCTIONS ==========
+-- ========== REBIRTH FUNCTIONS ==========
 
 local function GetRebirthTable()
     local universe = CurrentUniverse and CurrentUniverse.Value or 0
@@ -412,8 +569,8 @@ local function PerformRebirth(rebirthIndex)
 end
 
 local function AutoRebirthBest()
-    local bestAmount, bestIndex = GetBestUnlockedRebirth()
-    if bestIndex > 0 then
+    local success, bestAmount, bestIndex = pcall(GetBestUnlockedRebirth)
+    if success and bestIndex and bestIndex > 0 then
         print(string.format("[Rebirth] Best unlocked: %s (index %s)", formatNumber(bestAmount), bestIndex))
         PerformRebirth(bestIndex)
         return true
@@ -421,54 +578,7 @@ local function AutoRebirthBest()
     return false
 end
 
-local function StopTraining()
-    pcall(function()
-        RemoteEvent:FireServer("Stop Training")
-        print("[AutoTrain] Stopped training")
-    end)
-end
-
-local function DisableAutoTrain()
-    if AutoTrain and AutoTrain.Value then
-        Network.FireServer("Toggle Setting", "AutoTrain")
-        print("[AutoTrain] Disabled")
-    end
-    StopTraining()
-end
-
-local function EnableAutoTrain()
-    if AutoTrain and not AutoTrain.Value then
-        Network.FireServer("Toggle Setting", "AutoTrain")
-        print("[AutoTrain] Enabled")
-    end
-end
-
-local function EnableAutoThrow()
-    if AutoThrow and not AutoThrow.Value then
-        Network.FireServer("Toggle Setting", "AutoThrow")
-        print("[AutoThrow] Enabled")
-    end
-end
-
-local function TrainOnly()
-    print("[Cycle] Starting training phase (300 seconds)...")
-    EnableAutoTrain()
-    for i = 300, 1, -1 do
-        task.wait(1)
-    end
-    print("[Cycle] Training phase complete")
-end
-
-local function ThrowOnly()
-    print("[Cycle] Starting throwing phase (60 seconds)...")
-    DisableAutoTrain()
-    EnableAutoThrow()
-    for i = 60, 1, -1 do
-        task.wait(1)
-    end
-    print("[Cycle] Throwing phase complete")
-end
-
+-- ========== FIRE RANDOM ACTIONS ==========
 local actions = {
     { args = {"Upgrade", "More Rebirth Skips"} },
     { args = {"Unlock Next World"} },
@@ -478,23 +588,62 @@ local actions = {
 local lastActionIndex = nil
 
 local function fireRandomAction()
-    local availableIndices = {}
-    for i = 1, #actions do
-        if i ~= lastActionIndex then
-            table.insert(availableIndices, i)
-        end
-    end
-    local randomIndex = availableIndices[math.random(1, #availableIndices)]
-    local selectedAction = actions[randomIndex]
     pcall(function()
+        local availableIndices = {}
+        for i = 1, #actions do
+            if i ~= lastActionIndex then
+                table.insert(availableIndices, i)
+            end
+        end
+        if #availableIndices == 0 then
+            for i = 1, #actions do
+                table.insert(availableIndices, i)
+            end
+        end
+        local randomIndex = availableIndices[math.random(1, #availableIndices)]
+        local selectedAction = actions[randomIndex]
         RemoteFunction:InvokeServer(unpack(selectedAction.args))
         print("[Action] Fired:", unpack(selectedAction.args))
+        lastActionIndex = randomIndex
     end)
-    lastActionIndex = randomIndex
 end
 
--- ========== START UI AND LOOPS ==========
+-- ========== START EVERYTHING ==========
 
+-- Setup auto train only (disable auto throw, enable auto train)
+setupAutoTrainOnly()
+
+-- Start auto upgrade system
+task.spawn(function()
+    task.wait(2)
+    while true do
+        local success, result = pcall(autoUpgradeAll)
+        if not success then
+            print("[AutoUpgrade] Error occurred, retrying in 30 seconds...")
+        end
+        task.wait(30) -- Check every 30 seconds for new upgrade opportunities
+    end
+end)
+
+-- Start rebirth checker
+task.spawn(function()
+    while true do
+        task.wait(10)
+        pcall(AutoRebirthBest)
+    end
+end)
+
+-- Start random actions
+task.spawn(function()
+    task.wait(1)
+    fireRandomAction()
+    while true do
+        task.wait(5)
+        fireRandomAction()
+    end
+end)
+
+-- Start UI display updates
 updateDisplay()
 
 if Universe1Rebirths then
@@ -508,29 +657,19 @@ end
 task.spawn(function()
     while true do
         task.wait(2)
-        updateDisplay()
+        pcall(updateDisplay)
     end
 end)
 
-print("Rebirth Display UI loaded! Press R to toggle visibility")
-print("[Farm] Starting loop: Train 300s -> Throw 60s")
+print("========================================")
+print("✓ Auto Train ENABLED")
+print("✓ Auto Throw DISABLED")
+print("✓ Auto Upgrade System ACTIVE")
+print("✓ Rebirth Display UI Loaded (Press R to toggle)")
+print("✓ Auto Rebirth ACTIVE")
+print("========================================")
 
-task.spawn(function()
-    while true do
-        task.wait(10)
-        pcall(AutoRebirthBest)
-    end
-end)
-
-task.spawn(function()
-    fireRandomAction()
-    while true do
-        task.wait(5)
-        fireRandomAction()
-    end
-end)
-
+-- Keep script alive
 while true do
-    TrainOnly()
-    ThrowOnly()
+    task.wait(60)
 end
