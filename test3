@@ -20,6 +20,9 @@ local allowedPets = {
 	["Enchanted Inferno"] = true
 }
 
+-- Track sent messages to prevent duplicates
+local sentMessages = {}
+
 print("Started - Monitoring for pet names in chat fr")
 
 local function stripFontTags(str)
@@ -138,6 +141,36 @@ local function getVariantDisplay(variant)
 	end
 end
 
+local function getModifiedChanceText(petName, variant)
+	local originalChance = petChances[petName] or "Unknown"
+	
+	if variant == "Rainbow" then
+		-- 100x rarer
+		if originalChance == "1 in 50" then
+			return "1 in 5,000"
+		elseif originalChance == "1 in 100" then
+			return "1 in 10,000"
+		elseif originalChance == "1 in 1,000" then
+			return "1 in 100,000"
+		else
+			return "Unknown"
+		end
+	elseif variant == "Golden" then
+		-- 20x rarer
+		if originalChance == "1 in 50" then
+			return "1 in 1,000"
+		elseif originalChance == "1 in 100" then
+			return "1 in 2,000"
+		elseif originalChance == "1 in 1,000" then
+			return "1 in 20,000"
+		else
+			return "Unknown"
+		end
+	else
+		return originalChance
+	end
+end
+
 local function sendWebhook(playerName, petName, variant, petInfo, userId)
 	local imageUrl = nil
 	local avatarUrl = nil
@@ -189,7 +222,7 @@ local function sendWebhook(playerName, petName, variant, petInfo, userId)
 	local displayPetName = petName
 	local rarityText = "Unknown"
 	local boostText = "Unknown"
-	local chanceText = petChances[petName] or "Unknown"
+	local chanceText = getModifiedChanceText(petName, variant)
 	local powerValue = 0
 	local boostValue = 0
 	
@@ -284,6 +317,26 @@ TextChatService.OnIncomingMessage = function(message)
 			variant = "Rainbow"
 		elseif string.find(loweredText, "golden") then
 			variant = "Golden"
+		end
+		
+		-- Create unique key for this message to prevent duplicates
+		local messageKey = playerName .. "_" .. detectedPet .. "_" .. variant
+		
+		-- Check if we've already sent this exact message
+		if sentMessages[messageKey] then
+			print(string.format("Duplicate detected, skipping: %s - %s (%s)", playerName, detectedPet, variant))
+			return
+		end
+		
+		-- Mark this message as sent
+		sentMessages[messageKey] = os.time()
+		
+		-- Clean up old entries (older than 5 seconds)
+		local currentTime = os.time()
+		for key, timestamp in pairs(sentMessages) do
+			if currentTime - timestamp > 5 then
+				sentMessages[key] = nil
+			end
 		end
 		
 		print(string.format("Detected: %s said %s (%s)", playerName, detectedPet, variant))
