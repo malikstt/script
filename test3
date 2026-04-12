@@ -6,7 +6,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local webhookUrl = "https://discord.com/api/webhooks/1492622522339037315/wC2sJfo1IepeHxG4sLAb9226eLBu91EKFmjb6TFi5CBXaSsbSRRUGp84MpZIzOFsIAZd"
 local pingUserId = "198241023866961920"  -- User to ping: shakeem_hood
 
--- Allowed pets list
+-- Allowed pets list (for contains detection)
 local allowedPets = {
 	["Horror Book"] = true,
 	["Cursed Hell Eye"] = true,
@@ -27,35 +27,6 @@ local function extractPlayerName(text)
 	local endPos = string.find(text, " ", startPos)
 	if not endPos then return nil end
 	return string.sub(text, startPos, endPos - 1)
-end
-
-local function extractPetInfo(text)
-	local variant = "Normal"
-	local petName = nil
-	
-	local exclusivePos = string.find(string.lower(text), "exclusive")
-	if not exclusivePos then return nil, nil end
-	
-	local afterExclusive = string.sub(text, exclusivePos + 9)
-	
-	if string.find(string.lower(afterExclusive), "^ rainbow") then
-		variant = "Rainbow"
-		afterExclusive = string.sub(afterExclusive, 9)
-	elseif string.find(string.lower(afterExclusive), "^ golden") then
-		variant = "Golden"
-		afterExclusive = string.sub(afterExclusive, 8)
-	end
-	
-	afterExclusive = string.gsub(afterExclusive, "^ ", "")
-	
-	local exclamationPos = string.find(afterExclusive, "!")
-	if exclamationPos then
-		petName = string.sub(afterExclusive, 1, exclamationPos - 1)
-	else
-		petName = afterExclusive
-	end
-	
-	return variant, petName
 end
 
 local function findPetData(petName)
@@ -121,14 +92,11 @@ local function getVariantDisplay(variant)
 	end
 end
 
-local function sendWebhook(playerName, petInfo, variant)
-	local player = Players:FindFirstChild(playerName)
-	if not player then return end
-	
+local function sendWebhook(player, petInfo, variant)
 	local imageUrl = nil
 	local avatarUrl = nil
 	
-	-- Get pet image (use gold icon if variant is Golden and exists)
+	-- Get pet image
 	if variant == "Golden" and petInfo.IconGold then
 		imageUrl = getAssetImageUrl(petInfo.IconGold)
 	else
@@ -153,11 +121,11 @@ local function sendWebhook(playerName, petInfo, variant)
 	end
 	
 	local chanceText = petInfo.Chance or "Unknown"
-	local pingText = string.format("<@%s>", pingUserId)  -- Creates Discord mention
+	local pingText = string.format("<@%s>", pingUserId)
 	
 	local payload = {
-		username = "Nigatron",
-		content = pingText,  -- This will ping the user
+		username = "Exclusive Hatch",
+		content = pingText,
 		embeds = {{
 			description = string.format("Hatched **%s** %s!", petInfo.PetName, chanceText),
 			color = 0xFFD700,
@@ -212,33 +180,52 @@ TextChatService.OnIncomingMessage = function(message)
 	
 	pcall(function()
 		local text = stripFontTags(message.Text)
+		local loweredText = string.lower(text)
 		
 		-- Check if it's a hatch message
 		if not string.find(text, "🌍") then return end
-		if not string.find(string.lower(text), "hatched") then return end
+		if not string.find(loweredText, "hatched") then return end
 		
 		-- Extract player name
 		local playerName = extractPlayerName(text)
 		if not playerName then return end
 		
-		-- Extract pet info
-		local variant, petName = extractPetInfo(text)
-		if not petName then return end
+		-- CONTAINS DETECTION: Check if any allowed pet is in the message
+		local detectedPet = nil
+		for petName in pairs(allowedPets) do
+			if string.find(loweredText, string.lower(petName), 1, true) then
+				detectedPet = petName
+				break
+			end
+		end
 		
-		-- Check if it's one of the 4 allowed pets
-		if not allowedPets[petName] then
-			print(string.format("Ignored: %s hatched %s (not in allowed list)", playerName, petName))
+		if not detectedPet then
+			print("Ignored (no matching pet in message)")
 			return
 		end
+		
+		-- VARIANT DETECTION: Simple contains check for rainbow/golden
+		local variant = "Normal"
+		if string.find(loweredText, "rainbow") then
+			variant = "Rainbow"
+		elseif string.find(loweredText, "golden") then
+			variant = "Golden"
+		end
+		
+		print(string.format("Detected: %s hatched %s (%s)", playerName, detectedPet, variant))
 		
 		-- Get pet data from game
-		local petInfo = findPetData(petName)
+		local petInfo = findPetData(detectedPet)
 		if not petInfo then
-			warn("Could not find pet data for:", petName)
+			warn("Could not find pet data for:", detectedPet)
 			return
 		end
 		
+		-- Get player object
+		local player = Players:FindFirstChild(playerName)
+		if not player then return end
+		
 		-- Send webhook
-		sendWebhook(playerName, petInfo, variant)
+		sendWebhook(player, petInfo, variant)
 	end)
 end
