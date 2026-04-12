@@ -3,254 +3,242 @@ local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local webhookUrl = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
-local pingUserId = "1135837863603351573"
+local webhookUrl = "https://discord.com/api/webhooks/1492622522339037315/wC2sJfo1IepeHxG4sLAb9226eLBu91EKFmjb6TFi5CBXaSsbSRRUGp84MpZIzOFsIAZd"
+local pingUserId = "198241023866961920"  -- User to ping: shakeem_hood
 
-print("started v2")
+-- Allowed pets list
+local allowedPets = {
+	["Horror Book"] = true,
+	["Cursed Hell Eye"] = true,
+	["Horror Monster"] = true,
+	["Enchanted Inferno"] = true
+}
+
+print("Started - Monitoring for pet hatches")
 
 local function stripFontTags(str)
-    return str:gsub("<.->","")
+	return str:gsub("<.->","")
 end
 
 local function extractPlayerName(text)
-    local atIndex = string.find(text, "@")
-    if not atIndex then return nil end
-    local startPos = atIndex + 1
-    local endPos = string.find(text, " ", startPos)
-    if not endPos then return nil end
-    return string.sub(text, startPos, endPos - 1)
+	local atIndex = string.find(text, "@")
+	if not atIndex then return nil end
+	local startPos = atIndex + 1
+	local endPos = string.find(text, " ", startPos)
+	if not endPos then return nil end
+	return string.sub(text, startPos, endPos - 1)
 end
 
 local function extractPetInfo(text)
-    local variant = nil
-    local petName = nil
-    
-    local exclusivePos = string.find(string.lower(text), "exclusive")
-    if not exclusivePos then return nil, nil end
-    
-    local afterExclusive = string.sub(text, exclusivePos + 9)
-    
-    if string.find(string.lower(afterExclusive), "^ rainbow") then
-        variant = "Rainbow"
-        afterExclusive = string.sub(afterExclusive, 9)
-    elseif string.find(string.lower(afterExclusive), "^ golden") then
-        variant = "Golden"
-        afterExclusive = string.sub(afterExclusive, 8)
-    else
-        variant = "Normal"
-    end
-    
-    afterExclusive = string.gsub(afterExclusive, "^ ", "")
-    
-    local exclamationPos = string.find(afterExclusive, "!")
-    if exclamationPos then
-        petName = string.sub(afterExclusive, 1, exclamationPos - 1)
-    else
-        petName = afterExclusive
-    end
-    
-    return variant, petName
+	local variant = "Normal"
+	local petName = nil
+	
+	local exclusivePos = string.find(string.lower(text), "exclusive")
+	if not exclusivePos then return nil, nil end
+	
+	local afterExclusive = string.sub(text, exclusivePos + 9)
+	
+	if string.find(string.lower(afterExclusive), "^ rainbow") then
+		variant = "Rainbow"
+		afterExclusive = string.sub(afterExclusive, 9)
+	elseif string.find(string.lower(afterExclusive), "^ golden") then
+		variant = "Golden"
+		afterExclusive = string.sub(afterExclusive, 8)
+	end
+	
+	afterExclusive = string.gsub(afterExclusive, "^ ", "")
+	
+	local exclamationPos = string.find(afterExclusive, "!")
+	if exclamationPos then
+		petName = string.sub(afterExclusive, 1, exclamationPos - 1)
+	else
+		petName = afterExclusive
+	end
+	
+	return variant, petName
 end
 
 local function findPetData(petName)
-    local petsFolder = ReplicatedStorage:FindFirstChild("Pets")
-    if not petsFolder then return nil end
-    
-    for _, petModule in pairs(petsFolder:GetChildren()) do
-        local petInfo = require(petModule)
-        if petInfo.PetName == petName then
-            return petInfo
-        end
-    end
-    return nil
+	local petsFolder = ReplicatedStorage:FindFirstChild("Pets")
+	if not petsFolder then return nil end
+	
+	for _, petModule in pairs(petsFolder:GetChildren()) do
+		local success, petInfo = pcall(require, petModule)
+		if success and petInfo.PetName == petName then
+			return petInfo
+		end
+	end
+	return nil
 end
 
 local function getAssetImageUrl(assetId)
-    assetId = tostring(assetId):match("%d+")
-    local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetId.."&size=420x420&format=Png&isCircular=false"
-    
-    local response = request({
-        Url = url,
-        Method = "GET"
-    })
-    
-    if response.Success then
-        local data = HttpService:JSONDecode(response.Body)
-        if data and data.data and data.data[1] then
-            return data.data[1].imageUrl
-        end
-    end
-    return nil
+	if not assetId then return nil end
+	assetId = tostring(assetId):match("%d+")
+	local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetId.."&size=420x420&format=Png&isCircular=false"
+	
+	local success, response = pcall(function()
+		return request({
+			Url = url,
+			Method = "GET"
+		})
+	end)
+	
+	if success and response.Success then
+		local data = HttpService:JSONDecode(response.Body)
+		if data and data.data and data.data[1] and data.data[1].imageUrl then
+			return data.data[1].imageUrl
+		end
+	end
+	return nil
 end
 
 local function getPlayerAvatarUrl(userId)
-    local url = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds="..userId.."&size=420x420&format=Png&isCircular=true"
-    
-    local response = request({
-        Url = url,
-        Method = "GET"
-    })
-    
-    if response.Success then
-        local data = HttpService:JSONDecode(response.Body)
-        if data and data.data and data.data[1] then
-            return data.data[1].imageUrl
-        end
-    end
-    return nil
+	local url = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds="..userId.."&size=420x420&format=Png&isCircular=true"
+	
+	local success, response = pcall(function()
+		return request({
+			Url = url,
+			Method = "GET"
+		})
+	end)
+	
+	if success and response.Success then
+		local data = HttpService:JSONDecode(response.Body)
+		if data and data.data and data.data[1] and data.data[1].imageUrl then
+			return data.data[1].imageUrl
+		end
+	end
+	return nil
 end
 
-local function makeRB(imageUrl)
-    local encoded = HttpService:UrlEncode(imageUrl)
-    return "https://images.weserv.nl/?url="
-        .. encoded
-        .. "&sat=0"
-        .. "&con=2.2"
-        .. "&gam=1.3"
-        .. "&blur=0.4"
-        .. "&tint=ffffff"
-        .. "&overlay=https://i.imgur.com/7s6R4Qx.png"
-        .. "&overlay=https://i.imgur.com/7s6R4Qx.png"
-        .. "&overlay=https://i.imgur.com/7s6R4Qx.png"
+local function getVariantDisplay(variant)
+	if variant == "Rainbow" then
+		return "🌈 Rainbow"
+	elseif variant == "Golden" then
+		return "⭐ Golden"
+	else
+		return "None (Normal)"
+	end
 end
 
-local function sendWebhook(playerName, petInfo, variant, petNameRaw)
-    local player = Players:FindFirstChild(playerName)
-    if not player then 
-        print("Player not found: " .. playerName)
-        return 
-    end
-    
-    local avatarUrl = getPlayerAvatarUrl(player.UserId)
-    local imageUrl = nil
-    
-    if variant == "Golden" and petInfo.IconGold then
-        imageUrl = getAssetImageUrl(petInfo.IconGold)
-    else
-        imageUrl = getAssetImageUrl(petInfo.Icon)
-    end
-    
-    while not imageUrl do
-        task.wait(0.5)
-        if variant == "Golden" and petInfo.IconGold then
-            imageUrl = getAssetImageUrl(petInfo.IconGold)
-        else
-            imageUrl = getAssetImageUrl(petInfo.Icon)
-        end
-    end
-    
-    while not avatarUrl do
-        task.wait(0.5)
-        avatarUrl = getPlayerAvatarUrl(player.UserId)
-    end
-    
-    local petImage = imageUrl
-    if variant == "Rainbow" then
-        petImage = makeRB(imageUrl)
-    end
-    
-    local boostText = ""
-    if petInfo.Boost then
-        boostText = string.format("+%d%% / %s", petInfo.Boost, string.format("%.0f", petInfo.Power))
-    else
-        boostText = string.format("%s", string.format("%.0f", petInfo.Power))
-    end
-    
-    local descriptionText = ""
-    if variant == "Rainbow" then
-        descriptionText = string.format("Hatched 🌈 **%s** 🌈!", petInfo.PetName)
-    elseif variant == "Golden" then
-        descriptionText = string.format("Hatched ⭐ **%s** ⭐!", petInfo.PetName)
-    else
-        descriptionText = string.format("Hatched **%s**!", petInfo.PetName)
-    end
-    
-    local payload = {
-        username = "Exclusive Hatch",
-        embeds = {{
-            description = descriptionText,
-            color = 0xFF00FF,
-            thumbnail = {
-                url = petImage
-            },
-            author = {
-                name = player.Name,
-                icon_url = avatarUrl
-            },
-            fields = {
-                {
-                    name = "Rarity",
-                    value = petInfo.Rarity,
-                    inline = true
-                },
-                {
-                    name = "Variant",
-                    value = variant,
-                    inline = true
-                },
-                {
-                    name = "Stats",
-                    value = boostText,
-                    inline = true
-                }
-            }
-        }}
-    }
-    
-    local response = HttpService:RequestAsync({
-        Url = webhookUrl,
-        Method = "POST",
-        Headers = {
-            ["Content-Type"] = "application/json"
-        },
-        Body = HttpService:JSONEncode(payload)
-    })
-    
-    print("Webhook sent! Status: " .. response.StatusCode)
+local function sendWebhook(playerName, petInfo, variant)
+	local player = Players:FindFirstChild(playerName)
+	if not player then return end
+	
+	local imageUrl = nil
+	local avatarUrl = nil
+	
+	-- Get pet image (use gold icon if variant is Golden and exists)
+	if variant == "Golden" and petInfo.IconGold then
+		imageUrl = getAssetImageUrl(petInfo.IconGold)
+	else
+		imageUrl = getAssetImageUrl(petInfo.Icon or petInfo.AssetId)
+	end
+	
+	avatarUrl = getPlayerAvatarUrl(player.UserId)
+	
+	-- Keep trying until both images load
+	while not imageUrl do
+		task.wait(0.5)
+		if variant == "Golden" and petInfo.IconGold then
+			imageUrl = getAssetImageUrl(petInfo.IconGold)
+		else
+			imageUrl = getAssetImageUrl(petInfo.Icon or petInfo.AssetId)
+		end
+	end
+	
+	while not avatarUrl do
+		task.wait(0.5)
+		avatarUrl = getPlayerAvatarUrl(player.UserId)
+	end
+	
+	local chanceText = petInfo.Chance or "Unknown"
+	local pingText = string.format("<@%s>", pingUserId)  -- Creates Discord mention
+	
+	local payload = {
+		username = "Nigatron",
+		content = pingText,  -- This will ping the user
+		embeds = {{
+			description = string.format("Hatched **%s** %s!", petInfo.PetName, chanceText),
+			color = 0xFFD700,
+			thumbnail = {
+				url = imageUrl
+			},
+			author = {
+				name = player.Name,
+				icon_url = avatarUrl
+			},
+			fields = {
+				{
+					name = "Rarity",
+					value = petInfo.Rarity or "Unknown",
+					inline = true
+				},
+				{
+					name = "Variant",
+					value = getVariantDisplay(variant),
+					inline = true
+				},
+				{
+					name = "Stats",
+					value = string.format("+%d%% / %s", petInfo.Boost or 0, string.format("%.0f", petInfo.Power or 0)),
+					inline = true
+				}
+			}
+		}}
+	}
+	
+	local success, err = pcall(function()
+		HttpService:RequestAsync({
+			Url = webhookUrl,
+			Method = "POST",
+			Headers = {
+				["Content-Type"] = "application/json"
+			},
+			Body = HttpService:JSONEncode(payload)
+		})
+	end)
+	
+	if success then
+		print(string.format("Sent webhook for %s - %s (%s)", player.Name, petInfo.PetName, variant))
+	else
+		warn("Failed to send webhook:", err)
+	end
 end
 
--- TEST FUNCTION: Simulate receiving the message
-local function testWebhook()
-    print("=== TESTING WEBHOOK ===")
-    local testMessage = "🌍@ANH_Hans Hatched an Exclusive Golden Futuristic Mech!"
-    
-    pcall(function()
-        local text = stripFontTags(testMessage)
-        print("Stripped text: " .. text)
-        
-        if not string.find(text, "🌍") then 
-            print("No globe emoji found")
-            return 
-        end
-        if not string.find(string.lower(text), "hatched") then 
-            print("No 'hatched' found")
-            return 
-        end
-        
-        local playerName = extractPlayerName(text)
-        if not playerName then 
-            print("Could not extract player name")
-            return 
-        end
-        print("Player name: " .. playerName)
-        
-        local variant, petName = extractPetInfo(text)
-        if not petName then 
-            print("Could not extract pet info")
-            return 
-        end
-        print("Variant: " .. variant .. ", Pet: " .. petName)
-        
-        local petInfo = findPetData(petName)
-        if not petInfo then 
-            print("Pet data not found for: " .. petName)
-            return 
-        end
-        print("Pet found! Rarity: " .. petInfo.Rarity)
-        
-        sendWebhook(playerName, petInfo, variant, petName)
-    end)
+-- Main chat listener
+TextChatService.OnIncomingMessage = function(message)
+	if not message.Text then return end
+	
+	pcall(function()
+		local text = stripFontTags(message.Text)
+		
+		-- Check if it's a hatch message
+		if not string.find(text, "🌍") then return end
+		if not string.find(string.lower(text), "hatched") then return end
+		
+		-- Extract player name
+		local playerName = extractPlayerName(text)
+		if not playerName then return end
+		
+		-- Extract pet info
+		local variant, petName = extractPetInfo(text)
+		if not petName then return end
+		
+		-- Check if it's one of the 4 allowed pets
+		if not allowedPets[petName] then
+			print(string.format("Ignored: %s hatched %s (not in allowed list)", playerName, petName))
+			return
+		end
+		
+		-- Get pet data from game
+		local petInfo = findPetData(petName)
+		if not petInfo then
+			warn("Could not find pet data for:", petName)
+			return
+		end
+		
+		-- Send webhook
+		sendWebhook(playerName, petInfo, variant)
+	end)
 end
-
--- Run the test
-testWebhook()
