@@ -55,50 +55,59 @@ local function findPetData(petName)
 	return nil
 end
 
-local function extractAssetIdFromIcon(iconString)
-	if not iconString then return nil end
-	local assetId = iconString:match("rbxassetid://(%d+)")
-	if not assetId then
-		assetId = iconString:match("(%d+)")
-	end
-	return assetId
-end
-
-local function getAssetImageUrlFromIcon(iconString)
-	local assetId = extractAssetIdFromIcon(iconString)
-	if not assetId then return nil end
-	
+local function getAssetImageUrl(assetId)
+	assetId = tostring(assetId):match("%d+")
 	local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetId.."&size=420x420&format=Png&isCircular=false"
-	
 	local success, response = pcall(function()
 		return HttpService:RequestAsync({
 			Url = url,
 			Method = "GET"
 		})
 	end)
-	
 	if success and response.Success then
 		local data = HttpService:JSONDecode(response.Body)
-		if data and data.data and data.data[1] and data.data[1].imageUrl then
+		if data and data.data and data.data[1] then
 			return data.data[1].imageUrl
 		end
 	end
 	return nil
 end
 
+local function makeRB(imageUrl)
+	local encoded = HttpService:UrlEncode(imageUrl)
+	return "https://images.weserv.nl/?url="
+		.. encoded
+		.. "&sat=2.5&con=1.3&blur=0.3&overlay=https://i.imgur.com/7s6R4Qx.png"
+end
+
+local function getPetImageUrl(petInfo, variant)
+	local assetId = nil
+	
+	if petInfo then
+		if variant == "Golden" and petInfo.IconGold then
+			assetId = petInfo.IconGold:match("rbxassetid://(%d+)")
+		elseif petInfo.Icon then
+			assetId = petInfo.Icon:match("rbxassetid://(%d+)")
+		end
+	end
+	
+	if not assetId then return nil end
+	
+	local imageUrl = getAssetImageUrl(assetId)
+	return imageUrl
+end
+
 local function getPlayerAvatarUrl(userId)
 	local url = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds="..userId.."&size=420x420&format=Png&isCircular=true"
-	
 	local success, response = pcall(function()
 		return HttpService:RequestAsync({
 			Url = url,
 			Method = "GET"
 		})
 	end)
-	
 	if success and response.Success then
 		local data = HttpService:JSONDecode(response.Body)
-		if data and data.data and data.data[1] and data.data[1].imageUrl then
+		if data and data.data and data.data[1] then
 			return data.data[1].imageUrl
 		end
 	end
@@ -145,7 +154,6 @@ local function getModifiedChanceText(petName, variant)
 	local originalChance = petChances[petName] or "Unknown"
 	
 	if variant == "Rainbow" then
-		-- 100x rarer
 		if originalChance == "1 in 50" then
 			return "1 in 5,000"
 		elseif originalChance == "1 in 100" then
@@ -156,7 +164,6 @@ local function getModifiedChanceText(petName, variant)
 			return "Unknown"
 		end
 	elseif variant == "Golden" then
-		-- 20x rarer
 		if originalChance == "1 in 50" then
 			return "1 in 1,000"
 		elseif originalChance == "1 in 100" then
@@ -176,16 +183,7 @@ local function sendWebhook(playerName, petName, variant, petInfo, userId)
 	local avatarUrl = nil
 	
 	if petInfo then
-		local iconToUse = nil
-		if variant == "Golden" and petInfo.IconGold then
-			iconToUse = petInfo.IconGold
-		else
-			iconToUse = petInfo.Icon
-		end
-		
-		if iconToUse then
-			imageUrl = getAssetImageUrlFromIcon(iconToUse)
-		end
+		imageUrl = getPetImageUrl(petInfo, variant)
 	end
 	
 	if userId then
@@ -207,16 +205,20 @@ local function sendWebhook(playerName, petName, variant, petInfo, userId)
 		task.wait(0.5)
 		attempts = attempts + 1
 		if petInfo then
-			local iconToUse = nil
-			if variant == "Golden" and petInfo.IconGold then
-				iconToUse = petInfo.IconGold
-			else
-				iconToUse = petInfo.Icon
-			end
-			if iconToUse then
-				imageUrl = getAssetImageUrlFromIcon(iconToUse)
-			end
+			imageUrl = getPetImageUrl(petInfo, variant)
 		end
+	end
+	
+	local finalImageUrl = nil
+	if imageUrl then
+		-- Only apply RB effect to Rainbow pets
+		if variant == "Rainbow" then
+			finalImageUrl = makeRB(imageUrl)
+		else
+			finalImageUrl = imageUrl
+		end
+	else
+		finalImageUrl = "https://i.imgur.com/placeholder.png"
 	end
 	
 	local displayPetName = petName
@@ -237,10 +239,9 @@ local function sendWebhook(playerName, petName, variant, petInfo, userId)
 	end
 	
 	local pingText = string.format("<@%s>", pingUserId)
-	local finalImageUrl = imageUrl or "https://i.imgur.com/placeholder.png"
 	
 	local payload = {
-		username = "rrrrr",
+		username = "Pet Hatch Monitor",
 		content = pingText,
 		embeds = {{
 			description = string.format("Hatched **%s** %s!", displayPetName, chanceText),
@@ -319,19 +320,15 @@ TextChatService.OnIncomingMessage = function(message)
 			variant = "Golden"
 		end
 		
-		-- Create unique key for this message to prevent duplicates
 		local messageKey = playerName .. "_" .. detectedPet .. "_" .. variant
 		
-		-- Check if we've already sent this exact message
 		if sentMessages[messageKey] then
 			print(string.format("Duplicate detected, skipping: %s - %s (%s)", playerName, detectedPet, variant))
 			return
 		end
 		
-		-- Mark this message as sent
 		sentMessages[messageKey] = os.time()
 		
-		-- Clean up old entries (older than 5 seconds)
 		local currentTime = os.time()
 		for key, timestamp in pairs(sentMessages) do
 			if currentTime - timestamp > 5 then
