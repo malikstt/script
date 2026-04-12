@@ -20,7 +20,6 @@ local allowedPets = {
 	["Enchanted Inferno"] = true
 }
 
--- Track sent messages to prevent duplicates
 local sentMessages = {}
 
 print("Started - Monitoring for pet names in chat fr")
@@ -55,62 +54,66 @@ local function findPetData(petName)
 	return nil
 end
 
+local function extractAssetId(str)
+	if not str or str == "" then return nil end
+	return tostring(str):match("%d+")
+end
+
 local function getAssetImageUrl(assetId)
-	assetId = tostring(assetId):match("%d+")
+	if not assetId then return nil end
+	
 	local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetId.."&size=420x420&format=Png&isCircular=false"
+	
 	local success, response = pcall(function()
-		return HttpService:RequestAsync({
+		return request({
 			Url = url,
 			Method = "GET"
 		})
 	end)
-	if success and response.Success then
+	
+	if success and response and response.Success then
 		local data = HttpService:JSONDecode(response.Body)
-		if data and data.data and data.data[1] then
+		if data and data.data and data.data[1] and data.data[1].imageUrl then
 			return data.data[1].imageUrl
 		end
 	end
+	
 	return nil
 end
 
-local function makeRB(imageUrl)
-	local encoded = HttpService:UrlEncode(imageUrl)
-	return "https://images.weserv.nl/?url="
-		.. encoded
-		.. "&sat=2.5&con=1.3&blur=0.3&overlay=https://i.imgur.com/7s6R4Qx.png"
-end
-
 local function getPetImageUrl(petInfo, variant)
+	if not petInfo then return nil end
+	
 	local assetId = nil
 	
-	if petInfo then
-		if variant == "Golden" and petInfo.IconGold then
-			assetId = petInfo.IconGold:match("rbxassetid://(%d+)")
-		elseif petInfo.Icon then
-			assetId = petInfo.Icon:match("rbxassetid://(%d+)")
-		end
+	if variant == "Golden" and petInfo.IconGold then
+		assetId = extractAssetId(petInfo.IconGold)
+	elseif petInfo.Icon then
+		assetId = extractAssetId(petInfo.Icon)
 	end
 	
 	if not assetId then return nil end
 	
-	local imageUrl = getAssetImageUrl(assetId)
-	return imageUrl
+	return getAssetImageUrl(assetId)
 end
 
 local function getPlayerAvatarUrl(userId)
 	local url = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds="..userId.."&size=420x420&format=Png&isCircular=true"
+	
 	local success, response = pcall(function()
-		return HttpService:RequestAsync({
+		return request({
 			Url = url,
 			Method = "GET"
 		})
 	end)
-	if success and response.Success then
+	
+	if success and response and response.Success then
 		local data = HttpService:JSONDecode(response.Body)
-		if data and data.data and data.data[1] then
+		if data and data.data and data.data[1] and data.data[1].imageUrl then
 			return data.data[1].imageUrl
 		end
 	end
+	
 	return nil
 end
 
@@ -121,7 +124,7 @@ local function getUserIdFromUsername(username)
 	}
 	
 	local success, response = pcall(function()
-		return HttpService:RequestAsync({
+		return request({
 			Url = url,
 			Method = "POST",
 			Headers = {
@@ -131,7 +134,7 @@ local function getUserIdFromUsername(username)
 		})
 	end)
 	
-	if success and response.Success then
+	if success and response and response.Success then
 		local data = HttpService:JSONDecode(response.Body)
 		if data.data and data.data[1] then
 			return data.data[1].id
@@ -179,47 +182,30 @@ local function getModifiedChanceText(petName, variant)
 end
 
 local function sendWebhook(playerName, petName, variant, petInfo, userId)
+	print(string.format("[WEBHOOK] Starting for %s - %s (%s)", playerName, petName, variant))
+	
 	local imageUrl = nil
 	local avatarUrl = nil
 	
-	if petInfo then
+	print("[WEBHOOK] Loading pet image...")
+	repeat
 		imageUrl = getPetImageUrl(petInfo, variant)
-	end
-	
-	if userId then
-		avatarUrl = getPlayerAvatarUrl(userId)
-		local attempts = 0
-		while not avatarUrl and attempts < 10 do
+		if not imageUrl then
 			task.wait(0.5)
-			attempts = attempts + 1
-			avatarUrl = getPlayerAvatarUrl(userId)
 		end
-	end
+	until imageUrl
+	print("[WEBHOOK] Pet image loaded successfully")
 	
-	if not avatarUrl then
-		avatarUrl = "https://www.roblox.com/headshot-thumbnail/image?userId=1&width=420&height=420&format=png"
-	end
-	
-	local attempts = 0
-	while not imageUrl and attempts < 10 do
-		task.wait(0.5)
-		attempts = attempts + 1
-		if petInfo then
-			imageUrl = getPetImageUrl(petInfo, variant)
+	print("[WEBHOOK] Loading avatar...")
+	repeat
+		avatarUrl = getPlayerAvatarUrl(userId)
+		if not avatarUrl then
+			task.wait(0.5)
 		end
-	end
+	until avatarUrl
+	print("[WEBHOOK] Avatar loaded successfully")
 	
-	local finalImageUrl = nil
-	if imageUrl then
-		-- Only apply RB effect to Rainbow pets
-		if variant == "Rainbow" then
-			finalImageUrl = makeRB(imageUrl)
-		else
-			finalImageUrl = imageUrl
-		end
-	else
-		finalImageUrl = "https://i.imgur.com/placeholder.png"
-	end
+	local finalImageUrl = imageUrl
 	
 	local displayPetName = petName
 	local rarityText = "Unknown"
@@ -274,7 +260,7 @@ local function sendWebhook(playerName, petName, variant, petInfo, userId)
 	}
 	
 	local success, err = pcall(function()
-		HttpService:RequestAsync({
+		request({
 			Url = webhookUrl,
 			Method = "POST",
 			Headers = {
@@ -285,9 +271,9 @@ local function sendWebhook(playerName, petName, variant, petInfo, userId)
 	end)
 	
 	if success then
-		print(string.format("Sent webhook for %s - %s (%s)", playerName, displayPetName, variant))
+		print(string.format("[WEBHOOK] ✅ Sent successfully for %s - %s (%s)", playerName, displayPetName, variant))
 	else
-		warn("Failed to send webhook:", err)
+		print(string.format("[WEBHOOK] ❌ Failed to send for %s - %s (%s): %s", playerName, displayPetName, variant, err))
 	end
 end
 
@@ -299,7 +285,10 @@ TextChatService.OnIncomingMessage = function(message)
 		local loweredText = string.lower(text)
 		
 		local playerName = extractPlayerName(text)
-		if not playerName then return end
+		if not playerName then 
+			print("[SKIP] No player name found in message")
+			return 
+		end
 		
 		local detectedPet = nil
 		for petName in pairs(allowedPets) do
@@ -310,6 +299,7 @@ TextChatService.OnIncomingMessage = function(message)
 		end
 		
 		if not detectedPet then
+			print(string.format("[SKIP] No matching pet found in message from %s", playerName))
 			return
 		end
 		
@@ -323,7 +313,7 @@ TextChatService.OnIncomingMessage = function(message)
 		local messageKey = playerName .. "_" .. detectedPet .. "_" .. variant
 		
 		if sentMessages[messageKey] then
-			print(string.format("Duplicate detected, skipping: %s - %s (%s)", playerName, detectedPet, variant))
+			print(string.format("[SKIP] Duplicate detected for %s - %s (%s)", playerName, detectedPet, variant))
 			return
 		end
 		
@@ -336,20 +326,29 @@ TextChatService.OnIncomingMessage = function(message)
 			end
 		end
 		
-		print(string.format("Detected: %s said %s (%s)", playerName, detectedPet, variant))
+		print(string.format("[DETECT] %s hatched %s (%s)", playerName, detectedPet, variant))
 		
 		local petInfo = findPetData(detectedPet)
 		if not petInfo then
-			print("WARNING: No pet data found for " .. detectedPet .. ", sending with Unknown values")
+			print(string.format("[WARNING] No pet data found for %s, sending with Unknown values", detectedPet))
 		end
 		
-		local userId = getUserIdFromUsername(playerName)
+		print("[USERID] Fetching UserId for " .. playerName)
+		local userId = nil
+		local attempts = 0
+		while not userId and attempts < 5 do
+			task.wait(0.5)
+			attempts = attempts + 1
+			userId = getUserIdFromUsername(playerName)
+		end
+		
 		if not userId then
-			print("Could not find UserId for:", playerName)
+			print(string.format("[ERROR] Could not find UserId for %s after 5 attempts, sending without avatar", playerName))
 			sendWebhook(playerName, detectedPet, variant, petInfo, nil)
 			return
 		end
 		
+		print(string.format("[USERID] Found UserId %s for %s", userId, playerName))
 		sendWebhook(playerName, detectedPet, variant, petInfo, userId)
 	end)
 end
