@@ -1,199 +1,327 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local VirtualInputManager = game:GetService("VirtualInputManager")
+local PlayerGui = LocalPlayer.PlayerGui
 
-local Paper = require(ReplicatedStorage:WaitForChild("Paper"))
-local Stats = Paper.Stats
-local Network = Paper.Network
-local UniverseModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Universe)
-local RebirthModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Rebirths)
+local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
+local ItemsModule = require(ReplicatedStorage.Modules.Items)
+local GaragesModule = require(ReplicatedStorage.Modules["Garages-experiment1"])
+local Auctions = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
+local EnterQueue = Auctions:WaitForChild("EnterQueue")
+local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
+local PlaceBid = Auctions:WaitForChild("PlaceBid")
+local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
+local SellAllItems = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions"):WaitForChild("SellAllItems")
 
-repeat task.wait() until Stats.IsLoaded(LocalPlayer)
+local enterQueueTimestamps = {}
+local MAX_ENTERQUEUE_CALLS = 3
+local TIME_WINDOW = 60
 
-local Remotes = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes")
-local RemoteFunction = Remotes:WaitForChild("__remotefunction")
-local RemoteEvent = Remotes:WaitForChild("__remoteevent")
-
-local AutoTrain = Stats.Get("AutoTrain")
-local AutoThrow = Stats.Get("AutoThrow")
-local CurrentUniverse = Stats.Get("CurrentUniverse")
-
-local RebirthsEaster = require(ReplicatedStorage:WaitForChild("Tables").RebirthsEaster)
-local RebirthsUni1 = require(ReplicatedStorage:WaitForChild("Tables").Rebirths)
-local RebirthsUni2 = require(ReplicatedStorage:WaitForChild("Tables").RebirthsUni2)
-
-local function GetRebirthTable()
-    local universe = CurrentUniverse and CurrentUniverse.Value or 0
-    if universe == 0 then
-        return RebirthsEaster
-    elseif universe == 1 then
-        return RebirthsUni1
-    elseif universe == 2 then
-        return RebirthsUni2
+local function canCallEnterQueue()
+    local now = os.time()
+    for i = #enterQueueTimestamps, 1, -1 do
+        if now - enterQueueTimestamps[i] >= TIME_WINDOW then
+            table.remove(enterQueueTimestamps, i)
+        end
     end
-    return RebirthsEaster
+    return #enterQueueTimestamps < MAX_ENTERQUEUE_CALLS
 end
 
-local function GetCurrentMoney()
-    local universe = CurrentUniverse and CurrentUniverse.Value or 0
-    return UniverseModule.GetMoneyStat(LocalPlayer, universe)
+local function recordEnterQueueCall()
+    table.insert(enterQueueTimestamps, os.time())
 end
 
-local function GetRebirthSkips()
-    local universe = CurrentUniverse and CurrentUniverse.Value or 0
-    return UniverseModule.GetRebirthSkipsStat(LocalPlayer, universe)
+local function safeEnterQueue(garageId)
+    if canCallEnterQueue() then
+        recordEnterQueueCall()
+        return EnterQueue:InvokeServer(garageId)
+    else
+        print(string.format("⏰ Rate limit hit! Cannot call EnterQueue more than %d times per minute. Waiting...", MAX_ENTERQUEUE_CALLS))
+        return nil
+    end
 end
 
-local function GetRebirthCost(rebirthAmount)
-    local universe = CurrentUniverse and CurrentUniverse.Value or 0
-    return RebirthModule.GetRebirthCost(LocalPlayer, rebirthAmount, universe)
+local GARAGE_REQUIREMENTS = {
+    [1] = 150,
+    [2] = 500,
+}
+
+local currentBidData = nil
+local MIN_PROFIT = 6
+local inAuction = false
+local myCash = 0
+local currentGarageValue = 0
+local bidPlaced = false
+local processingItemsWon = false
+local currentGarageBudget = 0
+
+local function destroySpecificGuis()
+    local items = PlayerGui:FindFirstChild("ItemsWon")
+    if items then items:Destroy() end
+    local circle = PlayerGui:FindFirstChild("CircleAnimationUI")
+    if circle then circle:Destroy() end
 end
 
-local function GetMaxUnlockedRebirthIndex()
-    local skipsStat = GetRebirthSkips()
-    local skips = skipsStat and skipsStat.Value or 0
-    local universe = CurrentUniverse and CurrentUniverse.Value or 0
-    local extra = (universe == 2 or universe == 0) and 1 or 8
-    return skips + extra
+destroySpecificGuis()
+
+PlayerGui.ChildAdded:Connect(function(child)
+    if child.Name == "ItemsWon" or child.Name == "CircleAnimationUI" then
+        child:Destroy()
+    end
+end)
+
+local function tryClick(obj)
+    if obj and (obj:IsA("TextButton") or obj:IsA("ImageButton")) then
+        pcall(function() obj:Activate() end)
+        if getconnections then
+            for _, v in pairs(getconnections(obj.MouseButton1Click)) do
+                pcall(function() v:Fire() end)
+            end
+        end
+    end
 end
 
-local function GetBestAffordableRebirth()
-    local moneyStat = GetCurrentMoney()
-    local currentMoney = moneyStat and moneyStat.Value or 0
-    local rebirthTable = GetRebirthTable()
-    local maxUnlocked = GetMaxUnlockedRebirthIndex()
-    local bestAmount = 0
-    local bestIndex = 0
+local function checkForButton()
+    local itemsWon = PlayerGui:FindFirstChild("ItemsWon", true)
+    if itemsWon then
+        local button = itemsWon:FindFirstChild("Button", true)
+        if button then
+            tryClick(button)
+        end
+    end
+end
+
+checkForButton()
+
+PlayerGui.DescendantAdded:Connect(function(obj)
+    if obj.Name == "Button" then
+        task.wait(0.5)
+        tryClick(obj)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(30)
+        checkForButton()
+    end
+end)
+
+local function updateCash()
+    local success, data = pcall(function() return DataEvent:InvokeServer() end)
+    if success and data and data.Cash then
+        myCash = tonumber(data.Cash) or 0
+    end
+end
+
+local function sellAllItems()
+    processingItemsWon = true
+    task.wait(1)
+
+    local success, data = pcall(function()
+        return DataEvent:InvokeServer()
+    end)
+
+    if not success or not data then
+        print("❌ GetAll failed")
+        processingItemsWon = false
+        return
+    end
+
+    local itemsWon = data.ItemsWon
+    if not itemsWon or next(itemsWon) == nil then
+        print("📦 No items won")
+        processingItemsWon = false
+        return
+    end
+
+    local allGuids = {}
+
+    for guid, itemData in pairs(itemsWon) do
+        table.insert(allGuids, guid)
+    end
+
+    print("📦 Found " .. #allGuids .. " items → selling ALL")
+
+    task.wait(1)
+
+    local sellSuccess, sellResult = pcall(function()
+        return SellAllItems:InvokeServer("Default", allGuids)
+    end)
+
+    if sellSuccess and sellResult then
+        print("✅ Sold ALL items successfully")
+    else
+        print("❌ Sell failed")
+    end
+
+    print("✅ Items won processing complete")
+    task.wait(2)
+    processingItemsWon = false
+end
+
+UpdateCurrentBid.OnClientEvent:Connect(function(data)
+    if data then
+        currentBidData = data
+        if inAuction and currentGarageValue > 0 then
+            print("💰 Bid Update: $" .. tostring(data.nextBid) .. " | " .. tostring(data.player and (data.player.Name or "NPC") or "None"))
+            
+            if data.player ~= LocalPlayer and bidPlaced then
+                local nextBid = data.nextBid
+                local profit = currentGarageValue - nextBid
+                local profitPercent = (profit / currentGarageValue) * 100
+                
+                if profitPercent >= MIN_PROFIT and nextBid <= myCash then
+                    print("⚡ Counter-bidding: $" .. nextBid)
+                    pcall(function() PlaceBid:InvokeServer(nextBid) end)
+                end
+            end
+        end
+    end
+end)
+
+local function getGarageEstimatedValue(garageData)
+    return garageData.AuctionBudget or 0
+end
+
+local function getBestAffordableGarage()
+    updateCash()
+    local bestId = "1"
+    local bestValue = 0
     
-    for index, amount in ipairs(rebirthTable) do
-        if index <= maxUnlocked then
-            local cost = GetRebirthCost(amount)
-            if cost <= currentMoney and amount > bestAmount then
-                bestAmount = amount
-                bestIndex = index
+    for id, data in pairs(GaragesModule) do
+        if data.Type == "Cash" then
+            local requiredCash = GARAGE_REQUIREMENTS[tonumber(id)]
+            if requiredCash and myCash >= requiredCash then
+                local estimatedValue = getGarageEstimatedValue(data)
+                if estimatedValue > bestValue then
+                    bestValue = estimatedValue
+                    bestId = id
+                end
             end
         end
     end
     
-    return bestAmount, bestIndex
+    return bestId
 end
 
-local function PerformRebirth(rebirthIndex)
-    pcall(function()
-        local args = { "Rebirth", rebirthIndex }
-        RemoteFunction:InvokeServer(unpack(args))
-        print("[Rebirth] Performed rebirth with index:", rebirthIndex)
-    end)
-end
-
-local function AutoRebirthBest()
-    local bestAmount, bestIndex = GetBestAffordableRebirth()
-    if bestIndex > 0 then
-        print(string.format("[Rebirth] Best affordable: %s (index %s)", bestAmount, bestIndex))
-        PerformRebirth(bestIndex)
-        return true
-    else
-        print("[Rebirth] Cannot afford any unlocked rebirth")
-        return false
-    end
-end
-
-local function StopTraining()
-    pcall(function()
-        local args = { "Stop Training" }
-        RemoteEvent:FireServer(unpack(args))
-        print("[AutoTrain] Stopped training")
-    end)
-end
-
-local function DisableAutoTrain()
-    if AutoTrain and AutoTrain.Value then
-        Network.FireServer("Toggle Setting", "AutoTrain")
-        print("[AutoTrain] Disabled")
-    end
-    StopTraining()
-end
-
-local function EnableAutoTrain()
-    if AutoTrain and not AutoTrain.Value then
-        Network.FireServer("Toggle Setting", "AutoTrain")
-        print("[AutoTrain] Enabled")
-    end
-end
-
-local function EnableAutoThrow()
-    if AutoThrow and not AutoThrow.Value then
-        Network.FireServer("Toggle Setting", "AutoThrow")
-        print("[AutoThrow] Enabled")
-    end
-end
-
-local function TrainOnly()
-    print("[Cycle] Starting training phase (10 seconds)...")
-    EnableAutoTrain()
-    for i = 10, 1, -1 do
+local function joinAuction()
+    while true do
+        if not processingItemsWon and not inAuction then
+            local garageId = getBestAffordableGarage()
+            local requiredCash = GARAGE_REQUIREMENTS[tonumber(garageId)] or 0
+            local garageData = GaragesModule[garageId]
+            if garageData then
+                print("🎯 Entering: " .. garageData.Name .. " (Required: $" .. requiredCash .. ", Est: $" .. getGarageEstimatedValue(garageData) .. ")")
+                safeEnterQueue(garageId)
+            end
+        end
         task.wait(1)
     end
-    print("[Cycle] Training phase complete")
 end
 
-local function ThrowOnly()
-    print("[Cycle] Starting throwing phase (10 seconds)...")
-    DisableAutoTrain()
-    EnableAutoThrow()
-    for i = 10, 1, -1 do
-        task.wait(1)
-    end
-    print("[Cycle] Throwing phase complete")
-end
+coroutine.wrap(joinAuction)()
 
-local actions = {
-    { args = {"Upgrade", "More Rebirth Skips"} },
-    { args = {"Unlock Next World"} },
-    { args = {"Buy Next Object"} }
-}
-
-local lastActionIndex = nil
-
-local function fireRandomAction()
-    local availableIndices = {}
+AuctionsFolder.ChildAdded:Connect(function(garage)
+    if processingItemsWon then return end
     
-    for i = 1, #actions do
-        if i ~= lastActionIndex then
-            table.insert(availableIndices, i)
+    inAuction = true
+    currentBidData = nil
+    bidPlaced = false
+    currentGarageBudget = 0
+    local garageName = garage.Name
+    local garageId = nil
+    
+    for id, data in pairs(GaragesModule) do
+        if data.Name == garageName then
+            garageId = id
+            currentGarageBudget = GARAGE_REQUIREMENTS[tonumber(id)] or 0
+            break
         end
     end
     
-    local randomIndex = availableIndices[math.random(1, #availableIndices)]
-    local selectedAction = actions[randomIndex]
+    print("\n=== " .. garageName .. " (Required: $" .. currentGarageBudget .. ") ===")
     
-    pcall(function()
-        RemoteFunction:InvokeServer(unpack(selectedAction.args))
-        print("[Action] Fired:", unpack(selectedAction.args))
-    end)
+    local itemsFolder = garage:WaitForChild("Items", 5)
+    if not itemsFolder then
+        print("❌ No items")
+        return
+    end
     
-    lastActionIndex = randomIndex
-end
-
-task.spawn(function()
-    while true do
-        task.wait(10)
-        pcall(AutoRebirthBest)
+    task.wait(3)
+    
+    currentGarageValue = 0
+    local items = itemsFolder:GetChildren()
+    
+    for _, itemInstance in ipairs(items) do
+        local itemId = itemInstance.Name
+        local itemData = ItemsModule[itemId] or ItemsModule[tonumber(itemId)]
+        
+        if itemData and type(itemData) == "table" and itemData.Price then
+            currentGarageValue = currentGarageValue + (tonumber(itemData.Price) or 0)
+        end
+    end
+    
+    if currentGarageValue == 0 then
+        print("❌ Value: $0")
+        return
+    end
+    
+    print("💰 Value: $" .. currentGarageValue)
+    
+    local timeout = 0
+    while not currentBidData and timeout < 8 do
+        task.wait(0.5)
+        timeout = timeout + 0.5
+    end
+    
+    if not currentBidData then
+        print("❌ No bid data")
+        return
+    end
+    
+    local nextBid = currentBidData.nextBid
+    local profit = currentGarageValue - nextBid
+    local profitPercent = (profit / currentGarageValue) * 100
+    local worth = profitPercent >= MIN_PROFIT
+    local canAfford = nextBid <= myCash
+    
+    print("💰 Next: $" .. nextBid)
+    print("📊 Profit: $" .. profit .. " (" .. string.format("%.2f", profitPercent) .. "%)")
+    print(worth and "✅ WORTH" or "❌ NOT WORTH")
+    print(canAfford and "✅ Can afford" or "❌ Can't afford")
+    
+    if currentBidData.player == LocalPlayer then
+        print("👑 Highest bidder")
+        bidPlaced = true
+        return
+    end
+    
+    if worth and canAfford then
+        print("⚡ Bidding...")
+        local success = pcall(function()
+            return PlaceBid:InvokeServer(nextBid)
+        end)
+        if success then
+            print("✅ Bid placed")
+            bidPlaced = true
+        else
+            print("❌ Bid failed")
+        end
     end
 end)
 
-task.spawn(function()
-    fireRandomAction()
-    while true do
-        task.wait(5)
-        fireRandomAction()
+AuctionsFolder.ChildRemoved:Connect(function()
+    if #AuctionsFolder:GetChildren() == 0 then
+        print("\n=== Left ===\n")
+        inAuction = false
+        currentBidData = nil
+        currentGarageValue = 0
+        bidPlaced = false
+        task.wait(2)
+        sellAllItems()
     end
 end)
 
-print("[Farm] Starting loop: Train 10s -> Throw 10s")
-
-while true do
-    TrainOnly()
-    ThrowOnly()
-end
+print("🚀 Started - " .. MIN_PROFIT .. "% profit (Only garages 1 and 2 - SELLS ALL items)")
+print("⏰ EnterQueue limited to " .. MAX_ENTERQUEUE_CALLS .. " calls per " .. TIME_WINDOW .. " seconds")
