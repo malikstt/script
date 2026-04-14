@@ -1,176 +1,378 @@
-local ReplicatedStorage=game:GetService("ReplicatedStorage")
-local Players=game:GetService("Players")
-local LocalPlayer=Players.LocalPlayer
-local GetAll=ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
+-- Anti-Kick Protection
+task.spawn(function()
+    local player = game:GetService("Players").LocalPlayer
 
-local ScreenGui=Instance.new("ScreenGui",game.CoreGui)
-ScreenGui.Name="GetAllListenerUI"
+    local runningScript = player.PlayerScripts:FindFirstChild("KickPrevention")  
+    if runningScript then  
+        runningScript:Destroy()  
+    end  
 
-local Frame=Instance.new("Frame",ScreenGui)
-Frame.Size=UDim2.new(0,280,0,220)
-Frame.Position=UDim2.new(1,-290,0,10)
-Frame.BackgroundColor3=Color3.fromRGB(25,25,25)
+    local starterCopy = game:GetService("StarterPlayer").StarterPlayerScripts:FindFirstChild("KickPrevention")  
+    if starterCopy then  
+        starterCopy:Destroy()  
+    end  
 
-local Toggle=Instance.new("TextButton",Frame)
-Toggle.Size=UDim2.new(1,0,0,30)
-Toggle.Text="GetAll Listener: OFF"
-Toggle.BackgroundColor3=Color3.fromRGB(40,40,40)
-Toggle.TextColor3=Color3.new(1,1,1)
+    for _, x in pairs(getconnections(player.Idled)) do  
+        x:Disable()  
+    end  
 
-local OutputScroll=Instance.new("ScrollingFrame",Frame)
-OutputScroll.Size=UDim2.new(1,-10,1,-70)
-OutputScroll.Position=UDim2.new(0,5,0,35)
-OutputScroll.CanvasSize=UDim2.new(0,0,0,0)
-OutputScroll.ScrollBarThickness=6
-OutputScroll.BackgroundTransparency=1
+    print("KickPrevention destroyed and Idled connections disabled")
+end)
 
-local Layout=Instance.new("UIListLayout",OutputScroll)
-Layout.SortOrder=Enum.SortOrder.LayoutOrder
-Layout.Padding=UDim.new(0,2)
-
-local CopyAllBtn=Instance.new("TextButton",Frame)
-CopyAllBtn.Size=UDim2.new(1,0,0,25)
-CopyAllBtn.Position=UDim2.new(0,0,1,-30)
-CopyAllBtn.Text="Copy Everything"
-CopyAllBtn.BackgroundColor3=Color3.fromRGB(50,50,50)
-CopyAllBtn.TextColor3=Color3.new(1,1,1)
-
-local ErrorFrame=Instance.new("Frame",ScreenGui)
-ErrorFrame.Size=UDim2.new(0,280,0,180)
-ErrorFrame.Position=UDim2.new(1,-290,0,240)
-ErrorFrame.BackgroundColor3=Color3.fromRGB(35,20,20)
-
-local ErrorTitle=Instance.new("TextLabel",ErrorFrame)
-ErrorTitle.Size=UDim2.new(1,0,0,25)
-ErrorTitle.Text="Errors"
-ErrorTitle.BackgroundTransparency=1
-ErrorTitle.TextColor3=Color3.fromRGB(255,120,120)
-
-local ErrorScroll=Instance.new("ScrollingFrame",ErrorFrame)
-ErrorScroll.Size=UDim2.new(1,-10,1,-60)
-ErrorScroll.Position=UDim2.new(0,5,0,25)
-ErrorScroll.CanvasSize=UDim2.new(0,0,0,0)
-ErrorScroll.ScrollBarThickness=6
-ErrorScroll.BackgroundTransparency=1
-
-local ErrorLayout=Instance.new("UIListLayout",ErrorScroll)
-ErrorLayout.SortOrder=Enum.SortOrder.LayoutOrder
-ErrorLayout.Padding=UDim.new(0,2)
-
-local CopyErrorBtn=Instance.new("TextButton",ErrorFrame)
-CopyErrorBtn.Size=UDim2.new(1,0,0,25)
-CopyErrorBtn.Position=UDim2.new(0,0,1,-25)
-CopyErrorBtn.Text="Copy Everything"
-CopyErrorBtn.BackgroundColor3=Color3.fromRGB(60,30,30)
-CopyErrorBtn.TextColor3=Color3.new(1,1,1)
-
-local running=false
-local lastData={}
-local dataLogs={}
-local errorLogs={}
-local MAX_LOGS=60
-
-local function updateCanvas(scroll,layout)
-	task.wait()
-	scroll.CanvasSize=UDim2.new(0,0,0,layout.AbsoluteContentSize.Y)
-	scroll.CanvasPosition=Vector2.new(0,layout.AbsoluteContentSize.Y)
+-- Hide UI Elements (instead of destroying)
+local function hideUIElements()
+    -- Hide all ScreenGuis
+    for _, gui in pairs(game:GetService("CoreGui"):GetChildren()) do
+        if gui:IsA("ScreenGui") then
+            gui.Enabled = false
+        end
+    end
+    
+    -- Hide Roblox icon, chat icon, and close icon (CoreGui elements)
+    local coreGui = game:GetService("CoreGui")
+    local elementsToHide = {
+        "RobloxGui", -- Contains roblox icon
+        "Chat",      -- Chat icon
+        "PlayerList", -- Player list
+        "NotificationGui", -- Notifications
+        "TopBarContainer" -- Contains close/minimize buttons
+    }
+    
+    for _, elementName in pairs(elementsToHide) do
+        local element = coreGui:FindFirstChild(elementName)
+        if element then
+            if element:IsA("ScreenGui") then
+                element.Enabled = false
+            else
+                element.Visible = false
+            end
+        end
+    end
+    
+    -- Alternative: Try to hide specific buttons
+    local starterGui = game:GetService("StarterGui")
+    starterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, false)
+    starterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
+    starterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+    starterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Health, false)
+    
+    print("UI elements hidden")
 end
 
-local function addLog(scroll,layout,logsTable,text,color)
-	local label=Instance.new("TextLabel")
-	label.Size=UDim2.new(1,-5,0,18)
-	label.BackgroundTransparency=1
-	label.TextXAlignment=Enum.TextXAlignment.Left
-	label.Font=Enum.Font.Code
-	label.TextSize=14
-	label.TextColor3=color or Color3.new(1,1,1)
-	label.Text=text
-	label.Parent=scroll
-	table.insert(logsTable,text)
-	if #logsTable>MAX_LOGS then
-		table.remove(logsTable,1)
-		for _,v in ipairs(scroll:GetChildren()) do
-			if v:IsA("TextLabel") then v:Destroy() break end
-		end
-	end
-	updateCanvas(scroll,layout)
+-- Destroy existing ScreenGuis in PlayerGui
+local player = game:GetService("Players").LocalPlayer
+for _, gui in pairs(player.PlayerGui:GetChildren()) do
+    if gui:IsA("ScreenGui") then
+        gui:Destroy()
+    end
 end
 
-local function logData(t)addLog(OutputScroll,Layout,dataLogs,t,Color3.new(1,1,1))end
-local function logError(t)addLog(ErrorScroll,ErrorLayout,errorLogs,t,Color3.fromRGB(255,120,120))end
+-- Call the hide function
+hideUIElements()
 
-local function flatten(tbl,path,result,visited)
-	visited=visited or{}
-	if visited[tbl] then return end
-	visited[tbl]=true
-	for k,v in pairs(tbl) do
-		local newPath=path.."."..tostring(k)
-		if type(v)=="table" then
-			flatten(v,newPath,result,visited)
-		else
-			result[newPath]=tostring(v)
-		end
-	end
+-- Create Status Display UI
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+
+local GetAll = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
+local EndTutorial = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Tutorial"):WaitForChild("EndTutorial")
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "StatusDisplay"
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(1, 0, 1, 0)
+mainFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+mainFrame.BackgroundTransparency = 0
+mainFrame.Parent = screenGui
+
+local textContainer = Instance.new("Frame")
+textContainer.Name = "TextContainer"
+textContainer.Size = UDim2.new(1, 0, 1, 0)
+textContainer.BackgroundTransparency = 1
+textContainer.Parent = mainFrame
+
+local function getFontSize()
+    local viewportY = workspace.CurrentCamera.ViewportSize.Y
+    if viewportY <= 200 then
+        return 11
+    elseif viewportY <= 300 then
+        return 14
+    else
+        return 18
+    end
 end
 
-local function getFlat()
-	local success,data=pcall(function()
-		return GetAll:InvokeServer()
-	end)
-	if not success then logError("🔴 Invoke Failed: "..tostring(data)) return nil end
-	if not data then logError("🟠 Returned Nil") return nil end
-	if type(data)~="table" then logError("🟡 Invalid Type: "..typeof(data)) return nil end
-	local flat={}
-	flatten(data,"Result",flat)
-	return flat
+local usernameLabel = Instance.new("TextLabel")
+usernameLabel.Size = UDim2.new(1, 0, 0, 20)
+usernameLabel.Position = UDim2.new(0, 0, 0.05, 0)
+usernameLabel.BackgroundTransparency = 1
+usernameLabel.Text = "Username: "
+usernameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+usernameLabel.TextSize = getFontSize()
+usernameLabel.Font = Enum.Font.GothamBold
+usernameLabel.TextXAlignment = Enum.TextXAlignment.Center
+usernameLabel.TextYAlignment = Enum.TextYAlignment.Center
+usernameLabel.Parent = textContainer
+
+local cashLabel = Instance.new("TextLabel")
+cashLabel.Size = UDim2.new(1, 0, 0, 20)
+cashLabel.Position = UDim2.new(0, 0, 0.25, 0)
+cashLabel.BackgroundTransparency = 1
+cashLabel.Text = "Cash: "
+cashLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+cashLabel.TextSize = getFontSize()
+cashLabel.Font = Enum.Font.GothamBold
+cashLabel.TextXAlignment = Enum.TextXAlignment.Center
+cashLabel.TextYAlignment = Enum.TextYAlignment.Center
+cashLabel.Parent = textContainer
+
+local gemsLabel = Instance.new("TextLabel")
+gemsLabel.Size = UDim2.new(1, 0, 0, 20)
+gemsLabel.Position = UDim2.new(0, 0, 0.42, 0)
+gemsLabel.BackgroundTransparency = 1
+gemsLabel.Text = "Gems: "
+gemsLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+gemsLabel.TextSize = getFontSize()
+gemsLabel.Font = Enum.Font.GothamBold
+gemsLabel.TextXAlignment = Enum.TextXAlignment.Center
+gemsLabel.TextYAlignment = Enum.TextYAlignment.Center
+gemsLabel.Parent = textContainer
+
+local tutorialLabel = Instance.new("TextLabel")
+tutorialLabel.Size = UDim2.new(1, 0, 0, 20)
+tutorialLabel.Position = UDim2.new(0, 0, 0.59, 0)
+tutorialLabel.BackgroundTransparency = 1
+tutorialLabel.Text = "Tutorial: "
+tutorialLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+tutorialLabel.TextSize = getFontSize()
+tutorialLabel.Font = Enum.Font.GothamBold
+tutorialLabel.TextXAlignment = Enum.TextXAlignment.Center
+tutorialLabel.TextYAlignment = Enum.TextYAlignment.Center
+tutorialLabel.Parent = textContainer
+
+local timerLabel = Instance.new("TextLabel")
+timerLabel.Size = UDim2.new(1, 0, 0, 20)
+timerLabel.Position = UDim2.new(0, 0, 0.76, 0)
+timerLabel.BackgroundTransparency = 1
+timerLabel.Text = "Runtime: 00h 00m 00s"
+timerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+timerLabel.TextSize = getFontSize() + 1
+timerLabel.Font = Enum.Font.GothamBold
+timerLabel.TextXAlignment = Enum.TextXAlignment.Center
+timerLabel.TextYAlignment = Enum.TextYAlignment.Center
+timerLabel.Parent = textContainer
+
+local startTime = tick()
+local runtimeTimer = nil
+local farmingScriptRunning = false
+
+local function updateTimer()
+    while runtimeTimer do
+        local elapsed = tick() - startTime
+        local hours = math.floor(elapsed / 3600)
+        local minutes = math.floor((elapsed % 3600) / 60)
+        local seconds = math.floor(elapsed % 60)
+        timerLabel.Text = string.format("Runtime: %02dh %02dm %02ds", hours, minutes, seconds)
+        task.wait(1)
+    end
 end
 
-local function compare(old,new)
-	local changes={}
-	for path,value in pairs(new) do
-		if not old[path] then
-			table.insert(changes,"🟢 NEW: "..path.." = "..value)
-		elseif old[path]~=value then
-			table.insert(changes,"🟡 CHANGED: "..path.." = "..value)
-		end
-	end
-	for path in pairs(old) do
-		if not new[path] then
-			table.insert(changes,"🔴 REMOVED: "..path)
-		end
-	end
-	return changes
+local function updateBackgroundColor(cashAmount)
+    if cashAmount >= 500000 then
+        mainFrame.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+        mainFrame.BackgroundTransparency = 0
+    else
+        mainFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+        mainFrame.BackgroundTransparency = 0
+    end
 end
+
+local function checkAndUpdate()
+    local success, data = pcall(function()
+        return GetAll:InvokeServer()
+    end)
+
+    if success and data then  
+        local tutorialStatus = data.CompletedTutorial  
+        local playerCash = data.Cash or 0  
+        local playerGems = data.Gems or 0  
+        local playerName = LocalPlayer.Name  
+        
+        usernameLabel.Text = "Username: " .. playerName  
+        cashLabel.Text = "Cash: $" .. string.format("%.2f", playerCash)  
+        gemsLabel.Text = "Gems: " .. string.format("%.0f", playerGems)  
+        tutorialLabel.Text = "Tutorial: " .. tostring(tutorialStatus)  
+        
+        updateBackgroundColor(playerCash)  
+        
+        if tutorialStatus == false then  
+            tutorialLabel.Text = "Tutorial: COMPLETING..."  
+            task.wait(0.5)  
+            
+            local endSuccess = pcall(function()  
+                EndTutorial:FireServer()  
+            end)  
+            
+            if endSuccess then  
+                tutorialLabel.Text = "Tutorial: COMPLETED"  
+                tutorialLabel.TextColor3 = Color3.fromRGB(0, 255, 0)  
+                
+                task.wait(1)  
+                local newData = GetAll:InvokeServer()  
+                if newData then  
+                    cashLabel.Text = "Cash: $" .. string.format("%.2f", newData.Cash or 0)  
+                    gemsLabel.Text = "Gems: " .. string.format("%.0f", newData.Gems or 0)  
+                    tutorialLabel.Text = "Tutorial: " .. tostring(newData.CompletedTutorial)  
+                    updateBackgroundColor(newData.Cash or 0)  
+                end  
+            else  
+                tutorialLabel.Text = "Tutorial: FAILED"  
+                tutorialLabel.TextColor3 = Color3.fromRGB(255, 0, 0)  
+            end  
+        elseif tutorialStatus == true then  
+            tutorialLabel.TextColor3 = Color3.fromRGB(0, 255, 0)  
+        end  
+        
+        return playerCash  
+    else  
+        usernameLabel.Text = "Username: " .. LocalPlayer.Name  
+        cashLabel.Text = "Cash: ERROR"  
+        gemsLabel.Text = "Gems: ERROR"  
+        tutorialLabel.Text = "Tutorial: ERROR"  
+        return 0  
+    end
+end
+
+local function startFarmingScript()
+    if farmingScriptRunning then return end
+    farmingScriptRunning = true
+
+    print("Starting farming script...")  
+    
+    local Workspace = game:GetService("Workspace")  
+    local VirtualUser = game:GetService("VirtualUser")  
+    
+    local SHELVES = {  
+        {Id = "5", SizeX = 21.08, SizeZ = 18, Max = math.huge},  
+        {Id = "4", SizeX = 14, SizeZ = 11, Max = 0}  
+    }  
+    local FLOOR = 1  
+    local InsertFurniture = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Shop"):WaitForChild("InsertFurniture")  
+    local RemoveFurniture = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Shop"):WaitForChild("RemoveFurniture")  
+    
+    local nsv = LocalPlayer:WaitForChild("NonSaveVars")  
+    local own = nsv:WaitForChild("OwnsPlot")  
+    repeat task.wait() until own.Value and own.Value ~= 0  
+    
+    local plot = Workspace:WaitForChild("Plots"):WaitForChild(tostring(own.Value))  
+    local canvas = plot:WaitForChild("Interior"):WaitForChild("Shop1"):WaitForChild("Canvas")  
+    
+    local function generateGridPositions(shelf)  
+        local positions = {}  
+        local fitX = math.floor(canvas.Size.X / shelf.SizeX)  
+        local fitZ = math.floor(canvas.Size.Z / shelf.SizeZ)  
+        local startX = canvas.Position.X - canvas.Size.X/2 + shelf.SizeX/2  
+        local startZ = canvas.Position.Z - canvas.Size.Z/2 + shelf.SizeZ/2  
+        local y = canvas.Position.Y + canvas.Size.Y/2  
+        for x = 0, fitX - 1 do  
+            for z = 0, fitZ - 1 do  
+                table.insert(positions, Vector3.new(startX + x * shelf.SizeX, y, startZ + z * shelf.SizeZ))  
+            end  
+        end  
+        return positions  
+    end  
+    
+    local function placeShelves()  
+        local totalPlaced = 0  
+        for _, shelf in ipairs(SHELVES) do  
+            local positions = generateGridPositions(shelf)  
+            local maxToPlace = math.min(shelf.Max, #positions)  
+            local placedCount = 0  
+            for i = 1, maxToPlace do  
+                local pos = positions[i]  
+                local success = false  
+                for attempt = 1, 3 do  
+                    success = pcall(function()  
+                        InsertFurniture:InvokeServer({Id = shelf.Id, CFrame = CFrame.new(pos), Floor = FLOOR})  
+                    end)  
+                    if success then  
+                        placedCount = placedCount + 1  
+                        totalPlaced = totalPlaced + 1  
+                        task.wait(0.1)  
+                        break  
+                    else  
+                        task.wait(0.1)  
+                    end  
+                end  
+            end  
+            print(string.format("Placed %d/%d of ID %s", placedCount, maxToPlace, shelf.Id))  
+        end  
+        return totalPlaced  
+    end  
+    
+    task.spawn(function()  
+        task.wait(1)  
+        for _, x in pairs(getconnections(LocalPlayer.Idled)) do  
+            x:Disable()  
+        end  
+        LocalPlayer.Idled:Connect(function()  
+            VirtualUser:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)  
+            task.wait(1)  
+            VirtualUser:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)  
+        end)  
+    end)  
+    
+    -- Removed amgs loading
+    
+    task.spawn(function()  
+        pcall(function()  
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/optimization"))()  
+        end)  
+    end)  
+    
+    task.spawn(function()  
+        pcall(function()  
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/sab"))()  
+        end)  
+    end)  
+    
+    task.spawn(function()  
+        pcall(function()  
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))()  
+        end)  
+    end)  
+    
+    task.spawn(function()  
+        placeShelves()  
+    end)
+end
+
+repeat task.wait() until LocalPlayer.Character and LocalPlayer.Character.Parent
+
+local playerCash = checkAndUpdate()
+
+if playerCash < 500000 then
+    startFarmingScript()
+else
+    print("Cash is 500k or more, farming script not started")
+end
+
+runtimeTimer = true
+task.spawn(updateTimer)
 
 task.spawn(function()
-	while true do
-		if not running then task.wait(0.5) continue end
-		task.wait(1)
-		local newData=getFlat()
-		if newData then
-			local changes=compare(lastData,newData)
-			for _,line in ipairs(changes) do logData(line) end
-			lastData=newData
-		end
-	end
-end)
-
-Toggle.MouseButton1Click:Connect(function()
-	running=not running
-	Toggle.Text="GetAll Listener: "..(running and"ON"or"OFF")
-	Toggle.TextColor3=running and Color3.fromRGB(0,255,0)or Color3.new(1,1,1)
-	if running then
-		lastData=getFlat()or{}
-		logData("▶ Started listening...")
-	else
-		logData("⏸ Paused")
-	end
-end)
-
-CopyAllBtn.MouseButton1Click:Connect(function()
-	pcall(function()setclipboard(table.concat(dataLogs,"\n"))end)
-end)
-
-CopyErrorBtn.MouseButton1Click:Connect(function()
-	pcall(function()setclipboard(table.concat(errorLogs,"\n"))end)
+    while true do
+        task.wait(5)
+        local newCash = checkAndUpdate()
+        if newCash < 500000 and not farmingScriptRunning then
+            startFarmingScript()
+        end
+    end
 end)
