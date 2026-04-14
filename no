@@ -36,7 +36,6 @@ local function safeEnterQueue(garageId)
         recordEnterQueueCall()
         return EnterQueue:InvokeServer(garageId)
     else
-        print(string.format("⏰ Rate limit hit! Cannot call EnterQueue more than %d times per minute. Waiting...", MAX_ENTERQUEUE_CALLS))
         return nil
     end
 end
@@ -131,14 +130,12 @@ local function sellAllItems()
     end)
 
     if not success or not data then
-        print("❌ GetAll failed")
         processingItemsWon = false
         return
     end
 
     local itemsWon = data.ItemsWon
     if not itemsWon or next(itemsWon) == nil then
-        print("📦 No items won")
         processingItemsWon = false
         return
     end
@@ -149,21 +146,12 @@ local function sellAllItems()
         table.insert(allGuids, guid)
     end
 
-    print("📦 Found " .. #allGuids .. " items → selling ALL")
-
     task.wait(1)
 
     local sellSuccess, sellResult = pcall(function()
         return SellAllItems:InvokeServer("Default", allGuids)
     end)
 
-    if sellSuccess and sellResult then
-        print("✅ Sold ALL items successfully")
-    else
-        print("❌ Sell failed")
-    end
-
-    print("✅ Items won processing complete")
     task.wait(2)
     processingItemsWon = false
 end
@@ -172,15 +160,12 @@ UpdateCurrentBid.OnClientEvent:Connect(function(data)
     if data then
         currentBidData = data
         if inAuction and currentGarageValue > 0 then
-            print("💰 Bid Update: $" .. tostring(data.nextBid) .. " | " .. tostring(data.player and (data.player.Name or "NPC") or "None"))
-            
             if data.player ~= LocalPlayer and bidPlaced then
                 local nextBid = data.nextBid
                 local profit = currentGarageValue - nextBid
                 local profitPercent = (profit / currentGarageValue) * 100
                 
                 if profitPercent >= MIN_PROFIT and nextBid <= myCash then
-                    print("⚡ Counter-bidding: $" .. nextBid)
                     pcall(function() PlaceBid:InvokeServer(nextBid) end)
                 end
             end
@@ -217,12 +202,7 @@ local function joinAuction()
     while true do
         if not processingItemsWon and not inAuction then
             local garageId = getBestAffordableGarage()
-            local requiredCash = GARAGE_REQUIREMENTS[tonumber(garageId)] or 0
-            local garageData = GaragesModule[garageId]
-            if garageData then
-                print("🎯 Entering: " .. garageData.Name .. " (Required: $" .. requiredCash .. ", Est: $" .. getGarageEstimatedValue(garageData) .. ")")
-                safeEnterQueue(garageId)
-            end
+            safeEnterQueue(garageId)
         end
         task.wait(1)
     end
@@ -248,11 +228,8 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
         end
     end
     
-    print("\n=== " .. garageName .. " (Required: $" .. currentGarageBudget .. ") ===")
-    
     local itemsFolder = garage:WaitForChild("Items", 5)
     if not itemsFolder then
-        print("❌ No items")
         return
     end
     
@@ -271,11 +248,8 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     end
     
     if currentGarageValue == 0 then
-        print("❌ Value: $0")
         return
     end
-    
-    print("💰 Value: $" .. currentGarageValue)
     
     local timeout = 0
     while not currentBidData and timeout < 8 do
@@ -284,7 +258,6 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     end
     
     if not currentBidData then
-        print("❌ No bid data")
         return
     end
     
@@ -294,34 +267,21 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
     local worth = profitPercent >= MIN_PROFIT
     local canAfford = nextBid <= myCash
     
-    print("💰 Next: $" .. nextBid)
-    print("📊 Profit: $" .. profit .. " (" .. string.format("%.2f", profitPercent) .. "%)")
-    print(worth and "✅ WORTH" or "❌ NOT WORTH")
-    print(canAfford and "✅ Can afford" or "❌ Can't afford")
-    
     if currentBidData.player == LocalPlayer then
-        print("👑 Highest bidder")
         bidPlaced = true
         return
     end
     
     if worth and canAfford then
-        print("⚡ Bidding...")
-        local success = pcall(function()
+        pcall(function()
             return PlaceBid:InvokeServer(nextBid)
         end)
-        if success then
-            print("✅ Bid placed")
-            bidPlaced = true
-        else
-            print("❌ Bid failed")
-        end
+        bidPlaced = true
     end
 end)
 
 AuctionsFolder.ChildRemoved:Connect(function()
     if #AuctionsFolder:GetChildren() == 0 then
-        print("\n=== Left ===\n")
         inAuction = false
         currentBidData = nil
         currentGarageValue = 0
@@ -330,6 +290,3 @@ AuctionsFolder.ChildRemoved:Connect(function()
         sellAllItems()
     end
 end)
-
-print("🚀 Started - " .. MIN_PROFIT .. "% profit (Garages 1-9 and 15 - SELLS ALL items)")
-print("⏰ EnterQueue limited to " .. MAX_ENTERQUEUE_CALLS .. " calls per " .. TIME_WINDOW .. " seconds")
