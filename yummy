@@ -23,6 +23,7 @@ end)
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
+local TeleportService = game:GetService("TeleportService")
 
 local GetAll = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
 local EndTutorial = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Tutorial"):WaitForChild("EndTutorial")
@@ -121,7 +122,8 @@ timerLabel.Parent = textContainer
 local startTime = tick()
 local runtimeTimer = nil
 local farmingScriptRunning = false
-local hasReachedThreshold = false  -- Track if we already kicked for reaching 500k
+local hasRejoined = false  -- Track if we already rejoined for reaching 500k
+local rejoiningInProgress = false
 
 local function updateTimer()
     while runtimeTimer do
@@ -146,6 +148,36 @@ end
 
 local lastCashAmount = 0
 
+local function rejoinGame()
+    if rejoiningInProgress then return end
+    rejoiningInProgress = true
+    
+    print("Reaching 500k! Teleporting to rejoin...")
+    
+    -- Show rejoin message on UI
+    local rejoinMessage = Instance.new("TextLabel")
+    rejoinMessage.Size = UDim2.new(1, 0, 0, 30)
+    rejoinMessage.Position = UDim2.new(0, 0, 0.9, 0)
+    rejoinMessage.BackgroundTransparency = 0.5
+    rejoinMessage.BackgroundColor3 = Color3.fromRGB(255, 165, 0)
+    rejoinMessage.Text = "REJOINING: Reached 500k!"
+    rejoinMessage.TextColor3 = Color3.fromRGB(255, 255, 255)
+    rejoinMessage.TextSize = 20
+    rejoinMessage.Font = Enum.Font.GothamBold
+    rejoinMessage.TextXAlignment = Enum.TextXAlignment.Center
+    rejoinMessage.Parent = textContainer
+    
+    task.wait(1)
+    
+    -- Teleport to rejoin the same place
+    local placeId = game.PlaceId
+    local jobId = game.JobId
+    
+    pcall(function()
+        TeleportService:Teleport(placeId, LocalPlayer)
+    end)
+end
+
 local function checkAndUpdate()
     local success, data = pcall(function()
         return GetAll:InvokeServer()
@@ -165,27 +197,15 @@ local function checkAndUpdate()
         updateBackgroundColor(playerCash)  
         
         -- Check for 500k threshold crossing (from below to at or above)
-        if not hasReachedThreshold and lastCashAmount < 500000 and playerCash >= 500000 then
-            hasReachedThreshold = true
-            print(string.format("Player reached 500k! (was: $%.2f, now: $%.2f) - Kicking player...", lastCashAmount, playerCash))
+        if not hasRejoined and not rejoiningInProgress and lastCashAmount < 500000 and playerCash >= 500000 then
+            hasRejoined = true
+            print(string.format("Player reached 500k! (was: $%.2f, now: $%.2f) - Rejoining...", lastCashAmount, playerCash))
             
-            -- Show kick message on UI
-            local kickMessage = Instance.new("TextLabel")
-            kickMessage.Size = UDim2.new(1, 0, 0, 30)
-            kickMessage.Position = UDim2.new(0, 0, 0.9, 0)
-            kickMessage.BackgroundTransparency = 0.5
-            kickMessage.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
-            kickMessage.Text = "KICKED: Reached 500k!"
-            kickMessage.TextColor3 = Color3.fromRGB(255, 255, 255)
-            kickMessage.TextSize = 20
-            kickMessage.Font = Enum.Font.GothamBold
-            kickMessage.TextXAlignment = Enum.TextXAlignment.Center
-            kickMessage.Parent = textContainer
+            -- Stop farming script if running
+            farmingScriptRunning = false
             
-            task.wait(0.5)
-            
-            -- Kick the player
-            LocalPlayer:Kick("You have reached 500k cash!")
+            -- Rejoin the game
+            rejoinGame()
             return playerCash
         end
         
@@ -230,6 +250,7 @@ end
 
 local function startFarmingScript()
     if farmingScriptRunning then return end
+    if hasRejoined then return end  -- Don't start farming if we already rejoined
     farmingScriptRunning = true
 
     print("Starting farming script...")  
@@ -339,7 +360,7 @@ if initialCash < 500000 then
     startFarmingScript()
 else
     print("Initial cash is 500k or more - farming script not started")
-    print("No kick will occur since player already had 500k+ at start")
+    print("No rejoin will occur since player already had 500k+ at start")
 end
 
 runtimeTimer = true
@@ -349,8 +370,8 @@ task.spawn(function()
     while true do
         task.wait(5)
         local newCash = checkAndUpdate()
-        -- Only start farming if we haven't reached threshold and cash is below 500k
-        if not hasReachedThreshold and newCash < 500000 and not farmingScriptRunning then
+        -- Only start farming if we haven't rejoined and cash is below 500k
+        if not hasRejoined and newCash < 500000 and not farmingScriptRunning then
             startFarmingScript()
         end
     end
