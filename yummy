@@ -121,6 +121,7 @@ timerLabel.Parent = textContainer
 local startTime = tick()
 local runtimeTimer = nil
 local farmingScriptRunning = false
+local hasReachedThreshold = false  -- Track if we already kicked for reaching 500k
 
 local function updateTimer()
     while runtimeTimer do
@@ -143,6 +144,8 @@ local function updateBackgroundColor(cashAmount)
     end
 end
 
+local lastCashAmount = 0
+
 local function checkAndUpdate()
     local success, data = pcall(function()
         return GetAll:InvokeServer()
@@ -160,6 +163,31 @@ local function checkAndUpdate()
         tutorialLabel.Text = "Tutorial: " .. tostring(tutorialStatus)  
         
         updateBackgroundColor(playerCash)  
+        
+        -- Check for 500k threshold crossing (from below to at or above)
+        if not hasReachedThreshold and lastCashAmount < 500000 and playerCash >= 500000 then
+            hasReachedThreshold = true
+            print(string.format("Player reached 500k! (was: $%.2f, now: $%.2f) - Kicking player...", lastCashAmount, playerCash))
+            
+            -- Show kick message on UI
+            local kickMessage = Instance.new("TextLabel")
+            kickMessage.Size = UDim2.new(1, 0, 0, 30)
+            kickMessage.Position = UDim2.new(0, 0, 0.9, 0)
+            kickMessage.BackgroundTransparency = 0.5
+            kickMessage.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+            kickMessage.Text = "KICKED: Reached 500k!"
+            kickMessage.TextColor3 = Color3.fromRGB(255, 255, 255)
+            kickMessage.TextSize = 20
+            kickMessage.Font = Enum.Font.GothamBold
+            kickMessage.TextXAlignment = Enum.TextXAlignment.Center
+            kickMessage.Parent = textContainer
+            
+            task.wait(0.5)
+            
+            -- Kick the player
+            LocalPlayer:Kick("You have reached 500k cash!")
+            return playerCash
+        end
         
         if tutorialStatus == false then  
             tutorialLabel.Text = "Tutorial: COMPLETING..."  
@@ -189,13 +217,14 @@ local function checkAndUpdate()
             tutorialLabel.TextColor3 = Color3.fromRGB(0, 255, 0)  
         end  
         
+        lastCashAmount = playerCash
         return playerCash  
     else  
         usernameLabel.Text = "Username: " .. LocalPlayer.Name  
         cashLabel.Text = "Cash: ERROR"  
         gemsLabel.Text = "Gems: ERROR"  
         tutorialLabel.Text = "Tutorial: ERROR"  
-        return 0  
+        return lastCashAmount  
     end
 end
 
@@ -303,12 +332,14 @@ end
 
 repeat task.wait() until LocalPlayer.Character and LocalPlayer.Character.Parent
 
-local playerCash = checkAndUpdate()
+local initialCash = checkAndUpdate()
 
-if playerCash < 500000 then
+-- Only start farming if initial cash is less than 500k
+if initialCash < 500000 then
     startFarmingScript()
 else
-    print("Cash is 500k or more, farming script not started")
+    print("Initial cash is 500k or more - farming script not started")
+    print("No kick will occur since player already had 500k+ at start")
 end
 
 runtimeTimer = true
@@ -318,7 +349,8 @@ task.spawn(function()
     while true do
         task.wait(5)
         local newCash = checkAndUpdate()
-        if newCash < 500000 and not farmingScriptRunning then
+        -- Only start farming if we haven't reached threshold and cash is below 500k
+        if not hasReachedThreshold and newCash < 500000 and not farmingScriptRunning then
             startFarmingScript()
         end
     end
