@@ -1,36 +1,18 @@
-local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
 local CollectionService = game:GetService("CollectionService")
 
 local player = Players.LocalPlayer
 local Events = ReplicatedStorage:WaitForChild("Events")
 local Data = Events:WaitForChild("Data")
 
--- Constants
+local GetAchievementsData = Data:WaitForChild("GetAchievementsData")
+local ClaimAchievement = Data:WaitForChild("ClaimAchievement")
+local AchievementsModule = require(ReplicatedStorage.Modules:WaitForChild("Achievements"))
+local Upgrades = require(ReplicatedStorage.Modules.Upgrades)
+
+local CHECK_INTERVAL = 3600 -- 1 hour
 local MAX_PRICE = 500
-local ACHIEVEMENT_CHECK_INTERVAL = 360 
-local UPGRADE_CHECK_INTERVAL = 0.5
-local SETTINGS_CHECK_INTERVAL = 1
-
--- Modules
-local Upgrades, AchievementsModule
-
--- Error handling wrapper for module loading
-local function loadModule(path, moduleName)
-    local success, module = pcall(function()
-        return require(path)
-    end)
-    if success then
-        return module
-    else
-        warn(string.format("[Module] Failed to load %s: %s", moduleName, module))
-        return nil
-    end
-end
-
--- Load modules safely
-Upgrades = loadModule(ReplicatedStorage.Modules.Upgrades, "Upgrades")
-AchievementsModule = loadModule(ReplicatedStorage.Modules:WaitForChild("Achievements"), "Achievements")
 
 local upgradeKeys = {
     "ShopLevel",
@@ -39,345 +21,156 @@ local upgradeKeys = {
     "PaycheckAmount"
 }
 
--- Error handling wrapper
-local function safeCall(func, ...)
-    local success, result = pcall(func, ...)
-    if not success then
-        warn("Error in operation:", result)
-        return nil
-    end
-    return result
-end
-
--- Data retrieval with error handling
 local function getData()
-    if not Events or not Events.Data or not Events.Data.GetAll then
-        warn("[Data] Events.Data.GetAll not available")
-        return nil
-    end
-    
-    return safeCall(function()
-        return Events.Data.GetAll:InvokeServer()
-    end)
+    return Events.Data.GetAll:InvokeServer()
 end
 
--- Upgrade buying functionality
 local function buyCheapUpgrades()
-    -- Skip if Upgrades module failed to load
-    if not Upgrades then
-        return
-    end
-    
-    local success, result = pcall(function()
-        local data = getData()
-        if not data then 
-            warn("[Upgrade] No data available, skipping upgrade check")
-            return 
-        end
+    local data = getData()
+    if not data then return end
 
-        for _, key in ipairs(upgradeKeys) do
-            -- Skip if key doesn't exist in Upgrades
-            if not Upgrades[key] then
-                warn("[Upgrade] Key not found in Upgrades:", key)
-                goto continue
-            end
-            
-            local levels = Upgrades[key]
-            local current = data[key]
+    for _, key in ipairs(upgradeKeys) do
+        local levels = Upgrades[key]
+        local current = data[key]
 
-            if levels and current and levels[current + 1] then
-                local nextLevel = levels[current + 1]
+        if levels and current and levels[current + 1] then
+            local nextLevel = levels[current + 1]
 
-                if nextLevel.Price and nextLevel.Price <= MAX_PRICE then
-                    -- Check if Events.UI.UpgradeClicked exists before calling
-                    if Events and Events.UI and Events.UI.UpgradeClicked then
-                        local buySuccess = safeCall(function()
-                            return Events.UI.UpgradeClicked:InvokeServer(key)
-                        end)
-                        
-                        if buySuccess then
-                            print("[Upgrade] Bought:", key, "for", nextLevel.Price)
-                        end
-                    else
-                        warn("[Upgrade] Events.UI.UpgradeClicked not available")
-                    end
+            if nextLevel.Price and nextLevel.Price <= MAX_PRICE then
+                local success = false
+                pcall(function()
+                    success = Events.UI.UpgradeClicked:InvokeServer(key)
+                end)
+
+                if success then
+                    print("Bought:", key, "for", nextLevel.Price)
                 end
             end
-            
-            ::continue::
         end
-    end)
-    
-    if not success then
-        warn("[Upgrade] Error in upgrade check:", result)
     end
 end
 
--- Settings management functionality
-local function manageSettings()
-    local success, result = pcall(function()
+local function checkAchievements()
+    print("Checking achievements...")
+
+    local success, data = pcall(function()
+        return GetAchievementsData:InvokeServer()
+    end)
+
+    if not success or not data then
+        warn("Failed to get achievement data")
+        return
+    end
+
+    local claimedSomething = false
+
+    for achievementName, achievementInfo in pairs(AchievementsModule) do
+        local currentLevel = data[achievementName] or 0
+        local nextLevel = currentLevel + 1
+
+        if achievementInfo.Levels[nextLevel] then
+            local success2, result = pcall(function()
+                return ClaimAchievement:InvokeServer(achievementName, nextLevel)
+            end)
+
+            if success2 and result then
+                print("Claimed:", achievementName, "Level:", nextLevel)
+                claimedSomething = true
+                task.wait(0.25)
+            end
+        end
+    end
+
+    if not claimedSomething then
+        print("All claimable achievements are already claimed.")
+    else
+        print("Finished claiming achievements.")
+    end
+end
+
+task.spawn(function()
+    while true do
+        checkAchievements()
+        print("Next achievement check in 1 hour.")
+        task.wait(CHECK_INTERVAL)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        buyCheapUpgrades()
+        task.wait(0.5)
+    end
+end)
+
+task.spawn(function()
+    while true do
         local done = true
 
-        -- Check if player and SaveVars exist
-        if player and player:FindFirstChild("SaveVars") then
-            -- Music Volume
-            if player.SaveVars:FindFirstChild("MusicVolume") and player.SaveVars.MusicVolume.Value ~= 0 then
-                safeCall(function()
-                    player.SaveVars.MusicVolume.Value = 0
-                end)
+        if player:FindFirstChild("SaveVars") then
+            if player.SaveVars.MusicVolume.Value ~= 0 then
+                player.SaveVars.MusicVolume.Value = 0
                 done = false
-                print("[Settings] Music volume set to 0")
             end
-            
-            -- Sound Volume
-            if player.SaveVars:FindFirstChild("SoundVolume") and player.SaveVars.SoundVolume.Value ~= 0 then
-                safeCall(function()
-                    player.SaveVars.SoundVolume.Value = 0
-                end)
+            if player.SaveVars.SoundVolume.Value ~= 0 then
+                player.SaveVars.SoundVolume.Value = 0
                 done = false
-                print("[Settings] Sound volume set to 0")
             end
-            
-            -- Store Outline
-            if player.SaveVars:FindFirstChild("ShowStoreOutline") and player.SaveVars.ShowStoreOutline.Value ~= false then
-                if Events and Events.Data and Events.Data.SetStoreOutline then
-                    safeCall(function()
-                        Events.Data.SetStoreOutline:FireServer(false)
-                    end)
-                end
-                safeCall(function()
-                    player.SaveVars.ShowStoreOutline.Value = false
+            if player.SaveVars.ShowStoreOutline.Value ~= false then
+                pcall(function()
+                    events.Data.SetStoreOutline:FireServer(false)
                 end)
+                player.SaveVars.ShowStoreOutline.Value = false
                 done = false
-                print("[Settings] Store outline disabled")
             end
-            
-            -- Paycheck Notify
-            if player.SaveVars:FindFirstChild("PaycheckNotify") and player.SaveVars.PaycheckNotify.Value ~= false then
-                if Events and Events.Data and Events.Data.TogglePaycheckNotify then
-                    safeCall(function()
-                        Events.Data.TogglePaycheckNotify:FireServer(false)
-                    end)
-                end
-                safeCall(function()
-                    player.SaveVars.PaycheckNotify.Value = false
+            if player.SaveVars.PaycheckNotify.Value ~= false then
+                pcall(function()
+                    events.Data.TogglePaycheckNotify:FireServer(false)
                 end)
+                player.SaveVars.PaycheckNotify.Value = false
                 done = false
-                print("[Settings] Paycheck notifications disabled")
             end
-            
-            -- Store Access (changed to "Everyone")
-            if player.SaveVars:FindFirstChild("StoreAccess") and player.SaveVars.StoreAccess.Value ~= "Me" then
-                if Events and Events.Data and Events.Data.SetStoreAccess then
-                    safeCall(function()
-                        Events.Data.SetStoreAccess:FireServer("Me")
-                    end)
-                end
-                safeCall(function()
-                    player.SaveVars.StoreAccess.Value = "Me"
+            if player.SaveVars.StoreAccess.Value ~= "Me" then
+                pcall(function()
+                    events.Data.SetStoreAccess:FireServer("Me")
                 end)
+                player.SaveVars.StoreAccess.Value = "Me"
                 done = false
-                print("[Settings] Store access set to Me")
             end
         else
             done = false
-            warn("[Settings] SaveVars not found")
         end
 
-        -- Boombox Volume
-        if player and player:GetAttribute("BoomboxVolume") ~= 0 then
-            safeCall(function()
-                player:SetAttribute("BoomboxVolume", 0)
+        if player:GetAttribute("BoomboxVolume") ~= 0 then
+            player:SetAttribute("BoomboxVolume",0)
+            done = false
+        end
+
+        if player:GetAttribute("ChatTagsVisibility") ~= false then
+            pcall(function()
+                events.Data.SetChatTagsVisibility:FireServer(false)
             end)
             done = false
-            print("[Settings] Boombox volume set to 0")
         end
 
-        -- Chat Tags Visibility
-        if player and player:GetAttribute("ChatTagsVisibility") ~= false then
-            if Events and Events.Data and Events.Data.SetChatTagsVisibility then
-                safeCall(function()
-                    Events.Data.SetChatTagsVisibility:FireServer(false)
-                end)
-            end
-            done = false
-            print("[Settings] Chat tags visibility disabled")
-        end
-
-        -- Boombox sounds
-        if player and CollectionService then
-            safeCall(function()
-                for _, v in pairs(CollectionService:GetTagged(player.Name .. "Boombox")) do
-                    if v then
-                        local parts = v:FindFirstChild("ItemParts")
-                        if parts then
-                            local handle = parts:FindFirstChild("Handle")
-                            if handle then
-                                local sound = handle:FindFirstChild("Sound")
-                                if sound and sound.Volume ~= 0 then
-                                    sound.Volume = 0
-                                    done = false
-                                    print("[Settings] Boombox sound volume set to 0")
-                                end
-                            end
-                        end
-                    end
-                end
-            end)
-        end
-        
-        return done
-    end)
-    
-    if not success then
-        warn("[Settings] Error in settings management:", result)
-        return false
-    end
-    
-    return result
-end
-
--- Achievement checking functionality
-local function checkAchievements()
-    -- Skip if AchievementsModule failed to load
-    if not AchievementsModule then
-        warn("[Achievement] Achievements module not available, skipping")
-        return
-    end
-    
-    local success, result = pcall(function()
-        print("[Achievement] Checking achievements...")
-
-        if not Events or not Events.Data or not Events.Data.GetAchievementsData then
-            warn("[Achievement] GetAchievementsData not available")
-            return
-        end
-        
-        local achievementData = safeCall(function()
-            return Data.GetAchievementsData:InvokeServer()
-        end)
-
-        if not achievementData then
-            warn("[Achievement] Failed to get achievement data")
-            return
-        end
-
-        local claimedSomething = false
-
-        for achievementName, achievementInfo in pairs(AchievementsModule) do
-            if achievementInfo and achievementInfo.Levels then
-                local currentLevel = achievementData[achievementName] or 0
-                local nextLevel = currentLevel + 1
-
-                if achievementInfo.Levels[nextLevel] then
-                    if Events and Events.Data and Events.Data.ClaimAchievement then
-                        local claimSuccess = safeCall(function()
-                            return Data.ClaimAchievement:InvokeServer(achievementName, nextLevel)
-                        end)
-
-                        if claimSuccess then
-                            print("[Achievement] Claimed:", achievementName, "Level:", nextLevel)
-                            claimedSomething = true
-                            task.wait(0.25)
-                        end
-                    else
-                        warn("[Achievement] ClaimAchievement not available")
+        for _,v in pairs(CollectionService:GetTagged(player.Name.."Boombox")) do
+            local parts = v:FindFirstChild("ItemParts")
+            if parts then
+                local handle = parts:FindFirstChild("Handle")
+                if handle then
+                    local sound = handle:FindFirstChild("Sound")
+                    if sound and sound.Volume ~= 0 then
+                        sound.Volume = 0
+                        done = false
                     end
                 end
             end
         end
 
-        if not claimedSomething then
-            print("[Achievement] All claimable achievements are already claimed.")
-        else
-            print("[Achievement] Finished claiming achievements.")
+        if done then
+            break
         end
-    end)
-    
-    if not success then
-        warn("[Achievement] Error in achievement check:", result)
+
+        task.wait(1)
     end
-end
-
--- Main execution with coroutines for parallel execution
-local function startServices()
-    print("[System] Starting all services...")
-    
-    -- Settings management loop (runs until all settings are configured)
-    task.spawn(function()
-        print("[Settings] Starting settings management...")
-        local retryCount = 0
-        local maxRetries = 10
-        
-        while retryCount < maxRetries do
-            local done = manageSettings()
-            if done then
-                print("[Settings] All settings configured successfully")
-                break
-            end
-            retryCount = retryCount + 1
-            task.wait(SETTINGS_CHECK_INTERVAL)
-        end
-        
-        if retryCount >= maxRetries then
-            warn("[Settings] Max retries reached, continuing with current settings")
-        end
-    end)
-    
-    -- Upgrade checking loop
-    task.spawn(function()
-        print("[Upgrade] Starting upgrade checker...")
-        while true do
-            safeCall(buyCheapUpgrades)
-            task.wait(UPGRADE_CHECK_INTERVAL)
-        end
-    end)
-    
-    -- Achievement checking loop
-    task.spawn(function()
-        print("[Achievement] Starting achievement checker...")
-        while true do
-            safeCall(checkAchievements)
-            print("[Achievement] Next achievement check in 1 hour.")
-            task.wait(ACHIEVEMENT_CHECK_INTERVAL)
-        end
-    end)
-end
-
--- Start everything with error handling
-local success, error = pcall(startServices)
-if not success then
-    warn("[System] Failed to start services:", error)
-    -- Try to start individual services if main startup fails
-    print("[System] Attempting to start individual services...")
-    
-    -- Try to start settings management independently
-    task.spawn(function()
-        safeCall(function()
-            while true do
-                manageSettings()
-                task.wait(SETTINGS_CHECK_INTERVAL)
-            end
-        end)
-    end)
-    
-    -- Try to start upgrade checking independently
-    task.spawn(function()
-        safeCall(function()
-            while true do
-                buyCheapUpgrades()
-                task.wait(UPGRADE_CHECK_INTERVAL)
-            end
-        end)
-    end)
-    
-    -- Try to start achievement checking independently
-    task.spawn(function()
-        safeCall(function()
-            while true do
-                checkAchievements()
-                task.wait(ACHIEVEMENT_CHECK_INTERVAL)
-            end
-        end)
-    end)
-end
+end)
