@@ -25,7 +25,6 @@ local SellAllItems = Auctions:WaitForChild("SellAllItems")
 local Events = ReplicatedStorage:WaitForChild("Events")
 local Shop = Events:WaitForChild("Shop")
 
--- Rate limiting for EnterQueue
 local enterQueueTimestamps = {}
 local MAX_ENTERQUEUE_CALLS = 3
 local TIME_WINDOW = 40
@@ -72,7 +71,6 @@ local targetGarage = nil
 local processingItemsWon = false
 local isBiddingActive = false
 
--- Webhook spam protection
 local webhookSentForCurrentAuction = false
 local lastWebhookItemId = nil
 local lastWebhookGarageId = nil
@@ -102,7 +100,8 @@ end
 
 destroySpecificGuis()
 
-PlayerGui.ChildAdded:Connect(function(child)
+local guiConnection
+guiConnection = PlayerGui.ChildAdded:Connect(function(child)
 	if child.Name == "ItemsWon" or child.Name == "CircleAnimationUI" then
 		child:Destroy()
 	end
@@ -131,15 +130,17 @@ end
 
 checkForButton()
 
-PlayerGui.DescendantAdded:Connect(function(obj)
+local descendantConnection
+descendantConnection = PlayerGui.DescendantAdded:Connect(function(obj)
 	if obj.Name == "Button" then
 		task.wait(0.5)
 		tryClick(obj)
 	end
 end)
 
+local buttonLoopRunning = true
 task.spawn(function()
-	while true do
+	while buttonLoopRunning do
 		task.wait(0.25)
 		checkForButton()
 	end
@@ -401,14 +402,16 @@ local function PlaceTargetInventoryItems()
 	return true
 end
 
-UpdateCurrentBid.OnClientEvent:Connect(function(data)
+local updateBidConnection
+updateBidConnection = UpdateCurrentBid.OnClientEvent:Connect(function(data)
 	if data then
 		currentNextBid = data.nextBid
 		currentBidder = data.player
 	end
 end)
 
-AuctionsFolder.ChildAdded:Connect(function(garage)
+local childAddedConnection
+childAddedConnection = AuctionsFolder.ChildAdded:Connect(function(garage)
 	debugPrint("Auction started for garage:", garage.Name)
 	inAuction = true
 	auctionEnded = false
@@ -418,7 +421,8 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
 	webhookSentForCurrentAuction = false
 end)
 
-AuctionsFolder.ChildRemoved:Connect(function(child)
+local childRemovedConnection
+childRemovedConnection = AuctionsFolder.ChildRemoved:Connect(function(child)
 	if child == currentGarage then
 		debugPrint("Auction ended for garage:", child and child.Name)
 		auctionEnded = true
@@ -507,8 +511,9 @@ local function waitForCondition(condition, timeout, checkInterval)
 	return false
 end
 
+local placeItemsLoop = true
 task.spawn(function()
-	while true do
+	while placeItemsLoop do
 		PlaceTargetInventoryItems()
 		task.wait(300)
 	end
@@ -516,7 +521,6 @@ end)
 
 debugPrint("Auction bot started - monitoring for garage", GARAGE_ID)
 
--- Modified main loop with safeEnterQueue
 while not halted do
 	while processingItemsWon do
 		task.wait(0.25)
@@ -534,13 +538,13 @@ while not halted do
 	if not enteredQueue then
 		debugPrint("Rate limited or failed to enter queue, waiting 60 seconds")
 		task.wait(60)
-		continue
+		goto continue
 	end
 	
 	local entered = waitForCondition(function() return inAuction end, 10, 0.05)
 	if not entered then
 		debugPrint("Failed to enter auction, retrying")
-		continue
+		goto continue
 	end
 	
 	debugPrint("Successfully entered auction")
@@ -595,6 +599,20 @@ while not halted do
 	
 	task.wait(1.5)
 	debugPrint("Ready for next auction")
+	
+	::continue::
 end
 
 debugPrint("Auction bot stopped")
+
+local function cleanup()
+    buttonLoopRunning = false
+    placeItemsLoop = false
+    if guiConnection then guiConnection:Disconnect() end
+    if descendantConnection then descendantConnection:Disconnect() end
+    if updateBidConnection then updateBidConnection:Disconnect() end
+    if childAddedConnection then childAddedConnection:Disconnect() end
+    if childRemovedConnection then childRemovedConnection:Disconnect() end
+    table.clear(enterQueueTimestamps)
+    enterQueueTimestamps = nil
+end
