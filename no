@@ -25,8 +25,35 @@ local SellAllItems = Auctions:WaitForChild("SellAllItems")
 local Events = ReplicatedStorage:WaitForChild("Events")
 local Shop = Events:WaitForChild("Shop")
 
+-- Rate limiting for EnterQueue
+local enterQueueTimestamps = {}
+local MAX_ENTERQUEUE_CALLS = 3
+local TIME_WINDOW = 60
+
+local function canCallEnterQueue()
+    local now = os.time()
+    for i = #enterQueueTimestamps, 1, -1 do
+        if now - enterQueueTimestamps[i] >= TIME_WINDOW then
+            table.remove(enterQueueTimestamps, i)
+        end
+    end
+    return #enterQueueTimestamps < MAX_ENTERQUEUE_CALLS
+end
+
+local function recordEnterQueueCall()
+    table.insert(enterQueueTimestamps, os.time())
+end
+
+local function safeEnterQueue(garageId)
+    if canCallEnterQueue() then
+        recordEnterQueueCall()
+        return EnterQueue:InvokeServer(garageId)
+    end
+    return nil
+end
+
 local SCAN_DURATION = 1
-local GARAGE_ID = "51"
+local GARAGE_ID = "85"
 local BID_CHECK_INTERVAL = 0.1
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1473040107572297761/-FOyJPBRqHg9EYpyhC8x-yz7dk9Z9-D6FYfTt9IbrjV75UoxLtfDfCmPVujy9HvTADEo"
 local PET_SAFE_WEBHOOK_URL = "https://discord.com/api/webhooks/1483023142653005914/F7ZnzfoI-CFKMdUiFLSW68VTDk29KH6D_baLERftS9q8wjRdU062SzMLD50qdb-kWDYV"
@@ -159,13 +186,11 @@ local function formatNumber(n)
 end
 
 local function sendWebhook(itemId, itemData, playerName)
-	-- Spam protection: only send once per item per auction
 	if webhookSentForCurrentAuction then
 		debugPrint("Webhook already sent for this auction, skipping duplicate")
 		return
 	end
 	
-	-- Also check if same item was sent recently in same garage
 	if lastWebhookItemId == itemId and lastWebhookGarageId == GARAGE_ID then
 		debugPrint("Same item already webhook'd recently, skipping")
 		return
@@ -287,7 +312,6 @@ local function sendWebhook(itemId, itemData, playerName)
 		})
 	end)
 	
-	-- Mark as sent for this auction
 	webhookSentForCurrentAuction = true
 	lastWebhookItemId = itemId
 	lastWebhookGarageId = GARAGE_ID
@@ -391,7 +415,6 @@ AuctionsFolder.ChildAdded:Connect(function(garage)
 	currentGarage = garage
 	targetGarage = nil
 	isBiddingActive = false
-	-- Reset webhook protection for new auction
 	webhookSentForCurrentAuction = false
 end)
 
@@ -493,6 +516,7 @@ end)
 
 debugPrint("Auction bot started - monitoring for garage", GARAGE_ID)
 
+-- Modified main loop with safeEnterQueue
 while not halted do
 	while processingItemsWon do
 		task.wait(0.25)
@@ -505,7 +529,13 @@ while not halted do
 	end
 	
 	debugPrint("Entering queue for garage:", GARAGE_ID)
-	pcall(function() EnterQueue:InvokeServer(GARAGE_ID) end)
+	local enteredQueue = safeEnterQueue(GARAGE_ID)
+	
+	if not enteredQueue then
+		debugPrint("Rate limited or failed to enter queue, waiting 60 seconds")
+		task.wait(60)
+		continue
+	end
 	
 	local entered = waitForCondition(function() return inAuction end, 10, 0.05)
 	if not entered then
