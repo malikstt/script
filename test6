@@ -73,46 +73,22 @@ end
 local webhookUrl = "https://discord.com/api/webhooks/1495059642206781442/E3T_EnLH4JANdxJXaxq-anMTC_O5c4mtArKu5hC7vUNkeeAxOSpSTuEzm6dg6Bg4nYtC"
 
 local sentCache = {}
-local CACHE_DURATION = 5 -- seconds
+local CACHE_DURATION = 5
 
-print("Started - Monitoring for " .. #monitoredUsers .. " users in chat")
+print("Started - Monitoring for " .. #monitoredUsers .. " users")
 
 local function stripFormatting(text)
-    -- Remove RichText tags
     return text:gsub("<[^>]+>", "")
 end
 
-local function getFullChatMessage(message)
-    local senderName = "Unknown"
-    local messageText = ""
-    
-    -- Try to get sender name
-    if message.TextSource then
-        local player = Players:GetPlayerByUserId(message.TextSource.UserId)
-        if player then
-            senderName = player.Name
-        end
-    end
-    
-    -- Get the message text
-    if message.Text then
-        messageText = stripFormatting(message.Text)
-    end
-    
-    -- Build full chat representation
-    return string.format("[%s]: %s", senderName, messageText)
-end
-
-local function sendToWebhook(fullMessage, username)
-    -- Check cache to avoid duplicates
-    local cacheKey = username .. "_" .. fullMessage
+local function sendToWebhook(messageText, username)
+    local cacheKey = username .. "_" .. messageText
     if sentCache[cacheKey] then
         return
     end
     
     sentCache[cacheKey] = os.time()
     
-    -- Clean old cache entries
     local currentTime = os.time()
     for key, timestamp in pairs(sentCache) do
         if currentTime - timestamp > CACHE_DURATION then
@@ -122,7 +98,7 @@ local function sendToWebhook(fullMessage, username)
     
     local payload = {
         username = "Chat Monitor",
-        content = string.format("**User Mentioned:** %s\n**Full Chat:** %s", username, fullMessage)
+        content = messageText
     }
     
     local success, err = pcall(function()
@@ -137,13 +113,13 @@ local function sendToWebhook(fullMessage, username)
     end)
     
     if success then
-        print(string.format("[SENT] Found user %s - Message sent to webhook", username))
+        print(string.format("[SENT] %s", messageText))
     else
-        print(string.format("[ERROR] Failed to send: %s", err))
+        print(string.format("[ERROR] %s", err))
     end
 end
 
--- Main monitoring loop
+-- Monitor every chat message
 TextChatService.OnIncomingMessage = function(message)
     if not message or not message.Text then
         return
@@ -153,16 +129,15 @@ TextChatService.OnIncomingMessage = function(message)
         local cleanText = stripFormatting(message.Text)
         local lowerText = string.lower(cleanText)
         
-        -- Check if any monitored username appears in the message
+        -- Check if any monitored username appears anywhere in the message
         for lowerUsername, originalUsername in pairs(monitoredUsersLower) do
             if string.find(lowerText, lowerUsername, 1, true) then
-                local fullMessage = getFullChatMessage(message)
-                print(string.format("[FOUND] Detected user %s in chat", originalUsername))
-                sendToWebhook(fullMessage, originalUsername)
-                break -- Only send once per message
+                -- Send the raw message exactly as it appears
+                sendToWebhook(cleanText, originalUsername)
+                break
             end
         end
     end)
 end
 
-print("Chat monitor running. Waiting for messages...")
+print("Monitoring chat...")
