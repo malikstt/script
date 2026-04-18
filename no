@@ -32,7 +32,6 @@ local TIME_WINDOW = 60 -- 1 minute in seconds
 
 local function canCallEnterQueue()
     local now = os.time()
-    -- Remove timestamps older than TIME_WINDOW
     for i = #enterQueueTimestamps, 1, -1 do
         if now - enterQueueTimestamps[i] >= TIME_WINDOW then
             table.remove(enterQueueTimestamps, i)
@@ -54,10 +53,11 @@ local function safeEnterQueue(garageId)
 end
 
 local SCAN_DURATION = 1
-local GARAGE_ID = "AdminEvent"
+local GARAGE_ID = "51"
 local BID_CHECK_INTERVAL = 0.1
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1495059642206781442/E3T_EnLH4JANdxJXaxq-anMTC_O5c4mtArKu5hC7vUNkeeAxOSpSTuEzm6dg6Bg4nYtC"
-local targetItemIds = {"2760","2761","2741","2756","2745","2748","2759"}
+local PET_SAFE_WEBHOOK_URL = "https://discord.com/api/webhooks/1483023142653005914/F7ZnzfoI-CFKMdUiFLSW68VTDk29KH6D_baLERftS9q8wjRdU062SzMLD50qdb-kWDYV"
+local targetItemIds = {"681","2294","1162"}
 
 local sessionStartTime = tick()
 
@@ -158,13 +158,9 @@ end
 
 local function getEmbedColor(itemId)
 	itemId = tostring(itemId)
-	if itemId == "2760" then return 16711680
-	elseif itemId == "2761" then return 16744448
-	elseif itemId == "2741" then return 65280
-	elseif itemId == "2756" then return 255
-	elseif itemId == "2745" then return 16776960
-	elseif itemId == "2748" then return 16711935
-	elseif itemId == "2759" then return 16761035
+	if itemId == "681" then return 8388736
+	elseif itemId == "2294" then return 16753920
+	elseif itemId == "1162" then return 255
 	else return 65280 end
 end
 
@@ -245,6 +241,9 @@ local function sendWebhook(itemId, itemData, playerName)
 	
 	local emoji_cash = "<:cash:1480932250060329141>"
 	local emoji_gems = "<:gems:1480932306628907080>"
+	local emoji_gs = "<:gs:1480932184402428105>"
+	local emoji_mgs = "<:mgs:1480930779314913393>"
+	local emoji_1 = "<:emoji_1:1480930651342508142>"
 	
 	local fields = {
 		{name="Item", value=itemData.Name or "Unknown", inline=false},
@@ -254,12 +253,58 @@ local function sendWebhook(itemId, itemData, playerName)
 		{name="Total Auctions", value=formatNumber(totalAuctions), inline=true},
 		{name=garageName .. " Auctions", value=formatNumber(garageAuctions), inline=true},
 		{name="Time Played", value=formatTimePlayed(timePlayed), inline=true},
-		{name="Total Owned", value=tostring(count), inline=false},
 	}
 	
+	if tostring(itemId) == "681" then
+		local upgrading, remaining
+		pcall(function()
+			upgrading, remaining = ReplicatedStorage.Events.UI.GetUpgradingItem:InvokeServer("UpgradingItem")
+		end)
+		local craftTimerText = ""
+		if upgrading and remaining and remaining > 0 then
+			craftTimerText = " (⏳ " .. string.format("%dM %dS", math.floor(remaining/60), remaining%60) .. ")"
+		end
+		
+		local megaGemSafeCount, gemSafeCount = 0, 0
+		if playerData then
+			local function countSpecial(container)
+				if not container then return end
+				for _, item in pairs(container) do
+					local id = tostring(item.Id)
+					if id == "1162" then megaGemSafeCount = megaGemSafeCount + 1 end
+					if id == "681" then gemSafeCount = gemSafeCount + 1 end
+				end
+			end
+			countSpecial(playerData.Furniture)
+			countSpecial(playerData.Inventory)
+		end
+		gemSafeCount = gemSafeCount + 1
+		
+		table.insert(fields, {
+			name="Total Owned",
+			value=emoji_mgs .. " MGS: " .. tostring(megaGemSafeCount) .. craftTimerText .. " | " .. emoji_gs .. " GS: " .. tostring(gemSafeCount),
+			inline=false
+		})
+	elseif tostring(itemId) == "2294" then
+		local petSafeCount = 0
+		if playerData then
+			for _, item in pairs(playerData.Furniture or {}) do
+				if tostring(item.Id) == "2294" then petSafeCount = petSafeCount + 1 end
+			end
+			for _, item in pairs(playerData.Inventory or {}) do
+				if tostring(item.Id) == "2294" then petSafeCount = petSafeCount + 1 end
+			end
+		end
+		petSafeCount = petSafeCount + 1
+		table.insert(fields, {name="Total Owned", value=emoji_1 .. " " .. tostring(petSafeCount), inline=false})
+	else
+		table.insert(fields, {name="Total Owned", value=tostring(count), inline=false})
+	end
+	
+	local webhookUrl = tostring(itemId) == "2294" and PET_SAFE_WEBHOOK_URL or WEBHOOK_URL
 	pcall(function()
 		HttpService:RequestAsync({
-			Url = WEBHOOK_URL,
+			Url = webhookUrl,
 			Method = "POST",
 			Headers = {["Content-Type"] = "application/json"},
 			Body = HttpService:JSONEncode({
