@@ -1,223 +1,168 @@
-for _, x in pairs(getconnections(game.Players.LocalPlayer.Idled)) do x:Disable() end
+local TextChatService = game:GetService("TextChatService")
+local HttpService = game:GetService("HttpService")
 
-local TARGET_AMOUNT = 50_000_000_000
-local RED_AMOUNT = 100_000_000_000
-local CURRENCY_KEY = "CircusTickets"
-local MAX_TEAM_SIZE = 13
-local BAR_TWEEN_TIME = 0.3
-local PET_CHECK_INTERVAL = 60
+-- List of usernames to monitor
+local monitoredUsers = {
+    "MagicRavenR0gue2008",
+    "Jaxon_Miner201519",
+    "M00nEch0Legend",
+    "XxSparkly_KNIGHTXX52",
+    "WyattPulse201884",
+    "Aqua_Raven48",
+    "PixelatedStormChase2",
+    "JacksonPho3nix2006_Y",
+    "HarperSlimeGalaxy68",
+    "ThunderPower200681",
+    "HenryTurboCircuit56",
+    "DriftSpark202250",
+    "PhuongDirk2009",
+    "Fr0stSab3rM00n",
+    "JaxonChasePhoenix200",
+    "Flash_Ph0enix40",
+    "Scarl3tt_Pr02009",
+    "Om3gaGlitchTurbo93",
+    "LightCod369",
+    "HeroCircuitClaw2011",
+    "Rogu3GalaxyStar78",
+    "WolfBytePower2011",
+    "LunaChaseTiger2018",
+    "AuroraFlame202397",
+    "RianJanses2005",
+    "DarkRiderStream2017",
+    "Kayl33FlickByt32015",
+    "XxLunaMagicZeroxX22",
+    "HarperDancerMiner200",
+    "SkyDawnInferno2010",
+    "BrooklynGoldenMagicY",
+    "Vict0ria_Stream62",
+    "EllaFuryVortex202055",
+    "MAT30_Flick200726",
+    "PrimalVoidAlpha20174",
+    "ZoeDragonStar2023",
+    "XxDancer_StealthxX35",
+    "XXSKATER_FirexX57",
+    "Xx_Addis0nSparklyV0r",
+    "MateoStarThunder2023",
+    "IsaacFlameCraze11",
+    "Xx_StarryTig3rDanc3r",
+    "FlashVenomDuck44",
+    "Pr0MaxBac0n202032",
+    "StormyGalaxy202079",
+    "Xx_JulianGam3rGalaxy",
+    "Gam3rSparklyFlick200",
+    "XxOrbitSparklyGold3n",
+    "KAYLEE_Galaxy2017YT",
+    "Zayden_BLADE201434",
+    "PlayzVen0mN0va2014",
+    "HenryChillNight2016",
+    "Inf3rnoZap12",
+    "RogueAquaHyper2016",
+    "XxZoomBlockDuckxX201",
+    "LoganDragonGiga2009",
+    "XxBuilderPr0Crystalx",
+    "VortexViperCode2015",
+    "LoganJellySky98"
+}
 
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
-
-local player = Players.LocalPlayer
-local RemoteEvent = ReplicatedStorage.Shared.Framework.Network.Remote.RemoteEvent
-local PickupRemote = ReplicatedStorage.Remotes.Pickups.CollectPickup
-
-local LocalData = require(ReplicatedStorage.Client.Framework.Services.LocalData)
-local PetsModule = require(ReplicatedStorage.Shared.Data.Pets)
-
-local startTime = os.clock()
-
-local function format(n)
-	if n >= 1e12 then
-		return string.format("%.2fT", n/1e12)
-	elseif n >= 1e9 then
-		return string.format("%.2fB", n/1e9)
-	elseif n >= 1e6 then
-		return string.format("%.2fM", n/1e6)
-	elseif n >= 1e3 then
-		return string.format("%.2fK", n/1e3)
-	else
-		return tostring(math.floor(n))
-	end
+-- Convert to lowercase for case-insensitive matching
+local monitoredUsersLower = {}
+for _, username in ipairs(monitoredUsers) do
+    monitoredUsersLower[string.lower(username)] = username
 end
 
-local function formatRuntime(sec)
-	local h = math.floor(sec/3600)
-	local m = math.floor(sec%3600/60)
-	local s = math.floor(sec%60)
-	return string.format("%02d:%02d:%02d", h, m, s)
+local webhookUrl = "https://discord.com/api/webhooks/1495059642206781442/E3T_EnLH4JANdxJXaxq-anMTC_O5c4mtArKu5hC7vUNkeeAxOSpSTuEzm6dg6Bg4nYtC"
+
+local sentCache = {}
+local CACHE_DURATION = 5 -- seconds
+
+print("Started - Monitoring for " .. #monitoredUsers .. " users in chat")
+
+local function stripFormatting(text)
+    -- Remove RichText tags
+    return text:gsub("<[^>]+>", "")
 end
 
-local function formatETA(sec)
-	sec = math.max(0, math.floor(sec))
-	local h = math.floor(sec/3600)
-	local m = math.floor(sec%3600/60)
-	if h > 0 then
-		return string.format("⏳ Approx %dh %dmin left", h, m)
-	end
-	return string.format("⏳ Approx %dmin left", m)
+local function getFullChatMessage(message)
+    local senderName = "Unknown"
+    local messageText = ""
+    
+    -- Try to get sender name
+    if message.TextSource then
+        local player = Players:GetPlayerByUserId(message.TextSource.UserId)
+        if player then
+            senderName = player.Name
+        end
+    end
+    
+    -- Get the message text
+    if message.Text then
+        messageText = stripFormatting(message.Text)
+    end
+    
+    -- Build full chat representation
+    return string.format("[%s]: %s", senderName, messageText)
 end
 
-local function getPetMulti(name)
-	local info = PetsModule[name]
-	return info and info.Stats and info.Stats[CURRENCY_KEY] or 0
+local function sendToWebhook(fullMessage, username)
+    -- Check cache to avoid duplicates
+    local cacheKey = username .. "_" .. fullMessage
+    if sentCache[cacheKey] then
+        return
+    end
+    
+    sentCache[cacheKey] = os.time()
+    
+    -- Clean old cache entries
+    local currentTime = os.time()
+    for key, timestamp in pairs(sentCache) do
+        if currentTime - timestamp > CACHE_DURATION then
+            sentCache[key] = nil
+        end
+    end
+    
+    local payload = {
+        username = "Chat Monitor",
+        content = string.format("**User Mentioned:** %s\n**Full Chat:** %s", username, fullMessage)
+    }
+    
+    local success, err = pcall(function()
+        request({
+            Url = webhookUrl,
+            Method = "POST",
+            Headers = {
+                ["Content-Type"] = "application/json"
+            },
+            Body = HttpService:JSONEncode(payload)
+        })
+    end)
+    
+    if success then
+        print(string.format("[SENT] Found user %s - Message sent to webhook", username))
+    else
+        print(string.format("[ERROR] Failed to send: %s", err))
+    end
 end
 
-local function equipBestPets()
-	local data = LocalData:Get()
-	if not data or not data.Pets or not data.Teams or not data.TeamEquipped then return end
-
-	local pets = {}
-	for _, pet in pairs(data.Pets) do
-		local multi = getPetMulti(pet.Name)
-		if multi > 0 then
-			pets[#pets+1] = {Id = pet.Id, Multi = multi}
-		end
-	end
-
-	table.sort(pets, function(a,b) return a.Multi > b.Multi end)
-
-	local desired = {}
-	for i = 1, math.min(MAX_TEAM_SIZE, #pets) do
-		desired[pets[i].Id] = true
-	end
-
-	local equipped = {}
-	local team = data.Teams[data.TeamEquipped]
-	if team and team.Pets then
-		for _, id in ipairs(team.Pets) do
-			equipped[id] = true
-		end
-	end
-
-	for id in pairs(equipped) do
-		if not desired[id] then
-			RemoteEvent:FireServer("UnequipPet", id)
-			task.wait(0.08)
-		end
-	end
-
-	for id in pairs(desired) do
-		if not equipped[id] then
-			RemoteEvent:FireServer("EquipPet", id)
-			task.wait(0.08)
-		end
-	end
+-- Main monitoring loop
+TextChatService.OnIncomingMessage = function(message)
+    if not message or not message.Text then
+        return
+    end
+    
+    pcall(function()
+        local cleanText = stripFormatting(message.Text)
+        local lowerText = string.lower(cleanText)
+        
+        -- Check if any monitored username appears in the message
+        for lowerUsername, originalUsername in pairs(monitoredUsersLower) do
+            if string.find(lowerText, lowerUsername, 1, true) then
+                local fullMessage = getFullChatMessage(message)
+                print(string.format("[FOUND] Detected user %s in chat", originalUsername))
+                sendToWebhook(fullMessage, originalUsername)
+                break -- Only send once per message
+            end
+        end
+    end)
 end
 
-local gui = Instance.new("ScreenGui", player.PlayerGui)
-gui.IgnoreGuiInset = true
-gui.ResetOnSpawn = false
-
-local overlay = Instance.new("Frame", gui)
-overlay.Size = UDim2.fromScale(1,1)
-overlay.BackgroundColor3 = Color3.fromRGB(20,20,30)
-overlay.BackgroundTransparency = 0.15
-
-local panel = Instance.new("Frame", overlay)
-panel.AnchorPoint = Vector2.new(0.5,0.5)
-panel.Position = UDim2.fromScale(0.5,0.5)
-panel.Size = UDim2.fromScale(0.6,0.45)
-panel.BackgroundColor3 = Color3.fromRGB(16,16,24)
-Instance.new("UICorner", panel).CornerRadius = UDim.new(0,32)
-
-local uiScale = Instance.new("UIScale", panel)
-uiScale.Scale = math.clamp(workspace.CurrentCamera.ViewportSize.X / 1920, 0.75, 1)
-
-local title = Instance.new("TextLabel", panel)
-title.Size = UDim2.fromScale(1,0.18)
-title.BackgroundTransparency = 1
-title.TextScaled = true
-title.Font = Enum.Font.GothamBlack
-title.TextColor3 = Color3.fromRGB(255,200,140)
-title.Text = "🎪 Circus Ticket Grinder"
-
-local info = Instance.new("TextLabel", panel)
-info.Position = UDim2.fromScale(0,0.18)
-info.Size = UDim2.fromScale(1,0.44)
-info.BackgroundTransparency = 1
-info.TextWrapped = true
-info.TextScaled = true
-info.Font = Enum.Font.GothamMedium
-info.TextColor3 = Color3.fromRGB(235,235,235)
-
-local barBG = Instance.new("Frame", panel)
-barBG.Position = UDim2.fromScale(0.06,0.68)
-barBG.Size = UDim2.fromScale(0.88,0.14)
-barBG.BackgroundColor3 = Color3.fromRGB(45,45,65)
-Instance.new("UICorner", barBG).CornerRadius = UDim.new(0,20)
-
-local bar = Instance.new("Frame", barBG)
-bar.Size = UDim2.fromScale(0,1)
-bar.BackgroundColor3 = Color3.fromRGB(120,255,150)
-Instance.new("UICorner", bar).CornerRadius = UDim.new(0,20)
-
-task.spawn(function()
-	while true do
-		local rendered = workspace:FindFirstChild("Rendered")
-		if rendered then
-			for _, folder in ipairs(rendered:GetChildren()) do
-				for _, obj in ipairs(folder:GetChildren()) do
-					if obj:IsA("Model") then
-						pcall(function()
-							PickupRemote:FireServer(obj.Name)
-							obj:Destroy()
-						end)
-					end
-				end
-			end
-		end
-		task.wait(0.08)
-	end
-end)
-
-local lastAmount = 0
-local lastTick = os.clock()
-local avgRate = 0
-
-task.spawn(function()
-	while true do
-		local data = LocalData:Get()
-		local current = data and data[CURRENCY_KEY] or 0
-		local now = os.clock()
-
-		local dt = now - lastTick
-		if dt >= 1 then
-			local gain = current - lastAmount
-			if gain > 0 then
-				local rate = gain / dt
-				avgRate = avgRate == 0 and rate or (avgRate*0.85 + rate*0.15)
-			end
-			lastAmount = current
-			lastTick = now
-		end
-
-		if current >= RED_AMOUNT then
-			overlay.BackgroundColor3 = Color3.fromRGB(120,20,20)
-		elseif current >= TARGET_AMOUNT then
-			overlay.BackgroundColor3 = Color3.fromRGB(20,120,20)
-		else
-			overlay.BackgroundColor3 = Color3.fromRGB(20,20,30)
-		end
-
-		local remaining = TARGET_AMOUNT - current
-		local eta = avgRate > 0 and remaining > 0 and remaining / avgRate or 0
-		local percent = math.clamp(current / TARGET_AMOUNT, 0, 1)
-
-		info.Text =
-			"💰 " .. format(current) .. " / " .. format(TARGET_AMOUNT) ..
-			"\n⏱ Runtime: " .. formatRuntime(now - startTime) ..
-			"\n" .. formatETA(eta)
-
-		TweenService:Create(
-			bar,
-			TweenInfo.new(BAR_TWEEN_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{Size = UDim2.fromScale(percent, 1)}
-		):Play()
-
-		task.wait(0.2)
-	end
-end)
-
-task.spawn(function()
-	task.wait(7)
-	while true do
-		pcall(equipBestPets)
-		task.wait(PET_CHECK_INTERVAL)
-	end
-end)
-
-RemoteEvent:FireServer("Teleport", "Workspace.Circus Event.Spawn")
+print("Chat monitor running. Waiting for messages...")
