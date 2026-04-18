@@ -26,6 +26,34 @@ local SellAllItems = Auctions:WaitForChild("SellAllItems")
 local Events = ReplicatedStorage:WaitForChild("Events")
 local Shop = Events:WaitForChild("Shop")
 
+-- Rate limiting for EnterQueue (max 5 calls per minute)
+local enterQueueTimestamps = {}
+local MAX_ENTERQUEUE_CALLS = 5
+local TIME_WINDOW = 60 -- 1 minute in seconds
+
+local function canCallEnterQueue()
+    local now = os.time()
+    -- Remove timestamps older than TIME_WINDOW
+    for i = #enterQueueTimestamps, 1, -1 do
+        if now - enterQueueTimestamps[i] >= TIME_WINDOW then
+            table.remove(enterQueueTimestamps, i)
+        end
+    end
+    return #enterQueueTimestamps < MAX_ENTERQUEUE_CALLS
+end
+
+local function recordEnterQueueCall()
+    table.insert(enterQueueTimestamps, os.time())
+end
+
+local function safeEnterQueue(garageId)
+    if canCallEnterQueue() then
+        recordEnterQueueCall()
+        return EnterQueue:InvokeServer(garageId)
+    end
+    return nil
+end
+
 local SCAN_DURATION = 1
 local GARAGE_ID = "AdminEvent"
 local BID_CHECK_INTERVAL = 0.1
@@ -449,7 +477,7 @@ end)
 
 debugPrint("Auction bot started - monitoring for garage", GARAGE_ID)
 
--- Main loop without rate limiting
+-- Main loop with rate limiting (max 5 calls per minute)
 while not halted do
 	while processingItemsWon do
 		task.wait(0.25)
@@ -462,11 +490,11 @@ while not halted do
 	end
 	
 	debugPrint("Entering queue for garage:", GARAGE_ID)
-	local enteredQueue = EnterQueue:InvokeServer(GARAGE_ID)
+	local enteredQueue = safeEnterQueue(GARAGE_ID)
 	
 	if not enteredQueue then
-		debugPrint("Failed to enter queue, waiting 5 seconds")
-		task.wait(5)
+		debugPrint("Rate limited or failed to enter queue, waiting 12 seconds")
+		task.wait(12)
 		continue
 	end
 	
