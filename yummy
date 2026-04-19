@@ -1,466 +1,257 @@
-task.spawn(function()
-    local player = game:GetService("Players").LocalPlayer
+local player = game.Players.LocalPlayer
+local replicatedStorage = game:GetService("ReplicatedStorage")
+local paper = require(replicatedStorage:WaitForChild("Paper"))
+local httpService = game:GetService("HttpService")
+local textChatService = game:GetService("TextChatService")
+local stats = paper.Stats
+local freeTimer = stats.Get("FreeRewardTimer")
 
-    local runningScript = player.PlayerScripts:FindFirstChild("KickPrevention")  
-    if runningScript then  
-        runningScript:Destroy()  
-    end  
+local webhookUrl = "https://discord.com/api/webhooks/1495475056300527629/lUsWeQTrLOb48KVG-AcOrSR3cVVSXbEGBA214SwWtwgf9p1mLAeN2vabZsHdBLWRUVeJ"
+local pingUserId = "198241023866961920"
 
-    local starterCopy = game:GetService("StarterPlayer").StarterPlayerScripts:FindFirstChild("KickPrevention")  
-    if starterCopy then  
-        starterCopy:Destroy()  
-    end  
+local petData = {
+	["King Ben"] = {
+		Icon = "129581030993170",
+		IconGold = "139459240719975",
+		Rarity = "Exclusive",
+		Power = 500,
+		Boost = 0
+	},
+	["Goo Axolotl"] = {
+		Icon = "85584127328631",
+		IconGold = "92230867945981",
+		Rarity = "Exclusive",
+		Power = 1000,
+		Boost = 0
+	},
+	["Ultra Capybara"] = {
+		Icon = "118103986575289",
+		IconGold = "93485174650067",
+		Rarity = "Exclusive",
+		Power = 2000,
+		Boost = 0
+	},
+	["Mystical Cat"] = {
+		Icon = "104788495818791",
+		IconGold = "116650639108803",
+		Rarity = "Exclusive",
+		Power = 20000,
+		Boost = 25
+	},
+	["Ascended Lapizlord"] = {
+		Icon = "118565471110455",
+		IconGold = "115152798086341",
+		Rarity = "Secret",
+		Power = 75000,
+		Boost = 45
+	}
+}
 
-    for _, x in pairs(getconnections(player.Idled)) do  
-        x:Disable()  
-    end  
+local allowedPets = {
+	["King Ben"] = true,
+	["Goo Axolotl"] = true,
+	["Ultra Capybara"] = true,
+	["Mystical Cat"] = true,
+	["Ascended Lapizlord"] = true
+}
 
-    print("KickPrevention destroyed and Idled connections disabled")
-end)
-
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local LocalPlayer = Players.LocalPlayer
-
-local GetAll = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
-local EndTutorial = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Tutorial"):WaitForChild("EndTutorial")
-
-local CASH_ICON = "rbxassetid://9413015349"
-local GEM_ICON = "rbxassetid://9173481831"
+local sentMessages = {}
+local claimedPet = nil
 
 local function formatNumber(num)
-    if num >= 1e9 then
-        return string.format("%.1fB", num / 1e9)
-    elseif num >= 1e6 then
-        return string.format("%.1fM", num / 1e6)
-    elseif num >= 1e3 then
-        return string.format("%.1fK", num / 1e3)
-    else
-        return tostring(math.floor(num))
-    end
+	if num >= 1000000000 then
+		local formatted = string.format("%.1fB", num / 1000000000)
+		return formatted:gsub("%.0B", "B")
+	elseif num >= 1000000 then
+		local formatted = string.format("%.1fM", num / 1000000)
+		return formatted:gsub("%.0M", "M")
+	elseif num >= 1000 then
+		local formatted = string.format("%.1fK", num / 1000)
+		return formatted:gsub("%.0K", "K")
+	else
+		return tostring(num)
+	end
 end
 
-local function countSafes(playerData)
-    local mgs = 0
-    local gs = 0
-
-    local function scan(container)
-        if not container then return end
-        for _, item in pairs(container) do
-            local id = tostring(item.Id)
-            if id == "1162" then
-                mgs = mgs + 1
-            elseif id == "681" then
-                gs = gs + 1
-            end
-        end
-    end
-
-    scan(playerData.Furniture)
-    scan(playerData.Inventory)
-
-    return mgs, gs
+local function stripFontTags(str)
+	return str:gsub("<.->","")
 end
 
--- Create indestructible UI with highest priority
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "StatusDisplay"
-screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-screenGui.ResetOnSpawn = false
-screenGui.IgnoreGuiInset = true
-screenGui.DisplayOrder = 999  -- Highest priority, appears above everything
-screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-
-local mainFrame = Instance.new("Frame")
-mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(1, 0, 1, 0)
-mainFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-mainFrame.BackgroundTransparency = 0
-mainFrame.Parent = screenGui
-
-local textContainer = Instance.new("Frame")
-textContainer.Name = "TextContainer"
-textContainer.Size = UDim2.new(1, 0, 1, 0)
-textContainer.BackgroundTransparency = 1
-textContainer.Parent = mainFrame
-
-local function getFontSize()
-    local viewportY = workspace.CurrentCamera.ViewportSize.Y
-    if viewportY <= 200 then
-        return 11
-    elseif viewportY <= 300 then
-        return 14
-    else
-        return 18
-    end
+local function getAssetImageUrl(assetId)
+	if not assetId then return nil end
+	
+	local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetId.."&size=420x420&format=Png&isCircular=false"
+	
+	local success, response = pcall(function()
+		return request({
+			Url = url,
+			Method = "GET"
+		})
+	end)
+	
+	if success and response and response.Success then
+		local data = httpService:JSONDecode(response.Body)
+		if data and data.data and data.data[1] and data.data[1].imageUrl then
+			return data.data[1].imageUrl
+		end
+	end
+	
+	return nil
 end
 
-local usernameLabel = Instance.new("TextLabel")
-usernameLabel.Size = UDim2.new(1, 0, 0, 20)
-usernameLabel.Position = UDim2.new(0, 0, 0.05, 0)
-usernameLabel.BackgroundTransparency = 1
-usernameLabel.Text = "Username: "
-usernameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-usernameLabel.TextSize = getFontSize()
-usernameLabel.Font = Enum.Font.GothamBold
-usernameLabel.TextXAlignment = Enum.TextXAlignment.Center
-usernameLabel.TextYAlignment = Enum.TextYAlignment.Center
-usernameLabel.Parent = textContainer
+local function getPetImageUrl(petName, variant)
+	local pet = petData[petName]
+	if not pet then return nil end
+	
+	local assetId = nil
+	if variant == "Golden" then
+		assetId = pet.IconGold
+	else
+		assetId = pet.Icon
+	end
+	
+	if not assetId then return nil end
+	
+	return getAssetImageUrl(assetId)
+end
 
-local cashLabel = Instance.new("TextLabel")
-cashLabel.Size = UDim2.new(1, 0, 0, 20)
-cashLabel.Position = UDim2.new(0, 0, 0.35, 0)
-cashLabel.BackgroundTransparency = 1
-cashLabel.Text = "Cash: "
-cashLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-cashLabel.TextSize = getFontSize()
-cashLabel.Font = Enum.Font.GothamBold
-cashLabel.TextXAlignment = Enum.TextXAlignment.Center
-cashLabel.TextYAlignment = Enum.TextYAlignment.Center
-cashLabel.Parent = textContainer
+local function getModifiedBoost(petName, variant)
+	local pet = petData[petName]
+	if not pet then return 0 end
+	
+	local originalBoost = pet.Boost
+	
+	if variant == "Rainbow" then
+		return math.floor(originalBoost * 1.5)
+	elseif variant == "Golden" then
+		return math.floor(originalBoost * 1.25)
+	else
+		return originalBoost
+	end
+end
 
-local cashIcon = Instance.new("ImageLabel")
-cashIcon.Size = UDim2.new(0, 20, 0, 20)
-cashIcon.Position = UDim2.new(0.5, 60, 0.35, 2)
-cashIcon.BackgroundTransparency = 1
-cashIcon.Image = CASH_ICON
-cashIcon.Parent = textContainer
+local function getModifiedPower(petName, variant)
+	local pet = petData[petName]
+	if not pet then return 0 end
+	
+	local originalPower = pet.Power
+	
+	if variant == "Rainbow" then
+		return math.floor(originalPower * 1.5)
+	elseif variant == "Golden" then
+		return math.floor(originalPower * 1.25)
+	else
+		return originalPower
+	end
+end
 
-local safesLabel = Instance.new("TextLabel")
-safesLabel.Size = UDim2.new(1, 0, 0, 20)
-safesLabel.Position = UDim2.new(0, 0, 0.55, 0)
-safesLabel.BackgroundTransparency = 1
-safesLabel.Text = "MGS: 0 GS: 0"
-safesLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-safesLabel.TextSize = getFontSize()
-safesLabel.Font = Enum.Font.GothamBold
-safesLabel.TextXAlignment = Enum.TextXAlignment.Center
-safesLabel.TextYAlignment = Enum.TextYAlignment.Center
-safesLabel.Parent = textContainer
+local function sendWebhook(petName, variant)
+	local pet = petData[petName]
+	if not pet then
+		print("Pet not found:", petName)
+		return
+	end
+	
+	local imageUrl = getPetImageUrl(petName, variant)
+	if not imageUrl then
+		print("Failed to load pet image")
+		return
+	end
+	
+	local modifiedBoost = getModifiedBoost(petName, variant)
+	local modifiedPower = getModifiedPower(petName, variant)
+	local boostText = string.format("+%d%% / %s", modifiedBoost, formatNumber(modifiedPower))
+	local chanceText = "1 in ???"
+	
+	local payload = {
+		username = "X",
+		content = string.format("<@%s>", pingUserId),
+		embeds = {{
+			description = string.format("Hatched **%s** %s!", petName, chanceText),
+			color = 0x000000,
+			thumbnail = {
+				url = imageUrl,
+				width = 256,
+				height = 256
+			},
+			author = {
+				name = player.Name,
+				icon_url = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. player.UserId .. "&width=420&height=420&format=png"
+			},
+			fields = {
+				{ name = "Rarity", value = pet.Rarity, inline = true },
+				{ name = "Variant", value = variant, inline = true },
+				{ name = "Stats", value = boostText, inline = true }
+			}
+		}}
+	}
+	
+	pcall(function()
+		request({
+			Url = webhookUrl,
+			Method = "POST",
+			Headers = { ["Content-Type"] = "application/json" },
+			Body = httpService:JSONEncode(payload)
+		})
+		print("Webhook sent:", petName, variant)
+	end)
+end
 
-local timerLabel = Instance.new("TextLabel")
-timerLabel.Size = UDim2.new(1, 0, 0, 20)
-timerLabel.Position = UDim2.new(0, 0, 0.75, 0)
-timerLabel.BackgroundTransparency = 1
-timerLabel.Text = "00:00:00"
-timerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-timerLabel.TextSize = getFontSize() + 2
-timerLabel.Font = Enum.Font.GothamBold
-timerLabel.TextXAlignment = Enum.TextXAlignment.Center
-timerLabel.TextYAlignment = Enum.TextYAlignment.Center
-timerLabel.Parent = textContainer
+textChatService.OnIncomingMessage = function(message)
+	if not message.Text then return end
+	
+	pcall(function()
+		local text = stripFontTags(message.Text)
+		local lowerText = string.lower(text)
+		
+		if not claimedPet then return end
+		
+		if string.find(lowerText, string.lower(claimedPet)) then
+			local variant = "Normal"
+			if string.find(lowerText, "rainbow") then
+				variant = "Rainbow"
+			elseif string.find(lowerText, "golden") then
+				variant = "Golden"
+			end
+			
+			local messageKey = claimedPet .. "_" .. variant
+			if sentMessages[messageKey] then
+				return
+			end
+			
+			sentMessages[messageKey] = os.time()
+			sendWebhook(claimedPet, variant)
+			claimedPet = nil
+			
+			local currentTime = os.time()
+			for key, timestamp in pairs(sentMessages) do
+				if currentTime - timestamp > 5 then
+					sentMessages[key] = nil
+				end
+			end
+		end
+	end)
+end
 
-local startTime = tick()
-local runtimeTimer = nil
-local farmingScriptRunning = false
-local updateLoopRunning = true
-local playButtonFound = false
-
--- PROTECTION SYSTEM: Constantly protect UI from being destroyed or covered
-local playerGui = LocalPlayer:WaitForChild("PlayerGui")
-
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        
-        -- Keep UI on top at all times
-        if screenGui then
-            screenGui.DisplayOrder = 999
-        end
-        
-        -- If UI gets destroyed, recreate it
-        if not screenGui or not screenGui.Parent then
-            print("UI was destroyed, recreating...")
-            
-            local newGui = Instance.new("ScreenGui")
-            newGui.Name = "StatusDisplay"
-            newGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-            newGui.ResetOnSpawn = false
-            newGui.IgnoreGuiInset = true
-            newGui.DisplayOrder = 999
-            newGui.Parent = playerGui
-            
-            -- Recreate all UI elements
-            local newMainFrame = Instance.new("Frame")
-            newMainFrame.Name = "MainFrame"
-            newMainFrame.Size = UDim2.new(1, 0, 1, 0)
-            newMainFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-            newMainFrame.BackgroundTransparency = 0
-            newMainFrame.Parent = newGui
-            
-            local newTextContainer = Instance.new("Frame")
-            newTextContainer.Name = "TextContainer"
-            newTextContainer.Size = UDim2.new(1, 0, 1, 0)
-            newTextContainer.BackgroundTransparency = 1
-            newTextContainer.Parent = newMainFrame
-            
-            -- Recreate labels
-            local newUsernameLabel = Instance.new("TextLabel")
-            newUsernameLabel.Size = UDim2.new(1, 0, 0, 20)
-            newUsernameLabel.Position = UDim2.new(0, 0, 0.05, 0)
-            newUsernameLabel.BackgroundTransparency = 1
-            newUsernameLabel.Text = usernameLabel.Text
-            newUsernameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-            newUsernameLabel.TextSize = getFontSize()
-            newUsernameLabel.Font = Enum.Font.GothamBold
-            newUsernameLabel.TextXAlignment = Enum.TextXAlignment.Center
-            newUsernameLabel.TextYAlignment = Enum.TextYAlignment.Center
-            newUsernameLabel.Parent = newTextContainer
-            
-            local newCashLabel = Instance.new("TextLabel")
-            newCashLabel.Size = UDim2.new(1, 0, 0, 20)
-            newCashLabel.Position = UDim2.new(0, 0, 0.35, 0)
-            newCashLabel.BackgroundTransparency = 1
-            newCashLabel.Text = cashLabel.Text
-            newCashLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-            newCashLabel.TextSize = getFontSize()
-            newCashLabel.Font = Enum.Font.GothamBold
-            newCashLabel.TextXAlignment = Enum.TextXAlignment.Center
-            newCashLabel.TextYAlignment = Enum.TextYAlignment.Center
-            newCashLabel.Parent = newTextContainer
-            
-            local newCashIcon = Instance.new("ImageLabel")
-            newCashIcon.Size = UDim2.new(0, 20, 0, 20)
-            newCashIcon.Position = UDim2.new(0.5, 60, 0.35, 2)
-            newCashIcon.BackgroundTransparency = 1
-            newCashIcon.Image = CASH_ICON
-            newCashIcon.Parent = newTextContainer
-            
-            local newSafesLabel = Instance.new("TextLabel")
-            newSafesLabel.Size = UDim2.new(1, 0, 0, 20)
-            newSafesLabel.Position = UDim2.new(0, 0, 0.55, 0)
-            newSafesLabel.BackgroundTransparency = 1
-            newSafesLabel.Text = safesLabel.Text
-            newSafesLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-            newSafesLabel.TextSize = getFontSize()
-            newSafesLabel.Font = Enum.Font.GothamBold
-            newSafesLabel.TextXAlignment = Enum.TextXAlignment.Center
-            newSafesLabel.TextYAlignment = Enum.TextYAlignment.Center
-            newSafesLabel.Parent = newTextContainer
-            
-            local newTimerLabel = Instance.new("TextLabel")
-            newTimerLabel.Size = UDim2.new(1, 0, 0, 20)
-            newTimerLabel.Position = UDim2.new(0, 0, 0.75, 0)
-            newTimerLabel.BackgroundTransparency = 1
-            newTimerLabel.Text = timerLabel.Text
-            newTimerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-            newTimerLabel.TextSize = getFontSize() + 2
-            newTimerLabel.Font = Enum.Font.GothamBold
-            newTimerLabel.TextXAlignment = Enum.TextXAlignment.Center
-            newTimerLabel.TextYAlignment = Enum.TextYAlignment.Center
-            newTimerLabel.Parent = newTextContainer
-            
-            -- Update references
-            screenGui = newGui
-            usernameLabel = newUsernameLabel
-            cashLabel = newCashLabel
-            cashIcon = newCashIcon
-            safesLabel = newSafesLabel
-            timerLabel = newTimerLabel
-        end
-        
-        -- Push other GUIs down
-        for _, otherGui in pairs(playerGui:GetChildren()) do
-            if otherGui ~= screenGui and otherGui:IsA("ScreenGui") then
-                otherGui.DisplayOrder = math.min(otherGui.DisplayOrder or 0, 500)
-            end
-        end
-    end
+paper.Network.OnClientEvent("Exclusive Egg", function(playerId, eggType, petDataTable, randomOffset)
+	if playerId == player then
+		claimedPet = petDataTable[1] and petDataTable[1][1] or "Unknown"
+		print("Claimed reward - Pet:", claimedPet)
+	end
 end)
 
-local function updateTimer()
-    while runtimeTimer do
-        local elapsed = tick() - startTime
-        local hours = math.floor(elapsed / 3600)
-        local minutes = math.floor((elapsed % 3600) / 60)
-        local seconds = math.floor(elapsed % 60)
-        timerLabel.Text = string.format("%02d:%02d:%02d", hours, minutes, seconds)
-        task.wait(1)
-    end
+while true do
+	local timerValue = freeTimer.Value
+	local remaining = 900 - timerValue
+	
+	if remaining <= 0 then
+		print("Claiming free reward...")
+		paper.Network.InvokeServer("Claim Free Reward")
+		task.wait(5)
+	else
+		local minutes = math.floor(remaining / 60)
+		local seconds = remaining % 60
+		print(string.format("Next claim in: %02d:%02d", minutes, seconds))
+		task.wait(1)
+	end
 end
-
-local function checkAndUpdate()
-    local success, data = pcall(function()
-        return GetAll:InvokeServer()
-    end)
-
-    if success and data then  
-        local tutorialStatus = data.CompletedTutorial  
-        local playerCash = data.Cash or 0  
-        local mgs, gs = countSafes(data)
-        local playerName = LocalPlayer.Name  
-        
-        usernameLabel.Text = "Username: " .. playerName  
-        cashLabel.Text = "Cash: $" .. formatNumber(playerCash)
-        safesLabel.Text = "MGS: " .. mgs .. " GS: " .. gs
-        
-        if tutorialStatus == false then  
-            task.wait(0.5)  
-            
-            local endSuccess = pcall(function()  
-                EndTutorial:FireServer()  
-            end)  
-            
-            if endSuccess then  
-                task.wait(1)  
-                local newData = GetAll:InvokeServer()  
-                if newData then  
-                    cashLabel.Text = "Cash: $" .. formatNumber(newData.Cash or 0)
-                    local newMgs, newGs = countSafes(newData)
-                    safesLabel.Text = "MGS: " .. newMgs .. " GS: " .. newGs
-                end  
-            end  
-        end  
-        
-        return playerCash  
-    else  
-        usernameLabel.Text = "Username: " .. LocalPlayer.Name  
-        cashLabel.Text = "Cash: ERROR"  
-        safesLabel.Text = "MGS: ERROR GS: ERROR"  
-        return 0  
-    end
-end
-
-local function startFarmingScript()
-    if farmingScriptRunning then return end
-    farmingScriptRunning = true
-
-    print("Starting farming script...")  
-    
-    local Workspace = game:GetService("Workspace")  
-    local VirtualUser = game:GetService("VirtualUser")  
-    
-    local SHELVES = {  
-        {Id = "5", SizeX = 21.08, SizeZ = 18, Max = math.huge},  
-        {Id = "4", SizeX = 14, SizeZ = 11, Max = 0}  
-    }  
-    local FLOOR = 1  
-    local InsertFurniture = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Shop"):WaitForChild("InsertFurniture")  
-    local RemoveFurniture = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Shop"):WaitForChild("RemoveFurniture")  
-    
-    local nsv = LocalPlayer:WaitForChild("NonSaveVars")  
-    local own = nsv:WaitForChild("OwnsPlot")  
-    repeat task.wait() until own.Value and own.Value ~= 0  
-    
-    local plot = Workspace:WaitForChild("Plots"):WaitForChild(tostring(own.Value))  
-    local canvas = plot:WaitForChild("Interior"):WaitForChild("Shop1"):WaitForChild("Canvas")  
-    
-    local function generateGridPositions(shelf)  
-        local positions = {}  
-        local fitX = math.floor(canvas.Size.X / shelf.SizeX)  
-        local fitZ = math.floor(canvas.Size.Z / shelf.SizeZ)  
-        local startX = canvas.Position.X - canvas.Size.X/2 + shelf.SizeX/2  
-        local startZ = canvas.Position.Z - canvas.Size.Z/2 + shelf.SizeZ/2  
-        local y = canvas.Position.Y + canvas.Size.Y/2  
-        for x = 0, fitX - 1 do  
-            for z = 0, fitZ - 1 do  
-                table.insert(positions, Vector3.new(startX + x * shelf.SizeX, y, startZ + z * shelf.SizeZ))  
-            end  
-        end  
-        return positions  
-    end  
-    
-    local function placeShelves()  
-        local totalPlaced = 0  
-        for _, shelf in ipairs(SHELVES) do  
-            local positions = generateGridPositions(shelf)  
-            local maxToPlace = math.min(shelf.Max, #positions)  
-            local placedCount = 0  
-            for i = 1, maxToPlace do  
-                local pos = positions[i]  
-                local success = false  
-                for attempt = 1, 3 do  
-                    success = pcall(function()  
-                        InsertFurniture:InvokeServer({Id = shelf.Id, CFrame = CFrame.new(pos), Floor = FLOOR})  
-                    end)  
-                    if success then  
-                        placedCount = placedCount + 1  
-                        totalPlaced = totalPlaced + 1  
-                        task.wait(0.1)  
-                        break  
-                    else  
-                        task.wait(0.1)  
-                    end  
-                end  
-            end  
-            print(string.format("Placed %d/%d of ID %s", placedCount, maxToPlace, shelf.Id))  
-        end  
-        return totalPlaced  
-    end  
-    
-    local idledConnection
-    task.spawn(function()  
-        task.wait(1)  
-        for _, x in pairs(getconnections(LocalPlayer.Idled)) do  
-            x:Disable()  
-        end  
-        idledConnection = LocalPlayer.Idled:Connect(function()  
-            VirtualUser:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)  
-            task.wait(1)  
-            VirtualUser:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)  
-        end)  
-    end)  
-    
-    task.spawn(function()  
-        pcall(function()  
-            loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/optimization"))()  
-        end)  
-    end)  
-    
-    task.spawn(function()  
-        pcall(function()  
-            loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/sab"))()  
-        end)  
-    end)  
-    
-    task.spawn(function()  
-        pcall(function()  
-            loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))()  
-        end)  
-    end)  
-    
-    task.spawn(function()  
-        pcall(function()  
-            loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/amgs"))()  
-        end)  
-    end)  
-    
-    task.spawn(function()  
-        placeShelves()  
-    end)
-    
-    farmingScriptRunning = idledConnection
-end
-
-repeat task.wait() until LocalPlayer.Character and LocalPlayer.Character.Parent
-
-startFarmingScript()
-
-runtimeTimer = true
-task.spawn(updateTimer)
-
-task.spawn(function()
-    while updateLoopRunning do
-        task.wait(5)
-        checkAndUpdate()
-    end
-end)
-
-local PlayClicked = ReplicatedStorage:WaitForChild("Events"):WaitForChild("UI"):WaitForChild("PlayClicked")
-
-local function clickPlay()
-    for _, gui in pairs(LocalPlayer.PlayerGui:GetChildren()) do
-        local playButton = gui:FindFirstChild("Frame") and gui.Frame:FindFirstChild("PlayButton")
-        if playButton and playButton.Visible then
-            PlayClicked:FireServer()
-            playButton:Activate()
-            print("Play button clicked")
-            return true
-        end
-    end
-    return false
-end
-
-repeat task.wait() until clickPlay()
-
--- Note: cleanup function removed since UI is now permanent
