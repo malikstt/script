@@ -102,7 +102,7 @@ local allowedPets = {
 
 local sentMessages = {}
 
-print("Started - Monitoring for pet names v10")
+print("Started - Monitoring for pet names v13")
 
 local function formatNumber(num)
 	if num >= 1000000000 then
@@ -268,6 +268,23 @@ local function getUserPresence(userId)
 	return "Unknown"
 end
 
+local function getDisplayName(userId)
+	if not userId then return nil end
+	
+	local success, response = pcall(function()
+		return request({
+			Url = "https://users.roblox.com/v1/users/" .. userId,
+			Method = "GET"
+		})
+	end)
+	
+	if success and response and response.Success then
+		local data = HttpService:JSONDecode(response.Body)
+		return data.displayName
+	end
+	return nil
+end
+
 local function getVariantDisplay(variant)
 	if variant == "Rainbow" then
 		return "Rainbow"
@@ -285,7 +302,7 @@ local function getModifiedChanceText(petName, variant)
 	local baseNum = pet.Chance
 	
 	if variant == "Rainbow" then
-		return string.format("1 in %s", formatNumber(baseNum * 20 * 1.5))
+		return string.format("1 in %s", formatNumber(baseNum * 100))
 	elseif variant == "Golden" then
 		return string.format("1 in %s", formatNumber(baseNum * 20))
 	else
@@ -334,23 +351,6 @@ local function getPingString(petName, rarity)
 	return ""
 end
 
-local function getRelativeTime(timestamp)
-	local diff = os.time() - timestamp
-	
-	if diff < 60 then
-		return string.format("%d seconds ago", diff)
-	elseif diff < 3600 then
-		local minutes = math.floor(diff / 60)
-		return string.format("%d minute%s ago", minutes, minutes ~= 1 and "s" or "")
-	elseif diff < 86400 then
-		local hours = math.floor(diff / 3600)
-		return string.format("%d hour%s ago", hours, hours ~= 1 and "s" or "")
-	else
-		local days = math.floor(diff / 86400)
-		return string.format("%d day%s ago", days, days ~= 1 and "s" or "")
-	end
-end
-
 local function sendWebhook(playerName, petName, variant, userId, messageTimestamp)
 	print(string.format("[WEBHOOK] Starting for %s - %s (%s)", playerName, petName, variant))
 	
@@ -363,6 +363,8 @@ local function sendWebhook(playerName, petName, variant, userId, messageTimestam
 	local imageUrl = nil
 	local avatarUrl = nil
 	local presence = "Unknown"
+	local displayName = playerName
+	local finalUserId = userId or "Unknown"
 	
 	print("[WEBHOOK] Loading pet image...")
 	for attempt = 1, 5 do
@@ -392,6 +394,12 @@ local function sendWebhook(playerName, petName, variant, userId, messageTimestam
 		
 		print("[WEBHOOK] Fetching user presence...")
 		presence = getUserPresence(userId)
+		
+		print("[WEBHOOK] Fetching display name...")
+		local fetchedDisplayName = getDisplayName(userId)
+		if fetchedDisplayName then
+			displayName = fetchedDisplayName
+		end
 	end
 	
 	if not avatarUrl then
@@ -404,7 +412,6 @@ local function sendWebhook(playerName, petName, variant, userId, messageTimestam
 	local boostText = string.format("+%d%% / %s", modifiedBoost, formatNumber(modifiedPower))
 	
 	local pingText = getPingString(petName, pet.Rarity)
-	local relativeTime = getRelativeTime(messageTimestamp)
 	local discordTimestamp = string.format("<t:%d:R>", messageTimestamp)
 	
 	local payload = {
@@ -440,10 +447,11 @@ local function sendWebhook(playerName, petName, variant, userId, messageTimestam
 				},
 				{
 					name = "Fetch Result",
-					value = string.format("Presence: **%s**\nMessage Age: %s %s", 
+					value = string.format("Presence: **%s** (%s)\nDisplay Name: **%s**\nUser ID: `%s`", 
 						presence, 
-						relativeTime,
-						discordTimestamp),
+						discordTimestamp,
+						displayName,
+						finalUserId),
 					inline = false
 				}
 			}
