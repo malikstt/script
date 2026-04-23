@@ -128,8 +128,47 @@ local petImageCache = {}
 
 print("Started - Monitoring for pet names v15")
 
-local function getAssetImageUrl(assetId, maxAttempts)
-	maxAttempts = maxAttempts or 5
+-- For PRELOAD only - limited attempts
+local function preloadAssetImageUrl(assetId, maxAttempts, cache)
+	if not assetId then return nil end
+	
+	if cache[assetId] then
+		return cache[assetId]
+	end
+	
+	local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetId.."&size=420x420&format=Png&isCircular=false"
+	
+	for attempt = 1, maxAttempts do
+		local success, response = pcall(function()
+			return request({
+				Url = url,
+				Method = "GET"
+			})
+		end)
+		
+		if success and response and response.Success then
+			local data = HttpService:JSONDecode(response.Body)
+			
+			if data and data.data and data.data[1] then
+				local thumb = data.data[1]
+				
+				if thumb.state == "Completed" and thumb.imageUrl then
+					cache[assetId] = thumb.imageUrl
+					return thumb.imageUrl
+				end
+			end
+		end
+		
+		if attempt < maxAttempts then
+			task.wait(0.7)
+		end
+	end
+	
+	return nil
+end
+
+-- For WEBHOOK - unlimited retries
+local function getAssetImageUrl(assetId)
 	if not assetId then return nil end
 	
 	if eggImageCache[assetId] then
@@ -138,7 +177,7 @@ local function getAssetImageUrl(assetId, maxAttempts)
 	
 	local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetId.."&size=420x420&format=Png&isCircular=false"
 	
-	for attempt = 1, maxAttempts do
+	while true do
 		local success, response = pcall(function()
 			return request({
 				Url = url,
@@ -159,14 +198,13 @@ local function getAssetImageUrl(assetId, maxAttempts)
 			end
 		end
 		
-		if attempt < maxAttempts then
-			task.wait(0.7)
-		end
+		task.wait(0.7)
 	end
 	
 	return nil
 end
 
+-- For WEBHOOK pet images - unlimited retries
 local function getPetImageUrl(petName, variant)
 	local pet = petData[petName]
 	if not pet then return nil end
@@ -191,10 +229,9 @@ local function getPetImageUrl(petName, variant)
 	
 	if not assetId then return nil end
 	
-	-- 10 attempts for pet images
 	local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetId.."&size=420x420&format=Png&isCircular=false"
 	
-	for attempt = 1, 10 do
+	while true do
 		local success, response = pcall(function()
 			return request({
 				Url = url,
@@ -215,20 +252,18 @@ local function getPetImageUrl(petName, variant)
 			end
 		end
 		
-		if attempt < 10 then
-			task.wait(0.7)
-		end
+		task.wait(0.7)
 	end
 	
 	return nil
 end
 
--- Pre-load all egg images (5 attempts each)
+-- Pre-load all egg images (5 attempts max)
 local function preloadEggImages()
 	print("Pre-loading egg images...")
 	for eggName, assetId in pairs(eggAssets) do
 		task.spawn(function()
-			local url = getAssetImageUrl(assetId, 5)
+			local url = preloadAssetImageUrl(assetId, 5, eggImageCache)
 			if url then
 				print("  Loaded: " .. eggName)
 			else
@@ -239,14 +274,14 @@ local function preloadEggImages()
 	end
 end
 
--- Pre-load all pet images (10 attempts each)
+-- Pre-load all pet images (10 attempts max)
 local function preloadPetImages()
 	print("Pre-loading pet images...")
 	for petName, pet in pairs(petData) do
 		task.spawn(function()
 			-- Normal variant
 			if pet.Icon then
-				local url = getAssetImageUrl(pet.Icon, 10)
+				local url = preloadAssetImageUrl(pet.Icon, 10, petImageCache)
 				if url then
 					petImageCache[petName .. "_Normal"] = url
 					print("  Loaded: " .. petName .. " (Normal)")
@@ -258,7 +293,7 @@ local function preloadPetImages()
 			
 			-- Golden variant
 			if pet.IconGold then
-				local url = getAssetImageUrl(pet.IconGold, 10)
+				local url = preloadAssetImageUrl(pet.IconGold, 10, petImageCache)
 				if url then
 					petImageCache[petName .. "_Golden"] = url
 					print("  Loaded: " .. petName .. " (Golden)")
@@ -486,18 +521,16 @@ local function sendWebhook(playerName, petName, variant, userId, messageTimestam
 		return
 	end
 	
-	-- Get egg info (5 attempts max)
+	-- Get egg info (uses cached from preload or fetches with unlimited retries)
 	local eggName = petEggs[petName] or "Unknown Egg"
 	local eggAssetId = eggAssets[eggName]
 	local eggIconUrl = nil
 	local eggDisplay = eggName
 	
 	if eggAssetId then
-		eggIconUrl = getAssetImageUrl(eggAssetId, 5)
+		eggIconUrl = getAssetImageUrl(eggAssetId)
 		if eggIconUrl then
 			eggDisplay = string.format("%s\n%s", eggName, eggIconUrl)
-		else
-			print(string.format("[WEBHOOK] Failed to load egg image for %s after 5 attempts", eggName))
 		end
 	end
 	
@@ -507,11 +540,18 @@ local function sendWebhook(playerName, petName, variant, userId, messageTimestam
 	local displayName = playerName
 	local finalUserId = userId or "Unknown"
 	
-	print("[WEBHOOK] Loading pet image (10 attempts max)...")
-	imageUrl = getPetImageUrl(petName, variant)
+	print("[WEBHOOK] Loading pet image...")
+	for attempt = 1, 5 do
+		imageUrl = getPetImageUrl(petName, variant)
+		if imageUrl then
+			break
+		end
+		print(string.format("[WEBHOOK] Pet image attempt %d failed, retrying...", attempt))
+		task.wait(1)
+	end
 	
 	if not imageUrl then
-		print("[WEBHOOK] Failed to load pet image after 10 attempts, skipping webhook")
+		print("[WEBHOOK] Failed to load pet image")
 		return
 	end
 	
