@@ -126,10 +126,12 @@ local allowedPets = {
 local sentMessages = {}
 local eggImageCache = {}
 local petImageCache = {}
+local failedEggs = {}
+local failedPets = {}
 
-print("Started - Monitoring for pet names v15")
+print("Started - Monitoring for pet names v16")
 
-local function preloadAssetImageUrl(assetId, maxAttempts, cache)
+local function preloadAssetImageUrl(assetId, maxAttempts, cache, assetName, assetType)
 	if not assetId then return nil end
 	
 	if cache[assetId] then
@@ -164,7 +166,50 @@ local function preloadAssetImageUrl(assetId, maxAttempts, cache)
 		end
 	end
 	
+	if assetType == "egg" then
+		table.insert(failedEggs, {name = assetName, assetId = assetId})
+	elseif assetType == "pet" then
+		table.insert(failedPets, {name = assetName, assetId = assetId, variant = assetName:match("_(.+)$")})
+	end
+	
 	return nil
+end
+
+local function retryFailed()
+	while true do
+		task.wait(math.random(60, 300))
+		
+		if #failedEggs > 0 then
+			print(string.format("[RETRY] Retrying %d failed eggs...", #failedEggs))
+			for i = #failedEggs, 1, -1 do
+				local egg = failedEggs[i]
+				local url = preloadAssetImageUrl(egg.assetId, 5, eggImageCache, egg.name, "egg")
+				if url then
+					print(string.format("[RETRY] Successfully loaded egg: %s", egg.name))
+					table.remove(failedEggs, i)
+				else
+					print(string.format("[RETRY] Still failed: %s", egg.name))
+				end
+				task.wait(0.5)
+			end
+		end
+		
+		if #failedPets > 0 then
+			print(string.format("[RETRY] Retrying %d failed pets...", #failedPets))
+			for i = #failedPets, 1, -1 do
+				local pet = failedPets[i]
+				local url = preloadAssetImageUrl(pet.assetId, 10, petImageCache, pet.name, "pet")
+				if url then
+					petImageCache[pet.name] = url
+					print(string.format("[RETRY] Successfully loaded pet: %s", pet.name))
+					table.remove(failedPets, i)
+				else
+					print(string.format("[RETRY] Still failed: %s", pet.name))
+				end
+				task.wait(0.5)
+			end
+		end
+	end
 end
 
 local function getAssetImageUrl(assetId)
@@ -260,7 +305,7 @@ local function preloadEggImages()
 	print("Pre-loading egg images...")
 	for eggName, assetId in pairs(eggAssets) do
 		task.spawn(function()
-			local url = preloadAssetImageUrl(assetId, 5, eggImageCache)
+			local url = preloadAssetImageUrl(assetId, 5, eggImageCache, eggName, "egg")
 			if url then
 				print("  Loaded: " .. eggName)
 			else
@@ -276,9 +321,10 @@ local function preloadPetImages()
 	for petName, pet in pairs(petData) do
 		task.spawn(function()
 			if pet.Icon then
-				local url = preloadAssetImageUrl(pet.Icon, 10, petImageCache)
+				local cacheKey = petName .. "_Normal"
+				local url = preloadAssetImageUrl(pet.Icon, 10, petImageCache, cacheKey, "pet")
 				if url then
-					petImageCache[petName .. "_Normal"] = url
+					petImageCache[cacheKey] = url
 					print("  Loaded: " .. petName .. " (Normal)")
 				else
 					print("  Failed (after 10 attempts): " .. petName .. " (Normal)")
@@ -287,9 +333,10 @@ local function preloadPetImages()
 			task.wait(0.2)
 			
 			if pet.IconGold then
-				local url = preloadAssetImageUrl(pet.IconGold, 10, petImageCache)
+				local cacheKey = petName .. "_Golden"
+				local url = preloadAssetImageUrl(pet.IconGold, 10, petImageCache, cacheKey, "pet")
 				if url then
-					petImageCache[petName .. "_Golden"] = url
+					petImageCache[cacheKey] = url
 					print("  Loaded: " .. petName .. " (Golden)")
 				else
 					print("  Failed (after 10 attempts): " .. petName .. " (Golden)")
@@ -308,6 +355,7 @@ end
 
 preloadEggImages()
 preloadPetImages()
+task.spawn(retryFailed)
 
 local function formatNumber(num)
 	if num >= 1000000000 then
@@ -517,13 +565,9 @@ local function sendWebhook(playerName, petName, variant, userId, messageTimestam
 	local eggName = petEggs[petName] or "Unknown Egg"
 	local eggAssetId = eggAssets[eggName]
 	local eggIconUrl = nil
-	local eggDisplay = eggName
 	
 	if eggAssetId then
 		eggIconUrl = getAssetImageUrl(eggAssetId)
-		if eggIconUrl then
-			eggDisplay = string.format("%s\n%s", eggName, eggIconUrl)
-		end
 	end
 	
 	local imageUrl = getPetImageUrl(petName, variant)
@@ -571,23 +615,21 @@ local function sendWebhook(playerName, petName, variant, userId, messageTimestam
 		username = "S",
 		content = pingText,
 		embeds = {{
-			description = string.format("Hatched **%s** %s!", petName, chanceText),
+			description = string.format("Hatched **%s** %s!\nFrom Egg: **%s**", petName, chanceText, eggName),
 			color = 0x000000,
 			thumbnail = {
-				url = imageUrl,
+				url = eggIconUrl,
 				width = 256,
 				height = 256
+			},
+			image = {
+				url = imageUrl
 			},
 			author = {
 				name = playerName,
 				icon_url = avatarUrl
 			},
 			fields = {
-				{
-					name = "Egg",
-					value = eggDisplay,
-					inline = true
-				},
 				{
 					name = "Rarity",
 					value = pet.Rarity,
