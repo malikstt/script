@@ -8,6 +8,28 @@ local webhookUrl = "https://discord.com/api/webhooks/1492622522339037315/wC2sJfo
 local celestialRoleId = "1495140212349599896"
 local secretRoleId = "1495486601449574623"
 
+-- Egg Asset IDs
+local eggAssets = {
+    ["Toy Egg"] = "95641493234146",
+    ["Nightmare Egg"] = "117381695675008",
+    ["Admin Egg"] = "80914973237193",
+    ["Cosmic Egg"] = "98332641381553",
+    ["Elemental Egg"] = "137139139834968",
+    ["Hell Egg"] = "84933951925523",
+    ["Space Egg"] = "136928541676217",
+    ["Frostbound Egg"] = "95944750513457",
+    ["Farm Egg"] = "136928541676217"
+}
+
+-- Pet to Egg mapping
+local petEggs = {
+    ["Bunny Machine"] = "Toy Egg",
+    ["Carnival Cannon"] = "Farm Egg",
+    ["Elemental Guardian"] = "Elemental Egg",
+    ["Enchanted Inferno"] = "Hell Egg",
+    ["Horror Monster"] = "Nightmare Egg"
+}
+
 local petData = {
 	["Cursed Hell Eye"] = {
 		Icon = "9798871377",
@@ -101,8 +123,63 @@ local allowedPets = {
 }
 
 local sentMessages = {}
+local eggImageCache = {}
 
 print("Started - Monitoring for pet names v13")
+
+local function getAssetImageUrl(assetId)
+	if not assetId then return nil end
+	
+	if eggImageCache[assetId] then
+		return eggImageCache[assetId]
+	end
+	
+	local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetId.."&size=420x420&format=Png&isCircular=false"
+	
+	for attempt = 1, 5 do
+		local success, response = pcall(function()
+			return request({
+				Url = url,
+				Method = "GET"
+			})
+		end)
+		
+		if success and response and response.Success then
+			local data = HttpService:JSONDecode(response.Body)
+			
+			if data and data.data and data.data[1] then
+				local thumb = data.data[1]
+				
+				if thumb.state == "Completed" and thumb.imageUrl then
+					eggImageCache[assetId] = thumb.imageUrl
+					return thumb.imageUrl
+				end
+			end
+		end
+		
+		task.wait(0.7)
+	end
+	
+	return nil
+end
+
+-- Pre-load all egg images
+local function preloadEggImages()
+	print("Pre-loading egg images...")
+	for eggName, assetId in pairs(eggAssets) do
+		task.spawn(function()
+			local url = getAssetImageUrl(assetId)
+			if url then
+				print("  Loaded: " .. eggName)
+			else
+				print("  Failed: " .. eggName)
+			end
+		end)
+		task.wait(0.3)
+	end
+end
+
+preloadEggImages()
 
 local function formatNumber(num)
 	if num >= 1000000000 then
@@ -130,37 +207,6 @@ local function extractPlayerName(text)
 	local endPos = string.find(text, " ", startPos)
 	if not endPos then return nil end
 	return string.sub(text, startPos, endPos - 1)
-end
-
-local function getAssetImageUrl(assetId)
-	if not assetId then return nil end
-	
-	local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetId.."&size=420x420&format=Png&isCircular=false"
-	
-	for attempt = 1, 5 do
-		local success, response = pcall(function()
-			return request({
-				Url = url,
-				Method = "GET"
-			})
-		end)
-		
-		if success and response and response.Success then
-			local data = HttpService:JSONDecode(response.Body)
-			
-			if data and data.data and data.data[1] then
-				local thumb = data.data[1]
-				
-				if thumb.state == "Completed" and thumb.imageUrl then
-					return thumb.imageUrl
-				end
-			end
-		end
-		
-		task.wait(0.7)
-	end
-	
-	return nil
 end
 
 local function getPetImageUrl(petName, variant)
@@ -360,6 +406,15 @@ local function sendWebhook(playerName, petName, variant, userId, messageTimestam
 		return
 	end
 	
+	-- Get egg info
+	local eggName = petEggs[petName] or "Unknown Egg"
+	local eggAssetId = eggAssets[eggName]
+	local eggIconUrl = eggAssetId and getAssetImageUrl(eggAssetId) or nil
+	local eggDisplay = eggName
+	if eggIconUrl then
+		eggDisplay = string.format("%s\n%s", eggName, eggIconUrl)
+	end
+	
 	local imageUrl = nil
 	local avatarUrl = nil
 	local presence = "Unknown"
@@ -430,6 +485,11 @@ local function sendWebhook(playerName, petName, variant, userId, messageTimestam
 				icon_url = avatarUrl
 			},
 			fields = {
+				{
+					name = "Egg",
+					value = eggDisplay,
+					inline = true
+				},
 				{
 					name = "Rarity",
 					value = pet.Rarity,
