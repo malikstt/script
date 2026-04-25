@@ -13,117 +13,267 @@ local Window = Rayfield:CreateWindow({
 
 local Tab = Window:CreateTab("Main")
 
--- Variables
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Debris = game:GetService("Debris")
-local CollectionService = game:GetService("CollectionService")
 
 local AutoTrainEnabled = false
+local AutoThrowEnabled = false
 local FullControlEnabled = false
 local DestroyAnimEnabled = false
 local DisablePopupsEnabled = false
 local DisableUIEnabled = false
+local ThrowWhileTrainingEnabled = false
+local FastThrowEnabled = false
+local FastThrowLoopRunning = false
+local ZoneLockEnabled = false
+local FreezePositionEnabled = false
+local DualActionEnabled = false
 
--- Original event reference
-local originalTrainAnim = nil
-local trainAnimConnection = nil
+local FastThrowInterval = 0.05
+local FastThrowConnection = nil
+local Paper = nil
+local Worlds = nil
 
--- Function to toggle built-in AutoTrain
+local function SafeRequire(module)
+    local success, result = pcall(function()
+        return require(module)
+    end)
+    if success then
+        return result
+    end
+    return nil
+end
+
+local function WaitForPaper()
+    local attempts = 0
+    while attempts < 50 and not Paper do
+        Paper = SafeRequire(ReplicatedStorage:FindFirstChild("Paper"))
+        if not Paper then
+            task.wait(0.1)
+            attempts = attempts + 1
+        end
+    end
+    if Paper then
+        pcall(function()
+            Worlds = require(ReplicatedStorage.Modules.Shared.Worlds)
+        end)
+    end
+end
+
+WaitForPaper()
+
 local function ToggleAutoTrain(state)
-    local Paper = require(ReplicatedStorage.Paper)
     if Paper and Paper.Stats then
-        local autoTrainStat = Paper.Stats.Get("AutoTrain")
-        if autoTrainStat then
-            autoTrainStat.Value = state
+        local success, autoTrainStat = pcall(function()
+            return Paper.Stats.Get("AutoTrain")
+        end)
+        if success and autoTrainStat then
+            pcall(function()
+                autoTrainStat.Value = state
+            end)
         end
     end
 end
 
--- Function for full control (unanchor player)
+local function ToggleAutoThrow(state)
+    if Paper and Paper.Stats then
+        local success, autoThrowStat = pcall(function()
+            return Paper.Stats.Get("AutoThrow")
+        end)
+        if success and autoThrowStat then
+            pcall(function()
+                autoThrowStat.Value = state
+            end)
+        end
+    end
+end
+
+local function GetRaceStartValue()
+    local success, raceStart = pcall(function()
+        return ReplicatedStorage.Values.Race.RaceStart
+    end)
+    if success and raceStart then
+        return raceStart.Value
+    end
+    return 0
+end
+
+local function IsInRace()
+    if Paper and Paper.State then
+        local success, result = pcall(function()
+            return Paper.State.IsInState(LocalPlayer, "Race")
+        end)
+        if success then
+            return result
+        end
+    end
+    return false
+end
+
+local function FireThrowObject()
+    if Paper and Paper.Network then
+        pcall(function()
+            Paper.Network.FireServer("Throw Object")
+        end)
+    end
+end
+
+local function StartFastThrowLoop()
+    if FastThrowConnection then
+        FastThrowConnection:Disconnect()
+        FastThrowConnection = nil
+    end
+    
+    if FastThrowEnabled and FastThrowLoopRunning then
+        FastThrowConnection = RunService.Heartbeat:Connect(function()
+            if FastThrowEnabled and FastThrowLoopRunning then
+                local canThrow = true
+                
+                if not DualActionEnabled then
+                    if AutoTrainEnabled and LocalPlayer:GetAttribute("TrainingStation") then
+                        canThrow = false
+                    end
+                end
+                
+                if canThrow and GetRaceStartValue() == 0 and not IsInRace() then
+                    FireThrowObject()
+                end
+                
+                task.wait(FastThrowInterval)
+            end
+        end)
+    end
+end
+
+local function StopFastThrowLoop()
+    if FastThrowConnection then
+        FastThrowConnection:Disconnect()
+        FastThrowConnection = nil
+    end
+end
+
 local function HandleFullControl()
     if not FullControlEnabled then return end
-    
     local character = LocalPlayer.Character
     if character then
         local rootPart = character:FindFirstChild("HumanoidRootPart")
         if rootPart and rootPart.Anchored == true then
-            rootPart.Anchored = false
+            pcall(function()
+                rootPart.Anchored = false
+            end)
         end
     end
 end
 
--- Function to destroy training animation
-local function SetupAnimationDestroyer()
-    if trainAnimConnection then
-        trainAnimConnection:Disconnect()
-        trainAnimConnection = nil
-    end
+local function HandleZoneLock()
+    if not ZoneLockEnabled then return end
+    local character = LocalPlayer.Character
+    if not character then return end
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return end
+    local humanoid = character:FindFirstChild("Humanoid")
+    if not humanoid then return end
     
+    if Worlds then
+        local success, currentWorldFolder = pcall(function()
+            return Worlds.GetCurrentWorldFolder(LocalPlayer)
+        end)
+        if success and currentWorldFolder then
+            local standingZone = currentWorldFolder:FindFirstChild("Standing Zone")
+            if standingZone then
+                pcall(function()
+                    humanoid:MoveTo(standingZone.Position, rootPart)
+                end)
+            end
+        end
+    end
+end
+
+local function HandleFreezePosition()
+    if not FreezePositionEnabled then return end
+    local character = LocalPlayer.Character
+    if character then
+        local rootPart = character:FindFirstChild("HumanoidRootPart")
+        if rootPart then
+            pcall(function()
+                rootPart.AssemblyLinearVelocity = Vector3.new(0, rootPart.AssemblyLinearVelocity.Y, 0)
+                rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            end)
+        end
+    end
+end
+
+local function SetupAnimationDestroyer()
     if DestroyAnimEnabled then
-        -- Hook into the network event
-        local Paper = require(ReplicatedStorage.Paper)
-        if Paper and Paper.Network then
-            -- Override the event handler
-            local oldHandlers = getrawmetatable(game).__namecall
-            -- Alternative: Clear the attribute reset
+        pcall(function()
             LocalPlayer:GetAttributeChangedSignal("Throw"):Connect(function()
                 if DestroyAnimEnabled and LocalPlayer:GetAttribute("Throw") then
                     task.wait()
                     LocalPlayer:SetAttribute("Throw", nil)
                 end
             end)
-        end
+        end)
     end
 end
 
--- Function to remove training popups (VFX)
 local function RemoveTrainingVFX()
-    local vfxFolder = ReplicatedStorage:FindFirstChild("Assets") and ReplicatedStorage.Assets:FindFirstChild("VFX")
+    local vfxFolder = ReplicatedStorage:FindFirstChild("Assets")
     if vfxFolder then
-        for _, vfx in pairs(vfxFolder:GetChildren()) do
-            if vfx.Name == "WallSmoke" or vfx.Name == "DebrisPart" then
-                vfx:Destroy()
+        vfxFolder = vfxFolder:FindFirstChild("VFX")
+        if vfxFolder then
+            for _, vfx in pairs(vfxFolder:GetChildren()) do
+                if vfx.Name == "WallSmoke" or vfx.Name == "DebrisPart" then
+                    pcall(function()
+                        vfx:Destroy()
+                    end)
+                end
             end
         end
     end
     
-    -- Override the FlyingDebris function
-    local Paper = require(ReplicatedStorage.Paper)
     if Paper and Paper.VFX then
-        Paper.VFX.FlyingDebris = function() end
+        pcall(function()
+            Paper.VFX.FlyingDebris = function() end
+        end)
     end
 end
 
--- Function to remove training UI elements
 local function RemoveTrainingUI()
-    local playerGui = LocalPlayer:WaitForChild("PlayerGui")
-    local mainGui = playerGui:FindFirstChild("Main")
+    local success, playerGui = pcall(function()
+        return LocalPlayer:WaitForChild("PlayerGui")
+    end)
+    if not success then return end
     
+    local mainGui = playerGui:FindFirstChild("Main")
     if mainGui then
-        -- Find and destroy training UI clones
         for _, child in pairs(mainGui:GetDescendants()) do
             if child:IsA("Frame") or child:IsA("TextLabel") then
                 if child.Name == "Required" or child.Name == "Rebirths" or child.Name == "Gain" then
-                    if child.Parent and child.Parent.Parent and child.Parent.Parent.Name == "UI" then
-                        child:Destroy()
+                    if child.Parent and child.Parent.Parent then
+                        pcall(function()
+                            child:Destroy()
+                        end)
                     end
                 end
             end
         end
     end
     
-    -- Also clean up existing training station UIs
     local trainingFolder = workspace:FindFirstChild("Training")
     if trainingFolder then
         for _, station in pairs(trainingFolder:GetChildren()) do
             local ui = station:FindFirstChild("UI")
             if ui then
                 for _, element in pairs(ui:GetChildren()) do
-                    if element:IsA("Frame") and (element.Name == "Required" or element.Name == "Rebirths" or element.Name == "Gain") then
-                        element:Destroy()
+                    if element:IsA("Frame") then
+                        if element.Name == "Required" or element.Name == "Rebirths" or element.Name == "Gain" then
+                            pcall(function()
+                                element:Destroy()
+                            end)
+                        end
                     end
                 end
             end
@@ -131,71 +281,110 @@ local function RemoveTrainingUI()
     end
 end
 
--- Main loop for continuous checks
-RunService.Heartbeat:Connect(function()
-    -- Full Control: Keep unanchoring
-    if FullControlEnabled then
-        HandleFullControl()
-    end
-    
-    -- Destroy Animation: Monitor and clear Throw attribute
-    if DestroyAnimEnabled then
-        if LocalPlayer:GetAttribute("Throw") then
-            LocalPlayer:SetAttribute("Throw", nil)
+local function HandleThrowWhileTraining()
+    if not ThrowWhileTrainingEnabled then return end
+    if DualActionEnabled then
+        if FastThrowEnabled and not FastThrowLoopRunning and AutoThrowEnabled then
+            FastThrowLoopRunning = true
+            StartFastThrowLoop()
         end
     end
-    
-    -- Disable Popups: Clean debris and VFX
-    if DisablePopupsEnabled then
-        for _, debris in pairs(workspace:GetDescendants()) do
-            if debris:IsA("Part") and debris.Name == "DebrisPart" then
-                debris:Destroy()
-            elseif debris:IsA("ParticleEmitter") and debris.Parent and debris.Parent.Name == "WallSmoke" then
-                debris:Destroy()
+end
+
+local function HandleDualAction()
+    if DualActionEnabled then
+        if AutoTrainEnabled then
+            local trainingStation = LocalPlayer:GetAttribute("TrainingStation")
+            if trainingStation then
+                if FastThrowEnabled and not FastThrowLoopRunning then
+                    FastThrowLoopRunning = true
+                    StartFastThrowLoop()
+                end
+            end
+        end
+    else
+        if AutoTrainEnabled and AutoThrowEnabled then
+            if LocalPlayer:GetAttribute("TrainingStation") then
+                if FastThrowLoopRunning then
+                    FastThrowLoopRunning = false
+                    StopFastThrowLoop()
+                end
             end
         end
     end
-    
-    -- Disable UI: Continuously clean UI elements
-    if DisableUIEnabled then
-        RemoveTrainingUI()
-    end
+end
+
+RunService.Heartbeat:Connect(function()
+    pcall(function()
+        if FullControlEnabled then
+            HandleFullControl()
+        end
+        
+        if DestroyAnimEnabled then
+            if LocalPlayer:GetAttribute("Throw") then
+                LocalPlayer:SetAttribute("Throw", nil)
+            end
+        end
+        
+        if DisablePopupsEnabled then
+            local debrisCount = 0
+            for _, debris in pairs(workspace:GetDescendants()) do
+                if debris:IsA("Part") and debris.Name == "DebrisPart" then
+                    pcall(function() debris:Destroy() end)
+                    debrisCount = debrisCount + 1
+                    if debrisCount > 50 then break end
+                elseif debris:IsA("ParticleEmitter") and debris.Parent and debris.Parent.Name == "WallSmoke" then
+                    pcall(function() debris:Destroy() end)
+                end
+            end
+        end
+        
+        if DisableUIEnabled then
+            RemoveTrainingUI()
+        end
+        
+        if ZoneLockEnabled then
+            HandleZoneLock()
+        end
+        
+        if FreezePositionEnabled then
+            HandleFreezePosition()
+        end
+        
+        if ThrowWhileTrainingEnabled then
+            HandleThrowWhileTraining()
+        end
+        
+        if DualActionEnabled then
+            HandleDualAction()
+        end
+    end)
 end)
 
--- New training station detection for UI cleanup
 local trainingFolder = workspace:FindFirstChild("Training")
 if trainingFolder then
     trainingFolder.ChildAdded:Connect(function(station)
         if DisableUIEnabled then
             task.wait(0.1)
-            local ui = station:FindFirstChild("UI")
-            if ui then
-                for _, element in pairs(ui:GetChildren()) do
-                    if element:IsA("Frame") and (element.Name == "Required" or element.Name == "Rebirths" or element.Name == "Gain") then
-                        element:Destroy()
+            pcall(function()
+                local ui = station:FindFirstChild("UI")
+                if ui then
+                    for _, element in pairs(ui:GetChildren()) do
+                        if element:IsA("Frame") then
+                            if element.Name == "Required" or element.Name == "Rebirths" or element.Name == "Gain" then
+                                element:Destroy()
+                            end
+                        end
                     end
                 end
-            end
+            end)
         end
     end)
 end
 
--- Listen for Train Anim event
-local Paper = require(ReplicatedStorage.Paper)
-if Paper and Paper.Network then
-    local originalFireServer = Paper.Network.FireServer
-    Paper.Network.FireServer = function(event, ...)
-        if DestroyAnimEnabled and event == "Train Anim" then
-            return -- Block the event
-        end
-        return originalFireServer(event, ...)
-    end
-end
-
--- Create Toggles
 Rayfield:CreateToggle({
     Name = "Auto Train",
-    Description = "Toggle the game's built-in AutoTrain setting",
+    Description = "Toggle the game's built-in AutoTrain system",
     CurrentValue = false,
     Flag = "AutoTrain",
     Callback = function(Value)
@@ -206,22 +395,31 @@ Rayfield:CreateToggle({
 })
 
 Rayfield:CreateToggle({
-    Name = "Full Control",
-    Description = "Keep player unanchored and allow movement while training",
+    Name = "Auto Throw",
+    Description = "Toggle the game's built-in AutoThrow system",
+    CurrentValue = false,
+    Flag = "AutoThrow",
+    Callback = function(Value)
+        AutoThrowEnabled = Value
+        ToggleAutoThrow(Value)
+    end,
+    Parent = Tab
+})
+
+Rayfield:CreateToggle({
+    Name = "Full Movement Control",
+    Description = "Continuously unanchor player - allows movement during training/throwing",
     CurrentValue = false,
     Flag = "FullControl",
     Callback = function(Value)
         FullControlEnabled = Value
-        if Value then
-            HandleFullControl()
-        end
     end,
     Parent = Tab
 })
 
 Rayfield:CreateToggle({
     Name = "Destroy Training Animation",
-    Description = "Prevent training animations and attribute changes",
+    Description = "Prevent training animations and clear Throw attributes",
     CurrentValue = false,
     Flag = "DestroyAnim",
     Callback = function(Value)
@@ -246,7 +444,7 @@ Rayfield:CreateToggle({
 })
 
 Rayfield:CreateToggle({
-    Name = "Disable Training UI Popups",
+    Name = "Disable Training UI",
     Description = "Hide requirement, gain, and rebirth display elements",
     CurrentValue = false,
     Flag = "DisableUI",
@@ -259,6 +457,85 @@ Rayfield:CreateToggle({
     Parent = Tab
 })
 
--- Initialize any existing UI cleanup
-RemoveTrainingVFX()
-RemoveTrainingUI()
+Rayfield:CreateToggle({
+    Name = "Throw While Training",
+    Description = "Ignore TrainingStation attribute - throw even while training",
+    CurrentValue = false,
+    Flag = "ThrowWhileTraining",
+    Callback = function(Value)
+        ThrowWhileTrainingEnabled = Value
+    end,
+    Parent = Tab
+})
+
+Rayfield:CreateToggle({
+    Name = "Fast Throw Loop",
+    Description = "Custom loop to fire Throw Object at faster interval",
+    CurrentValue = false,
+    Flag = "FastThrow",
+    Callback = function(Value)
+        FastThrowEnabled = Value
+        if Value then
+            FastThrowLoopRunning = true
+            StartFastThrowLoop()
+        else
+            FastThrowLoopRunning = false
+            StopFastThrowLoop()
+        end
+    end,
+    Parent = Tab
+})
+
+Rayfield:CreateToggle({
+    Name = "Zone Lock",
+    Description = "Keep player positioned inside throwing zone",
+    CurrentValue = false,
+    Flag = "ZoneLock",
+    Callback = function(Value)
+        ZoneLockEnabled = Value
+    end,
+    Parent = Tab
+})
+
+Rayfield:CreateToggle({
+    Name = "Freeze Position",
+    Description = "Keep player stable while throwing",
+    CurrentValue = false,
+    Flag = "FreezePosition",
+    Callback = function(Value)
+        FreezePositionEnabled = Value
+    end,
+    Parent = Tab
+})
+
+Rayfield:CreateToggle({
+    Name = "Dual Action Mode",
+    Description = "Run both training and throwing simultaneously - ignores client restrictions",
+    CurrentValue = false,
+    Flag = "DualAction",
+    Callback = function(Value)
+        DualActionEnabled = Value
+        if Value then
+            if AutoTrainEnabled then
+                ToggleAutoTrain(true)
+            end
+            if AutoThrowEnabled or FastThrowEnabled then
+                if not FastThrowLoopRunning then
+                    FastThrowLoopRunning = true
+                    StartFastThrowLoop()
+                end
+            end
+        else
+            if FastThrowLoopRunning and AutoTrainEnabled then
+                FastThrowLoopRunning = false
+                StopFastThrowLoop()
+            end
+        end
+    end,
+    Parent = Tab
+})
+
+pcall(function()
+    RemoveTrainingVFX()
+    RemoveTrainingUI()
+end)
