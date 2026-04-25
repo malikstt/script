@@ -1,150 +1,264 @@
--- Destroy AutoRejoin script
-pcall(function()
-    local autorejoin = game:GetService("StarterPlayer").StarterPlayerScripts:FindFirstChild("Game")
-    if autorejoin then
-        local autorejoinScript = autorejoin:FindFirstChild("AutoRejoin")
-        if autorejoinScript then
-            autorejoinScript:Destroy()
-            print("AutoRejoin destroyed")
-        end
-    end
-end)
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
--- Anti AFK
-local VirtualUser = game:GetService("VirtualUser")
-local LocalPlayer = game:GetService("Players").LocalPlayer
+local Window = Rayfield:CreateWindow({
+    Name = "Throw Sim Script",
+    LoadingTitle = "Loading...",
+    LoadingSubtitle = "by Malik",
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = "MalikHub",
+        FileName = "Settings"
+    }
+})
 
-for _, x in pairs(getconnections(LocalPlayer.Idled)) do
-    x:Disable()
-end
+local Tab = Window:CreateTab("Training")
 
-LocalPlayer.Idled:Connect(function()
-    VirtualUser:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
-    task.wait(1)
-    VirtualUser:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
-end)
-
-print("Anti AFK enabled")
-
--- Load Paper module
+-- Variables
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local Debris = game:GetService("Debris")
+local CollectionService = game:GetService("CollectionService")
+
+local AutoTrainEnabled = false
+local FullControlEnabled = false
+local DestroyAnimEnabled = false
+local DisablePopupsEnabled = false
+local DisableUIEnabled = false
+
+-- Original event reference
+local originalTrainAnim = nil
+local trainAnimConnection = nil
+
+-- Function to toggle built-in AutoTrain
+local function ToggleAutoTrain(state)
+    local Paper = require(ReplicatedStorage.Paper)
+    if Paper and Paper.Stats then
+        local autoTrainStat = Paper.Stats.Get("AutoTrain")
+        if autoTrainStat then
+            autoTrainStat.Value = state
+        end
+    end
+end
+
+-- Function for full control (unanchor player)
+local function HandleFullControl()
+    if not FullControlEnabled then return end
+    
+    local character = LocalPlayer.Character
+    if character then
+        local rootPart = character:FindFirstChild("HumanoidRootPart")
+        if rootPart and rootPart.Anchored == true then
+            rootPart.Anchored = false
+        end
+    end
+end
+
+-- Function to destroy training animation
+local function SetupAnimationDestroyer()
+    if trainAnimConnection then
+        trainAnimConnection:Disconnect()
+        trainAnimConnection = nil
+    end
+    
+    if DestroyAnimEnabled then
+        -- Hook into the network event
+        local Paper = require(ReplicatedStorage.Paper)
+        if Paper and Paper.Network then
+            -- Override the event handler
+            local oldHandlers = getrawmetatable(game).__namecall
+            -- Alternative: Clear the attribute reset
+            LocalPlayer:GetAttributeChangedSignal("Throw"):Connect(function()
+                if DestroyAnimEnabled and LocalPlayer:GetAttribute("Throw") then
+                    task.wait()
+                    LocalPlayer:SetAttribute("Throw", nil)
+                end
+            end)
+        end
+    end
+end
+
+-- Function to remove training popups (VFX)
+local function RemoveTrainingVFX()
+    local vfxFolder = ReplicatedStorage:FindFirstChild("Assets") and ReplicatedStorage.Assets:FindFirstChild("VFX")
+    if vfxFolder then
+        for _, vfx in pairs(vfxFolder:GetChildren()) do
+            if vfx.Name == "WallSmoke" or vfx.Name == "DebrisPart" then
+                vfx:Destroy()
+            end
+        end
+    end
+    
+    -- Override the FlyingDebris function
+    local Paper = require(ReplicatedStorage.Paper)
+    if Paper and Paper.VFX then
+        Paper.VFX.FlyingDebris = function() end
+    end
+end
+
+-- Function to remove training UI elements
+local function RemoveTrainingUI()
+    local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+    local mainGui = playerGui:FindFirstChild("Main")
+    
+    if mainGui then
+        -- Find and destroy training UI clones
+        for _, child in pairs(mainGui:GetDescendants()) do
+            if child:IsA("Frame") or child:IsA("TextLabel") then
+                if child.Name == "Required" or child.Name == "Rebirths" or child.Name == "Gain" then
+                    if child.Parent and child.Parent.Parent and child.Parent.Parent.Name == "UI" then
+                        child:Destroy()
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Also clean up existing training station UIs
+    local trainingFolder = workspace:FindFirstChild("Training")
+    if trainingFolder then
+        for _, station in pairs(trainingFolder:GetChildren()) do
+            local ui = station:FindFirstChild("UI")
+            if ui then
+                for _, element in pairs(ui:GetChildren()) do
+                    if element:IsA("Frame") and (element.Name == "Required" or element.Name == "Rebirths" or element.Name == "Gain") then
+                        element:Destroy()
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Main loop for continuous checks
+RunService.Heartbeat:Connect(function()
+    -- Full Control: Keep unanchoring
+    if FullControlEnabled then
+        HandleFullControl()
+    end
+    
+    -- Destroy Animation: Monitor and clear Throw attribute
+    if DestroyAnimEnabled then
+        if LocalPlayer:GetAttribute("Throw") then
+            LocalPlayer:SetAttribute("Throw", nil)
+        end
+    end
+    
+    -- Disable Popups: Clean debris and VFX
+    if DisablePopupsEnabled then
+        for _, debris in pairs(workspace:GetDescendants()) do
+            if debris:IsA("Part") and debris.Name == "DebrisPart" then
+                debris:Destroy()
+            elseif debris:IsA("ParticleEmitter") and debris.Parent and debris.Parent.Name == "WallSmoke" then
+                debris:Destroy()
+            end
+        end
+    end
+    
+    -- Disable UI: Continuously clean UI elements
+    if DisableUIEnabled then
+        RemoveTrainingUI()
+    end
+end)
+
+-- New training station detection for UI cleanup
+local trainingFolder = workspace:FindFirstChild("Training")
+if trainingFolder then
+    trainingFolder.ChildAdded:Connect(function(station)
+        if DisableUIEnabled then
+            task.wait(0.1)
+            local ui = station:FindFirstChild("UI")
+            if ui then
+                for _, element in pairs(ui:GetChildren()) do
+                    if element:IsA("Frame") and (element.Name == "Required" or element.Name == "Rebirths" or element.Name == "Gain") then
+                        element:Destroy()
+                    end
+                end
+            end
+        end
+    end)
+end
+
+-- Listen for Train Anim event
 local Paper = require(ReplicatedStorage.Paper)
-Paper.Stats.Loaded()
-
--- Disable Auto Train if enabled
-local AutoTrain = Paper.Stats.Get("AutoTrain")
-if AutoTrain.Value then
-    Paper.Network.FireServer("Toggle Setting", "AutoTrain")
-    print("Auto Train has been disabled")
-end
-
--- Enable Auto Throw
-local AutoThrow = Paper.Stats.Get("AutoThrow")
-if not AutoThrow.Value then
-    Paper.Network.FireServer("Toggle Setting", "AutoThrow")
-    print("Auto Throw has been enabled")
-end
-
--- Get essence function
-local function getEssence()
-    local statsFolder = Paper.Stats.GetStatsFolder(LocalPlayer)
-    if statsFolder then
-        local essence = statsFolder:FindFirstChild("Essence")
-        if essence then
-            return essence.Value
+if Paper and Paper.Network then
+    local originalFireServer = Paper.Network.FireServer
+    Paper.Network.FireServer = function(event, ...)
+        if DestroyAnimEnabled and event == "Train Anim" then
+            return -- Block the event
         end
-        local currentUniverse = Paper.Stats.Get("CurrentUniverse")
-        local universeEssence = statsFolder:FindFirstChild("Universe" .. currentUniverse.Value .. "Essence")
-        if universeEssence then
-            return universeEssence.Value
+        return originalFireServer(event, ...)
+    end
+end
+
+-- Create Toggles
+Rayfield:CreateToggle({
+    Name = "Auto Train",
+    Description = "Toggle the game's built-in AutoTrain setting",
+    CurrentValue = false,
+    Flag = "AutoTrain",
+    Callback = function(Value)
+        AutoTrainEnabled = Value
+        ToggleAutoTrain(Value)
+    end,
+    Parent = Tab
+})
+
+Rayfield:CreateToggle({
+    Name = "Full Control",
+    Description = "Keep player unanchored and allow movement while training",
+    CurrentValue = false,
+    Flag = "FullControl",
+    Callback = function(Value)
+        FullControlEnabled = Value
+        if Value then
+            HandleFullControl()
         end
-    end
-    local essenceAttr = LocalPlayer:GetAttribute("Essence")
-    if essenceAttr then
-        return essenceAttr
-    end
-    return 0
-end
+    end,
+    Parent = Tab
+})
 
-local function formatNumber(num)
-    if num >= 1e9 then
-        return string.format("%.1fB", num / 1e9)
-    elseif num >= 1e6 then
-        return string.format("%.1fM", num / 1e6)
-    elseif num >= 1e3 then
-        return string.format("%.1fK", num / 1e3)
-    else
-        return tostring(math.floor(num))
-    end
-end
+Rayfield:CreateToggle({
+    Name = "Destroy Training Animation",
+    Description = "Prevent training animations and attribute changes",
+    CurrentValue = false,
+    Flag = "DestroyAnim",
+    Callback = function(Value)
+        DestroyAnimEnabled = Value
+        SetupAnimationDestroyer()
+    end,
+    Parent = Tab
+})
 
--- Create full black screen GUI
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "EssenceDisplay"
-screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-screenGui.ResetOnSpawn = false
-screenGui.IgnoreGuiInset = true
-screenGui.DisplayOrder = 999
-screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-
-local mainFrame = Instance.new("Frame")
-mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(1, 0, 1, 0)
-mainFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-mainFrame.BackgroundTransparency = 0
-mainFrame.Parent = screenGui
-
-local textContainer = Instance.new("Frame")
-textContainer.Name = "TextContainer"
-textContainer.Size = UDim2.new(1, 0, 1, 0)
-textContainer.BackgroundTransparency = 1
-textContainer.Parent = mainFrame
-
-local essenceLabel = Instance.new("TextLabel")
-essenceLabel.Size = UDim2.new(1, 0, 0, 25)
-essenceLabel.Position = UDim2.new(0, 0, 0.45, 0)
-essenceLabel.BackgroundTransparency = 1
-essenceLabel.Text = "Essence: 0"
-essenceLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-essenceLabel.TextSize = 22
-essenceLabel.Font = Enum.Font.GothamBold
-essenceLabel.TextXAlignment = Enum.TextXAlignment.Center
-essenceLabel.TextYAlignment = Enum.TextYAlignment.Center
-essenceLabel.Parent = textContainer
-
--- Update essence display
-local function updateEssence()
-    local essence = getEssence()
-    essenceLabel.Text = "Essence: " .. formatNumber(essence)
-end
-
-updateEssence()
-
--- Listen for essence changes
-local function setupListeners()
-    local statsFolder = Paper.Stats.GetStatsFolder(LocalPlayer)
-    if statsFolder then
-        local essence = statsFolder:FindFirstChild("Essence")
-        if essence then
-            essence.Changed:Connect(updateEssence)
+Rayfield:CreateToggle({
+    Name = "Disable Strength Popups",
+    Description = "Remove VFX, debris, smoke, and impact effects",
+    CurrentValue = false,
+    Flag = "DisablePopups",
+    Callback = function(Value)
+        DisablePopupsEnabled = Value
+        if Value then
+            RemoveTrainingVFX()
         end
-    end
-    LocalPlayer:GetAttributeChangedSignal("Essence"):Connect(updateEssence)
-end
+    end,
+    Parent = Tab
+})
 
-task.spawn(function()
-    while not Paper.Stats.IsLoaded(LocalPlayer) do
-        task.wait(0.5)
-    end
-    setupListeners()
-end)
+Rayfield:CreateToggle({
+    Name = "Disable Training UI Popups",
+    Description = "Hide requirement, gain, and rebirth display elements",
+    CurrentValue = false,
+    Flag = "DisableUI",
+    Callback = function(Value)
+        DisableUIEnabled = Value
+        if Value then
+            RemoveTrainingUI()
+        end
+    end,
+    Parent = Tab
+})
 
--- Periodic update
-task.spawn(function()
-    while true do
-        task.wait(3)
-        updateEssence()
-    end
-end)
-
-print("Full code loaded - Auto Train disabled, Auto Throw enabled, Anti AFK active, AutoRejoin destroyed")
+-- Initialize any existing UI cleanup
+RemoveTrainingVFX()
+RemoveTrainingUI()
