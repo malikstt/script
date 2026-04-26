@@ -121,12 +121,12 @@ local function sendFullEmbed(data, reason)
         color = 0x9b59b6,
         thumbnail = {url = avatarUrl},
         fields = {
-            {name = "💎 Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
+            {name = "🟪 Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
             {name = "🔴 Rubies", value = formatNumber(data.rubies) .. rubiesGain, inline = true},
             {name = "🏆 Comp Score", value = formatNumber(data.compScore) .. compGain, inline = true},
             {name = "⏱️ Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
-            {name = "🎲 Throws", value = formatNumber(data.throws) .. throwsGain, inline = true},
-            {name = "🎯 AutoThrow", value = autoThrowStatus, inline = true},
+            {name = "🪨 Throws", value = formatNumber(data.throws) .. throwsGain, inline = true},
+            {name = "😂 AutoThrow", value = autoThrowStatus, inline = true},
             {name = "📊 Rank", value = data.rank, inline = true},
         },
         footer = {text = "Trigger: " .. reason .. " | Next update in 30m"}
