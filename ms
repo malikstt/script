@@ -201,7 +201,7 @@ local function sendToDiscord(data, reason, isInitial)
             {name = "😂 AutoThrow", value = data.autoThrow and " Enabled" or " Disabled", inline = true},
             {name = "📊 Rank", value = data.rank, inline = true},
         },
-        footer = {text = "📌 " .. reason .. " | Next update in 30 minutes"}
+        footer = {text = "x " .. reason .. " | Next update in 30 minutes"}
     }
     
     -- Add 68exp under thumbnail
