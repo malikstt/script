@@ -189,7 +189,7 @@ local function sendToDiscord(data, reason, isInitial)
     end
     
     local embed = {
-        title = targetPlayer .. " - Stats Update",
+        title = "Stats Update",
         color = 0x3498db,
         thumbnail = avatarUrl and {url = avatarUrl} or nil,
         fields = {
