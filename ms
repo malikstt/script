@@ -123,7 +123,7 @@ local function sendFullEmbed(data, reason)
         fields = {
             {name = "🟪 Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
             {name = "🔴 Rubies", value = formatNumber(data.rubies) .. rubiesGain, inline = true},
-            {name = "🏆 Comp Score", value = formatNumber(data.compScore) .. compGain, inline = true},
+            {name = "🏆 S2 Comp Score", value = formatNumber(data.compScore) .. compGain, inline = true},
             {name = "⏱️ Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
             {name = "🪨 Throws", value = formatNumber(data.throws) .. throwsGain, inline = true},
             {name = "😂 AutoThrow", value = autoThrowStatus, inline = true},
