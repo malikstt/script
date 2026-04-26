@@ -7,7 +7,7 @@ local webhookUrl = "https://discord.com/api/webhooks/1497999446028587128/nTY1lOe
 local targetPlayer = "68exp"
 local discordUserId = "921793487509278730"
 
-print("[DEBUG] Script started - fetching Roblox ID for: " .. targetPlayer)
+print("[DEBUG] Script started v4 nigga fetching Roblox ID for: " .. targetPlayer)
 
 -- AUTO GET ROBLOX USER ID FROM USERNAME
 local robloxUserId = nil
