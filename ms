@@ -7,7 +7,7 @@ local webhookUrl = "https://discord.com/api/webhooks/1497999446028587128/nTY1lOe
 local targetPlayer = "68exp"
 local discordUserId = "921793487509278730"
 
-print("[DEBUG] Script started for: " .. targetPlayer)
+print("[DEBUG] Script started - fetching Roblox ID for: " .. targetPlayer)
 
 local robloxUserId = nil
 
@@ -63,6 +63,7 @@ print("[DEBUG] Stats found: " .. tostring(stats ~= nil))
 print("[DEBUG] Leaderboard found: " .. tostring(leaderboard ~= nil))
 
 local lastData = {}
+local last30MinData = nil
 local lastSendTime = 0
 local isRunning = true
 local lastThrowsTime = os.time()
@@ -261,6 +262,7 @@ local function checkPlayerLeft()
                 lastSendTime = os.time()
                 lastThrowsTime = os.time()
                 lastRubiesTime = os.time()
+                last30MinData = currentData
             end
             return true
         end
@@ -272,20 +274,64 @@ end
 local function sendToDiscord(data, reason)
     local avatarUrl = getAvatarThumbnail()
     
+    local embed = {
+        title = "Stats Update",
+        color = 0x3498db,
+        thumbnail = avatarUrl and {url = avatarUrl} or nil,
+        fields = {
+            {name = "💎 Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
+            {name = "🔴 Rubies", value = formatNumber(data.rubies), inline = true},
+            {name = "🏆 Comp Score", value = formatNumber(data.compScore), inline = true},
+            {name = "⏱️ Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
+            {name = "🎲 Throws", value = formatNumber(data.throws), inline = true},
+            {name = "🎯 AutoThrow", value = data.autoThrow and "Enabled" or "Disabled", inline = true},
+            {name = "📊 Rank", value = data.rank, inline = true},
+        },
+        footer = {text = reason .. " | Next update in 30 minutes"}
+    }
+    
+    if avatarUrl then
+        embed.description = "**68exp**"
+    end
+    
+    local success, response = pcall(function()
+        return request({
+            Url = webhookUrl,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = HttpService:JSONEncode({embeds = {embed}})
+        })
+    end)
+    
+    if success and (response.StatusCode == 200 or response.StatusCode == 204) then
+        print("Sent to Discord | Reason: " .. reason)
+        return true
+    else
+        print("Failed to send | Status: " .. tostring(response and response.StatusCode or "nil"))
+        return false
+    end
+end
+
+local function sendToDiscordWithCompare(currentData, compareData, reason)
+    local avatarUrl = getAvatarThumbnail()
+    
     local compGain = ""
     local rubiesGain = ""
     local throwsGain = ""
     
-    if lastData.compScore and data.compScore > lastData.compScore then
-        compGain = string.format(" (+%s)", formatNumber(data.compScore - lastData.compScore))
+    if compareData and compareData.compScore and currentData.compScore > compareData.compScore then
+        local gain = currentData.compScore - compareData.compScore
+        compGain = string.format(" (+%s)", formatNumber(gain))
     end
     
-    if lastData.rubies and data.rubies > lastData.rubies then
-        rubiesGain = string.format(" (+%s)", formatNumber(data.rubies - lastData.rubies))
+    if compareData and compareData.rubies and currentData.rubies > compareData.rubies then
+        local gain = currentData.rubies - compareData.rubies
+        rubiesGain = string.format(" (+%s)", formatNumber(gain))
     end
     
-    if lastData.throws and data.throws > lastData.throws then
-        throwsGain = string.format(" (+%s)", formatNumber(data.throws - lastData.throws))
+    if compareData and compareData.throws and currentData.throws > compareData.throws then
+        local gain = currentData.throws - compareData.throws
+        throwsGain = string.format(" (+%s)", formatNumber(gain))
     end
     
     local embed = {
@@ -293,13 +339,13 @@ local function sendToDiscord(data, reason)
         color = 0x3498db,
         thumbnail = avatarUrl and {url = avatarUrl} or nil,
         fields = {
-            {name = "🟪 Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
-            {name = "🔴 Rubies", value = formatNumber(data.rubies) .. rubiesGain, inline = true},
-            {name = "🏆 Comp Score", value = formatNumber(data.compScore) .. compGain, inline = true},
-            {name = "⏱️ Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
-            {name = "🎲 Throws", value = formatNumber(data.throws) .. throwsGain, inline = true},
-            {name = "🎯 AutoThrow", value = data.autoThrow and "Enabled" or "Disabled", inline = true},
-            {name = "📊 Rank", value = data.rank, inline = true},
+            {name = "💎 Enchant Gems", value = formatNumber(currentData.enchantGems), inline = true},
+            {name = "🔴 Rubies", value = formatNumber(currentData.rubies) .. rubiesGain, inline = true},
+            {name = "🏆 Comp Score", value = formatNumber(currentData.compScore) .. compGain, inline = true},
+            {name = "⏱️ Session Time", value = currentData.hours .. "h " .. currentData.minutes .. "m", inline = true},
+            {name = "🎲 Throws", value = formatNumber(currentData.throws) .. throwsGain, inline = true},
+            {name = "🎯 AutoThrow", value = currentData.autoThrow and "Enabled" or "Disabled", inline = true},
+            {name = "📊 Rank", value = currentData.rank, inline = true},
         },
         footer = {text = reason .. " | Next update in 30 minutes"}
     }
@@ -334,6 +380,7 @@ local function mainLoop()
     if initialData then
         print("[DEBUG] Got initial data, sending immediately...")
         lastData = initialData
+        last30MinData = initialData
         lastThrowsTime = os.time()
         lastRubiesTime = os.time()
         sendToDiscord(initialData, "Initial Load")
@@ -353,7 +400,12 @@ local function mainLoop()
         local currentData = getCurrentData()
         if currentData then
             if os.time() - lastSendTime >= 1800 then
-                sendToDiscord(currentData, "30 Minute Update")
+                if last30MinData then
+                    sendToDiscordWithCompare(currentData, last30MinData, "30 Minute Update")
+                else
+                    sendToDiscord(currentData, "30 Minute Update")
+                end
+                last30MinData = currentData
                 lastSendTime = os.time()
                 lastThrowsTime = os.time()
                 lastRubiesTime = os.time()
@@ -369,6 +421,7 @@ local function mainLoop()
                                 lastSendTime = os.time()
                                 lastThrowsTime = os.time()
                                 lastRubiesTime = os.time()
+                                last30MinData = currentData
                             end
                         end
                     else
@@ -383,6 +436,7 @@ local function mainLoop()
                                 lastSendTime = os.time()
                                 lastThrowsTime = os.time()
                                 lastRubiesTime = os.time()
+                                last30MinData = currentData
                             end
                         end
                     else
