@@ -7,13 +7,10 @@ local webhookUrl = "https://discord.com/api/webhooks/1497999446028587128/nTY1lOe
 local targetPlayer = "68exp"
 local discordUserId = "921793487509278730"
 
-print("[DEBUG] Script started - fetching Roblox ID for: " .. targetPlayer)
-
 -- AUTO GET ROBLOX USER ID FROM USERNAME
 local robloxUserId = nil
 
 local function getRobloxUserId(username)
-    print("[DEBUG] Fetching Roblox User ID for: " .. username)
     local url = "https://users.roblox.com/v1/usernames/users"
     local body = HttpService:JSONEncode({usernames = {username}})
     
@@ -26,49 +23,26 @@ local function getRobloxUserId(username)
         })
     end)
     
-    if success and response then
-        print("[DEBUG] Roblox API response status: " .. tostring(response.StatusCode))
-        if response.StatusCode == 200 then
-            local decodeSuccess, data = pcall(function()
-                return HttpService:JSONDecode(response.Body)
-            end)
-            if decodeSuccess and data and data.data and data.data[1] then
-                local id = tostring(data.data[1].id)
-                print("[DEBUG] Found Roblox User ID: " .. id)
-                return id
-            else
-                print("[ERROR] Failed to decode Roblox API response")
-            end
-        else
-            print("[ERROR] Roblox API returned status: " .. tostring(response.StatusCode))
+    if success and response and response.StatusCode == 200 then
+        local data = HttpService:JSONDecode(response.Body)
+        if data and data.data and data.data[1] then
+            return tostring(data.data[1].id)
         end
-    else
-        print("[ERROR] Failed to fetch Roblox User ID: " .. tostring(response))
     end
     return nil
 end
 
--- Get the Roblox ID before continuing
 robloxUserId = getRobloxUserId(targetPlayer)
-if not robloxUserId then
-    print("[WARNING] Could not fetch Roblox User ID - avatar thumbnails will be disabled")
-end
-
-print("[DEBUG] HttpService exists: " .. tostring(HttpService ~= nil))
-
--- Enable HTTP requests
-pcall(function()
-    HttpService.HttpEnabled = true
-end)
 
 local stats = ReplicatedStorage:FindFirstChild("Stats")
 local leaderboard = Workspace:FindFirstChild("Leaderboards")
 
-print("[DEBUG] Stats found: " .. tostring(stats ~= nil))
-print("[DEBUG] Leaderboard found: " .. tostring(leaderboard ~= nil))
-
 local lastData = {}
-local lastSendTime = 0
+local lastSendTime = os.time()
+local lastActivityTime = os.time()
+local lastInactivitySend = 0
+local playerLeftTimer = nil
+local wasGone = false
 local isRunning = true
 
 local function formatNumber(num)
@@ -86,25 +60,12 @@ local function formatNumber(num)
 end
 
 local function getAvatarThumbnail()
-    if not robloxUserId then
-        print("[DEBUG] No Roblox User ID available, skipping avatar")
-        return nil
-    end
-    
+    if not robloxUserId then return nil end
     local url = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=" .. robloxUserId .. "&size=150x150&format=Png&isCircular=true"
-    
-    local success, response = pcall(function()
-        return request({
-            Url = url, 
-            Method = "GET"
-        })
-    end)
-    
+    local success, response = pcall(function() return request({Url = url, Method = "GET"}) end)
     if success and response and response.StatusCode == 200 then
-        local decodeSuccess, data = pcall(function()
-            return HttpService:JSONDecode(response.Body)
-        end)
-        if decodeSuccess and data and data.data and data.data[1] and data.data[1].imageUrl then
+        local data = HttpService:JSONDecode(response.Body)
+        if data and data.data and data.data[1] and data.data[1].imageUrl then
             return data.data[1].imageUrl
         end
     end
@@ -112,17 +73,11 @@ local function getAvatarThumbnail()
 end
 
 local function getCurrentData()
-    if not stats then
-        stats = ReplicatedStorage:FindFirstChild("Stats")
-        if not stats then
-            return nil
-        end
-    end
+    if not stats then stats = ReplicatedStorage:FindFirstChild("Stats") end
+    if not stats then return nil end
     
     local targetStats = stats:FindFirstChild(targetPlayer)
-    if not targetStats then 
-        return nil 
-    end
+    if not targetStats then return nil end
     
     local compLeaderboard = leaderboard and leaderboard:FindFirstChild("CompLeaderboardScore")
     local main = compLeaderboard and compLeaderboard:FindFirstChild("Main")
@@ -169,10 +124,10 @@ local function getCurrentData()
     }
 end
 
-local function sendToDiscord(data, reason)
+-- CASE 1: Full embed send (with optional ping)
+local function sendFullEmbed(data, reason, shouldPing)
     local avatarUrl = getAvatarThumbnail()
     
-    -- Calculate gains since last send
     local compGain = ""
     local rubiesGain = ""
     local throwsGain = ""
@@ -180,95 +135,194 @@ local function sendToDiscord(data, reason)
     if lastData.compScore and data.compScore > lastData.compScore then
         compGain = string.format(" (+%s)", formatNumber(data.compScore - lastData.compScore))
     end
-    
     if lastData.rubies and data.rubies > lastData.rubies then
         rubiesGain = string.format(" (+%s)", formatNumber(data.rubies - lastData.rubies))
     end
-    
     if lastData.throws and data.throws > lastData.throws then
         throwsGain = string.format(" (+%s)", formatNumber(data.throws - lastData.throws))
     end
     
-    local embed = {
-        title = "Stats Update",
-        color = 0x3498db,
+    local autoThrowStatus = data.autoThrow and "Enabled" or "Disabled"
+    local payload = {}
+    
+    if shouldPing then
+        payload.content = string.format("<@%s>", discordUserId)
+    end
+    
+    payload.embeds = {{
+        color = 0x9b59b6,
         thumbnail = avatarUrl and {url = avatarUrl} or nil,
         fields = {
-            {name = "🟪 Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
+            {name = "💎 Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
             {name = "🔴 Rubies", value = formatNumber(data.rubies) .. rubiesGain, inline = true},
             {name = "🏆 Comp Score", value = formatNumber(data.compScore) .. compGain, inline = true},
             {name = "⏱️ Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
-            {name = "🪨 Throws", value = formatNumber(data.throws) .. throwsGain, inline = true},
-            {name = "😂 AutoThrow", value = data.autoThrow and "Enabled" or "Disabled", inline = true},
+            {name = "🎲 Throws", value = formatNumber(data.throws) .. throwsGain, inline = true},
+            {name = "🎯 AutoThrow", value = autoThrowStatus, inline = true},
             {name = "📊 Rank", value = data.rank, inline = true},
         },
-        footer = {text = reason .. " | Next update in 30 minutes"}
-    }
+        footer = {text = "Trigger: " .. reason .. " | Next update in 30m"}
+    }}
     
-    -- Add 68exp under thumbnail
-    if avatarUrl then
-        embed.description = "**68exp**"
-    end
-    
-    local success, response = pcall(function()
-        return request({
+    pcall(function()
+        request({
             Url = webhookUrl,
             Method = "POST",
             Headers = {["Content-Type"] = "application/json"},
-            Body = HttpService:JSONEncode({embeds = {embed}})
+            Body = HttpService:JSONEncode(payload)
         })
+        print("[CASE 1/2/3] Sent | Reason: " .. reason)
     end)
-    
-    if success and (response.StatusCode == 200 or response.StatusCode == 204) then
-        print("Sent to Discord | Reason: " .. reason)
-        return true
+end
+
+-- CASE 2: Player left message
+local function sendLeaveMessage()
+    local jobId = game.JobId or "Unknown"
+    local payload = {
+        content = string.format("<@%s> User %s left server\nJob ID: `%s`\n<t:%d:R>", discordUserId, targetPlayer, jobId, os.time())
+    }
+    pcall(function()
+        request({
+            Url = webhookUrl,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = HttpService:JSONEncode(payload)
+        })
+        print("[CASE 2] Leave message sent")
+    end)
+end
+
+-- CASE 3: Inactivity message
+local function sendInactivityMessage(reason, data)
+    local avatarUrl = getAvatarThumbnail()
+    local payload = {
+        content = string.format("<@%s> %s\nReason: %s", discordUserId, targetPlayer, reason),
+        embeds = {{
+            color = 0x9b59b6,
+            thumbnail = avatarUrl and {url = avatarUrl} or nil,
+            fields = {
+                {name = "💎 Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
+                {name = "🔴 Rubies", value = formatNumber(data.rubies), inline = true},
+                {name = "🏆 Comp Score", value = formatNumber(data.compScore), inline = true},
+                {name = "⏱️ Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
+                {name = "🎲 Throws", value = formatNumber(data.throws), inline = true},
+                {name = "🎯 AutoThrow", value = data.autoThrow and "Enabled" or "Disabled", inline = true},
+                {name = "📊 Rank", value = data.rank, inline = true},
+            }
+        }}
+    }
+    pcall(function()
+        request({
+            Url = webhookUrl,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = HttpService:JSONEncode(payload)
+        })
+        print("[CASE 3] Inactivity message sent | " .. reason)
+    end)
+end
+
+-- Check if player left (CASE 2)
+local function checkPlayerLeft()
+    local player = Players:FindFirstChild(targetPlayer)
+    if not player then
+        if not wasGone then
+            wasGone = true
+            playerLeftTimer = tick()
+        elseif tick() - playerLeftTimer >= 60 then
+            sendLeaveMessage()
+            playerLeftTimer = nil
+            wasGone = false
+            lastSendTime = os.time()
+            return true
+        end
     else
-        print("Failed to send | Status: " .. tostring(response and response.StatusCode or "nil"))
-        return false
+        if wasGone then
+            print("[REJOIN] Player rejoined!")
+            wasGone = false
+            playerLeftTimer = nil
+            local currentData = getCurrentData()
+            if currentData then
+                sendFullEmbed(currentData, "Player Rejoined", true)
+                lastSendTime = os.time()
+                lastActivityTime = os.time()
+            end
+            return true
+        end
+        playerLeftTimer = nil
     end
+    return false
+end
+
+-- Check inactivity (CASE 3)
+local function checkInactivity(currentData)
+    if not currentData then return false end
+    
+    if lastData.throws then
+        if currentData.throws == lastData.throws and os.time() - lastActivityTime >= 60 then
+            if os.time() - lastInactivitySend >= 300 then
+                sendInactivityMessage("No throws for 60 seconds", currentData)
+                lastActivityTime = os.time()
+                lastSendTime = os.time()
+                lastInactivitySend = os.time()
+                return true
+            end
+        elseif currentData.throws > lastData.throws then
+            lastActivityTime = os.time()
+        end
+    end
+    
+    if lastData.rubies then
+        if currentData.rubies == lastData.rubies and os.time() - lastActivityTime >= 300 then
+            if os.time() - lastInactivitySend >= 300 then
+                sendInactivityMessage("No rubies for 5 minutes", currentData)
+                lastActivityTime = os.time()
+                lastSendTime = os.time()
+                lastInactivitySend = os.time()
+                return true
+            end
+        elseif currentData.rubies > lastData.rubies then
+            lastActivityTime = os.time()
+        end
+    end
+    
+    return false
 end
 
 -- Main loop
 local function mainLoop()
-    print("[DEBUG] Waiting 5 seconds for game to load...")
     task.wait(5)
     
     local initialData = getCurrentData()
     if initialData then
-        print("[DEBUG] Got initial data, sending immediately...")
         lastData = initialData
-        sendToDiscord(initialData, "Initial Load")
+        sendFullEmbed(initialData, "Initial Load", false)
         lastSendTime = os.time()
-    else
-        print("[ERROR] Could not find player stats! Make sure '" .. targetPlayer .. "' is in the game")
-        print("[DEBUG] Available Stats children:")
-        if stats then
-            for _, child in pairs(stats:GetChildren()) do
-                print("   - " .. child.Name)
-            end
-        end
+        lastActivityTime = os.time()
     end
     
     while isRunning do
         task.wait(10)
-        
         local currentData = getCurrentData()
+        
         if currentData then
-            -- Send every 30 minutes (1800 seconds)
+            lastData = currentData
+            
+            -- CASE 1: 30 minute interval
             if os.time() - lastSendTime >= 1800 then
-                if sendToDiscord(currentData, "30 Minute Update") then
-                    lastData = currentData
-                    lastSendTime = os.time()
+                sendFullEmbed(currentData, "30 Minute Interval", false)
+                lastSendTime = os.time()
+                lastActivityTime = os.time()
+            else
+                -- CASE 2: Player left
+                local handled = checkPlayerLeft()
+                -- CASE 3: Inactivity (only if no other case triggered)
+                if not handled then
+                    checkInactivity(currentData)
                 end
             end
-        else
-            print("[DEBUG] Player data not found, retrying...")
         end
     end
 end
 
--- Start the script
-local success, err = pcall(mainLoop)
-if not success then
-    print("[FATAL] Script error: " .. tostring(err))
-end
+pcall(mainLoop)
