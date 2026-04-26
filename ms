@@ -421,7 +421,6 @@ local function mainLoop()
                                 lastSendTime = os.time()
                                 lastThrowsTime = os.time()
                                 lastRubiesTime = os.time()
-                                last30MinData = currentData
                             end
                         end
                     else
@@ -436,7 +435,6 @@ local function mainLoop()
                                 lastSendTime = os.time()
                                 lastThrowsTime = os.time()
                                 lastRubiesTime = os.time()
-                                last30MinData = currentData
                             end
                         end
                     else
