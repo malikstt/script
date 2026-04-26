@@ -1,237 +1,243 @@
-local Players=game:GetService("Players")
-local ReplicatedStorage=game:GetService("ReplicatedStorage")
-local Workspace=game:GetService("Workspace")
-local RunService=game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local webhookUrl = "https://discord.com/api/webhooks/1495059756371546345/L3e0gHM3cdJAhq80YGviVwkvNOcJKOKYjerPBRPp2I5mli4FZ7r8vD7-8LPrBqWODKNw"
 
-local LocalPlayer=Players.LocalPlayer
+local targetPlayer = "68exp"
+local targetDisplayName = "68exp"
 
-local Events=ReplicatedStorage:WaitForChild("Events")
+local stats = ReplicatedStorage:FindFirstChild("Stats")
+local leaderboard = Workspace:FindFirstChild("Leaderboards")
+local compLeaderboard = leaderboard and leaderboard:FindFirstChild("CompLeaderboardScore")
+local main = compLeaderboard and compLeaderboard:FindFirstChild("Main")
 
-local AcceptRemote=Events.Shop.AcceptOfferServer
-local DeclineRemote=Events.Shop.DeclineOfferServer
-local InsertFurniture=Events.Shop.InsertFurniture
-local RemoveFurniture=Events.Shop.RemoveFurniture
+local lastData = {}
+local lastSendTime = 0
+local lastActivityTime = os.time()
+local playerLeftTimer = nil
+local inactivityTimer = nil
+local isRunning = true
 
-local AcceptPlayerRemote=Events.Shop.AcceptPlayerOffer
-local SellRemote=Events.Shop.SellItemInShop
-local GetAllRemote=Events.Data.GetAll
-
-local RepLibrary=require(ReplicatedStorage.Modules.RepLibrary)
-local ItemsModule=require(ReplicatedStorage.Modules.Items)
-local UIModule=require(ReplicatedStorage.Modules.UIModule)
-
-local TARGET_NAME="xWesged"
-
-_G.AutoTrade={
-Enabled=true,
-TargetPlayer="xWesged",
-AutoSend=true,
-AutoAccept=true,
-AutoAdd=false,
-SendDelay=5,
-LastSend=0
-}
-
-task.spawn(function()
-while true do
-task.wait(1)
-if _G.AutoTrade.Enabled and _G.AutoTrade.AutoSend and _G.AutoTrade.TargetPlayer and tick()-_G.AutoTrade.LastSend>=_G.AutoTrade.SendDelay then
-local success=Events.Trading.SendInvite:InvokeServer(_G.AutoTrade.TargetPlayer)
-if success then
-UIModule:Notify(LocalPlayer,"Sent trade to ".._G.AutoTrade.TargetPlayer)
-_G.AutoTrade.LastSend=tick()
-end
-end
-end
-end)
-
-Events.Trading.AcceptTradeFromServer.OnClientEvent:Connect(function()
-if _G.AutoTrade.Enabled and _G.AutoTrade.AutoAccept then
-task.wait(0.5)
-Events.Trading.AcceptTrade:InvokeServer()
-UIModule:Notify(LocalPlayer,"Trade Accepted")
-end
-end)
-
-task.spawn(function()
-while true do
-task.wait(2)
-if _G.AutoTrade.Enabled and _G.AutoTrade.AutoAdd then
-local inventory=Events.Data.Get:InvokeServer("Inventory")
-local added=0
-for guid,data in pairs(inventory) do
-if added>=16 then break end
-if not(data.ItemPlaced or data.NextOfferDue) then
-local success=Events.Trading.AddItem:InvokeServer({GUID=guid,Type="Item"})
-if success then
-added+=1
-end
-task.wait(0.1)
-end
-end
-if added>0 then
-UIModule:Notify(LocalPlayer,"Added "..added.." items")
-task.wait(0.5)
-Events.Trading.AcceptTrade:InvokeServer()
-end
-end
-end
-end)
-
-task.spawn(function()
-while true do
-pcall(function()
-for _,gui in ipairs(LocalPlayer.PlayerGui:GetChildren()) do
-local from=gui:GetAttribute("OfferFromPlayerName")
-local guid=gui:GetAttribute("GUID")
-local price=gui:GetAttribute("Offer")
-if from==TARGET_NAME and guid and price then
-AcceptPlayerRemote:InvokeServer(from,guid,price)
-end
-end
-end)
-task.wait(0.5)
-end
-end)
-
-task.spawn(function()
-while true do
-pcall(function()
-local data=GetAllRemote:InvokeServer()
-if not data or not data.Inventory then return end
-local plotName=LocalPlayer.NonSaveVars.OwnsPlot.Value.Name
-local plot=workspace.Plots[plotName]
-if not plot then return end
-local shelves={}
-local furnitureFolder=plot:FindFirstChild("Furniture")
-if furnitureFolder then
-for _,f in ipairs(furnitureFolder:GetChildren()) do
-local s=f:FindFirstChild("Shelves")
-if s then
-for _,sh in ipairs(s:GetChildren()) do
-table.insert(shelves,sh)
-end
-end
-end
-end
-if #shelves==0 then return end
-local sorted={}
-for guid,info in pairs(data.Inventory) do
-local id=tonumber(info.Id)
-local itemData=ItemsModule[id]
-if not info.ItemPlaced and not info.NextOfferDue then
-local name=itemData and string.lower(itemData.Name or "") or ""
-if id~=681 and id~=2294 and not string.find(name,"safe") then
-local price=RepLibrary:GetItemPrice(info)
-table.insert(sorted,{GUID=guid,Data=info,Price=price})
-end
-end
-end
-table.sort(sorted,function(a,b)return a.Price>b.Price end)
-local i=1
-for _,item in ipairs(sorted) do
-if i>#shelves then break end
-SellRemote:FireServer(item.GUID,shelves[i],true)
-i+=1
-task.wait(0.1)
-end
-end)
-task.wait(3)
-end
-end)
-
-local function getPlot()
-local nsv=LocalPlayer:WaitForChild("NonSaveVars")
-local own=nsv:WaitForChild("OwnsPlot")
-repeat task.wait() until own.Value and own.Value~=0
-return Workspace.Plots:WaitForChild(tostring(own.Value))
+local function formatNumber(num)
+    if num >= 1e12 then
+        return string.format("%.1fT", num / 1e12)
+    elseif num >= 1e9 then
+        return string.format("%.1fB", num / 1e9)
+    elseif num >= 1e6 then
+        return string.format("%.1fM", num / 1e6)
+    elseif num >= 1e3 then
+        return string.format("%.1fK", num / 1e3)
+    else
+        return tostring(math.floor(num))
+    end
 end
 
-local function getShelves()
-local plot=getPlot()
-local shelves={}
-local furniture=plot:FindFirstChild("Furniture")
-if not furniture then return shelves end
-for _,v in ipairs(furniture:GetDescendants()) do
-if v.Name=="Shelves" then
-for _,s in ipairs(v:GetChildren()) do
-table.insert(shelves,s)
-end
-end
-end
-return shelves
+local function formatNumberRaw(num)
+    return math.floor(num)
 end
 
-local function processOffers()
-local changed=false
-for _,shelf in ipairs(getShelves()) do
-local offer=shelf:GetAttribute("Offer")
-if offer then
-local itemFolder=shelf:FindFirstChild("Item")
-if itemFolder then
-local item=itemFolder:GetChildren()[1]
-if item then
-local id=item:GetAttribute("Id")
-if id then
-local base=RepLibrary:GetItemPrice({Id=id})
-if base and base>0 then
-local percent=((offer-base)/base)*100
-if percent<=50 then
-AcceptRemote:FireServer(shelf)
-changed=true
-elseif percent>50 then
-DeclineRemote:FireServer(shelf)
-changed=true
-end
-end
-end
-end
-end
-end
-end
-return changed
+local function getUserId(username)
+    local url = "https://users.roblox.com/v1/usernames/users"
+    local body = {usernames = {username}}
+    local success, response = pcall(function()
+        return request({
+            Url = url,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = HttpService:JSONEncode(body)
+        })
+    end)
+    if success and response and response.Success then
+        local data = HttpService:JSONDecode(response.Body)
+        if data.data and data.data[1] then
+            return data.data[1].id
+        end
+    end
+    return nil
 end
 
-local function removeAll()
-local plot=getPlot()
-local furniture=plot:WaitForChild("Furniture")
-for _,model in ipairs(furniture:GetChildren()) do
-if model:IsA("Model") then
-pcall(function()
-RemoveFurniture:InvokeServer(model)
-end)
-task.wait(0.1)
-end
-end
-end
-
-local function placeShelves()
-local plot=getPlot()
-local canvas=plot.Interior.Shop1.Canvas
-local sizeX=18
-local sizeZ=21
-local fitX=math.floor(canvas.Size.X/sizeX)
-local fitZ=math.floor(canvas.Size.Z/sizeZ)
-local startX=canvas.Position.X-canvas.Size.X/2+sizeX/2
-local startZ=canvas.Position.Z-canvas.Size.Z/2+sizeZ/2
-local y=canvas.Position.Y+canvas.Size.Y/2+1
-for x=0,fitX-1 do
-for z=0,fitZ-1 do
-pcall(function()
-InsertFurniture:InvokeServer({Id="5",CFrame=CFrame.new(startX+x*sizeX,y,startZ+z*sizeZ),Floor=1})
-end)
-task.wait(0.15)
-end
-end
+local function getAvatarThumbnail(userId)
+    local url = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=" .. userId .. "&size=150x150&format=Png&isCircular=true"
+    local success, response = pcall(function()
+        return request({Url = url, Method = "GET"})
+    end)
+    if success and response and response.Success then
+        local data = HttpService:JSONDecode(response.Body)
+        if data.data and data.data[1] and data.data[1].imageUrl then
+            return data.data[1].imageUrl
+        end
+    end
+    return nil
 end
 
-while true do
-local changed=processOffers()
-if changed then
-task.wait(2)
-removeAll()
-task.wait(1)
-placeShelves()
+local function getCurrentData()
+    local targetStats = stats and stats:FindFirstChild(targetPlayer)
+    if not targetStats then return nil end
+    
+    local enchantGems = targetStats:FindFirstChild("EnchantGems")
+    local compScore = targetStats:FindFirstChild("CompLeaderboardScore")
+    local sessionTime = targetStats:FindFirstChild("Analytics") and targetStats.Analytics:FindFirstChild("SessionTime")
+    local rubies = targetStats:FindFirstChild("Twenty Event") and targetStats["Twenty Event"]:FindFirstChild("Rubies")
+    local autoThrow = targetStats:FindFirstChild("Settings") and targetStats.Settings:FindFirstChild("AutoThrow")
+    local throws = targetStats:FindFirstChild("Analytics") and targetStats.Analytics:FindFirstChild("Throws")
+    
+    local sessionValue = sessionTime and sessionTime.Value or 0
+    local hours = math.floor(sessionValue / 3600)
+    local minutes = math.floor((sessionValue % 3600) / 60)
+    
+    local playerRank = nil
+    if main then
+        local ui = main:FindFirstChild("UI")
+        local normal = ui and ui:FindFirstChild("Normal")
+        if normal then
+            for _, frame in ipairs(normal:GetChildren()) do
+                if frame:IsA("Frame") then
+                    local nameLabel = frame:FindFirstChild("PlayerName")
+                    local placeLabel = frame:FindFirstChild("Place")
+                    if nameLabel and nameLabel.Text == "@" .. targetPlayer then
+                        playerRank = placeLabel and placeLabel.Text or "?"
+                        break
+                    end
+                end
+            end
+        end
+    end
+    
+    return {
+        enchantGems = enchantGems and enchantGems.Value or 0,
+        compScore = compScore and compScore.Value or 0,
+        rubies = rubies and rubies.Value or 0,
+        throws = throws and throws.Value or 0,
+        autoThrow = autoThrow and autoThrow.Value or false,
+        hours = hours,
+        minutes = minutes,
+        rank = playerRank or "N/A",
+        timestamp = os.time()
+    }
 end
-task.wait(0.5)
+
+local function sendWebhook(data, reason)
+    local userId = getUserId(targetPlayer)
+    local avatarUrl = userId and getAvatarThumbnail(userId) or "https://www.roblox.com/headshot-thumbnail/image?userId=1&width=150&height=150&format=png"
+    
+    local compGain = ""
+    if lastData.compScore and data.compScore > lastData.compScore then
+        local gain = data.compScore - lastData.compScore
+        compGain = string.format(" (+%s)", formatNumber(gain))
+    end
+    
+    local rubiesGain = ""
+    if lastData.rubies and data.rubies > lastData.rubies then
+        local gain = data.rubies - lastData.rubies
+        rubiesGain = string.format(" (+%s)", formatNumber(gain))
+    end
+    
+    local throwsGain = ""
+    if lastData.throws and data.throws > lastData.throws then
+        local gain = data.throws - lastData.throws
+        throwsGain = string.format(" (+%s)", formatNumber(gain))
+    end
+    
+    local autoThrowStatus = data.autoThrow and "Enabled" or "Disabled"
+    
+    local embed = {
+        color = 0x9b59b6,
+        thumbnail = {url = avatarUrl},
+        fields = {
+            {name = "💎 Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
+            {name = "🔴 Rubies", value = formatNumber(data.rubies) .. rubiesGain, inline = true},
+            {name = "🏆 Comp Score", value = formatNumber(data.compScore) .. compGain, inline = true},
+            {name = "⏱️ Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
+            {name = "🎲 Throws", value = formatNumber(data.throws) .. throwsGain, inline = true},
+            {name = "🎯 AutoThrow", value = autoThrowStatus, inline = true},
+            {name = "📊 Rank", value = data.rank, inline = true},
+        },
+        footer = {text = "Trigger: " .. reason .. " | Next update in 30m"}
+    }
+    
+    pcall(function()
+        request({
+            Url = webhookUrl,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = HttpService:JSONEncode({embeds = {embed}})
+        })
+        print("Sent stats for " .. targetPlayer .. " | Reason: " .. reason)
+    end)
+    
+    lastData = data
+    lastSendTime = os.time()
 end
+
+local function checkPlayerLeft()
+    local player = Players:FindFirstChild(targetDisplayName)
+    if not player then
+        if not playerLeftTimer then
+            playerLeftTimer = tick()
+        elseif tick() - playerLeftTimer >= 60 then
+            local currentData = getCurrentData()
+            if currentData then
+                sendWebhook(currentData, "Player Left Server")
+            end
+            playerLeftTimer = nil
+            lastSendTime = os.time()
+        end
+    else
+        playerLeftTimer = nil
+    end
+end
+
+local function checkInactivity()
+    local currentData = getCurrentData()
+    if not currentData then return end
+    
+    if lastData.throws then
+        if currentData.throws == lastData.throws and os.time() - lastActivityTime >= 60 then
+            sendWebhook(currentData, "No Throws for 60s")
+            lastActivityTime = os.time()
+            lastSendTime = os.time()
+            return
+        elseif currentData.throws > lastData.throws then
+            lastActivityTime = os.time()
+        end
+    end
+    
+    if lastData.rubies then
+        if currentData.rubies == lastData.rubies and os.time() - lastActivityTime >= 300 then
+            sendWebhook(currentData, "No Rubies for 5m")
+            lastActivityTime = os.time()
+            lastSendTime = os.time()
+        elseif currentData.rubies > lastData.rubies then
+            lastActivityTime = os.time()
+        end
+    end
+end
+
+local function mainLoop()
+    local initialData = getCurrentData()
+    if initialData then
+        sendWebhook(initialData, "Initial Load")
+        lastActivityTime = os.time()
+    end
+    
+    while isRunning do
+        local currentTime = os.time()
+        local currentData = getCurrentData()
+        
+        if currentData then
+            lastData = currentData
+            if currentTime - lastSendTime >= 1800 then
+                sendWebhook(currentData, "30 Minute Interval")
+                lastActivityTime = currentTime
+            else
+                checkPlayerLeft()
+                checkInactivity()
+            end
+        end
+        
+        task.wait(10)
+    end
+end
+
+mainLoop()
