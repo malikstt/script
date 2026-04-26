@@ -2,10 +2,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
-local webhookUrl = "https://discord.com/api/webhooks/1495059756371546345/L3e0gHM3cdJAhq80YGviVwkvNOcJKOKYjerPBRPp2I5mli4FZ7r8vD7-8LPrBqWODKNw"
+local webhookUrl = "https://discord.com/api/webhooks/1497999446028587128/nTY1lOe95jZXpEMXJu0oxqG3RXkp75gqy70qswx44o9ummGlLNEe_RyYpszPo_YxwlI0"
 
 local targetPlayer = "68exp"
-local targetDisplayName = "68exp"
+local userId = "921793487509278730"
 
 local stats = ReplicatedStorage:FindFirstChild("Stats")
 local leaderboard = Workspace:FindFirstChild("Leaderboards")
@@ -16,8 +16,9 @@ local lastData = {}
 local lastSendTime = 0
 local lastActivityTime = os.time()
 local playerLeftTimer = nil
-local inactivityTimer = nil
 local isRunning = true
+local lastInactivitySend = 0
+local wasGone = false
 
 local function formatNumber(num)
     if num >= 1e12 then
@@ -33,32 +34,8 @@ local function formatNumber(num)
     end
 end
 
-local function formatNumberRaw(num)
-    return math.floor(num)
-end
-
-local function getUserId(username)
-    local url = "https://users.roblox.com/v1/usernames/users"
-    local body = {usernames = {username}}
-    local success, response = pcall(function()
-        return request({
-            Url = url,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = HttpService:JSONEncode(body)
-        })
-    end)
-    if success and response and response.Success then
-        local data = HttpService:JSONDecode(response.Body)
-        if data.data and data.data[1] then
-            return data.data[1].id
-        end
-    end
-    return nil
-end
-
-local function getAvatarThumbnail(userId)
-    local url = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=" .. userId .. "&size=150x150&format=Png&isCircular=true"
+local function getAvatarThumbnail()
+    local url = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=921793487509278730&size=150x150&format=Png&isCircular=true"
     local success, response = pcall(function()
         return request({Url = url, Method = "GET"})
     end)
@@ -117,9 +94,8 @@ local function getCurrentData()
     }
 end
 
-local function sendWebhook(data, reason)
-    local userId = getUserId(targetPlayer)
-    local avatarUrl = userId and getAvatarThumbnail(userId) or "https://www.roblox.com/headshot-thumbnail/image?userId=1&width=150&height=150&format=png"
+local function sendFullEmbed(data, reason)
+    local avatarUrl = getAvatarThumbnail()
     
     local compGain = ""
     if lastData.compScore and data.compScore > lastData.compScore then
@@ -163,41 +139,104 @@ local function sendWebhook(data, reason)
             Headers = {["Content-Type"] = "application/json"},
             Body = HttpService:JSONEncode({embeds = {embed}})
         })
-        print("Sent stats for " .. targetPlayer .. " | Reason: " .. reason)
+        print("Sent stats | Reason: " .. reason)
     end)
+end
+
+local function sendLeaveMessage()
+    local jobId = game.JobId or "Unknown"
+    local timestamp = os.time()
     
-    lastData = data
-    lastSendTime = os.time()
+    local payload = {
+        content = string.format("<@%s> User %s left server\nJob ID: `%s`\n<t:%d:R>", userId, targetPlayer, jobId, timestamp)
+    }
+    
+    pcall(function()
+        request({
+            Url = webhookUrl,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = HttpService:JSONEncode(payload)
+        })
+        print("Leave message sent")
+    end)
+end
+
+local function sendInactivityMessage(reason, data)
+    local avatarUrl = getAvatarThumbnail()
+    
+    local payload = {
+        content = string.format("<@%s> %s\nReason: %s", userId, targetPlayer, reason),
+        embeds = {{
+            color = 0x9b59b6,
+            thumbnail = {url = avatarUrl},
+            fields = {
+                {name = "💎 Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
+                {name = "🔴 Rubies", value = formatNumber(data.rubies), inline = true},
+                {name = "🏆 Comp Score", value = formatNumber(data.compScore), inline = true},
+                {name = "⏱️ Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
+                {name = "🎲 Throws", value = formatNumber(data.throws), inline = true},
+                {name = "🎯 AutoThrow", value = data.autoThrow and "Enabled" or "Disabled", inline = true},
+                {name = "📊 Rank", value = data.rank, inline = true},
+            }
+        }}
+    }
+    
+    pcall(function()
+        request({
+            Url = webhookUrl,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = HttpService:JSONEncode(payload)
+        })
+        print("Inactivity message sent | " .. reason)
+    end)
 end
 
 local function checkPlayerLeft()
-    local player = Players:FindFirstChild(targetDisplayName)
+    local player = Players:FindFirstChild(targetPlayer)
     if not player then
-        if not playerLeftTimer then
+        if not wasGone then
+            wasGone = true
             playerLeftTimer = tick()
         elseif tick() - playerLeftTimer >= 60 then
-            local currentData = getCurrentData()
-            if currentData then
-                sendWebhook(currentData, "Player Left Server")
-            end
+            sendLeaveMessage()
             playerLeftTimer = nil
+            wasGone = false
             lastSendTime = os.time()
+            return true
         end
     else
+        if wasGone then
+            print("Player rejoined!")
+            wasGone = false
+            playerLeftTimer = nil
+            local currentData = getCurrentData()
+            if currentData then
+                sendFullEmbed(currentData, "Player Rejoined")
+                lastSendTime = os.time()
+                lastActivityTime = os.time()
+                return true
+            end
+        end
         playerLeftTimer = nil
     end
+    return false
 end
 
 local function checkInactivity()
     local currentData = getCurrentData()
-    if not currentData then return end
+    if not currentData then return false end
     
     if lastData.throws then
         if currentData.throws == lastData.throws and os.time() - lastActivityTime >= 60 then
-            sendWebhook(currentData, "No Throws for 60s")
-            lastActivityTime = os.time()
-            lastSendTime = os.time()
-            return
+            if os.time() - lastInactivitySend >= 300 then
+                sendInactivityMessage("No throws for 60 seconds", currentData)
+                lastActivityTime = os.time()
+                lastSendTime = os.time()
+                lastInactivitySend = os.time()
+                return true
+            end
         elseif currentData.throws > lastData.throws then
             lastActivityTime = os.time()
         end
@@ -205,19 +244,27 @@ local function checkInactivity()
     
     if lastData.rubies then
         if currentData.rubies == lastData.rubies and os.time() - lastActivityTime >= 300 then
-            sendWebhook(currentData, "No Rubies for 5m")
-            lastActivityTime = os.time()
-            lastSendTime = os.time()
+            if os.time() - lastInactivitySend >= 300 then
+                sendInactivityMessage("No rubies for 5 minutes", currentData)
+                lastActivityTime = os.time()
+                lastSendTime = os.time()
+                lastInactivitySend = os.time()
+                return true
+            end
         elseif currentData.rubies > lastData.rubies then
             lastActivityTime = os.time()
         end
     end
+    
+    return false
 end
 
 local function mainLoop()
     local initialData = getCurrentData()
     if initialData then
-        sendWebhook(initialData, "Initial Load")
+        lastData = initialData
+        sendFullEmbed(initialData, "Initial Load")
+        lastSendTime = os.time()
         lastActivityTime = os.time()
     end
     
@@ -227,12 +274,16 @@ local function mainLoop()
         
         if currentData then
             lastData = currentData
+            
             if currentTime - lastSendTime >= 1800 then
-                sendWebhook(currentData, "30 Minute Interval")
+                sendFullEmbed(currentData, "30 Minute Interval")
+                lastSendTime = currentTime
                 lastActivityTime = currentTime
             else
-                checkPlayerLeft()
-                checkInactivity()
+                local handled = checkPlayerLeft()
+                if not handled then
+                    checkInactivity()
+                end
             end
         end
         
