@@ -9,7 +9,6 @@ local discordUserId = "921793487509278730"
 
 print("[DEBUG] Script started - fetching Roblox ID for: " .. targetPlayer)
 
--- AUTO GET ROBLOX USER ID FROM USERNAME
 local robloxUserId = nil
 
 local function getRobloxUserId(username)
@@ -48,7 +47,6 @@ local function getRobloxUserId(username)
     return nil
 end
 
--- Get the Roblox ID before continuing
 robloxUserId = getRobloxUserId(targetPlayer)
 if not robloxUserId then
     print("[WARNING] Could not fetch Roblox User ID - avatar thumbnails will be disabled")
@@ -56,7 +54,6 @@ end
 
 print("[DEBUG] HttpService exists: " .. tostring(HttpService ~= nil))
 
--- Enable HTTP requests
 pcall(function()
     HttpService.HttpEnabled = true
 end)
@@ -70,8 +67,6 @@ print("[DEBUG] Leaderboard found: " .. tostring(leaderboard ~= nil))
 local lastData = {}
 local lastSendTime = 0
 local isRunning = true
-
--- ADDED FOR CASE 2 & 3
 local lastActivityTime = os.time()
 local lastInactivitySend = 0
 local playerLeftTimer = nil
@@ -93,7 +88,6 @@ end
 
 local function getAvatarThumbnail()
     if not robloxUserId then
-        print("[DEBUG] No Roblox User ID available, skipping avatar")
         return nil
     end
     
@@ -175,11 +169,10 @@ local function getCurrentData()
     }
 end
 
--- ADDED: CASE 2 - Player left message
 local function sendLeaveMessage()
     local jobId = game.JobId or "Unknown"
     local payload = {
-        content = string.format("<@%s> User %s left server\nJob ID: `%s`\n<t:%d:R>", discordUserId, targetPlayer, jobId, os.time())
+        content = string.format("<@%s> left server\nJob ID: `%s`\n<t:%d:R>", discordUserId, jobId, os.time())
     }
     pcall(function()
         request({
@@ -192,11 +185,10 @@ local function sendLeaveMessage()
     end)
 end
 
--- ADDED: CASE 3 - Inactivity message
 local function sendInactivityMessage(reason, data)
     local avatarUrl = getAvatarThumbnail()
     local payload = {
-        content = string.format("<@%s> %s\nReason: %s", discordUserId, targetPlayer, reason),
+        content = string.format("<@%s> - %s", discordUserId, reason),
         embeds = {{
             color = 0x9b59b6,
             thumbnail = avatarUrl and {url = avatarUrl} or nil,
@@ -222,7 +214,6 @@ local function sendInactivityMessage(reason, data)
     end)
 end
 
--- ADDED: Check if player left (CASE 2)
 local function checkPlayerLeft()
     local player = Players:FindFirstChild(targetPlayer)
     if not player then
@@ -243,7 +234,6 @@ local function checkPlayerLeft()
             playerLeftTimer = nil
             local currentData = getCurrentData()
             if currentData then
-                -- Use existing sendToDiscord but with ping
                 local avatarUrl = getAvatarThumbnail()
                 local embed = {
                     title = "Stats Update",
@@ -279,7 +269,6 @@ local function checkPlayerLeft()
     return false
 end
 
--- ADDED: Check inactivity (CASE 3)
 local function checkInactivity(currentData)
     if not currentData then return false end
     
@@ -317,7 +306,6 @@ end
 local function sendToDiscord(data, reason)
     local avatarUrl = getAvatarThumbnail()
     
-    -- Calculate gains since last send
     local compGain = ""
     local rubiesGain = ""
     local throwsGain = ""
@@ -350,7 +338,6 @@ local function sendToDiscord(data, reason)
         footer = {text = reason .. " | Next update in 30 minutes"}
     }
     
-    -- Add 68exp under thumbnail
     if avatarUrl then
         embed.description = "**68exp**"
     end
@@ -373,7 +360,6 @@ local function sendToDiscord(data, reason)
     end
 end
 
--- Main loop
 local function mainLoop()
     print("[DEBUG] Waiting 5 seconds for game to load...")
     task.wait(5)
@@ -384,7 +370,7 @@ local function mainLoop()
         lastData = initialData
         sendToDiscord(initialData, "Initial Load")
         lastSendTime = os.time()
-        lastActivityTime = os.time()  -- ADDED
+        lastActivityTime = os.time()
     else
         print("[ERROR] Could not find player stats! Make sure '" .. targetPlayer .. "' is in the game")
         print("[DEBUG] Available Stats children:")
@@ -400,17 +386,15 @@ local function mainLoop()
         
         local currentData = getCurrentData()
         if currentData then
-            lastData = currentData  -- ADDED
+            lastData = currentData
             
-            -- CASE 1: Send every 30 minutes (1800 seconds)
             if os.time() - lastSendTime >= 1800 then
                 if sendToDiscord(currentData, "30 Minute Update") then
                     lastData = currentData
                     lastSendTime = os.time()
-                    lastActivityTime = os.time()  -- ADDED
+                    lastActivityTime = os.time()
                 end
             else
-                -- ADDED: CASE 2 & 3 checks only between 30-min sends
                 local handled = checkPlayerLeft()
                 if not handled then
                     checkInactivity(currentData)
@@ -422,7 +406,6 @@ local function mainLoop()
     end
 end
 
--- Start the script
 local success, err = pcall(mainLoop)
 if not success then
     print("[FATAL] Script error: " .. tostring(err))
