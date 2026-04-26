@@ -7,7 +7,7 @@ local webhookUrl = "https://discord.com/api/webhooks/1497999446028587128/nTY1lOe
 local targetPlayer = "68exp"
 local discordUserId = "921793487509278730"
 
-print("[DEBUG] Script started v4 nigga fetching Roblox ID for: " .. targetPlayer)
+print("[DEBUG] Script started - fetching Roblox ID for: " .. targetPlayer)
 
 -- AUTO GET ROBLOX USER ID FROM USERNAME
 local robloxUserId = nil
@@ -63,15 +63,12 @@ end)
 
 local stats = ReplicatedStorage:FindFirstChild("Stats")
 local leaderboard = Workspace:FindFirstChild("Leaderboards")
-local compLeaderboard = leaderboard and leaderboard:FindFirstChild("CompLeaderboardScore")
-local main = compLeaderboard and compLeaderboard:FindFirstChild("Main")
 
 print("[DEBUG] Stats found: " .. tostring(stats ~= nil))
 print("[DEBUG] Leaderboard found: " .. tostring(leaderboard ~= nil))
 
 local lastData = {}
 local lastSendTime = 0
-local lastActivityTime = os.time()
 local isRunning = true
 
 local function formatNumber(num)
@@ -115,10 +112,20 @@ local function getAvatarThumbnail()
 end
 
 local function getCurrentData()
-    local targetStats = stats and stats:FindFirstChild(targetPlayer)
+    if not stats then
+        stats = ReplicatedStorage:FindFirstChild("Stats")
+        if not stats then
+            return nil
+        end
+    end
+    
+    local targetStats = stats:FindFirstChild(targetPlayer)
     if not targetStats then 
         return nil 
     end
+    
+    local compLeaderboard = leaderboard and leaderboard:FindFirstChild("CompLeaderboardScore")
+    local main = compLeaderboard and compLeaderboard:FindFirstChild("Main")
     
     local enchantGems = targetStats:FindFirstChild("EnchantGems")
     local compScore = targetStats:FindFirstChild("CompLeaderboardScore")
@@ -162,30 +169,24 @@ local function getCurrentData()
     }
 end
 
-local function sendToDiscord(data, reason, isInitial)
+local function sendToDiscord(data, reason)
     local avatarUrl = getAvatarThumbnail()
     
-    -- Calculate gains over 30 minutes
+    -- Calculate gains since last send
     local compGain = ""
-    local compGainValue = 0
     local rubiesGain = ""
-    local rubiesGainValue = 0
     local throwsGain = ""
-    local throwsGainValue = 0
     
     if lastData.compScore and data.compScore > lastData.compScore then
-        compGainValue = data.compScore - lastData.compScore
-        compGain = string.format(" (+%s)", formatNumber(compGainValue))
+        compGain = string.format(" (+%s)", formatNumber(data.compScore - lastData.compScore))
     end
     
     if lastData.rubies and data.rubies > lastData.rubies then
-        rubiesGainValue = data.rubies - lastData.rubies
-        rubiesGain = string.format(" (+%s)", formatNumber(rubiesGainValue))
+        rubiesGain = string.format(" (+%s)", formatNumber(data.rubies - lastData.rubies))
     end
     
     if lastData.throws and data.throws > lastData.throws then
-        throwsGainValue = data.throws - lastData.throws
-        throwsGain = string.format(" (+%s)", formatNumber(throwsGainValue))
+        throwsGain = string.format(" (+%s)", formatNumber(data.throws - lastData.throws))
     end
     
     local embed = {
@@ -198,10 +199,10 @@ local function sendToDiscord(data, reason, isInitial)
             {name = "🏆 Comp Score", value = formatNumber(data.compScore) .. compGain, inline = true},
             {name = "⏱️ Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
             {name = "🪨 Throws", value = formatNumber(data.throws) .. throwsGain, inline = true},
-            {name = "😂 AutoThrow", value = data.autoThrow and " Enabled" or " Disabled", inline = true},
-            {name = "Lb spot", value = data.rank, inline = true},
+            {name = "😂 AutoThrow", value = data.autoThrow and "Enabled" or "Disabled", inline = true},
+            {name = "📊 Rank", value = data.rank, inline = true},
         },
-        footer = {text = "x " .. reason .. " | Next update in 30 minutes"}
+        footer = {text = reason .. " | Next update in 30 minutes"}
     }
     
     -- Add 68exp under thumbnail
@@ -222,7 +223,7 @@ local function sendToDiscord(data, reason, isInitial)
         print("Sent to Discord | Reason: " .. reason)
         return true
     else
-        print("failed to send | Status: " .. tostring(response and response.StatusCode or "nil"))
+        print("Failed to send | Status: " .. tostring(response and response.StatusCode or "nil"))
         return false
     end
 end
@@ -236,9 +237,8 @@ local function mainLoop()
     if initialData then
         print("[DEBUG] Got initial data, sending immediately...")
         lastData = initialData
-        sendToDiscord(initialData, "Initial Load", true)
+        sendToDiscord(initialData, "Initial Load")
         lastSendTime = os.time()
-        lastActivityTime = os.time()
     else
         print("[ERROR] Could not find player stats! Make sure '" .. targetPlayer .. "' is in the game")
         print("[DEBUG] Available Stats children:")
@@ -254,15 +254,15 @@ local function mainLoop()
         
         local currentData = getCurrentData()
         if currentData then
-            lastData = currentData
-            
             -- Send every 30 minutes (1800 seconds)
             if os.time() - lastSendTime >= 1800 then
-                if sendToDiscord(currentData, "30 Minute Update", false) then
+                if sendToDiscord(currentData, "30 Minute Update") then
+                    lastData = currentData
                     lastSendTime = os.time()
-                    lastActivityTime = os.time()
                 end
             end
+        else
+            print("[DEBUG] Player data not found, retrying...")
         end
     end
 end
