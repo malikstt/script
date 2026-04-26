@@ -199,7 +199,7 @@ local function sendToDiscord(data, reason, isInitial)
             {name = "⏱️ Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
             {name = "🪨 Throws", value = formatNumber(data.throws) .. throwsGain, inline = true},
             {name = "😂 AutoThrow", value = data.autoThrow and " Enabled" or " Disabled", inline = true},
-            {name = "📊 Rank", value = data.rank, inline = true},
+            {name = "Lb spot", value = data.rank, inline = true},
         },
         footer = {text = "x " .. reason .. " | Next update in 30 minutes"}
     }
