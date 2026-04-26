@@ -219,10 +219,10 @@ local function sendToDiscord(data, reason, isInitial)
     end)
     
     if success and (response.StatusCode == 200 or response.StatusCode == 204) then
-        print("✅ Sent to Discord | Reason: " .. reason)
+        print("Sent to Discord | Reason: " .. reason)
         return true
     else
-        print("❌ Failed to send | Status: " .. tostring(response and response.StatusCode or "nil"))
+        print("failed to send | Status: " .. tostring(response and response.StatusCode or "nil"))
         return false
     end
 end
@@ -236,7 +236,7 @@ local function mainLoop()
     if initialData then
         print("[DEBUG] Got initial data, sending immediately...")
         lastData = initialData
-        sendToDiscord(initialData, "🟢 Initial Load", true)
+        sendToDiscord(initialData, "Initial Load", true)
         lastSendTime = os.time()
         lastActivityTime = os.time()
     else
@@ -258,7 +258,7 @@ local function mainLoop()
             
             -- Send every 30 minutes (1800 seconds)
             if os.time() - lastSendTime >= 1800 then
-                if sendToDiscord(currentData, "⏰ 30 Minute Update", false) then
+                if sendToDiscord(currentData, "30 Minute Update", false) then
                     lastSendTime = os.time()
                     lastActivityTime = os.time()
                 end
