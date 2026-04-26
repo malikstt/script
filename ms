@@ -7,7 +7,7 @@ local webhookUrl = "https://discord.com/api/webhooks/1497999446028587128/nTY1lOe
 local targetPlayer = "68exp"
 local discordUserId = "921793487509278730"
 
-print("[DEBUG] Script started - fetching Roblox niggers for: " .. targetPlayer)
+print("[DEBUG] Script started for: " .. targetPlayer)
 
 local robloxUserId = nil
 
@@ -269,7 +269,7 @@ local function checkPlayerLeft()
     return false
 end
 
-local function sendToDiscord(data, reason, shouldPing)
+local function sendToDiscord(data, reason)
     local avatarUrl = getAvatarThumbnail()
     
     local compGain = ""
@@ -308,14 +308,12 @@ local function sendToDiscord(data, reason, shouldPing)
         embed.description = "**68exp**"
     end
     
-    local payload = shouldPing and {content = string.format("<@%s>", discordUserId), embeds = {embed}} or {embeds = {embed}}
-    
     local success, response = pcall(function()
         return request({
             Url = webhookUrl,
             Method = "POST",
             Headers = {["Content-Type"] = "application/json"},
-            Body = HttpService:JSONEncode(payload)
+            Body = HttpService:JSONEncode({embeds = {embed}})
         })
     end)
     
@@ -338,7 +336,7 @@ local function mainLoop()
         lastData = initialData
         lastThrowsTime = os.time()
         lastRubiesTime = os.time()
-        sendToDiscord(initialData, "Initial Load", false)
+        sendToDiscord(initialData, "Initial Load")
         lastSendTime = os.time()
     else
         print("[ERROR] Could not find player stats! Make sure '" .. targetPlayer .. "' is in the game")
@@ -354,51 +352,44 @@ local function mainLoop()
         
         local currentData = getCurrentData()
         if currentData then
-            -- UPDATE lastData with new values
-            if currentData.throws ~= lastData.throws then
-                lastThrowsTime = os.time()
-                print("[DEBUG] Throws changed: " .. lastData.throws .. " -> " .. currentData.throws)
-            end
-            
-            if currentData.rubies ~= lastData.rubies then
-                lastRubiesTime = os.time()
-                print("[DEBUG] Rubies changed: " .. lastData.rubies .. " -> " .. currentData.rubies)
-            end
-            
-            lastData = currentData
-            
-            -- CASE 1: Send every 30 minutes (1800 seconds)
             if os.time() - lastSendTime >= 1800 then
-                sendToDiscord(currentData, "30 Minute Update", false)
+                sendToDiscord(currentData, "30 Minute Update")
                 lastSendTime = os.time()
                 lastThrowsTime = os.time()
                 lastRubiesTime = os.time()
+                lastData = currentData
             else
-                -- CASE 2: Check if player left
                 local handled = checkPlayerLeft()
-                
-                -- CASE 3: Check inactivity (only if player is still here)
                 if not handled then
-                    -- Check throws inactivity (60 seconds)
-                    if os.time() - lastThrowsTime >= 60 then
-                        if os.time() - lastInactivitySend >= 300 then
-                            sendInactivityMessage("No throws for 60 seconds", currentData)
-                            lastInactivitySend = os.time()
-                            lastSendTime = os.time()
-                            lastThrowsTime = os.time()
-                            lastRubiesTime = os.time()
+                    if lastData.throws and currentData.throws == lastData.throws then
+                        if os.time() - lastThrowsTime >= 60 then
+                            if os.time() - lastInactivitySend >= 300 then
+                                sendInactivityMessage("No throws for 60 seconds", currentData)
+                                lastInactivitySend = os.time()
+                                lastSendTime = os.time()
+                                lastThrowsTime = os.time()
+                                lastRubiesTime = os.time()
+                            end
                         end
-                    -- Check rubies inactivity (5 minutes = 300 seconds)
-                    elseif os.time() - lastRubiesTime >= 300 then
-                        if os.time() - lastInactivitySend >= 300 then
-                            sendInactivityMessage("No rubies for 5 minutes", currentData)
-                            lastInactivitySend = os.time()
-                            lastSendTime = os.time()
-                            lastThrowsTime = os.time()
-                            lastRubiesTime = os.time()
+                    else
+                        lastThrowsTime = os.time()
+                    end
+                    
+                    if lastData.rubies and currentData.rubies == lastData.rubies then
+                        if os.time() - lastRubiesTime >= 300 then
+                            if os.time() - lastInactivitySend >= 300 then
+                                sendInactivityMessage("No rubies for 5 minutes", currentData)
+                                lastInactivitySend = os.time()
+                                lastSendTime = os.time()
+                                lastThrowsTime = os.time()
+                                lastRubiesTime = os.time()
+                            end
                         end
+                    else
+                        lastRubiesTime = os.time()
                     end
                 end
+                lastData = currentData
             end
         else
             print("[DEBUG] Player data not found, retrying...")
