@@ -5,18 +5,60 @@ local Players = game:GetService("Players")
 local webhookUrl = "https://discord.com/api/webhooks/1497999446028587128/nTY1lOe95jZXpEMXJu0oxqG3RXkp75gqy70qswx44o9ummGlLNEe_RyYpszPo_YxwlI0"
 
 local targetPlayer = "68exp"
-local userId = "921793487509278730"
+local discordUserId = "921793487509278730"  -- Your Discord ID for mentions
 
-print("[DEBUG] Script started - checking services...")
-print("[DEBUG] ReplicatedStorage exists: " .. tostring(ReplicatedStorage ~= nil))
-print("[DEBUG] Workspace exists: " .. tostring(Workspace ~= nil))
+print("[DEBUG] Script started - fetching Roblox ID for: " .. targetPlayer)
+
+-- AUTO GET ROBLOX USER ID FROM USERNAME
+local robloxUserId = nil
+
+local function getRobloxUserId(username)
+    print("[DEBUG] Fetching Roblox User ID for: " .. username)
+    local url = "https://users.roblox.com/v1/usernames/users"
+    local body = HttpService:JSONEncode({usernames = {username}})
+    
+    local success, response = pcall(function()
+        return request({
+            Url = url,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = body
+        })
+    end)
+    
+    if success and response then
+        print("[DEBUG] Roblox API response status: " .. tostring(response.StatusCode))
+        if response.StatusCode == 200 then
+            local decodeSuccess, data = pcall(function()
+                return HttpService:JSONDecode(response.Body)
+            end)
+            if decodeSuccess and data and data.data and data.data[1] then
+                local id = tostring(data.data[1].id)
+                print("[DEBUG] Found Roblox User ID: " .. id)
+                return id
+            else
+                print("[ERROR] Failed to decode Roblox API response")
+            end
+        else
+            print("[ERROR] Roblox API returned status: " .. tostring(response.StatusCode))
+        end
+    else
+        print("[ERROR] Failed to fetch Roblox User ID: " .. tostring(response))
+    end
+    return nil
+end
+
+-- Get the Roblox ID before continuing
+robloxUserId = getRobloxUserId(targetPlayer)
+if not robloxUserId then
+    print("[WARNING] Could not fetch Roblox User ID - avatar thumbnails will be disabled")
+end
+
 print("[DEBUG] HttpService exists: " .. tostring(HttpService ~= nil))
-print("[DEBUG] Players exists: " .. tostring(Players ~= nil))
 
 -- Enable HTTP requests
 pcall(function()
     HttpService.HttpEnabled = true
-    print("[DEBUG] HttpEnabled set to true")
 end)
 
 local stats = ReplicatedStorage:FindFirstChild("Stats")
@@ -26,17 +68,11 @@ local main = compLeaderboard and compLeaderboard:FindFirstChild("Main")
 
 print("[DEBUG] Stats found: " .. tostring(stats ~= nil))
 print("[DEBUG] Leaderboard found: " .. tostring(leaderboard ~= nil))
-print("[DEBUG] CompLeaderboard found: " .. tostring(compLeaderboard ~= nil))
-print("[DEBUG] Main found: " .. tostring(main ~= nil))
 
 local lastData = {}
 local lastSendTime = 0
 local lastActivityTime = os.time()
-local playerLeftTimer = nil
 local isRunning = true
-local lastInactivitySend = 0
-local wasGone = false
-local errorCount = 0
 
 local function formatNumber(num)
     if num >= 1e12 then
@@ -53,8 +89,12 @@ local function formatNumber(num)
 end
 
 local function getAvatarThumbnail()
-    local url = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=" .. userId .. "&size=150x150&format=Png&isCircular=true"
-    print("[DEBUG] Fetching avatar thumbnail from: " .. url)
+    if not robloxUserId then
+        print("[DEBUG] No Roblox User ID available, skipping avatar")
+        return nil
+    end
+    
+    local url = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=" .. robloxUserId .. "&size=150x150&format=Png&isCircular=true"
     
     local success, response = pcall(function()
         return request({
@@ -63,44 +103,22 @@ local function getAvatarThumbnail()
         })
     end)
     
-    if success and response then
-        print("[DEBUG] Avatar request success, response status: " .. tostring(response.StatusCode))
-        if response.StatusCode == 200 then
-            local decodeSuccess, data = pcall(function()
-                return HttpService:JSONDecode(response.Body)
-            end)
-            if decodeSuccess and data and data.data and data.data[1] and data.data[1].imageUrl then
-                print("[DEBUG] Avatar URL obtained: " .. data.data[1].imageUrl)
-                return data.data[1].imageUrl
-            else
-                print("[DEBUG] Failed to decode avatar response or missing image URL")
-            end
-        else
-            print("[DEBUG] Avatar request failed with status: " .. tostring(response.StatusCode))
-        end
-    else
-        print("[DEBUG] Avatar request failed: " .. tostring(success))
-        if response then
-            print("[DEBUG] Error response: " .. tostring(response))
+    if success and response and response.StatusCode == 200 then
+        local decodeSuccess, data = pcall(function()
+            return HttpService:JSONDecode(response.Body)
+        end)
+        if decodeSuccess and data and data.data and data.data[1] and data.data[1].imageUrl then
+            return data.data[1].imageUrl
         end
     end
     return nil
 end
 
 local function getCurrentData()
-    print("[DEBUG] Getting current data for player: " .. targetPlayer)
     local targetStats = stats and stats:FindFirstChild(targetPlayer)
-    if not targetStats then
-        print("[DEBUG] Target stats not found for: " .. targetPlayer)
-        print("[DEBUG] Available children in Stats: ")
-        if stats then
-            for _, child in ipairs(stats:GetChildren()) do
-                print("[DEBUG]   - " .. child.Name)
-            end
-        end
+    if not targetStats then 
         return nil 
     end
-    print("[DEBUG] Target stats found")
     
     local enchantGems = targetStats:FindFirstChild("EnchantGems")
     local compScore = targetStats:FindFirstChild("CompLeaderboardScore")
@@ -108,13 +126,6 @@ local function getCurrentData()
     local rubies = targetStats:FindFirstChild("Twenty Event") and targetStats["Twenty Event"]:FindFirstChild("Rubies")
     local autoThrow = targetStats:FindFirstChild("Settings") and targetStats.Settings:FindFirstChild("AutoThrow")
     local throws = targetStats:FindFirstChild("Analytics") and targetStats.Analytics:FindFirstChild("Throws")
-    
-    print("[DEBUG] Stats found - EnchantGems: " .. tostring(enchantGems ~= nil))
-    print("[DEBUG] Stats found - CompScore: " .. tostring(compScore ~= nil))
-    print("[DEBUG] Stats found - SessionTime: " .. tostring(sessionTime ~= nil))
-    print("[DEBUG] Stats found - Rubies: " .. tostring(rubies ~= nil))
-    print("[DEBUG] Stats found - AutoThrow: " .. tostring(autoThrow ~= nil))
-    print("[DEBUG] Stats found - Throws: " .. tostring(throws ~= nil))
     
     local sessionValue = sessionTime and sessionTime.Value or 0
     local hours = math.floor(sessionValue / 3600)
@@ -138,7 +149,7 @@ local function getCurrentData()
         end
     end
     
-    local data = {
+    return {
         enchantGems = enchantGems and enchantGems.Value or 0,
         compScore = compScore and compScore.Value or 0,
         rubies = rubies and rubies.Value or 0,
@@ -149,59 +160,25 @@ local function getCurrentData()
         rank = playerRank or "N/A",
         timestamp = os.time()
     }
-    
-    print("[DEBUG] Current data - EnchantGems: " .. data.enchantGems .. ", CompScore: " .. data.compScore .. ", Rubies: " .. data.rubies)
-    return data
 end
 
-local function sendFullEmbed(data, reason)
-    print("[DEBUG] sendFullEmbed called with reason: " .. reason)
-    
-    -- Test webhook connectivity first
-    local testSuccess, testResponse = pcall(function()
-        return request({
-            Url = webhookUrl,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = HttpService:JSONEncode({content = "Testing connection from script"})
-        })
-    end)
-    
-    if testSuccess and testResponse then
-        print("[DEBUG] Webhook test sent, status: " .. tostring(testResponse.StatusCode))
-        if testResponse.StatusCode ~= 204 and testResponse.StatusCode ~= 200 then
-            print("[ERROR] Webhook test failed with status: " .. tostring(testResponse.StatusCode))
-            if testResponse.Body then
-                print("[ERROR] Response body: " .. tostring(testResponse.Body))
-            end
-            return
-        end
-    else
-        print("[ERROR] Webhook test failed completely: " .. tostring(testSuccess))
-        return
-    end
-    
+local function sendToDiscord(data, reason, isInitial)
     local avatarUrl = getAvatarThumbnail()
     
     local compGain = ""
     if lastData.compScore and data.compScore > lastData.compScore then
-        local gain = data.compScore - lastData.compScore
-        compGain = string.format(" (+%s)", formatNumber(gain))
+        compGain = string.format(" (+%s)", formatNumber(data.compScore - lastData.compScore))
     end
     
     local rubiesGain = ""
     if lastData.rubies and data.rubies > lastData.rubies then
-        local gain = data.rubies - lastData.rubies
-        rubiesGain = string.format(" (+%s)", formatNumber(gain))
+        rubiesGain = string.format(" (+%s)", formatNumber(data.rubies - lastData.rubies))
     end
     
     local throwsGain = ""
     if lastData.throws and data.throws > lastData.throws then
-        local gain = data.throws - lastData.throws
-        throwsGain = string.format(" (+%s)", formatNumber(gain))
+        throwsGain = string.format(" (+%s)", formatNumber(data.throws - lastData.throws))
     end
-    
-    local autoThrowStatus = data.autoThrow and "Enabled" or "Disabled"
     
     local embed = {
         title = "📊 " .. targetPlayer .. " - Stats Update",
@@ -210,102 +187,75 @@ local function sendFullEmbed(data, reason)
         fields = {
             {name = "🟪 Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
             {name = "🔴 Rubies", value = formatNumber(data.rubies) .. rubiesGain, inline = true},
-            {name = "🏆 S2 Comp Score", value = formatNumber(data.compScore) .. compGain, inline = true},
+            {name = "🏆 Comp Score", value = formatNumber(data.compScore) .. compGain, inline = true},
             {name = "⏱️ Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
             {name = "🪨 Throws", value = formatNumber(data.throws) .. throwsGain, inline = true},
-            {name = "😂 AutoThrow", value = autoThrowStatus, inline = true},
+            {name = "😂 AutoThrow", value = data.autoThrow and "✅ Enabled" or "❌ Disabled", inline = true},
             {name = "📊 Rank", value = data.rank, inline = true},
         },
-        footer = {text = "Trigger: " .. reason .. " | Next update in 30m | " .. os.date("%Y-%m-%d %H:%M:%S")}
+        footer = {text = "📌 " .. reason .. " | Next update in 30 minutes"}
     }
-    
-    local jsonBody = HttpService:JSONEncode({embeds = {embed}})
-    print("[DEBUG] Sending embed to Discord, body length: " .. #jsonBody)
     
     local success, response = pcall(function()
         return request({
             Url = webhookUrl,
             Method = "POST",
             Headers = {["Content-Type"] = "application/json"},
-            Body = jsonBody
+            Body = HttpService:JSONEncode({embeds = {embed}})
         })
     end)
     
-    if success then
-        print("[DEBUG] Discord request completed with status: " .. tostring(response.StatusCode))
-        if response.StatusCode == 204 or response.StatusCode == 200 then
-            print("✅ SUCCESS: Sent stats | Reason: " .. reason)
-            errorCount = 0
-        else
-            print("[ERROR] Discord returned status: " .. tostring(response.StatusCode))
-            if response.Body then
-                print("[ERROR] Response body: " .. tostring(response.Body))
-            end
-            errorCount = errorCount + 1
-        end
+    if success and (response.StatusCode == 200 or response.StatusCode == 204) then
+        print("✅ Sent to Discord | Reason: " .. reason)
+        return true
     else
-        print("[ERROR] Failed to send Discord webhook: " .. tostring(response))
-        errorCount = errorCount + 1
+        print("❌ Failed to send | Status: " .. tostring(response and response.StatusCode or "nil"))
+        return false
     end
 end
 
--- Rest of the functions (sendLeaveMessage, sendInactivityMessage, etc.) remain similar with debug prints added
-
+-- Main loop
 local function mainLoop()
-    print("[DEBUG] Main loop started")
-    
-    -- Wait a bit for everything to load
+    print("[DEBUG] Waiting 5 seconds for game to load...")
     task.wait(5)
     
     local initialData = getCurrentData()
     if initialData then
-        print("[DEBUG] Initial data obtained, sending...")
+        print("[DEBUG] Got initial data, sending...")
         lastData = initialData
-        sendFullEmbed(initialData, "Initial Load")
+        sendToDiscord(initialData, "🟢 Initial Load", true)
         lastSendTime = os.time()
         lastActivityTime = os.time()
     else
-        print("[ERROR] Could not get initial data - script may not work correctly")
+        print("[ERROR] Could not find player stats! Make sure '" .. targetPlayer .. "' is in the game")
+        print("[DEBUG] Available Stats children:")
+        if stats then
+            for _, child in pairs(stats:GetChildren()) do
+                print("   - " .. child.Name)
+            end
+        end
     end
     
-    local loopCount = 0
-    
     while isRunning do
-        loopCount = loopCount + 1
-        if loopCount % 6 == 0 then -- Print every minute (6 * 10 seconds)
-            print("[DEBUG] Loop iteration " .. loopCount .. " - Script still running")
-        end
+        task.wait(10)
         
-        local currentTime = os.time()
         local currentData = getCurrentData()
-        
         if currentData then
             lastData = currentData
             
-            if currentTime - lastSendTime >= 1800 then
-                print("[DEBUG] 30 minute interval reached, sending update")
-                sendFullEmbed(currentData, "30 Minute Interval")
-                lastSendTime = currentTime
-                lastActivityTime = currentTime
+            -- Send every 30 minutes (1800 seconds)
+            if os.time() - lastSendTime >= 1800 then
+                if sendToDiscord(currentData, "⏰ 30 Minute Update", false) then
+                    lastSendTime = os.time()
+                    lastActivityTime = os.time()
+                end
             end
-        else
-            print("[DEBUG] No current data available in this iteration")
         end
-        
-        task.wait(10)
     end
-    
-    print("[DEBUG] Main loop ended")
 end
 
-print("[DEBUG] Starting main loop...")
-local success, err = xpcall(mainLoop, function(err)
-    print("[FATAL ERROR] " .. tostring(err))
-    print("[FATAL ERROR] Stack trace: " .. debug.traceback())
-end)
-
+-- Start the script
+local success, err = pcall(mainLoop)
 if not success then
-    print("[FATAL ERROR] Script crashed: " .. tostring(err))
+    print("[FATAL] Script error: " .. tostring(err))
 end
-
-print("[DEBUG] Script execution completed")
