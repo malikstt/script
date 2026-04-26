@@ -5,7 +5,7 @@ local Players = game:GetService("Players")
 local webhookUrl = "https://discord.com/api/webhooks/1497999446028587128/nTY1lOe95jZXpEMXJu0oxqG3RXkp75gqy70qswx44o9ummGlLNEe_RyYpszPo_YxwlI0"
 
 local targetPlayer = "68exp"
-local discordUserId = "921793487509278730"  -- Your Discord ID for mentions
+local discordUserId = "921793487509278730"
 
 print("[DEBUG] Script started - fetching Roblox ID for: " .. targetPlayer)
 
@@ -73,6 +73,7 @@ local lastData = {}
 local lastSendTime = 0
 local lastActivityTime = os.time()
 local isRunning = true
+local firstWebhookSent = false
 
 local function formatNumber(num)
     if num >= 1e12 then
@@ -165,36 +166,56 @@ end
 local function sendToDiscord(data, reason, isInitial)
     local avatarUrl = getAvatarThumbnail()
     
+    -- Calculate gains over 30 minutes
     local compGain = ""
-    if lastData.compScore and data.compScore > lastData.compScore then
-        compGain = string.format(" (+%s)", formatNumber(data.compScore - lastData.compScore))
-    end
-    
+    local compGainValue = 0
     local rubiesGain = ""
-    if lastData.rubies and data.rubies > lastData.rubies then
-        rubiesGain = string.format(" (+%s)", formatNumber(data.rubies - lastData.rubies))
+    local rubiesGainValue = 0
+    local throwsGain = ""
+    local throwsGainValue = 0
+    
+    if lastData.compScore and data.compScore > lastData.compScore then
+        compGainValue = data.compScore - lastData.compScore
+        compGain = string.format(" (+%s)", formatNumber(compGainValue))
     end
     
-    local throwsGain = ""
+    if lastData.rubies and data.rubies > lastData.rubies then
+        rubiesGainValue = data.rubies - lastData.rubies
+        rubiesGain = string.format(" (+%s)", formatNumber(rubiesGainValue))
+    end
+    
     if lastData.throws and data.throws > lastData.throws then
-        throwsGain = string.format(" (+%s)", formatNumber(data.throws - lastData.throws))
+        throwsGainValue = data.throws - lastData.throws
+        throwsGain = string.format(" (+%s)", formatNumber(throwsGainValue))
+    end
+    
+    -- Create fields without emojis for stat update
+    local fields = {
+        {name = "Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
+        {name = "Rubies", value = formatNumber(data.rubies) .. rubiesGain, inline = true},
+        {name = "Comp Score", value = formatNumber(data.compScore) .. compGain, inline = true},
+        {name = "Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
+        {name = "Throws", value = formatNumber(data.throws) .. throwsGain, inline = true},
+        {name = "AutoThrow", value = data.autoThrow and "Enabled" or "Disabled", inline = true},
+    }
+    
+    -- Add rank field if available
+    if data.rank and data.rank ~= "N/A" then
+        table.insert(fields, {name = "Rank", value = data.rank, inline = true})
     end
     
     local embed = {
-        title = "📊 " .. targetPlayer .. " - Stats Update",
+        title = targetPlayer .. " - Stats Update",
         color = 0x9b59b6,
         thumbnail = avatarUrl and {url = avatarUrl} or nil,
-        fields = {
-            {name = "🟪 Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
-            {name = "🔴 Rubies", value = formatNumber(data.rubies) .. rubiesGain, inline = true},
-            {name = "🏆 Comp Score", value = formatNumber(data.compScore) .. compGain, inline = true},
-            {name = "⏱️ Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
-            {name = "🪨 Throws", value = formatNumber(data.throws) .. throwsGain, inline = true},
-            {name = "😂 AutoThrow", value = data.autoThrow and "✅ Enabled" or "❌ Disabled", inline = true},
-            {name = "📊 Rank", value = data.rank, inline = true},
-        },
-        footer = {text = "📌 " .. reason .. " | Next update in 30 minutes"}
+        fields = fields,
+        footer = {text = reason .. " | Next update in 30 minutes"}
     }
+    
+    -- Add 68exp under thumbnail if we're sending a regular update
+    if not isInitial and avatarUrl then
+        embed.description = "**68exp**"
+    end
     
     local success, response = pcall(function()
         return request({
@@ -206,10 +227,10 @@ local function sendToDiscord(data, reason, isInitial)
     end)
     
     if success and (response.StatusCode == 200 or response.StatusCode == 204) then
-        print("✅ Sent to Discord | Reason: " .. reason)
+        print("Sent to Discord | Reason: " .. reason)
         return true
     else
-        print("❌ Failed to send | Status: " .. tostring(response and response.StatusCode or "nil"))
+        print("Failed to send | Status: " .. tostring(response and response.StatusCode or "nil"))
         return false
     end
 end
@@ -221,11 +242,11 @@ local function mainLoop()
     
     local initialData = getCurrentData()
     if initialData then
-        print("[DEBUG] Got initial data, sending...")
+        print("[DEBUG] Got initial data, storing but NOT sending first webhook")
         lastData = initialData
-        sendToDiscord(initialData, "🟢 Initial Load", true)
         lastSendTime = os.time()
         lastActivityTime = os.time()
+        firstWebhookSent = false
     else
         print("[ERROR] Could not find player stats! Make sure '" .. targetPlayer .. "' is in the game")
         print("[DEBUG] Available Stats children:")
@@ -241,11 +262,18 @@ local function mainLoop()
         
         local currentData = getCurrentData()
         if currentData then
-            lastData = currentData
-            
-            -- Send every 30 minutes (1800 seconds)
-            if os.time() - lastSendTime >= 1800 then
-                if sendToDiscord(currentData, "⏰ 30 Minute Update", false) then
+            -- Wait 30 minutes before sending first webhook
+            if not firstWebhookSent and os.time() - lastSendTime >= 1800 then
+                if sendToDiscord(currentData, "30 Minute Update", false) then
+                    lastData = currentData
+                    lastSendTime = os.time()
+                    lastActivityTime = os.time()
+                    firstWebhookSent = true
+                end
+            -- After first webhook sent, send every 30 minutes with gain calculations
+            elseif firstWebhookSent and os.time() - lastSendTime >= 1800 then
+                if sendToDiscord(currentData, "30 Minute Update", false) then
+                    lastData = currentData
                     lastSendTime = os.time()
                     lastActivityTime = os.time()
                 end
