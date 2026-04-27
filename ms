@@ -193,12 +193,12 @@ local function sendInactivityMessage(reason, data)
             color = 0x9b59b6,
             thumbnail = avatarUrl and {url = avatarUrl} or nil,
             fields = {
-                {name = "💎 Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
+                {name = "Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
                 {name = "🔴 Rubies", value = formatNumber(data.rubies), inline = true},
                 {name = "🏆 Comp Score", value = formatNumber(data.compScore), inline = true},
                 {name = "⏱️ Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
-                {name = "🎲 Throws", value = formatNumber(data.throws), inline = true},
-                {name = "🎯 AutoThrow", value = data.autoThrow and "Enabled" or "Disabled", inline = true},
+                {name = "🪨 Throws", value = formatNumber(data.throws), inline = true},
+                {name = "😨 AutoThrow", value = data.autoThrow and "Enabled" or "Disabled", inline = true},
                 {name = "📊 Rank", value = data.rank, inline = true},
             }
         }}
@@ -270,12 +270,12 @@ local function sendToDiscordWithCompare(currentData, compareData, reason)
         color = 0x3498db,
         thumbnail = avatarUrl and {url = avatarUrl} or nil,
         fields = {
-            {name = "💎 Enchant Gems", value = formatNumber(currentData.enchantGems), inline = true},
+            {name = " Enchant Gems", value = formatNumber(currentData.enchantGems), inline = true},
             {name = "🔴 Rubies", value = formatNumber(currentData.rubies) .. rubiesGain, inline = true},
             {name = "🏆 Comp Score", value = formatNumber(currentData.compScore) .. compGain, inline = true},
             {name = "⏱️ Session Time", value = currentData.hours .. "h " .. currentData.minutes .. "m", inline = true},
-            {name = "🎲 Throws", value = formatNumber(currentData.throws) .. throwsGain, inline = true},
-            {name = "🎯 AutoThrow", value = currentData.autoThrow and "Enabled" or "Disabled", inline = true},
+            {name = "🪨 Throws", value = formatNumber(currentData.throws) .. throwsGain, inline = true},
+            {name = "🥶 AutoThrow", value = currentData.autoThrow and "Enabled" or "Disabled", inline = true},
             {name = "📊 Rank", value = currentData.rank, inline = true},
         },
         footer = {text = reason .. " | Next update in 30 minutes"}
