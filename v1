@@ -39,33 +39,28 @@ local AutoTrainEnabled = false
 local AutoClaimChestsEnabled = false
 local AutoBuyObjectsEnabled = false
 local AutoUnlockWorldsEnabled = false
-local SelectedChests = {}
 local SelectedWorldMode = "Any Affordable World"
+local SelectedChests = {}
 
-local AutoUsePotionsEnabled = false
+local AutoUseInventoryEnabled = false
 local AutoEnchantEnabled = false
-local AutoUseItemsEnabled = false
 local AutoClaimSpaceEggEnabled = false
-local SelectedPotions = {}
-local SelectedItems = {}
+local SelectedInventoryItems = {}
 local SelectedEnchants = {}
-local PotionTimers = {}
 local ItemTimers = {}
 
 local InstantThrowConnection = nil
 local AutoClaimConnection = nil
 local AutoBuyConnection = nil
 local AutoUnlockConnection = nil
-local AutoPotionConnection = nil
+local AutoInventoryConnection = nil
 local AutoEnchantConnection = nil
-local AutoItemConnection = nil
 local AutoSpaceEggConnection = nil
 local Paper = nil
 local ChestsList = {}
 local WorldsList = {}
-local PotionsList = {}
-local ItemsList = {}
 local EnchantsList = {}
+local CurrentInventoryItems = {}
 
 local function SafeRequire(module)
     local success, result = pcall(function()
@@ -104,22 +99,6 @@ if worldsTable then
     end
 end
 
-local itemsTable = ReplicatedStorage:FindFirstChild("Tables")
-if itemsTable then
-    itemsTable = itemsTable:FindFirstChild("Items")
-    if itemsTable then
-        local itemsData = SafeRequire(itemsTable) or {}
-        for name, data in pairs(itemsData) do
-            if data.Category == "Potions" then
-                PotionsList[name] = data
-            elseif data.Type == "Item" and data.Usable == true and data.Category ~= "Potions" then
-                ItemsList[name] = data
-            end
-        end
-        print("[DEBUG] Loaded Items table")
-    end
-end
-
 local enchantsTable = ReplicatedStorage:FindFirstChild("Tables")
 if enchantsTable then
     enchantsTable = enchantsTable:FindFirstChild("Enchants")
@@ -127,6 +106,65 @@ if enchantsTable then
         EnchantsList = SafeRequire(enchantsTable) or {}
         print("[DEBUG] Loaded Enchants table")
     end
+end
+
+local function GetItemDuration(itemName)
+    if string.find(itemName, "Potion") then
+        return 300
+    end
+    return 300
+end
+
+local function UseInventoryItem(itemName)
+    local success, result = pcall(function()
+        return Paper.Network.InvokeServer("Use Item", itemName, 1)
+    end)
+    if success and result then
+        print("[INVENTORY] Used:", itemName)
+        return true
+    end
+    return false
+end
+
+local function GetPlayerInventory()
+    local items = Paper.Stats.Get("Items")
+    local itemList = {}
+    if items and items.Value then
+        for name, amount in pairs(items.Value) do
+            if amount > 0 then
+                table.insert(itemList, name)
+            end
+        end
+    end
+    return itemList
+end
+
+local function UpdateInventoryDropdown()
+    local inventoryItems = GetPlayerInventory()
+    if #inventoryItems > 0 then
+        if MiscTab:GetDropdown("InventoryDropdown") then
+            MiscTab:GetDropdown("InventoryDropdown"):SetOptions(inventoryItems)
+        end
+    end
+end
+
+local function HasSelectedEnchant(pet)
+    local currentEnchant = pet:GetAttribute("Enchant1") or ""
+    for _, enchantName in pairs(SelectedEnchants) do
+        if currentEnchant == enchantName then
+            return true
+        end
+    end
+    return false
+end
+
+local function EnchantPet(petGuid)
+    return pcall(function()
+        return Paper.Network.InvokeServer("Pet", {
+            ["Action"] = "Enchant",
+            ["Pet"] = petGuid
+        })
+    end)
 end
 
 local function GetThrownObject()
@@ -321,128 +359,23 @@ local function StopAutoUnlock()
     end
 end
 
-local function GetPotionDuration(potionName)
-    local potionData = PotionsList[potionName]
-    if potionData and potionData.Duration then
-        return potionData.Duration
-    end
-    return 300
-end
-
-local function GetItemDuration(itemName)
-    local itemData = ItemsList[itemName]
-    if itemData and itemData.Duration then
-        return itemData.Duration
-    end
-    return 300
-end
-
-local function UsePotion(potionName)
-    local success, result = pcall(function()
-        return Paper.Network.InvokeServer("Use Item", potionName, 1)
-    end)
-    if success and result then
-        print("[POTION] Used:", potionName)
-        return true
-    end
-    return false
-end
-
-local function UseItem(itemName)
-    local success, result = pcall(function()
-        return Paper.Network.InvokeServer("Use Item", itemName, 1)
-    end)
-    if success and result then
-        print("[ITEM] Used:", itemName)
-        return true
-    end
-    return false
-end
-
-local function GetPlayerItems()
-    local items = Paper.Stats.Get("Items")
-    local itemList = {}
-    if items and items.Value then
-        for name, amount in pairs(items.Value) do
-            if amount > 0 then
-                itemList[name] = amount
-            end
-        end
-    end
-    return itemList
-end
-
-local function HasSelectedEnchant(pet)
-    local currentEnchant = pet:GetAttribute("Enchant1") or ""
-    for _, enchantName in pairs(SelectedEnchants) do
-        if currentEnchant == enchantName then
-            return true
-        end
-    end
-    return false
-end
-
-local function EnchantPet(petGuid)
-    return pcall(function()
-        return Paper.Network.InvokeServer("Pet", {
-            ["Action"] = "Enchant",
-            ["Pet"] = petGuid
-        })
-    end)
-end
-
-local function StartAutoPotion()
-    if AutoPotionConnection then
-        AutoPotionConnection:Disconnect()
-        AutoPotionConnection = nil
+local function StartAutoInventory()
+    if AutoInventoryConnection then
+        AutoInventoryConnection:Disconnect()
+        AutoInventoryConnection = nil
     end
     
-    if AutoUsePotionsEnabled and Paper then
-        AutoPotionConnection = RunService.Heartbeat:Connect(function()
-            if AutoUsePotionsEnabled and Paper then
+    if AutoUseInventoryEnabled and Paper then
+        AutoInventoryConnection = RunService.Heartbeat:Connect(function()
+            if AutoUseInventoryEnabled and Paper then
                 local currentTime = os.time()
-                for _, potionName in pairs(SelectedPotions) do
-                    local lastUsed = PotionTimers[potionName] or 0
-                    local duration = GetPotionDuration(potionName)
-                    if currentTime - lastUsed >= duration then
-                        local items = GetPlayerItems()
-                        if items[potionName] and items[potionName] > 0 then
-                            UsePotion(potionName)
-                            PotionTimers[potionName] = currentTime
-                            task.wait(0.5)
-                        end
-                    end
-                end
-                task.wait(1)
-            end
-        end)
-    end
-end
-
-local function StopAutoPotion()
-    if AutoPotionConnection then
-        AutoPotionConnection:Disconnect()
-        AutoPotionConnection = nil
-    end
-end
-
-local function StartAutoItem()
-    if AutoItemConnection then
-        AutoItemConnection:Disconnect()
-        AutoItemConnection = nil
-    end
-    
-    if AutoUseItemsEnabled and Paper then
-        AutoItemConnection = RunService.Heartbeat:Connect(function()
-            if AutoUseItemsEnabled and Paper then
-                local currentTime = os.time()
-                for _, itemName in pairs(SelectedItems) do
+                for _, itemName in pairs(SelectedInventoryItems) do
                     local lastUsed = ItemTimers[itemName] or 0
                     local duration = GetItemDuration(itemName)
                     if currentTime - lastUsed >= duration then
-                        local items = GetPlayerItems()
-                        if items[itemName] and items[itemName] > 0 then
-                            UseItem(itemName)
+                        local items = Paper.Stats.Get("Items")
+                        if items and items.Value and items.Value[itemName] and items.Value[itemName] > 0 then
+                            UseInventoryItem(itemName)
                             ItemTimers[itemName] = currentTime
                             task.wait(0.5)
                         end
@@ -454,10 +387,10 @@ local function StartAutoItem()
     end
 end
 
-local function StopAutoItem()
-    if AutoItemConnection then
-        AutoItemConnection:Disconnect()
-        AutoItemConnection = nil
+local function StopAutoInventory()
+    if AutoInventoryConnection then
+        AutoInventoryConnection:Disconnect()
+        AutoInventoryConnection = nil
     end
 end
 
@@ -610,16 +543,6 @@ for worldNum, worldData in pairs(WorldsList) do
     table.insert(worldNames, worldData.WorldName)
 end
 
-local potionNames = {}
-for potionName, _ in pairs(PotionsList) do
-    table.insert(potionNames, potionName)
-end
-
-local itemNames = {}
-for itemName, _ in pairs(ItemsList) do
-    table.insert(itemNames, itemName)
-end
-
 local enchantNames = {}
 for enchantName, _ in pairs(EnchantsList) do
     table.insert(enchantNames, enchantName)
@@ -680,6 +603,7 @@ MainTab:CreateDropdown({
     MultiSelect = true,
     Callback = function(Value)
         SelectedChests = Value
+        print("[CHESTS] Selected:", table.concat(SelectedChests, ", "))
     end
 })
 
@@ -732,30 +656,32 @@ MainTab:CreateParagraph({
     Content = "• Auto Train ON → Instant Throw stops\n• Auto Train OFF → Instant Throw works\n• Other features run independently"
 })
 
-MiscTab:CreateSection("🧪 AUTO USE POTIONS")
+MiscTab:CreateSection("📦 AUTO USE INVENTORY ITEMS")
 
 MiscTab:CreateToggle({
-    Name = "Auto Use Potions",
+    Name = "Auto Use Inventory Items",
     CurrentValue = false,
-    Flag = "AutoPotionFlag",
+    Flag = "AutoInventoryFlag",
     Callback = function(Value)
-        AutoUsePotionsEnabled = Value
+        AutoUseInventoryEnabled = Value
         if Value then
-            StartAutoPotion()
+            UpdateInventoryDropdown()
+            StartAutoInventory()
         else
-            StopAutoPotion()
+            StopAutoInventory()
         end
     end
 })
 
 MiscTab:CreateDropdown({
-    Name = "Select Potions",
-    Options = potionNames,
-    CurrentOption = "Select Potions",
-    Flag = "PotionSelection",
+    Name = "Select Items",
+    Options = GetPlayerInventory(),
+    CurrentOption = "Select Items",
+    Flag = "InventoryDropdown",
     MultiSelect = true,
     Callback = function(Value)
-        SelectedPotions = Value
+        SelectedInventoryItems = Value
+        print("[INVENTORY] Selected:", table.concat(SelectedInventoryItems, ", "))
     end
 })
 
@@ -799,34 +725,18 @@ MiscTab:CreateDropdown({
     MultiSelect = true,
     Callback = function(Value)
         SelectedEnchants = Value
+        print("[ENCHANTS] Selected:", table.concat(SelectedEnchants, ", "))
     end
 })
 
-MiscTab:CreateSection("📦 AUTO USE ITEMS")
-
-MiscTab:CreateToggle({
-    Name = "Auto Use Items",
-    CurrentValue = false,
-    Flag = "AutoItemFlag",
-    Callback = function(Value)
-        AutoUseItemsEnabled = Value
-        if Value then
-            StartAutoItem()
-        else
-            StopAutoItem()
+if Paper and Paper.Stats and Paper.Stats.Get("Items") then
+    local itemsConnection = Paper.Stats.Get("Items").Changed:Connect(function()
+        UpdateInventoryDropdown()
+        local currentOptions = MiscTab:GetDropdown("InventoryDropdown")
+        if currentOptions then
+            currentOptions:SetOptions(GetPlayerInventory())
         end
-    end
-})
-
-MiscTab:CreateDropdown({
-    Name = "Select Items",
-    Options = itemNames,
-    CurrentOption = "Select Items",
-    Flag = "ItemSelection",
-    MultiSelect = true,
-    Callback = function(Value)
-        SelectedItems = Value
-    end
-})
+    end)
+end
 
 print("[SCRIPT] Script loaded")
