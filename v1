@@ -35,8 +35,19 @@ local RunService = game:GetService("RunService")
 
 local InstantThrowEnabled = false
 local AutoTrainEnabled = false
+local AutoClaimChestsEnabled = false
+local AutoBuyObjectsEnabled = false
+local AutoUnlockWorldsEnabled = false
+local SelectedChest = "DailyChest"
+local SelectedWorldMode = "Any Affordable World"
+
 local InstantThrowConnection = nil
+local AutoClaimConnection = nil
+local AutoBuyConnection = nil
+local AutoUnlockConnection = nil
 local Paper = nil
+local ChestsList = {}
+local WorldsList = {}
 
 local function SafeRequire(module)
     local success, result = pcall(function()
@@ -55,6 +66,24 @@ if paperModule then
     Paper = SafeRequire(paperModule)
 else
     print("[ERROR] Paper module NOT FOUND")
+end
+
+local chestsTable = ReplicatedStorage:FindFirstChild("Tables")
+if chestsTable then
+    chestsTable = chestsTable:FindFirstChild("Chests")
+    if chestsTable then
+        ChestsList = SafeRequire(chestsTable) or {}
+        print("[DEBUG] Loaded Chests table")
+    end
+end
+
+local worldsTable = ReplicatedStorage:FindFirstChild("Tables")
+if worldsTable then
+    worldsTable = worldsTable:FindFirstChild("Worlds")
+    if worldsTable then
+        WorldsList = SafeRequire(worldsTable) or {}
+        print("[DEBUG] Loaded Worlds table")
+    end
 end
 
 local function GetThrownObject()
@@ -124,6 +153,140 @@ local function StopInstantThrow()
     end
 end
 
+local function StartAutoClaim()
+    if AutoClaimConnection then
+        AutoClaimConnection:Disconnect()
+        AutoClaimConnection = nil
+    end
+    
+    if AutoClaimChestsEnabled then
+        AutoClaimConnection = RunService.Heartbeat:Connect(function()
+            if AutoClaimChestsEnabled then
+                local remote = ReplicatedStorage:FindFirstChild("Paper")
+                if remote then
+                    remote = remote:FindFirstChild("Remotes")
+                    if remote then
+                        remote = remote:FindFirstChild("__remotefunction")
+                        if remote then
+                            local success, result = pcall(function()
+                                return remote:InvokeServer("Claim Chest", SelectedChest)
+                            end)
+                            if not success then
+                                print("[FAILED] Claim Chest failed, retrying...")
+                            end
+                        end
+                    end
+                end
+                task.wait(1)
+            end
+        end)
+    end
+end
+
+local function StopAutoClaim()
+    if AutoClaimConnection then
+        AutoClaimConnection:Disconnect()
+        AutoClaimConnection = nil
+    end
+end
+
+local function StartAutoBuy()
+    if AutoBuyConnection then
+        AutoBuyConnection:Disconnect()
+        AutoBuyConnection = nil
+    end
+    
+    if AutoBuyObjectsEnabled then
+        AutoBuyConnection = RunService.Heartbeat:Connect(function()
+            if AutoBuyObjectsEnabled then
+                local remote = ReplicatedStorage:FindFirstChild("Paper")
+                if remote then
+                    remote = remote:FindFirstChild("Remotes")
+                    if remote then
+                        remote = remote:FindFirstChild("__remotefunction")
+                        if remote then
+                            local success, result = pcall(function()
+                                return remote:InvokeServer("Buy Next Object")
+                            end)
+                            if not success then
+                                print("[FAILED] Buy Next Object failed, retrying...")
+                            end
+                        end
+                    end
+                end
+                task.wait(0.5)
+            end
+        end)
+    end
+end
+
+local function StopAutoBuy()
+    if AutoBuyConnection then
+        AutoBuyConnection:Disconnect()
+        AutoBuyConnection = nil
+    end
+end
+
+local function StartAutoUnlock()
+    if AutoUnlockConnection then
+        AutoUnlockConnection:Disconnect()
+        AutoUnlockConnection = nil
+    end
+    
+    if AutoUnlockWorldsEnabled then
+        AutoUnlockConnection = RunService.Heartbeat:Connect(function()
+            if AutoUnlockWorldsEnabled then
+                if SelectedWorldMode == "Any Affordable World" then
+                    local remote = ReplicatedStorage:FindFirstChild("Paper")
+                    if remote then
+                        remote = remote:FindFirstChild("Remotes")
+                        if remote then
+                            remote = remote:FindFirstChild("__remotefunction")
+                            if remote then
+                                local success, result = pcall(function()
+                                    return remote:InvokeServer("Unlock Next World")
+                                end)
+                                if not success then
+                                    print("[FAILED] Unlock Next World failed, retrying...")
+                                end
+                            end
+                        end
+                    end
+                else
+                    for worldNum, worldData in pairs(WorldsList) do
+                        if worldData.WorldName == SelectedWorldMode then
+                            local remote = ReplicatedStorage:FindFirstChild("Paper")
+                            if remote then
+                                remote = remote:FindFirstChild("Remotes")
+                                if remote then
+                                    remote = remote:FindFirstChild("__remotefunction")
+                                    if remote then
+                                        local success, result = pcall(function()
+                                            return remote:InvokeServer("Set Current World", worldNum)
+                                        end)
+                                        if not success then
+                                            print("[FAILED] Set Current World failed, retrying...")
+                                        end
+                                    end
+                                end
+                            end
+                            break
+                        end
+                    end
+                end
+                task.wait(1)
+            end
+        end)
+    end
+end
+
+local function StopAutoUnlock()
+    if AutoUnlockConnection then
+        AutoUnlockConnection:Disconnect()
+        AutoUnlockConnection = nil
+    end
+end
+
 local function ToggleAutoTrain(state)
     AutoTrainEnabled = state
     
@@ -170,6 +333,16 @@ local function ToggleAutoTrain(state)
     end
 end
 
+local chestNames = {}
+for chestName, chestData in pairs(ChestsList) do
+    table.insert(chestNames, chestName)
+end
+
+local worldNames = { "Any Affordable World" }
+for worldNum, worldData in pairs(WorldsList) do
+    table.insert(worldNames, worldData.WorldName)
+end
+
 MainTab:CreateSection("🔥 INSTANT THROW")
 
 local InstantThrowToggle = MainTab:CreateToggle({
@@ -201,11 +374,71 @@ local AutoTrainToggle = MainTab:CreateToggle({
     end
 })
 
-MainTab:CreateSection("⚡ PRIORITY")
+MainTab:CreateSection("🎁 AUTO CLAIM CHESTS")
 
-MainTab:CreateParagraph({
-    Title = "How It Works",
-    Content = "• Instant Throw ONLY — throws repeatedly\n• Auto Train ONLY — trains repeatedly\n• Both ON? Auto Train wins, Instant Throw stops"
+MainTab:CreateToggle({
+    Name = "Auto Claim Chests",
+    CurrentValue = false,
+    Flag = "AutoClaimFlag",
+    Callback = function(Value)
+        AutoClaimChestsEnabled = Value
+        if Value then
+            StartAutoClaim()
+        else
+            StopAutoClaim()
+        end
+    end
 })
 
+MainTab:CreateDropdown({
+    Name = "Select Chest",
+    Options = chestNames,
+    CurrentOption = "DailyChest",
+    Flag = "ChestSelection",
+    Callback = function(Value)
+        SelectedChest = Value
+    end
+})
+
+MainTab:CreateSection("🛒 AUTO BUY OBJECTS")
+
+MainTab:CreateToggle({
+    Name = "Auto Buy All Objects",
+    CurrentValue = false,
+    Flag = "AutoBuyFlag",
+    Callback = function(Value)
+        AutoBuyObjectsEnabled = Value
+        if Value then
+            StartAutoBuy()
+        else
+            StopAutoBuy()
+        end
+    end
+})
+
+MainTab:CreateSection("🌍 AUTO UNLOCK WORLDS")
+
+MainTab:CreateToggle({
+    Name = "Auto Unlock Worlds",
+    CurrentValue = false,
+    Flag = "AutoUnlockFlag",
+    Callback = function(Value)
+        AutoUnlockWorldsEnabled = Value
+        if Value then
+            StartAutoUnlock()
+        else
+            StopAutoUnlock()
+        end
+    end
+})
+
+MainTab:CreateDropdown({
+    Name = "Select World",
+    Options = worldNames,
+    CurrentOption = "Any Affordable World",
+    Flag = "WorldSelection",
+    Callback = function(Value)
+        SelectedWorldMode = Value
+    end
+})
 print("[SCRIPT] Script loaded")
