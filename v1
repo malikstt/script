@@ -32,27 +32,11 @@ local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local Debris = game:GetService("Debris")
 
+local InstantThrowEnabled = false
 local AutoTrainEnabled = false
-local AutoThrowEnabled = false
-local FullControlEnabled = false
-local DestroyAnimEnabled = false
-local DisablePopupsEnabled = false
-local DisableUIEnabled = false
-local ThrowWhileTrainingEnabled = false
-local FastThrowEnabled = false
-local FastThrowLoopRunning = false
-local ZoneLockEnabled = false
-local FreezePositionEnabled = false
-local DualActionEnabled = false
-
-local FastThrowInterval = 0.05
-local FastThrowConnection = nil
+local InstantThrowConnection = nil
 local Paper = nil
-local Worlds = nil
-
-print("[SCRIPT] Looking for Paper module...")
 
 local function SafeRequire(module)
     local success, result = pcall(function()
@@ -67,28 +51,74 @@ end
 
 local paperModule = ReplicatedStorage:FindFirstChild("Paper")
 if paperModule then
-    print("[DEBUG] Found Paper module in ReplicatedStorage")
+    print("[DEBUG] Found Paper module")
     Paper = SafeRequire(paperModule)
 else
-    print("[ERROR] Paper module NOT FOUND in ReplicatedStorage")
+    print("[ERROR] Paper module NOT FOUND")
 end
 
-if Paper then
-    print("[SUCCESS] Paper loaded successfully")
-    
-    local worldsModule = ReplicatedStorage:FindFirstChild("Modules")
-    if worldsModule then
-        worldsModule = worldsModule:FindFirstChild("Shared")
-        if worldsModule then
-            worldsModule = worldsModule:FindFirstChild("Worlds")
-            if worldsModule then
-                print("[DEBUG] Found Worlds module")
-                Worlds = SafeRequire(worldsModule)
+local function GetThrownObject()
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("BasePart") and obj:FindFirstChild("Creator") then
+            local success, creator = pcall(function()
+                return obj.Creator.Value
+            end)
+            if success and creator == LocalPlayer then
+                return obj
             end
         end
     end
-else
-    print("[ERROR] Paper is nil, features will not work")
+    return nil
+end
+
+local function WaitForLanding()
+    local obj = GetThrownObject()
+    if not obj then return end
+    repeat
+        task.wait()
+        local vel = obj.AssemblyLinearVelocity
+        if vel.Magnitude < 1 then
+            task.wait(0.1)
+            break
+        end
+        obj = GetThrownObject()
+        if not obj then break end
+    until false
+end
+
+local function StartInstantThrow()
+    if InstantThrowConnection then
+        InstantThrowConnection:Disconnect()
+        InstantThrowConnection = nil
+    end
+    
+    if InstantThrowEnabled and Paper then
+        InstantThrowConnection = RunService.Heartbeat:Connect(function()
+            if InstantThrowEnabled and Paper then
+                local raceStart = ReplicatedStorage:FindFirstChild("Values")
+                if raceStart then
+                    raceStart = raceStart:FindFirstChild("Race")
+                    if raceStart then
+                        raceStart = raceStart:FindFirstChild("RaceStart")
+                        if raceStart and raceStart.Value == 0 then
+                            pcall(function()
+                                Paper.Network.FireServer("Throw Object")
+                                WaitForLanding()
+                            end)
+                        end
+                    end
+                end
+                task.wait()
+            end
+        end)
+    end
+end
+
+local function StopInstantThrow()
+    if InstantThrowConnection then
+        InstantThrowConnection:Disconnect()
+        InstantThrowConnection = nil
+    end
 end
 
 local function ToggleAutoTrain(state)
@@ -100,326 +130,40 @@ local function ToggleAutoTrain(state)
             pcall(function()
                 autoTrainStat.Value = state
             end)
+        end
+    end
+    
+    if not state then
+        pcall(function()
+            local remote = ReplicatedStorage:FindFirstChild("Paper")
+            if remote then
+                remote = remote:FindFirstChild("Remotes")
+                if remote then
+                    remote = remote:FindFirstChild("__remoteevent")
+                    if remote then
+                        remote:FireServer("Stop Training")
+                    end
+                end
+            end
+        end)
+    end
+end
+
+MainTab:CreateSection("AUTO FARM")
+
+MainTab:CreateToggle({
+    Name = "Instant Throw",
+    CurrentValue = false,
+    Flag = "InstantThrowFlag",
+    Callback = function(Value)
+        InstantThrowEnabled = Value
+        if Value then
+            StartInstantThrow()
         else
-            print("[ERROR] AUTO TRAIN - Could not get AutoTrain stat")
-        end
-    else
-        print("[ERROR] AUTO TRAIN - Paper or Paper.Stats is nil")
-    end
-end
-
-local function ToggleAutoThrow(state)
-    if Paper and Paper.Stats then
-        local success, autoThrowStat = pcall(function()
-            return Paper.Stats.Get("AutoThrow")
-        end)
-        if success and autoThrowStat then
-            pcall(function()
-                autoThrowStat.Value = state
-            end)
-        else
-            print("[ERROR] AUTO THROW - Could not get AutoThrow stat")
-        end
-    else
-        print("[ERROR] AUTO THROW - Paper or Paper.Stats is nil")
-    end
-end
-
-local function GetRaceStartValue()
-    local success, raceStart = pcall(function()
-        local values = ReplicatedStorage:FindFirstChild("Values")
-        if values then
-            local race = values:FindFirstChild("Race")
-            if race then
-                return race:FindFirstChild("RaceStart")
-            end
-        end
-        return nil
-    end)
-    if success and raceStart then
-        return raceStart.Value
-    end
-    return 0
-end
-
-local function IsInRace()
-    if Paper and Paper.State then
-        local success, result = pcall(function()
-            return Paper.State.IsInState(LocalPlayer, "Race")
-        end)
-        if success then
-            return result
+            StopInstantThrow()
         end
     end
-    return false
-end
-
-local function FireThrowObject()
-    if Paper and Paper.Network then
-        pcall(function()
-            Paper.Network.FireServer("Throw Object")
-        end)
-    end
-end
-
-local function StartFastThrowLoop()
-    if FastThrowConnection then
-        FastThrowConnection:Disconnect()
-        FastThrowConnection = nil
-    end
-    
-    if FastThrowEnabled and FastThrowLoopRunning then
-        FastThrowConnection = RunService.Heartbeat:Connect(function()
-            if FastThrowEnabled and FastThrowLoopRunning then
-                local canThrow = true
-                
-                if not DualActionEnabled then
-                    if AutoTrainEnabled and LocalPlayer:GetAttribute("TrainingStation") then
-                        canThrow = false
-                    end
-                end
-                
-                if canThrow and GetRaceStartValue() == 0 and not IsInRace() then
-                    FireThrowObject()
-                end
-                
-                task.wait(FastThrowInterval)
-            end
-        end)
-    end
-end
-
-local function StopFastThrowLoop()
-    if FastThrowConnection then
-        FastThrowConnection:Disconnect()
-        FastThrowConnection = nil
-    end
-end
-
-local function HandleFullControl()
-    if not FullControlEnabled then return end
-    local character = LocalPlayer.Character
-    if character then
-        local rootPart = character:FindFirstChild("HumanoidRootPart")
-        if rootPart and rootPart.Anchored == true then
-            pcall(function()
-                rootPart.Anchored = false
-            end)
-        end
-    end
-end
-
-local function HandleZoneLock()
-    if not ZoneLockEnabled then return end
-    local character = LocalPlayer.Character
-    if not character then return end
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
-    if not rootPart then return end
-    local humanoid = character:FindFirstChild("Humanoid")
-    if not humanoid then return end
-    
-    if Worlds then
-        local success, currentWorldFolder = pcall(function()
-            return Worlds.GetCurrentWorldFolder(LocalPlayer)
-        end)
-        if success and currentWorldFolder then
-            local standingZone = currentWorldFolder:FindFirstChild("Standing Zone")
-            if standingZone then
-                pcall(function()
-                    humanoid:MoveTo(standingZone.Position, rootPart)
-                end)
-            end
-        end
-    end
-end
-
-local function HandleFreezePosition()
-    if not FreezePositionEnabled then return end
-    local character = LocalPlayer.Character
-    if character then
-        local rootPart = character:FindFirstChild("HumanoidRootPart")
-        if rootPart then
-            pcall(function()
-                rootPart.AssemblyLinearVelocity = Vector3.new(0, rootPart.AssemblyLinearVelocity.Y, 0)
-                rootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-            end)
-        end
-    end
-end
-
-local function SetupAnimationDestroyer()
-    if DestroyAnimEnabled then
-        pcall(function()
-            LocalPlayer:GetAttributeChangedSignal("Throw"):Connect(function()
-                if DestroyAnimEnabled and LocalPlayer:GetAttribute("Throw") then
-                    task.wait()
-                    LocalPlayer:SetAttribute("Throw", nil)
-                end
-            end)
-        end)
-    end
-end
-
-local function RemoveTrainingVFX()
-    local vfxFolder = ReplicatedStorage:FindFirstChild("Assets")
-    if vfxFolder then
-        vfxFolder = vfxFolder:FindFirstChild("VFX")
-        if vfxFolder then
-            for _, vfx in pairs(vfxFolder:GetChildren()) do
-                if vfx.Name == "WallSmoke" or vfx.Name == "DebrisPart" then
-                    pcall(function()
-                        vfx:Destroy()
-                    end)
-                end
-            end
-        end
-    end
-    
-    if Paper and Paper.VFX then
-        pcall(function()
-            Paper.VFX.FlyingDebris = function() end
-        end)
-    end
-end
-
-local function RemoveTrainingUI()
-    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-    if not playerGui then return end
-    
-    local mainGui = playerGui:FindFirstChild("Main")
-    if mainGui then
-        for _, child in pairs(mainGui:GetDescendants()) do
-            if child:IsA("Frame") or child:IsA("TextLabel") then
-                if child.Name == "Required" or child.Name == "Rebirths" or child.Name == "Gain" then
-                    pcall(function()
-                        child:Destroy()
-                    end)
-                end
-            end
-        end
-    end
-    
-    local trainingFolder = workspace:FindFirstChild("Training")
-    if trainingFolder then
-        for _, station in pairs(trainingFolder:GetChildren()) do
-            local ui = station:FindFirstChild("UI")
-            if ui then
-                for _, element in pairs(ui:GetChildren()) do
-                    if element:IsA("Frame") then
-                        if element.Name == "Required" or element.Name == "Rebirths" or element.Name == "Gain" then
-                            pcall(function()
-                                element:Destroy()
-                            end)
-                        end
-                    end
-                end
-            end
-        end
-    end
-end
-
-local function HandleThrowWhileTraining()
-    if not ThrowWhileTrainingEnabled then return end
-    if DualActionEnabled then
-        if FastThrowEnabled and not FastThrowLoopRunning and AutoThrowEnabled then
-            FastThrowLoopRunning = true
-            StartFastThrowLoop()
-        end
-    end
-end
-
-local function HandleDualAction()
-    if DualActionEnabled then
-        if AutoTrainEnabled then
-            local trainingStation = LocalPlayer:GetAttribute("TrainingStation")
-            if trainingStation then
-                if FastThrowEnabled and not FastThrowLoopRunning then
-                    FastThrowLoopRunning = true
-                    StartFastThrowLoop()
-                end
-            end
-        end
-    else
-        if AutoTrainEnabled and AutoThrowEnabled then
-            if LocalPlayer:GetAttribute("TrainingStation") then
-                if FastThrowLoopRunning then
-                    FastThrowLoopRunning = false
-                    StopFastThrowLoop()
-                end
-            end
-        end
-    end
-end
-
-RunService.Heartbeat:Connect(function()
-    pcall(function()
-        if FullControlEnabled then
-            HandleFullControl()
-        end
-        
-        if DestroyAnimEnabled then
-            if LocalPlayer:GetAttribute("Throw") then
-                LocalPlayer:SetAttribute("Throw", nil)
-            end
-        end
-        
-        if DisablePopupsEnabled then
-            local debrisCount = 0
-            for _, debris in pairs(workspace:GetDescendants()) do
-                if debris:IsA("Part") and debris.Name == "DebrisPart" then
-                    pcall(function() debris:Destroy() end)
-                    debrisCount = debrisCount + 1
-                    if debrisCount > 50 then break end
-                elseif debris:IsA("ParticleEmitter") and debris.Parent and debris.Parent.Name == "WallSmoke" then
-                    pcall(function() debris:Destroy() end)
-                end
-            end
-        end
-        
-        if DisableUIEnabled then
-            RemoveTrainingUI()
-        end
-        
-        if ZoneLockEnabled then
-            HandleZoneLock()
-        end
-        
-        if FreezePositionEnabled then
-            HandleFreezePosition()
-        end
-        
-        if ThrowWhileTrainingEnabled then
-            HandleThrowWhileTraining()
-        end
-        
-        if DualActionEnabled then
-            HandleDualAction()
-        end
-    end)
-end)
-
-local trainingFolder = workspace:FindFirstChild("Training")
-if trainingFolder then
-    trainingFolder.ChildAdded:Connect(function(station)
-        if DisableUIEnabled then
-            task.wait(0.1)
-            pcall(function()
-                local ui = station:FindFirstChild("UI")
-                if ui then
-                    for _, element in pairs(ui:GetChildren()) do
-                        if element:IsA("Frame") then
-                            if element.Name == "Required" or element.Name == "Rebirths" or element.Name == "Gain" then
-                                element:Destroy()
-                            end
-                        end
-                    end
-                end
-            end)
-        end
-    end)
-end
-
-MainTab:CreateSection("CORE")
+})
 
 MainTab:CreateToggle({
     Name = "Auto Train",
@@ -431,138 +175,4 @@ MainTab:CreateToggle({
     end
 })
 
-MainTab:CreateToggle({
-    Name = "Auto Throw",
-    CurrentValue = false,
-    Flag = "AutoThrowFlag",
-    Callback = function(Value)
-        AutoThrowEnabled = Value
-        ToggleAutoThrow(Value)
-    end
-})
-
-MainTab:CreateSection("CONTROL")
-
-MainTab:CreateToggle({
-    Name = "Full Movement Control",
-    CurrentValue = false,
-    Flag = "FullControlFlag",
-    Callback = function(Value)
-        FullControlEnabled = Value
-    end
-})
-
-MainTab:CreateToggle({
-    Name = "Destroy Training Animation",
-    CurrentValue = false,
-    Flag = "DestroyAnimFlag",
-    Callback = function(Value)
-        DestroyAnimEnabled = Value
-        SetupAnimationDestroyer()
-    end
-})
-
-MainTab:CreateSection("VISUAL")
-
-MainTab:CreateToggle({
-    Name = "Disable Strength Popups",
-    CurrentValue = false,
-    Flag = "DisablePopupsFlag",
-    Callback = function(Value)
-        DisablePopupsEnabled = Value
-        if Value then
-            RemoveTrainingVFX()
-        end
-    end
-})
-
-MainTab:CreateToggle({
-    Name = "Disable Training UI",
-    CurrentValue = false,
-    Flag = "DisableUIFlag",
-    Callback = function(Value)
-        DisableUIEnabled = Value
-        if Value then
-            RemoveTrainingUI()
-        end
-    end
-})
-
-MainTab:CreateSection("THROW SYSTEM")
-
-MainTab:CreateToggle({
-    Name = "Throw While Training",
-    CurrentValue = false,
-    Flag = "ThrowWhileTrainingFlag",
-    Callback = function(Value)
-        ThrowWhileTrainingEnabled = Value
-    end
-})
-
-MainTab:CreateToggle({
-    Name = "Fast Throw Loop",
-    CurrentValue = false,
-    Flag = "FastThrowFlag",
-    Callback = function(Value)
-        FastThrowEnabled = Value
-        if Value then
-            FastThrowLoopRunning = true
-            StartFastThrowLoop()
-        else
-            FastThrowLoopRunning = false
-            StopFastThrowLoop()
-        end
-    end
-})
-
-MainTab:CreateToggle({
-    Name = "Zone Lock",
-    CurrentValue = false,
-    Flag = "ZoneLockFlag",
-    Callback = function(Value)
-        ZoneLockEnabled = Value
-    end
-})
-
-MainTab:CreateToggle({
-    Name = "Freeze Position",
-    CurrentValue = false,
-    Flag = "FreezePositionFlag",
-    Callback = function(Value)
-        FreezePositionEnabled = Value
-    end
-})
-
-MainTab:CreateSection("ADVANCED")
-
-MainTab:CreateToggle({
-    Name = "Dual Action Mode",
-    CurrentValue = false,
-    Flag = "DualActionFlag",
-    Callback = function(Value)
-        DualActionEnabled = Value
-        if Value then
-            if AutoTrainEnabled then
-                ToggleAutoTrain(true)
-            end
-            if AutoThrowEnabled or FastThrowEnabled then
-                if not FastThrowLoopRunning then
-                    FastThrowLoopRunning = true
-                    StartFastThrowLoop()
-                end
-            end
-        else
-            if FastThrowLoopRunning and AutoTrainEnabled then
-                FastThrowLoopRunning = false
-                StopFastThrowLoop()
-            end
-        end
-    end
-})
-
-pcall(function()
-    RemoveTrainingVFX()
-    RemoveTrainingUI()
-end)
-
-print("[SCRIPT] Script fully loaded")
+print("[SCRIPT] Script loaded")
