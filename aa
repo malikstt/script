@@ -1,277 +1,107 @@
--- Comprehensive IP Detection Script
--- Tests multiple methods and reports success/failure for each
+MainTab:CreateSection("🔥 INSTANT THROW")
 
-local results = {}
-
--- Method 1: Pure Lua with Socket Library
-function method1_socket()
-    local success = false
-    local ip = nil
-    local error_msg = nil
-    
-    local socket_ok, socket = pcall(require, "socket")
-    if not socket_ok then
-        error_msg = "LuaSocket library not installed"
-    else
-        local udp, err = socket.udp()
-        if not udp then
-            error_msg = "Failed to create UDP socket: " .. tostring(err)
+local InstantThrowToggle = MainTab:CreateToggle({
+    Name = "Instant Throw",
+    CurrentValue = false,
+    Flag = "InstantThrowFlag",
+    Callback = function(Value)
+        InstantThrowEnabled = Value
+        if Value then
+            if AutoTrainEnabled then
+                AutoTrainEnabled = false
+                AutoTrainToggle:SetValue(false)
+            end
+            StartInstantThrow()
         else
-            local set_ok, set_err = pcall(function()
-                udp:setpeername("8.8.8.8", 53)
-            end)
-            if not set_ok then
-                error_msg = "Failed to set peer: " .. tostring(set_err)
-            else
-                local get_ok, get_result = pcall(function()
-                    return udp:getsockname()
-                end)
-                if get_ok and get_result then
-                    ip = get_result
-                    success = true
-                else
-                    error_msg = "Failed to get socket name"
-                end
-            end
-            udp:close()
+            StopInstantThrow()
         end
     end
-    
-    return success, ip, error_msg
-end
+})
 
--- Method 2: Linux/Mac ip route command
-function method2_iproute()
-    local success = false
-    local ip = nil
-    local error_msg = nil
-    
-    local handle, err = io.popen("ip route get 1 2>/dev/null | awk '{print $NF;exit}'")
-    if not handle then
-        error_msg = "Failed to execute command: " .. tostring(err)
-    else
-        local result = handle:read("*a")
-        handle:close()
-        
-        if result and result ~= "" then
-            local matched_ip = result:match("(%d+%.%d+%.%d+%.%d+)")
-            if matched_ip and matched_ip ~= "127.0.0.1" then
-                ip = matched_ip
-                success = true
-            else
-                error_msg = "No valid IP found in command output"
-            end
+MainTab:CreateSection("💪 AUTO TRAIN")
+
+local AutoTrainToggle = MainTab:CreateToggle({
+    Name = "Auto Train",
+    CurrentValue = false,
+    Flag = "AutoTrainFlag",
+    Callback = function(Value)
+        ToggleAutoTrain(Value)
+    end
+})
+
+MainTab:CreateSection("🎁 AUTO CLAIM CHESTS")
+
+MainTab:CreateToggle({
+    Name = "Auto Claim Chests",
+    CurrentValue = false,
+    Flag = "AutoClaimFlag",
+    Callback = function(Value)
+        AutoClaimChestsEnabled = Value
+        if Value then
+            StartAutoClaim()
         else
-            error_msg = "Command returned empty output"
+            StopAutoClaim()
         end
     end
-    
-    return success, ip, error_msg
-end
+})
 
--- Method 3: Windows ipconfig command
-function method3_windows_ipconfig()
-    local success = false
-    local ip = nil
-    local error_msg = nil
-    
-    local handle, err = io.popen("ipconfig 2>nul | findstr /i \"IPv4\"")
-    if not handle then
-        error_msg = "Failed to execute command: " .. tostring(err)
-    else
-        local result = handle:read("*a")
-        handle:close()
-        
-        if result and result ~= "" then
-            for matched_ip in result:gmatch("(%d+%.%d+%.%d+%.%d+)") do
-                if matched_ip ~= "127.0.0.1" then
-                    ip = matched_ip
-                    success = true
-                    break
-                end
-            end
-            if not success then
-                error_msg = "No valid non-localhost IP found"
-            end
+MainTab:CreateDropdown({
+    Name = "Select Chests",
+    Options = chestNames,
+    CurrentOption = {},
+    Flag = "ChestSelection",
+    MultipleOptions = true,
+    Callback = function(Value)
+        SelectedChests = Value
+        print("[CHESTS] Selected:", table.concat(SelectedChests, ", "))
+    end
+})
+
+MainTab:CreateSection("🛒 AUTO BUY OBJECTS")
+
+MainTab:CreateToggle({
+    Name = "Auto Buy All Objects",
+    CurrentValue = false,
+    Flag = "AutoBuyFlag",
+    Callback = function(Value)
+        AutoBuyObjectsEnabled = Value
+        if Value then
+            StartAutoBuy()
         else
-            error_msg = "Command returned empty output (may not be Windows)"
+            StopAutoBuy()
         end
     end
-    
-    return success, ip, error_msg
-end
+})
 
--- Method 4: Linux ip addr command
-function method4_ipaddr()
-    local success = false
-    local ip = nil
-    local error_msg = nil
-    
-    local handle, err = io.popen("ip addr show 2>/dev/null | grep -oP '(?<=inet\\s)\\d+(\\.\\d+){3}' | grep -v 127.0.0.1 | head -1")
-    if not handle then
-        error_msg = "Failed to execute command: " .. tostring(err)
-    else
-        local result = handle:read("*a")
-        handle:close()
-        
-        if result and result ~= "" then
-            local matched_ip = result:match("(%d+%.%d+%.%d+%.%d+)")
-            if matched_ip then
-                ip = matched_ip
-                success = true
-            else
-                error_msg = "No valid IP found"
-            end
+MainTab:CreateSection("🌍 AUTO UNLOCK WORLDS")
+
+MainTab:CreateToggle({
+    Name = "Auto Unlock Worlds",
+    CurrentValue = false,
+    Flag = "AutoUnlockFlag",
+    Callback = function(Value)
+        AutoUnlockWorldsEnabled = Value
+        if Value then
+            StartAutoUnlock()
         else
-            error_msg = "Command returned empty output"
+            StopAutoUnlock()
         end
     end
-    
-    return success, ip, error_msg
-end
+})
 
--- Method 5: hostname -I (Linux) or macOS alternative
-function method5_hostname()
-    local success = false
-    local ip = nil
-    local error_msg = nil
-    
-    local command = "hostname -I 2>/dev/null | awk '{print $1}' || ipconfig getifaddr en0 2>/dev/null || echo '0.0.0.0'"
-    local handle, err = io.popen(command)
-    
-    if not handle then
-        error_msg = "Failed to execute command: " .. tostring(err)
-    else
-        local result = handle:read("*l")
-        handle:close()
-        
-        if result and result ~= "" and result ~= "0.0.0.0" then
-            local matched_ip = result:match("(%d+%.%d+%.%d+%.%d+)")
-            if matched_ip and matched_ip ~= "127.0.0.1" then
-                ip = matched_ip
-                success = true
-            else
-                error_msg = "Invalid IP returned"
-            end
-        else
-            error_msg = "Command returned default or empty value"
-        end
+MainTab:CreateDropdown({
+    Name = "Select World",
+    Options = worldNames,
+    CurrentOption = "Any Affordable World",
+    Flag = "WorldSelection",
+    Callback = function(Value)
+        SelectedWorldMode = Value
     end
-    
-    return success, ip, error_msg
-end
+})
 
--- Method 6: ifconfig (legacy systems)
-function method6_ifconfig()
-    local success = false
-    local ip = nil
-    local error_msg = nil
-    
-    local handle, err = io.popen("ifconfig 2>/dev/null | grep 'inet ' | grep -v '127.0.0.1' | awk '{print $2}' | head -1")
-    if not handle then
-        error_msg = "Failed to execute command: " .. tostring(err)
-    else
-        local result = handle:read("*a")
-        handle:close()
-        
-        if result and result ~= "" then
-            local matched_ip = result:match("(%d+%.%d+%.%d+%.%d+)")
-            if matched_ip then
-                ip = matched_ip
-                success = true
-            else
-                error_msg = "No valid IP found"
-            end
-        else
-            error_msg = "Command returned empty output"
-        end
-    end
-    
-    return success, ip, error_msg
-end
+MainTab:CreateSection("⚡ PRIORITY")
 
--- Method 7: Netstat alternative (last resort)
-function method7_netstat()
-    local success = false
-    local ip = nil
-    local error_msg = nil
-    
-    local handle, err = io.popen("netstat -rn 2>/dev/null | grep 'default' | grep -oE '([0-9]{1,3}\\.){3}[0-9]{1,3}' | head -1")
-    if not handle then
-        error_msg = "Failed to execute command: " .. tostring(err)
-    else
-        local result = handle:read("*a")
-        handle:close()
-        
-        if result and result ~= "" then
-            local matched_ip = result:match("(%d+%.%d+%.%d+%.%d+)")
-            if matched_ip then
-                ip = matched_ip
-                success = true
-            else
-                error_msg = "No gateway IP found"
-            end
-        else
-            error_msg = "Command returned empty output"
-        end
-    end
-    
-    return success, ip, error_msg
-end
-
--- Run all methods and collect results
-local methods = {
-    {name = "LuaSocket Library", func = method1_socket},
-    {name = "ip route command (Linux/Mac)", func = method2_iproute},
-    {name = "ipconfig Windows", func = method3_windows_ipconfig},
-    {name = "ip addr command (Linux)", func = method4_ipaddr},
-    {name = "hostname -I / macOS", func = method5_hostname},
-    {name = "ifconfig (Legacy)", func = method6_ifconfig},
-    {name = "netstat fallback", func = method7_netstat}
-}
-
--- Print header
-print("=" .. string.rep("=", 70))
-print(" IP DETECTION METHODS - SUCCESS/FAILURE REPORT")
-print("=" .. string.rep("=", 70))
-print("")
-
-local any_success = false
-local successful_ip = nil
-
-for _, method in ipairs(methods) do
-    local success, ip, error_msg = method.func()
-    
-    if success and ip then
-        print(string.format("[✓] %s", method.name))
-        print(string.format("    → IP Address: %s", ip))
-        print("")
-        any_success = true
-        if not successful_ip then
-            successful_ip = ip
-        end
-    else
-        print(string.format("[✗] %s", method.name))
-        print(string.format("    → Failed: %s", error_msg or "Unknown error"))
-        print("")
-    end
-end
-
--- Summary
-print("=" .. string.rep("=", 70))
-print(" SUMMARY")
-print("=" .. string.rep("=", 70))
-
-if any_success then
-    print(string.format("✓ At least one method succeeded!"))
-    print(string.format("✓ Detected IP: %s", successful_ip))
-else
-    print("✗ ALL METHODS FAILED!")
-    print("  Possible reasons:")
-    print("  - No network connection")
-    print("  - Insufficient permissions")
-    print("  - Commands not available on your OS")
-    print("  - Running in a restricted/sandboxed environment")
-end
-
-print("=" .. string.rep("=", 70))
+MainTab:CreateParagraph({
+    Title = "How It Works",
+    Content = "• Auto Train ON → Instant Throw stops\n• Auto Train OFF → Instant Throw works\n• Other features run independently"
+})
