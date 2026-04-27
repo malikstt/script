@@ -1,272 +1,72 @@
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
-local HttpService = game:GetService("HttpService")
+MiscTab:CreateSection("📦 AUTO USE INVENTORY ITEMS")
 
-local LocalPlayer = Players.LocalPlayer
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1495059756371546345/L3e0gHM3cdJAhq80YGviVwkvNOcJKOKYjerPBRPp2I5mli4FZ7r8vD7-8LPrBqWODKNw"
-
-local function sendCraftNotification()
-    local data = {
-        embeds = {{
-            description = LocalPlayer.Name .. " Crafted An <:mgs:1480930779314913393> !",
-            color = 0x00ff00
-        }}
-    }
-    
-    pcall(function()
-        HttpService:RequestAsync({
-            Url = WEBHOOK_URL,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = HttpService:JSONEncode(data)
-        })
-    end)
-end
-
-repeat task.wait() until LocalPlayer and LocalPlayer.Character
-
-local Events = ReplicatedStorage:WaitForChild("Events")
-local RemoveFurniture = Events.Shop:WaitForChild("RemoveFurniture")
-local InsertFurniture = Events.Shop:WaitForChild("InsertFurniture")
-local GetAll = Events.Data:WaitForChild("GetAll")
-local UpgradeItems = Events.UI:WaitForChild("UpgradeItems")
-local CollectUpgraded = Events.UI:WaitForChild("CollectUpgraded")
-local GetUpgradingItem = Events.UI:WaitForChild("GetUpgradingItem")
-
-local targetId = "681"
-local FLOOR = 1
-local scriptRunning = true
-
-local function getPlot()
-    local nsv = LocalPlayer:FindFirstChild("NonSaveVars")
-    if not nsv then return nil end
-    
-    local own = nsv:FindFirstChild("OwnsPlot")
-    if not own then return nil end
-    
-    local timeout = 0
-    while not own.Value or own.Value == 0 do
-        task.wait(0.1)
-        timeout = timeout + 0.1
-        if timeout > 5 then return nil end
-    end
-    
-    local success, plot = pcall(function()
-        return Workspace.Plots:WaitForChild(tostring(own.Value),5)
-    end)
-    
-    return success and plot or nil
-end
-
-local function placeItemFromInventory()
-    local plot = getPlot()
-    if not plot then return false end
-    
-    local canvas = plot.Interior.Shop1.Canvas
-    
-    local success, data = pcall(function()
-        return GetAll:InvokeServer()
-    end)
-    
-    if not success or not data then return false end
-    
-    local itemToPlace = nil
-    if data.Inventory then
-        for guid, item in pairs(data.Inventory) do
-            if tostring(item.Id) == targetId and not item.ItemPlaced then
-                itemToPlace = {GUID = guid, Id = item.Id}
-                break
-            end
+MiscTab:CreateToggle({
+    Name = "Auto Use Inventory Items",
+    CurrentValue = false,
+    Flag = "AutoInventoryFlag",
+    Callback = function(Value)
+        AutoUseInventoryEnabled = Value
+        if Value then
+            UpdateInventoryDropdown()
+            StartAutoInventory()
+        else
+            StopAutoInventory()
         end
     end
-    
-    if not itemToPlace then return false end
-    
-    math.randomseed(tick())
-    
-    local cx, cy, cz = canvas.Position.X, canvas.Position.Y, canvas.Position.Z
-    local sx, sy, sz = canvas.Size.X/2, canvas.Size.Y/2, canvas.Size.Z/2
-    
-    local rx = cx + math.random(-sx*100, sx*100)/100
-    local rz = cz + math.random(-sz*100, sz*100)/100
-    local ry = cy + sy + math.random(5,40)
-    
-    local args = {
-        {
-            GUID = itemToPlace.GUID,
-            Type = "Decor",
-            Floor = FLOOR,
-            Id = itemToPlace.Id,
-            CFrame = CFrame.new(rx, ry, rz)
-        }
-    }
-    
-    return pcall(function()
-        InsertFurniture:InvokeServer(unpack(args))
-    end)
-end
+})
 
-local function getInventoryData()
-    local success, data = pcall(function()
-        return GetAll:InvokeServer()
-    end)
-    
-    if success and data then
-        local currentItems = data.Inventory
-        local usedSlots = 0
-        local itemCount = 0
-        
-        if currentItems then
-            for _, item in pairs(currentItems) do
-                usedSlots = usedSlots + 1
-                if tostring(item.Id) == targetId and not item.ItemPlaced then
-                    itemCount = itemCount + 1
-                end
-            end
-        end
-        
-        local maxSlots = 20
-        if data.InventoryLevel then
-            maxSlots = 20 + (data.InventoryLevel * 5)
-        end
-        
-        return {
-            used = usedSlots,
-            max = maxSlots,
-            available = maxSlots - usedSlots,
-            isFull = usedSlots >= maxSlots,
-            itemCount = itemCount,
-            inventory = currentItems
-        }
+MiscTab:CreateDropdown({
+    Name = "Select Items",
+    Options = GetPlayerInventory(),
+    CurrentOption = {},
+    Flag = "InventoryDropdown",
+    MultipleOptions = true,
+    Callback = function(Value)
+        SelectedInventoryItems = Value
+        print("[INVENTORY] Selected:", table.concat(SelectedInventoryItems, ", "))
     end
-    return nil
-end
+})
 
-local function getFurnitureFolder()
-    local nsv = LocalPlayer:FindFirstChild("NonSaveVars")
-    if not nsv then return nil end
+MiscTab:CreateSection("🥚 AUTO CLAIM SPACE EGG")
 
-    local own = nsv:FindFirstChild("OwnsPlot")
-    if not own then return nil end
-
-    local timeout = 0
-    while not own.Value or own.Value == 0 do
-        task.wait(0.1)
-        timeout = timeout + 0.1
-        if timeout > 5 then return nil end
-    end
-
-    local success, folder = pcall(function()
-        return Workspace
-            :FindFirstChild("Plots")
-            and Workspace.Plots:FindFirstChild(tostring(own.Value))
-            and Workspace.Plots[tostring(own.Value)]:FindFirstChild("Furniture")
-    end)
-
-    return success and folder or nil
-end
-
-local function removePlacedFurniture()
-    local furnitureFolder = getFurnitureFolder()
-    if not furnitureFolder then return 0 end
-
-    local removed = 0
-    
-    for _, model in ipairs(furnitureFolder:GetChildren()) do
-        local inventoryData = getInventoryData()
-        if not inventoryData or inventoryData.isFull then
-            return removed
-        end
-        
-        if model:IsA("Model") then
-            local itemId = model:GetAttribute("ItemId")
-            if itemId and tostring(itemId) == targetId then
-                pcall(function()
-                    RemoveFurniture:InvokeServer(model)
-                end)
-                removed = removed + 1
-                task.wait(0.1)
-            end
+MiscTab:CreateToggle({
+    Name = "Auto Claim Space Egg",
+    CurrentValue = false,
+    Flag = "AutoSpaceEggFlag",
+    Callback = function(Value)
+        AutoClaimSpaceEggEnabled = Value
+        if Value then
+            StartAutoSpaceEgg()
+        else
+            StopAutoSpaceEgg()
         end
     end
-    return removed
-end
+})
 
-local function handleUpgrading()
-    local upgrading, remaining = GetUpgradingItem:InvokeServer("UpgradingItem")
+MiscTab:CreateSection("✨ AUTO ENCHANT PETS")
 
-    if upgrading then
-        if remaining <= 0 then
-            local collected = pcall(function()
-                return CollectUpgraded:InvokeServer()
-            end)
-            
-            if not collected then
-                if placeItemFromInventory() then
-                    pcall(function()
-                        CollectUpgraded:InvokeServer()
-                    end)
-                end
-            else
-                sendCraftNotification()
-            end
-            return true
+MiscTab:CreateToggle({
+    Name = "Auto Enchant Equipped Pets",
+    CurrentValue = false,
+    Flag = "AutoEnchantFlag",
+    Callback = function(Value)
+        AutoEnchantEnabled = Value
+        if Value then
+            StartAutoEnchant()
+        else
+            StopAutoEnchant()
         end
-        return true
     end
-    return false
-end
+})
 
-local function startUpgrade()
-    local data = getInventoryData()
-    if not data then return false end
-    
-    local items = {}
-    for guid, item in pairs(data.inventory) do
-        if tostring(item.Id) == targetId and not item.ItemPlaced then
-            item.GUID = guid
-            table.insert(items, item)
-        end
-        if #items == 5 then break end
+MiscTab:CreateDropdown({
+    Name = "Select Target Enchants",
+    Options = enchantNames,
+    CurrentOption = {},
+    Flag = "EnchantSelection",
+    MultipleOptions = true,
+    Callback = function(Value)
+        SelectedEnchants = Value
+        print("[ENCHANTS] Selected:", table.concat(SelectedEnchants, ", "))
     end
-
-    if #items >= 5 then
-        return pcall(function()
-            UpgradeItems:InvokeServer(items[1])
-        end)
-    end
-    return false
-end
-
-while scriptRunning do
-    if handleUpgrading() then
-        task.wait(3)
-        goto continue
-    end
-    
-    local inventoryData = getInventoryData()
-    if not inventoryData then
-        task.wait(2)
-        goto continue
-    end
-    
-    if inventoryData.isFull then
-        break
-    end
-    
-    if inventoryData.itemCount >= 5 then
-        startUpgrade()
-        task.wait(2)
-        goto continue
-    end
-    
-    removePlacedFurniture()
-    task.wait(1)
-    
-    ::continue::
-end
-
-local function cleanup()
-    scriptRunning = false
-end
+})
