@@ -26,6 +26,7 @@ local Window = Rayfield:CreateWindow({
 
 local MainTab = Window:CreateTab("Main", 0)
 local MiscTab = Window:CreateTab("Misc", 0)
+local HatchTab = Window:CreateTab("Hatch", 0)
 
 print("[SCRIPT] Starting Throw Sim Script")
 
@@ -33,6 +34,7 @@ local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
 
 local InstantThrowEnabled = false
 local AutoTrainEnabled = false
@@ -49,6 +51,12 @@ local SelectedInventoryItems = {}
 local SelectedEnchants = {}
 local ItemTimers = {}
 
+local AutoHatchEnabled = false
+local SelectedEgg = ""
+local EggDeleteEnabled = false
+local InventoryDeleteEnabled = false
+local PetsToDelete = {}
+
 local InstantThrowConnection = nil
 local AutoClaimConnection = nil
 local AutoBuyConnection = nil
@@ -56,10 +64,13 @@ local AutoUnlockConnection = nil
 local AutoInventoryConnection = nil
 local AutoEnchantConnection = nil
 local AutoSpaceEggConnection = nil
+local AutoHatchConnection = nil
+local InventoryDeleteConnection = nil
 local Paper = nil
 local ChestsList = {}
 local WorldsList = {}
 local EnchantsList = {}
+local EggsList = {}
 local CurrentInventoryItems = {}
 
 local function SafeRequire(module)
@@ -108,67 +119,17 @@ if enchantsTable then
     end
 end
 
-local function GetItemDuration(itemName)
-    if string.find(itemName, "Potion") then
-        return 300
+local eggsTable = ReplicatedStorage:FindFirstChild("Tables")
+if eggsTable then
+    eggsTable = eggsTable:FindFirstChild("Eggs")
+    if eggsTable then
+        EggsList = SafeRequire(eggsTable) or {}
+        print("[DEBUG] Loaded Eggs table")
     end
-    return 300
-end
-
-local function UseInventoryItem(itemName)
-    local success, result = pcall(function()
-        return Paper.Network.InvokeServer("Use Item", itemName, 1)
-    end)
-    if success and result then
-        print("[INVENTORY] Used:", itemName)
-        return true
-    end
-    return false
-end
-
-local function GetPlayerInventory()
-    local items = Paper.Stats.Get("Items")
-    local itemList = {}
-    if items and items.Value then
-        for name, amount in pairs(items.Value) do
-            if amount > 0 then
-                table.insert(itemList, name)
-            end
-        end
-    end
-    return itemList
-end
-
-local function UpdateInventoryDropdown()
-    local inventoryItems = GetPlayerInventory()
-    if #inventoryItems > 0 then
-        if MiscTab:GetDropdown("InventoryDropdown") then
-            MiscTab:GetDropdown("InventoryDropdown"):SetOptions(inventoryItems)
-        end
-    end
-end
-
-local function HasSelectedEnchant(pet)
-    local currentEnchant = pet:GetAttribute("Enchant1") or ""
-    for _, enchantName in pairs(SelectedEnchants) do
-        if currentEnchant == enchantName then
-            return true
-        end
-    end
-    return false
-end
-
-local function EnchantPet(petGuid)
-    return pcall(function()
-        return Paper.Network.InvokeServer("Pet", {
-            ["Action"] = "Enchant",
-            ["Pet"] = petGuid
-        })
-    end)
 end
 
 local function GetThrownObject()
-    for _, obj in pairs(workspace:GetDescendants()) do
+    for _, obj in pairs(Workspace:GetDescendants()) do
         if obj:IsA("BasePart") and obj:FindFirstChild("Creator") then
             local success, creator = pcall(function()
                 return obj.Creator.Value
@@ -359,6 +320,65 @@ local function StopAutoUnlock()
     end
 end
 
+local function GetItemDuration(itemName)
+    if string.find(itemName, "Potion") then
+        return 300
+    end
+    return 300
+end
+
+local function UseInventoryItem(itemName)
+    local success, result = pcall(function()
+        return Paper.Network.InvokeServer("Use Item", itemName, 1)
+    end)
+    if success and result then
+        print("[INVENTORY] Used:", itemName)
+        return true
+    end
+    return false
+end
+
+local function GetPlayerInventory()
+    local items = Paper.Stats.Get("Items")
+    local itemList = {}
+    if items and items.Value then
+        for name, amount in pairs(items.Value) do
+            if amount > 0 then
+                table.insert(itemList, name)
+            end
+        end
+    end
+    return itemList
+end
+
+local function UpdateInventoryDropdown()
+    local inventoryItems = GetPlayerInventory()
+    if #inventoryItems > 0 then
+        if MiscTab:GetDropdown("InventoryDropdown") then
+            MiscTab:GetDropdown("InventoryDropdown"):SetOptions(inventoryItems)
+        end
+    end
+end
+
+local function HasSelectedEnchant(pet)
+    local currentEnchant = pet:GetAttribute("Enchant1") or ""
+    for _, enchantName in pairs(SelectedEnchants) do
+        if currentEnchant == enchantName then
+            return true
+        end
+    end
+    return false
+end
+
+local function EnchantPet(petGuid)
+    return pcall(function()
+        return Paper.Network.InvokeServer("Pet", {
+            ["Action"] = "Enchant",
+            ["Pet"] = petGuid
+        })
+    end)
+end
+
 local function StartAutoInventory()
     if AutoInventoryConnection then
         AutoInventoryConnection:Disconnect()
@@ -487,6 +507,178 @@ local function StopAutoSpaceEgg()
     end
 end
 
+local function TeleportToEgg()
+    local eggModel = Workspace:FindFirstChild(SelectedEgg)
+    if eggModel then
+        local proximityPart = eggModel:FindFirstChild("ProximityPart") or eggModel:FindFirstChild("TouchInterest") or eggModel:FindFirstChild("Part")
+        if proximityPart then
+            local character = LocalPlayer.Character
+            if character then
+                local rootPart = character:FindFirstChild("HumanoidRootPart")
+                if rootPart then
+                    rootPart.CFrame = proximityPart.CFrame + Vector3.new(0, 3, 0)
+                    task.wait(0.5)
+                end
+            end
+        end
+    end
+end
+
+local function HatchEgg()
+    if not SelectedEgg or SelectedEgg == "" then return end
+    local remote = ReplicatedStorage:FindFirstChild("Paper")
+    if remote then
+        remote = remote:FindFirstChild("Remotes")
+        if remote then
+            remote = remote:FindFirstChild("__remotefunction")
+            if remote then
+                pcall(function()
+                    remote:InvokeServer("Hatch Egg", SelectedEgg)
+                    print("[HATCH] Hatched:", SelectedEgg)
+                end)
+            end
+        end
+    end
+end
+
+local function SetupEggAutoDelete()
+    if not EggDeleteEnabled then return end
+    if not SelectedEgg or SelectedEgg == "" then return end
+    if not EggsList[SelectedEgg] then return end
+    
+    local remote = ReplicatedStorage:FindFirstChild("Paper")
+    if not remote then return end
+    remote = remote:FindFirstChild("Remotes")
+    if not remote then return end
+    remote = remote:FindFirstChild("__remotefunction")
+    if not remote then return end
+    
+    local eggData = EggsList[SelectedEgg]
+    local autoDeleteStat = Paper.Stats.Get("AutoDelete")
+    
+    if eggData and eggData.Pets then
+        for _, petInfo in pairs(eggData.Pets) do
+            local petName = petInfo.Pet
+            local chance = petInfo.Chance or 0
+            
+            if chance > 0.001 then
+                pcall(function()
+                    remote:InvokeServer("Pet", {
+                        Pet = petName,
+                        Action = "AutoDelete",
+                        Tier = "all"
+                    })
+                    print("[EGG DELETE] Auto-deleting:", petName, "(" .. chance .. "%)")
+                end)
+                task.wait(0.05)
+            else
+                pcall(function()
+                    remote:InvokeServer("Pet", {
+                        Pet = petName,
+                        Action = "AutoDelete",
+                        Tier = "all"
+                    })
+                    print("[EGG DELETE] Removed auto-delete from rare pet:", petName)
+                end)
+                task.wait(0.05)
+            end
+        end
+    end
+end
+
+local function GetInventoryPets()
+    local pets = {}
+    local petsFolder = Paper.Stats.Get("Pets")
+    if petsFolder then
+        for _, pet in pairs(petsFolder:GetChildren()) do
+            table.insert(pets, pet)
+        end
+    end
+    return pets
+end
+
+local function DeletePet(petId)
+    local remote = ReplicatedStorage:FindFirstChild("Paper")
+    if remote then
+        remote = remote:FindFirstChild("Remotes")
+        if remote then
+            remote = remote:FindFirstChild("__remotefunction")
+            if remote then
+                local success, result = pcall(function()
+                    return remote:InvokeServer("Pet", {
+                        Action = "Delete",
+                        Pets = {petId}
+                    })
+                end)
+                if success then
+                    print("[INVENTORY DELETE] Deleted pet:", petId)
+                end
+            end
+        end
+    end
+end
+
+local function CheckAndDeleteInventoryPets()
+    if not InventoryDeleteEnabled then return end
+    
+    local pets = GetInventoryPets()
+    for _, pet in pairs(pets) do
+        local petName = pet:GetAttribute("PetName")
+        if PetsToDelete[petName] then
+            DeletePet(pet.Name)
+            task.wait(0.5)
+        end
+    end
+end
+
+local function StartInventoryDeleteLoop()
+    if InventoryDeleteConnection then
+        InventoryDeleteConnection:Disconnect()
+        InventoryDeleteConnection = nil
+    end
+    
+    if InventoryDeleteEnabled then
+        CheckAndDeleteInventoryPets()
+        InventoryDeleteConnection = RunService.Heartbeat:Connect(function()
+            if InventoryDeleteEnabled then
+                CheckAndDeleteInventoryPets()
+                task.wait(60)
+            end
+        end)
+    end
+end
+
+local function StopInventoryDeleteLoop()
+    if InventoryDeleteConnection then
+        InventoryDeleteConnection:Disconnect()
+        InventoryDeleteConnection = nil
+    end
+end
+
+local function StartAutoHatch()
+    if AutoHatchConnection then
+        AutoHatchConnection:Disconnect()
+        AutoHatchConnection = nil
+    end
+    
+    if AutoHatchEnabled and SelectedEgg and SelectedEgg ~= "" then
+        AutoHatchConnection = RunService.Heartbeat:Connect(function()
+            if AutoHatchEnabled and SelectedEgg and SelectedEgg ~= "" then
+                TeleportToEgg()
+                HatchEgg()
+                task.wait(2)
+            end
+        end)
+    end
+end
+
+local function StopAutoHatch()
+    if AutoHatchConnection then
+        AutoHatchConnection:Disconnect()
+        AutoHatchConnection = nil
+    end
+end
+
 local function ToggleAutoTrain(state)
     AutoTrainEnabled = state
     
@@ -546,6 +738,11 @@ end
 local enchantNames = {}
 for enchantName, _ in pairs(EnchantsList) do
     table.insert(enchantNames, enchantName)
+end
+
+local eggNames = {}
+for eggName, _ in pairs(EggsList) do
+    table.insert(eggNames, eggName)
 end
 
 MainTab:CreateSection("🔥 INSTANT THROW")
@@ -728,6 +925,89 @@ MiscTab:CreateDropdown({
         print("[ENCHANTS] Selected:", table.concat(SelectedEnchants, ", "))
     end
 })
+
+HatchTab:CreateSection("🥚 EGG SELECTION")
+
+HatchTab:CreateDropdown({
+    Name = "Select Egg",
+    Options = eggNames,
+    CurrentOption = eggNames[1] or "",
+    Flag = "EggSelection",
+    Callback = function(Value)
+        SelectedEgg = Value
+        print("[EGG] Selected:", SelectedEgg)
+        if EggDeleteEnabled then
+            SetupEggAutoDelete()
+        end
+    end
+})
+
+HatchTab:CreateSection("🐣 AUTO HATCH")
+
+HatchTab:CreateToggle({
+    Name = "Auto Hatch Selected Egg",
+    CurrentValue = false,
+    Flag = "AutoHatchFlag",
+    Callback = function(Value)
+        AutoHatchEnabled = Value
+        if Value then
+            StartAutoHatch()
+        else
+            StopAutoHatch()
+        end
+    end
+})
+
+HatchTab:CreateSection("🗑️ PET DELETE SYSTEM")
+
+HatchTab:CreateToggle({
+    Name = "Delete Common Pets From Egg (Auto-Delete)",
+    CurrentValue = false,
+    Flag = "EggDeleteFlag",
+    Callback = function(Value)
+        EggDeleteEnabled = Value
+        if Value and SelectedEgg and SelectedEgg ~= "" then
+            SetupEggAutoDelete()
+        end
+    end
+})
+
+HatchTab:CreateToggle({
+    Name = "Delete Specific Pets From Inventory",
+    CurrentValue = false,
+    Flag = "InventoryDeleteFlag",
+    Callback = function(Value)
+        InventoryDeleteEnabled = Value
+        if Value then
+            StartInventoryDeleteLoop()
+        else
+            StopInventoryDeleteLoop()
+        end
+    end
+})
+
+local petNamesToDelete = {
+    "King Ben",
+    "Goo Axolotl",
+    "Ultra Capybara",
+    "Mystical Cat"
+}
+
+for _, petName in pairs(petNamesToDelete) do
+    HatchTab:CreateToggle({
+        Name = "Delete: " .. petName,
+        CurrentValue = false,
+        Flag = "DeletePet_" .. petName,
+        Callback = function(Value)
+            if Value then
+                PetsToDelete[petName] = true
+            else
+                PetsToDelete[petName] = nil
+            end
+            print("[DELETE LIST] Current:", table.concat(PetsToDelete, ", "))
+        end
+    })
+end
 
 if Paper and Paper.Stats and Paper.Stats.Get("Items") then
     local itemsConnection = Paper.Stats.Get("Items").Changed:Connect(function()
