@@ -39,12 +39,15 @@ local AutoTrainEnabled = false
 local AutoClaimChestsEnabled = false
 local AutoBuyObjectsEnabled = false
 local AutoUnlockWorldsEnabled = false
-local SelectedChest = "DailyChest"
+local SelectedChests = {}
 local SelectedWorldMode = "Any Affordable World"
 
 local AutoUsePotionsEnabled = false
 local AutoEnchantEnabled = false
 local AutoUseItemsEnabled = false
+local AutoClaimSpaceEggEnabled = false
+local SelectedPotions = {}
+local SelectedItems = {}
 local SelectedEnchants = {}
 local PotionTimers = {}
 local ItemTimers = {}
@@ -56,6 +59,7 @@ local AutoUnlockConnection = nil
 local AutoPotionConnection = nil
 local AutoEnchantConnection = nil
 local AutoItemConnection = nil
+local AutoSpaceEggConnection = nil
 local Paper = nil
 local ChestsList = {}
 local WorldsList = {}
@@ -201,17 +205,20 @@ local function StartAutoClaim()
     if AutoClaimChestsEnabled then
         AutoClaimConnection = RunService.Heartbeat:Connect(function()
             if AutoClaimChestsEnabled then
-                local remote = ReplicatedStorage:FindFirstChild("Paper")
-                if remote then
-                    remote = remote:FindFirstChild("Remotes")
+                for _, chestName in pairs(SelectedChests) do
+                    local remote = ReplicatedStorage:FindFirstChild("Paper")
                     if remote then
-                        remote = remote:FindFirstChild("__remotefunction")
+                        remote = remote:FindFirstChild("Remotes")
                         if remote then
-                            pcall(function()
-                                remote:InvokeServer("Claim Chest", SelectedChest)
-                            end)
+                            remote = remote:FindFirstChild("__remotefunction")
+                            if remote then
+                                pcall(function()
+                                    remote:InvokeServer("Claim Chest", chestName)
+                                end)
+                            end
                         end
                     end
+                    task.wait(0.5)
                 end
                 task.wait(1)
             end
@@ -365,19 +372,6 @@ local function GetPlayerItems()
     return itemList
 end
 
-local function GetLuckLevel(enchantName)
-    if not enchantName then return 0 end
-    if string.find(enchantName, "III") then return 3 end
-    if string.find(enchantName, "II") then return 2 end
-    if string.find(enchantName, "I") then return 1 end
-    return 0
-end
-
-local function GetPetLuckLevel(pet)
-    local enchant = pet:GetAttribute("Enchant1")
-    return GetLuckLevel(enchant)
-end
-
 local function HasSelectedEnchant(pet)
     local currentEnchant = pet:GetAttribute("Enchant1") or ""
     for _, enchantName in pairs(SelectedEnchants) do
@@ -407,7 +401,7 @@ local function StartAutoPotion()
         AutoPotionConnection = RunService.Heartbeat:Connect(function()
             if AutoUsePotionsEnabled and Paper then
                 local currentTime = os.time()
-                for potionName, _ in pairs(PotionsList) do
+                for _, potionName in pairs(SelectedPotions) do
                     local lastUsed = PotionTimers[potionName] or 0
                     local duration = GetPotionDuration(potionName)
                     if currentTime - lastUsed >= duration then
@@ -442,7 +436,7 @@ local function StartAutoItem()
         AutoItemConnection = RunService.Heartbeat:Connect(function()
             if AutoUseItemsEnabled and Paper then
                 local currentTime = os.time()
-                for itemName, _ in pairs(ItemsList) do
+                for _, itemName in pairs(SelectedItems) do
                     local lastUsed = ItemTimers[itemName] or 0
                     local duration = GetItemDuration(itemName)
                     if currentTime - lastUsed >= duration then
@@ -485,7 +479,6 @@ local function StartAutoEnchant()
                 end
                 
                 if enchantGems.Value == 0 then
-                    print("[ENCHANT] No enchant gems left")
                     task.wait(5)
                     return
                 end
@@ -523,6 +516,41 @@ local function StopAutoEnchant()
     if AutoEnchantConnection then
         AutoEnchantConnection:Disconnect()
         AutoEnchantConnection = nil
+    end
+end
+
+local function StartAutoSpaceEgg()
+    if AutoSpaceEggConnection then
+        AutoSpaceEggConnection:Disconnect()
+        AutoSpaceEggConnection = nil
+    end
+    
+    if AutoClaimSpaceEggEnabled and Paper then
+        AutoSpaceEggConnection = RunService.Heartbeat:Connect(function()
+            if AutoClaimSpaceEggEnabled and Paper then
+                local freeTimer = Paper.Stats.Get("FreeRewardTimer")
+                if freeTimer then
+                    local timerValue = freeTimer.Value
+                    local remaining = 900 - timerValue
+                    
+                    if remaining <= 0 then
+                        pcall(function()
+                            Paper.Network.InvokeServer("Claim Free Reward")
+                            print("[SPACE EGG] Claimed at: " .. os.date("%H:%M:%S"))
+                        end)
+                        task.wait(5)
+                    end
+                end
+                task.wait(1)
+            end
+        end)
+    end
+end
+
+local function StopAutoSpaceEgg()
+    if AutoSpaceEggConnection then
+        AutoSpaceEggConnection:Disconnect()
+        AutoSpaceEggConnection = nil
     end
 end
 
@@ -645,12 +673,13 @@ MainTab:CreateToggle({
 })
 
 MainTab:CreateDropdown({
-    Name = "Select Chest",
+    Name = "Select Chests",
     Options = chestNames,
-    CurrentOption = "DailyChest",
+    CurrentOption = "Select Chests",
     Flag = "ChestSelection",
+    MultiSelect = true,
     Callback = function(Value)
-        SelectedChest = Value
+        SelectedChests = Value
     end
 })
 
@@ -719,6 +748,33 @@ MiscTab:CreateToggle({
     end
 })
 
+MiscTab:CreateDropdown({
+    Name = "Select Potions",
+    Options = potionNames,
+    CurrentOption = "Select Potions",
+    Flag = "PotionSelection",
+    MultiSelect = true,
+    Callback = function(Value)
+        SelectedPotions = Value
+    end
+})
+
+MiscTab:CreateSection("🥚 AUTO CLAIM SPACE EGG")
+
+MiscTab:CreateToggle({
+    Name = "Auto Claim Space Egg",
+    CurrentValue = false,
+    Flag = "AutoSpaceEggFlag",
+    Callback = function(Value)
+        AutoClaimSpaceEggEnabled = Value
+        if Value then
+            StartAutoSpaceEgg()
+        else
+            StopAutoSpaceEgg()
+        end
+    end
+})
+
 MiscTab:CreateSection("✨ AUTO ENCHANT PETS")
 
 MiscTab:CreateToggle({
@@ -735,30 +791,16 @@ MiscTab:CreateToggle({
     end
 })
 
-MiscTab:CreateParagraph({
-    Title = "Target Enchants",
-    Content = "Select which enchants to keep. Script will enchant until pet gets any selected enchant."
+MiscTab:CreateDropdown({
+    Name = "Select Target Enchants",
+    Options = enchantNames,
+    CurrentOption = "Select Enchants",
+    Flag = "EnchantSelection",
+    MultiSelect = true,
+    Callback = function(Value)
+        SelectedEnchants = Value
+    end
 })
-
-for _, enchantName in pairs(enchantNames) do
-    MiscTab:CreateToggle({
-        Name = enchantName,
-        CurrentValue = false,
-        Flag = "Enchant_" .. enchantName,
-        Callback = function(Value)
-            if Value then
-                table.insert(SelectedEnchants, enchantName)
-            else
-                for i, name in pairs(SelectedEnchants) do
-                    if name == enchantName then
-                        table.remove(SelectedEnchants, i)
-                        break
-                    end
-                end
-            end
-        end
-    })
-end
 
 MiscTab:CreateSection("📦 AUTO USE ITEMS")
 
@@ -773,6 +815,17 @@ MiscTab:CreateToggle({
         else
             StopAutoItem()
         end
+    end
+})
+
+MiscTab:CreateDropdown({
+    Name = "Select Items",
+    Options = itemNames,
+    CurrentOption = "Select Items",
+    Flag = "ItemSelection",
+    MultiSelect = true,
+    Callback = function(Value)
+        SelectedItems = Value
     end
 })
 
