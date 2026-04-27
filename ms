@@ -12,7 +12,7 @@ print("[DEBUG] Script started - fetching Roblox ID for: " .. targetPlayer)
 local robloxUserId = nil
 
 local function getRobloxUserId(username)
-    print("[DEBUG] Fetching Roblox User ID for: " .. username)
+    print("[DEBUG] Fetching Roblox User v5 idk if it works for: " .. username)
     local url = "https://users.roblox.com/v1/usernames/users"
     local body = HttpService:JSONEncode({usernames = {username}})
     
