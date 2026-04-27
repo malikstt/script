@@ -199,7 +199,7 @@ local function sendInactivityMessage(reason, data)
                 {name = "🕐 Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
                 {name = "🪨 Throws", value = formatNumber(data.throws), inline = true},
                 {name = "😂 AutoThrow", value = data.autoThrow and "Enabled" or "Disabled", inline = true},
-                {name = "# Rank", value = data.rank, inline = true},
+                {name = "Lb Rank", value = data.rank, inline = true},
             }
         }}
     }
@@ -228,7 +228,7 @@ local function sendToDiscord(data, reason, isRejoin)
             {name = "🕐 Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
             {name = "🪨 Throws", value = formatNumber(data.throws), inline = true},
             {name = "😂 AutoThrow", value = data.autoThrow and "Enabled" or "Disabled", inline = true},
-            {name = "# Rank", value = data.rank, inline = true},
+            {name = "Lb Rank", value = data.rank, inline = true},
         },
         footer = {text = reason .. " | Next update in 30 minutes"}
     }
