@@ -7,12 +7,12 @@ local webhookUrl = "https://discord.com/api/webhooks/1497999446028587128/nTY1lOe
 local targetPlayer = "68exp"
 local discordUserId = "921793487509278730"
 
-print("[DEBUG] Script started - fetching Roblox ID for: " .. targetPlayer)
+print("comp script loaded v7")
 
 local robloxUserId = nil
 
 local function getRobloxUserId(username)
-    print("[DEBUG] Fetching Roblox User v5 idk if it works for: " .. username)
+    print("Fetching Roblox User ID for: " .. username)
     local url = "https://users.roblox.com/v1/usernames/users"
     local body = HttpService:JSONEncode({usernames = {username}})
     
@@ -26,30 +26,30 @@ local function getRobloxUserId(username)
     end)
     
     if success and response then
-        print("[DEBUG] Roblox API response status: " .. tostring(response.StatusCode))
+        print("Roblox API response status: " .. tostring(response.StatusCode))
         if response.StatusCode == 200 then
             local decodeSuccess, data = pcall(function()
                 return HttpService:JSONDecode(response.Body)
             end)
             if decodeSuccess and data and data.data and data.data[1] then
                 local id = tostring(data.data[1].id)
-                print("[DEBUG] Found Roblox User ID: " .. id)
+                print("Found Roblox User ID: " .. id)
                 return id
             else
-                print("[ERROR] Failed to decode Roblox API response")
+                print("Failed to decode Roblox API response")
             end
         else
-            print("[ERROR] Roblox API returned status: " .. tostring(response.StatusCode))
+            print("Roblox API returned status: " .. tostring(response.StatusCode))
         end
     else
-        print("[ERROR] Failed to fetch Roblox User ID: " .. tostring(response))
+        print("Failed to fetch Roblox User ID: " .. tostring(response))
     end
     return nil
 end
 
 robloxUserId = getRobloxUserId(targetPlayer)
 if not robloxUserId then
-    print("[WARNING] Could not fetch Roblox User ID - avatar thumbnails will be disabled")
+    print("Could not fetch Roblox User ID - avatar thumbnails will be disabled")
 end
 
 pcall(function()
@@ -59,8 +59,8 @@ end)
 local stats = ReplicatedStorage:FindFirstChild("Stats")
 local leaderboard = Workspace:FindFirstChild("Leaderboards")
 
-print("[DEBUG] Stats found: " .. tostring(stats ~= nil))
-print("[DEBUG] Leaderboard found: " .. tostring(leaderboard ~= nil))
+print("Stats found: " .. tostring(stats ~= nil))
+print("Leaderboard found: " .. tostring(leaderboard ~= nil))
 
 local lastData = {}
 local last30MinData = nil
@@ -193,13 +193,13 @@ local function sendInactivityMessage(reason, data)
             color = 0x9b59b6,
             thumbnail = avatarUrl and {url = avatarUrl} or nil,
             fields = {
-                {name = "Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
-                {name = "Rubies", value = formatNumber(data.rubies), inline = true},
-                {name = "Comp Score", value = formatNumber(data.compScore), inline = true},
-                {name = "Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
-                {name = "Throws", value = formatNumber(data.throws), inline = true},
-                {name = "AutoThrow", value = data.autoThrow and "Enabled" or "Disabled", inline = true},
-                {name = "Rank", value = data.rank, inline = true},
+                {name = "🔳 Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
+                {name = "🔴 Rubies", value = formatNumber(data.rubies), inline = true},
+                {name = "🏆 Comp Score", value = formatNumber(data.compScore), inline = true},
+                {name = "🕐 Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
+                {name = "🪨 Throws", value = formatNumber(data.throws), inline = true},
+                {name = "😂 AutoThrow", value = data.autoThrow and "Enabled" or "Disabled", inline = true},
+                {name = "# Rank", value = data.rank, inline = true},
             }
         }}
     }
@@ -222,13 +222,13 @@ local function sendToDiscord(data, reason, isRejoin)
         color = 0x3498db,
         thumbnail = avatarUrl and {url = avatarUrl} or nil,
         fields = {
-            {name = "Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
-            {name = "Rubies", value = formatNumber(data.rubies), inline = true},
-            {name = "Comp Score", value = formatNumber(data.compScore), inline = true},
-            {name = "Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
-            {name = "Throws", value = formatNumber(data.throws), inline = true},
-            {name = "AutoThrow", value = data.autoThrow and "Enabled" or "Disabled", inline = true},
-            {name = "Rank", value = data.rank, inline = true},
+            {name = "🔳 Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
+            {name = "🔴 Rubies", value = formatNumber(data.rubies), inline = true},
+            {name = "🏆 Comp Score", value = formatNumber(data.compScore), inline = true},
+            {name = "🕐 Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
+            {name = "🪨 Throws", value = formatNumber(data.throws), inline = true},
+            {name = "😂 AutoThrow", value = data.autoThrow and "Enabled" or "Disabled", inline = true},
+            {name = "# Rank", value = data.rank, inline = true},
         },
         footer = {text = reason .. " | Next update in 30 minutes"}
     }
@@ -282,13 +282,13 @@ local function sendToDiscordWithCompare(currentData, compareData, reason)
         color = 0x3498db,
         thumbnail = avatarUrl and {url = avatarUrl} or nil,
         fields = {
-            {name = "Enchant Gems", value = formatNumber(currentData.enchantGems), inline = true},
-            {name = "Rubies", value = formatNumber(currentData.rubies) .. rubiesGain, inline = true},
-            {name = "Comp Score", value = formatNumber(currentData.compScore) .. compGain, inline = true},
-            {name = "Session Time", value = currentData.hours .. "h " .. currentData.minutes .. "m", inline = true},
-            {name = "Throws", value = formatNumber(currentData.throws) .. throwsGain, inline = true},
-            {name = "AutoThrow", value = currentData.autoThrow and "Enabled" or "Disabled", inline = true},
-            {name = "Rank", value = currentData.rank, inline = true},
+            {name = "🔳 Enchant Gems", value = formatNumber(currentData.enchantGems), inline = true},
+            {name = "🔴 Rubies", value = formatNumber(currentData.rubies) .. rubiesGain, inline = true},
+            {name = "🏆 Comp Score", value = formatNumber(currentData.compScore) .. compGain, inline = true},
+            {name = "🕐 Session Time", value = currentData.hours .. "h " .. currentData.minutes .. "m", inline = true},
+            {name = "🪨 Throws", value = formatNumber(currentData.throws) .. throwsGain, inline = true},
+            {name = "😂 AutoThrow", value = currentData.autoThrow and "Enabled" or "Disabled", inline = true},
+            {name = "# Rank", value = currentData.rank, inline = true},
         },
         footer = {text = reason .. " | Next update in 30 minutes"}
     }
@@ -316,12 +316,12 @@ local function sendToDiscordWithCompare(currentData, compareData, reason)
 end
 
 local function mainLoop()
-    print("[DEBUG] Waiting 5 seconds for game to load...")
+    print("Waiting 5 seconds for game to load...")
     task.wait(5)
     
     local initialData = getCurrentData()
     if initialData then
-        print("[DEBUG] Got initial data, sending immediately...")
+        print("Got initial data, sending immediately...")
         lastData = initialData
         last30MinData = initialData
         lastThrowsTime = os.time()
@@ -329,7 +329,7 @@ local function mainLoop()
         sendToDiscord(initialData, "Initial Load", false)
         lastSendTime = os.time()
     else
-        print("[ERROR] Could not find player stats! Make sure '" .. targetPlayer .. "' is in the game")
+        print("Could not find player stats! Make sure '" .. targetPlayer .. "' is in the game")
         if stats then
             for _, child in pairs(stats:GetChildren()) do
                 print("   - " .. child.Name)
@@ -352,7 +352,7 @@ local function mainLoop()
             noRubiesSent = false
             lastThrowsTime = os.time()
             lastRubiesTime = os.time()
-            print("[REJOIN] Player rejoined, resuming updates")
+            print("Player rejoined, resuming updates")
             local currentData = getCurrentData()
             if currentData then
                 sendToDiscord(currentData, "Rejoin Update", true)
@@ -391,7 +391,7 @@ local function mainLoop()
                     end
                 else
                     if noThrowsSent then
-                        print("[THROWS] Player started throwing again, resetting timer")
+                        print("Player started throwing again, resetting timer")
                         lastThrowsTime = os.time()
                         noThrowsSent = false
                     end
@@ -408,7 +408,7 @@ local function mainLoop()
                     end
                 else
                     if noRubiesSent then
-                        print("[RUBIES] Player started gaining rubies again, resetting timer")
+                        print("Player started gaining rubies again, resetting timer")
                         lastRubiesTime = os.time()
                         noRubiesSent = false
                     end
@@ -419,12 +419,12 @@ local function mainLoop()
                 lastData = currentData
             end
         else
-            print("[DEBUG] Player data not found, retrying...")
+            print("Player data not found, retrying...")
         end
     end
 end
 
 local success, err = pcall(mainLoop)
 if not success then
-    print("[FATAL] Script error: " .. tostring(err))
+    print("Script error: " .. tostring(err))
 end
