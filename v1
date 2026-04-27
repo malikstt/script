@@ -25,6 +25,7 @@ local Window = Rayfield:CreateWindow({
 })
 
 local MainTab = Window:CreateTab("Main", 0)
+local MiscTab = Window:CreateTab("Misc", 0)
 
 print("[SCRIPT] Starting Throw Sim Script")
 
@@ -41,13 +42,26 @@ local AutoUnlockWorldsEnabled = false
 local SelectedChest = "DailyChest"
 local SelectedWorldMode = "Any Affordable World"
 
+local AutoUsePotionsEnabled = false
+local AutoEnchantEnabled = false
+local AutoUseItemsEnabled = false
+local SelectedEnchants = {}
+local PotionTimers = {}
+local ItemTimers = {}
+
 local InstantThrowConnection = nil
 local AutoClaimConnection = nil
 local AutoBuyConnection = nil
 local AutoUnlockConnection = nil
+local AutoPotionConnection = nil
+local AutoEnchantConnection = nil
+local AutoItemConnection = nil
 local Paper = nil
 local ChestsList = {}
 local WorldsList = {}
+local PotionsList = {}
+local ItemsList = {}
+local EnchantsList = {}
 
 local function SafeRequire(module)
     local success, result = pcall(function()
@@ -83,6 +97,31 @@ if worldsTable then
     if worldsTable then
         WorldsList = SafeRequire(worldsTable) or {}
         print("[DEBUG] Loaded Worlds table")
+    end
+end
+
+local itemsTable = ReplicatedStorage:FindFirstChild("Tables")
+if itemsTable then
+    itemsTable = itemsTable:FindFirstChild("Items")
+    if itemsTable then
+        local itemsData = SafeRequire(itemsTable) or {}
+        for name, data in pairs(itemsData) do
+            if data.Category == "Potions" then
+                PotionsList[name] = data
+            elseif data.Type == "Item" and data.Usable == true and data.Category ~= "Potions" then
+                ItemsList[name] = data
+            end
+        end
+        print("[DEBUG] Loaded Items table")
+    end
+end
+
+local enchantsTable = ReplicatedStorage:FindFirstChild("Tables")
+if enchantsTable then
+    enchantsTable = enchantsTable:FindFirstChild("Enchants")
+    if enchantsTable then
+        EnchantsList = SafeRequire(enchantsTable) or {}
+        print("[DEBUG] Loaded Enchants table")
     end
 end
 
@@ -168,12 +207,9 @@ local function StartAutoClaim()
                     if remote then
                         remote = remote:FindFirstChild("__remotefunction")
                         if remote then
-                            local success, result = pcall(function()
-                                return remote:InvokeServer("Claim Chest", SelectedChest)
+                            pcall(function()
+                                remote:InvokeServer("Claim Chest", SelectedChest)
                             end)
-                            if not success then
-                                print("[FAILED] Claim Chest failed, retrying...")
-                            end
                         end
                     end
                 end
@@ -205,12 +241,9 @@ local function StartAutoBuy()
                     if remote then
                         remote = remote:FindFirstChild("__remotefunction")
                         if remote then
-                            local success, result = pcall(function()
-                                return remote:InvokeServer("Buy Next Object")
+                            pcall(function()
+                                remote:InvokeServer("Buy Next Object")
                             end)
-                            if not success then
-                                print("[FAILED] Buy Next Object failed, retrying...")
-                            end
                         end
                     end
                 end
@@ -243,12 +276,9 @@ local function StartAutoUnlock()
                         if remote then
                             remote = remote:FindFirstChild("__remotefunction")
                             if remote then
-                                local success, result = pcall(function()
-                                    return remote:InvokeServer("Unlock Next World")
+                                pcall(function()
+                                    remote:InvokeServer("Unlock Next World")
                                 end)
-                                if not success then
-                                    print("[FAILED] Unlock Next World failed, retrying...")
-                                end
                             end
                         end
                     end
@@ -261,12 +291,9 @@ local function StartAutoUnlock()
                                 if remote then
                                     remote = remote:FindFirstChild("__remotefunction")
                                     if remote then
-                                        local success, result = pcall(function()
-                                            return remote:InvokeServer("Set Current World", worldNum)
+                                        pcall(function()
+                                            remote:InvokeServer("Set Current World", worldNum)
                                         end)
-                                        if not success then
-                                            print("[FAILED] Set Current World failed, retrying...")
-                                        end
                                     end
                                 end
                             end
@@ -284,6 +311,218 @@ local function StopAutoUnlock()
     if AutoUnlockConnection then
         AutoUnlockConnection:Disconnect()
         AutoUnlockConnection = nil
+    end
+end
+
+local function GetPotionDuration(potionName)
+    local potionData = PotionsList[potionName]
+    if potionData and potionData.Duration then
+        return potionData.Duration
+    end
+    return 300
+end
+
+local function GetItemDuration(itemName)
+    local itemData = ItemsList[itemName]
+    if itemData and itemData.Duration then
+        return itemData.Duration
+    end
+    return 300
+end
+
+local function UsePotion(potionName)
+    local success, result = pcall(function()
+        return Paper.Network.InvokeServer("Use Item", potionName, 1)
+    end)
+    if success and result then
+        print("[POTION] Used:", potionName)
+        return true
+    end
+    return false
+end
+
+local function UseItem(itemName)
+    local success, result = pcall(function()
+        return Paper.Network.InvokeServer("Use Item", itemName, 1)
+    end)
+    if success and result then
+        print("[ITEM] Used:", itemName)
+        return true
+    end
+    return false
+end
+
+local function GetPlayerItems()
+    local items = Paper.Stats.Get("Items")
+    local itemList = {}
+    if items and items.Value then
+        for name, amount in pairs(items.Value) do
+            if amount > 0 then
+                itemList[name] = amount
+            end
+        end
+    end
+    return itemList
+end
+
+local function GetLuckLevel(enchantName)
+    if not enchantName then return 0 end
+    if string.find(enchantName, "III") then return 3 end
+    if string.find(enchantName, "II") then return 2 end
+    if string.find(enchantName, "I") then return 1 end
+    return 0
+end
+
+local function GetPetLuckLevel(pet)
+    local enchant = pet:GetAttribute("Enchant1")
+    return GetLuckLevel(enchant)
+end
+
+local function HasSelectedEnchant(pet)
+    local currentEnchant = pet:GetAttribute("Enchant1") or ""
+    for _, enchantName in pairs(SelectedEnchants) do
+        if currentEnchant == enchantName then
+            return true
+        end
+    end
+    return false
+end
+
+local function EnchantPet(petGuid)
+    return pcall(function()
+        return Paper.Network.InvokeServer("Pet", {
+            ["Action"] = "Enchant",
+            ["Pet"] = petGuid
+        })
+    end)
+end
+
+local function StartAutoPotion()
+    if AutoPotionConnection then
+        AutoPotionConnection:Disconnect()
+        AutoPotionConnection = nil
+    end
+    
+    if AutoUsePotionsEnabled and Paper then
+        AutoPotionConnection = RunService.Heartbeat:Connect(function()
+            if AutoUsePotionsEnabled and Paper then
+                local currentTime = os.time()
+                for potionName, _ in pairs(PotionsList) do
+                    local lastUsed = PotionTimers[potionName] or 0
+                    local duration = GetPotionDuration(potionName)
+                    if currentTime - lastUsed >= duration then
+                        local items = GetPlayerItems()
+                        if items[potionName] and items[potionName] > 0 then
+                            UsePotion(potionName)
+                            PotionTimers[potionName] = currentTime
+                            task.wait(0.5)
+                        end
+                    end
+                end
+                task.wait(1)
+            end
+        end)
+    end
+end
+
+local function StopAutoPotion()
+    if AutoPotionConnection then
+        AutoPotionConnection:Disconnect()
+        AutoPotionConnection = nil
+    end
+end
+
+local function StartAutoItem()
+    if AutoItemConnection then
+        AutoItemConnection:Disconnect()
+        AutoItemConnection = nil
+    end
+    
+    if AutoUseItemsEnabled and Paper then
+        AutoItemConnection = RunService.Heartbeat:Connect(function()
+            if AutoUseItemsEnabled and Paper then
+                local currentTime = os.time()
+                for itemName, _ in pairs(ItemsList) do
+                    local lastUsed = ItemTimers[itemName] or 0
+                    local duration = GetItemDuration(itemName)
+                    if currentTime - lastUsed >= duration then
+                        local items = GetPlayerItems()
+                        if items[itemName] and items[itemName] > 0 then
+                            UseItem(itemName)
+                            ItemTimers[itemName] = currentTime
+                            task.wait(0.5)
+                        end
+                    end
+                end
+                task.wait(1)
+            end
+        end)
+    end
+end
+
+local function StopAutoItem()
+    if AutoItemConnection then
+        AutoItemConnection:Disconnect()
+        AutoItemConnection = nil
+    end
+end
+
+local function StartAutoEnchant()
+    if AutoEnchantConnection then
+        AutoEnchantConnection:Disconnect()
+        AutoEnchantConnection = nil
+    end
+    
+    if AutoEnchantEnabled and Paper then
+        AutoEnchantConnection = RunService.Heartbeat:Connect(function()
+            if AutoEnchantEnabled and Paper then
+                local equippedPets = Paper.Stats.Get("Equipped Pets")
+                local enchantGems = Paper.Stats.Get("EnchantGems")
+                
+                if not equippedPets or not enchantGems then
+                    task.wait(1)
+                    return
+                end
+                
+                if enchantGems.Value == 0 then
+                    print("[ENCHANT] No enchant gems left")
+                    task.wait(5)
+                    return
+                end
+                
+                local petsToEnchant = {}
+                for _, pet in pairs(equippedPets:GetChildren()) do
+                    if not HasSelectedEnchant(pet) then
+                        table.insert(petsToEnchant, pet)
+                    end
+                end
+                
+                if #petsToEnchant == 0 then
+                    task.wait(5)
+                    return
+                end
+                
+                for _, pet in pairs(petsToEnchant) do
+                    if enchantGems.Value > 0 then
+                        local success, result = EnchantPet(pet.Name)
+                        if success then
+                            print("[ENCHANT] Enchanted pet:", pet.Name)
+                        end
+                        task.wait(0.25)
+                    else
+                        break
+                    end
+                end
+                task.wait(0.5)
+            end
+        end)
+    end
+end
+
+local function StopAutoEnchant()
+    if AutoEnchantConnection then
+        AutoEnchantConnection:Disconnect()
+        AutoEnchantConnection = nil
     end
 end
 
@@ -341,6 +580,21 @@ end
 local worldNames = { "Any Affordable World" }
 for worldNum, worldData in pairs(WorldsList) do
     table.insert(worldNames, worldData.WorldName)
+end
+
+local potionNames = {}
+for potionName, _ in pairs(PotionsList) do
+    table.insert(potionNames, potionName)
+end
+
+local itemNames = {}
+for itemName, _ in pairs(ItemsList) do
+    table.insert(itemNames, itemName)
+end
+
+local enchantNames = {}
+for enchantName, _ in pairs(EnchantsList) do
+    table.insert(enchantNames, enchantName)
 end
 
 MainTab:CreateSection("🔥 INSTANT THROW")
@@ -441,4 +695,85 @@ MainTab:CreateDropdown({
         SelectedWorldMode = Value
     end
 })
+
+MainTab:CreateSection("⚡ PRIORITY")
+
+MainTab:CreateParagraph({
+    Title = "How It Works",
+    Content = "• Auto Train ON → Instant Throw stops\n• Auto Train OFF → Instant Throw works\n• Other features run independently"
+})
+
+MiscTab:CreateSection("🧪 AUTO USE POTIONS")
+
+MiscTab:CreateToggle({
+    Name = "Auto Use Potions",
+    CurrentValue = false,
+    Flag = "AutoPotionFlag",
+    Callback = function(Value)
+        AutoUsePotionsEnabled = Value
+        if Value then
+            StartAutoPotion()
+        else
+            StopAutoPotion()
+        end
+    end
+})
+
+MiscTab:CreateSection("✨ AUTO ENCHANT PETS")
+
+MiscTab:CreateToggle({
+    Name = "Auto Enchant Equipped Pets",
+    CurrentValue = false,
+    Flag = "AutoEnchantFlag",
+    Callback = function(Value)
+        AutoEnchantEnabled = Value
+        if Value then
+            StartAutoEnchant()
+        else
+            StopAutoEnchant()
+        end
+    end
+})
+
+MiscTab:CreateParagraph({
+    Title = "Target Enchants",
+    Content = "Select which enchants to keep. Script will enchant until pet gets any selected enchant."
+})
+
+for _, enchantName in pairs(enchantNames) do
+    MiscTab:CreateToggle({
+        Name = enchantName,
+        CurrentValue = false,
+        Flag = "Enchant_" .. enchantName,
+        Callback = function(Value)
+            if Value then
+                table.insert(SelectedEnchants, enchantName)
+            else
+                for i, name in pairs(SelectedEnchants) do
+                    if name == enchantName then
+                        table.remove(SelectedEnchants, i)
+                        break
+                    end
+                end
+            end
+        end
+    })
+end
+
+MiscTab:CreateSection("📦 AUTO USE ITEMS")
+
+MiscTab:CreateToggle({
+    Name = "Auto Use Items",
+    CurrentValue = false,
+    Flag = "AutoItemFlag",
+    Callback = function(Value)
+        AutoUseItemsEnabled = Value
+        if Value then
+            StartAutoItem()
+        else
+            StopAutoItem()
+        end
+    end
+})
+
 print("[SCRIPT] Script loaded")
