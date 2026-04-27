@@ -68,9 +68,9 @@ local lastSendTime = 0
 local isRunning = true
 local lastThrowsTime = os.time()
 local lastRubiesTime = os.time()
-local lastInactivitySend = 0
-local playerLeftTimer = nil
-local wasGone = false
+local noThrowsSent = false
+local noRubiesSent = false
+local playerHasLeft = false
 
 local function formatNumber(num)
     if num >= 1e12 then
@@ -172,7 +172,7 @@ end
 local function sendLeaveMessage()
     local jobId = game.JobId or "Unknown"
     local payload = {
-        content = string.format("<@%s> left server\nJob ID: `%s`\n<t:%d:R>", discordUserId, jobId, os.time())
+        content = string.format("<@%s> left server | Job ID: `%s` | <t:%d:R>", discordUserId, jobId, os.time())
     }
     pcall(function()
         request({
@@ -181,7 +181,7 @@ local function sendLeaveMessage()
             Headers = {["Content-Type"] = "application/json"},
             Body = HttpService:JSONEncode(payload)
         })
-        print("[CASE 2] Leave message sent")
+        print("[CASE 2] Leave message sent - stopping all further updates")
     end)
 end
 
@@ -193,13 +193,13 @@ local function sendInactivityMessage(reason, data)
             color = 0x9b59b6,
             thumbnail = avatarUrl and {url = avatarUrl} or nil,
             fields = {
-                {name = "💎 Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
-                {name = "🔴 Rubies", value = formatNumber(data.rubies), inline = true},
-                {name = "🏆 Comp Score", value = formatNumber(data.compScore), inline = true},
-                {name = "⏱️ Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
-                {name = "🎲 Throws", value = formatNumber(data.throws), inline = true},
-                {name = "🎯 AutoThrow", value = data.autoThrow and "Enabled" or "Disabled", inline = true},
-                {name = "📊 Rank", value = data.rank, inline = true},
+                {name = "Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
+                {name = "Rubies", value = formatNumber(data.rubies), inline = true},
+                {name = "Comp Score", value = formatNumber(data.compScore), inline = true},
+                {name = "Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
+                {name = "Throws", value = formatNumber(data.throws), inline = true},
+                {name = "AutoThrow", value = data.autoThrow and "Enabled" or "Disabled", inline = true},
+                {name = "Rank", value = data.rank, inline = true},
             }
         }}
     }
@@ -210,68 +210,11 @@ local function sendInactivityMessage(reason, data)
             Headers = {["Content-Type"] = "application/json"},
             Body = HttpService:JSONEncode(payload)
         })
-        print("[CASE 3] Inactivity message sent | " .. reason)
+        print("[CASE 3] " .. reason .. " message sent")
     end)
 end
 
-local function checkPlayerLeft()
-    local player = Players:FindFirstChild(targetPlayer)
-    if not player then
-        if not wasGone then
-            wasGone = true
-            playerLeftTimer = tick()
-        elseif tick() - playerLeftTimer >= 60 then
-            sendLeaveMessage()
-            playerLeftTimer = nil
-            wasGone = false
-            lastSendTime = os.time()
-            return true
-        end
-    else
-        if wasGone then
-            print("[REJOIN] Player rejoined!")
-            wasGone = false
-            playerLeftTimer = nil
-            local currentData = getCurrentData()
-            if currentData then
-                local avatarUrl = getAvatarThumbnail()
-                local embed = {
-                    title = "Stats Update",
-                    color = 0x3498db,
-                    thumbnail = avatarUrl and {url = avatarUrl} or nil,
-                    fields = {
-                        {name = "🟪 Enchant Gems", value = formatNumber(currentData.enchantGems), inline = true},
-                        {name = "🔴 Rubies", value = formatNumber(currentData.rubies), inline = true},
-                        {name = "🏆 Comp Score", value = formatNumber(currentData.compScore), inline = true},
-                        {name = "⏱️ Session Time", value = currentData.hours .. "h " .. currentData.minutes .. "m", inline = true},
-                        {name = "🪨 Throws", value = formatNumber(currentData.throws), inline = true},
-                        {name = "😂 AutoThrow", value = currentData.autoThrow and "Enabled" or "Disabled", inline = true},
-                        {name = "📊 Rank", value = currentData.rank, inline = true},
-                    },
-                    footer = {text = "Player Rejoined | Next update in 30 minutes"}
-                }
-                if avatarUrl then embed.description = "**68exp**" end
-                pcall(function()
-                    request({
-                        Url = webhookUrl,
-                        Method = "POST",
-                        Headers = {["Content-Type"] = "application/json"},
-                        Body = HttpService:JSONEncode({embeds = {embed}})
-                    })
-                end)
-                lastSendTime = os.time()
-                lastThrowsTime = os.time()
-                lastRubiesTime = os.time()
-                last30MinData = currentData
-            end
-            return true
-        end
-        playerLeftTimer = nil
-    end
-    return false
-end
-
-local function sendToDiscord(data, reason)
+local function sendToDiscord(data, reason, isRejoin)
     local avatarUrl = getAvatarThumbnail()
     
     local embed = {
@@ -279,13 +222,13 @@ local function sendToDiscord(data, reason)
         color = 0x3498db,
         thumbnail = avatarUrl and {url = avatarUrl} or nil,
         fields = {
-            {name = "💎 Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
-            {name = "🔴 Rubies", value = formatNumber(data.rubies), inline = true},
-            {name = "🏆 Comp Score", value = formatNumber(data.compScore), inline = true},
-            {name = "⏱️ Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
-            {name = "🎲 Throws", value = formatNumber(data.throws), inline = true},
-            {name = "🎯 AutoThrow", value = data.autoThrow and "Enabled" or "Disabled", inline = true},
-            {name = "📊 Rank", value = data.rank, inline = true},
+            {name = "Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
+            {name = "Rubies", value = formatNumber(data.rubies), inline = true},
+            {name = "Comp Score", value = formatNumber(data.compScore), inline = true},
+            {name = "Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
+            {name = "Throws", value = formatNumber(data.throws), inline = true},
+            {name = "AutoThrow", value = data.autoThrow and "Enabled" or "Disabled", inline = true},
+            {name = "Rank", value = data.rank, inline = true},
         },
         footer = {text = reason .. " | Next update in 30 minutes"}
     }
@@ -339,13 +282,13 @@ local function sendToDiscordWithCompare(currentData, compareData, reason)
         color = 0x3498db,
         thumbnail = avatarUrl and {url = avatarUrl} or nil,
         fields = {
-            {name = "💎 Enchant Gems", value = formatNumber(currentData.enchantGems), inline = true},
-            {name = "🔴 Rubies", value = formatNumber(currentData.rubies) .. rubiesGain, inline = true},
-            {name = "🏆 Comp Score", value = formatNumber(currentData.compScore) .. compGain, inline = true},
-            {name = "⏱️ Session Time", value = currentData.hours .. "h " .. currentData.minutes .. "m", inline = true},
-            {name = "🎲 Throws", value = formatNumber(currentData.throws) .. throwsGain, inline = true},
-            {name = "🎯 AutoThrow", value = currentData.autoThrow and "Enabled" or "Disabled", inline = true},
-            {name = "📊 Rank", value = currentData.rank, inline = true},
+            {name = "Enchant Gems", value = formatNumber(currentData.enchantGems), inline = true},
+            {name = "Rubies", value = formatNumber(currentData.rubies) .. rubiesGain, inline = true},
+            {name = "Comp Score", value = formatNumber(currentData.compScore) .. compGain, inline = true},
+            {name = "Session Time", value = currentData.hours .. "h " .. currentData.minutes .. "m", inline = true},
+            {name = "Throws", value = formatNumber(currentData.throws) .. throwsGain, inline = true},
+            {name = "AutoThrow", value = currentData.autoThrow and "Enabled" or "Disabled", inline = true},
+            {name = "Rank", value = currentData.rank, inline = true},
         },
         footer = {text = reason .. " | Next update in 30 minutes"}
     }
@@ -383,7 +326,7 @@ local function mainLoop()
         last30MinData = initialData
         lastThrowsTime = os.time()
         lastRubiesTime = os.time()
-        sendToDiscord(initialData, "Initial Load")
+        sendToDiscord(initialData, "Initial Load", false)
         lastSendTime = os.time()
     else
         print("[ERROR] Could not find player stats! Make sure '" .. targetPlayer .. "' is in the game")
@@ -397,47 +340,79 @@ local function mainLoop()
     while isRunning do
         task.wait(10)
         
+        local playerExists = Players:FindFirstChild(targetPlayer) ~= nil
+        
+        if not playerExists and not playerHasLeft then
+            playerHasLeft = true
+            sendLeaveMessage()
+            print("[CASE 2] Player left, stopped all updates")
+        elseif playerExists and playerHasLeft then
+            playerHasLeft = false
+            noThrowsSent = false
+            noRubiesSent = false
+            lastThrowsTime = os.time()
+            lastRubiesTime = os.time()
+            print("[REJOIN] Player rejoined, resuming updates")
+            local currentData = getCurrentData()
+            if currentData then
+                sendToDiscord(currentData, "Rejoin Update", true)
+                lastSendTime = os.time()
+                last30MinData = currentData
+                lastData = currentData
+            end
+        end
+        
+        if playerHasLeft then
+            task.wait(10)
+            continue
+        end
+        
         local currentData = getCurrentData()
         if currentData then
             if os.time() - lastSendTime >= 1800 then
                 if last30MinData then
                     sendToDiscordWithCompare(currentData, last30MinData, "30 Minute Update")
                 else
-                    sendToDiscord(currentData, "30 Minute Update")
+                    sendToDiscord(currentData, "30 Minute Update", false)
                 end
                 last30MinData = currentData
                 lastSendTime = os.time()
                 lastThrowsTime = os.time()
                 lastRubiesTime = os.time()
                 lastData = currentData
+                noThrowsSent = false
+                noRubiesSent = false
             else
-                local handled = checkPlayerLeft()
-                if not handled then
-                    if lastData.throws and currentData.throws == lastData.throws then
-                        if os.time() - lastThrowsTime >= 60 then
-                            if os.time() - lastInactivitySend >= 300 then
-                                sendInactivityMessage("No throws for 60 seconds", currentData)
-                                lastInactivitySend = os.time()
-                                lastSendTime = os.time()
-                                lastThrowsTime = os.time()
-                                lastRubiesTime = os.time()
-                            end
-                        end
-                    else
+                if lastData.throws and currentData.throws == lastData.throws then
+                    if os.time() - lastThrowsTime >= 60 and not noThrowsSent then
+                        sendInactivityMessage("No throws for 60 seconds", currentData)
+                        noThrowsSent = true
+                        lastSendTime = os.time()
+                    end
+                else
+                    if noThrowsSent then
+                        print("[THROWS] Player started throwing again, resetting timer")
+                        lastThrowsTime = os.time()
+                        noThrowsSent = false
+                    end
+                    if currentData.throws > lastData.throws then
                         lastThrowsTime = os.time()
                     end
-                    
-                    if lastData.rubies and currentData.rubies == lastData.rubies then
-                        if os.time() - lastRubiesTime >= 300 then
-                            if os.time() - lastInactivitySend >= 300 then
-                                sendInactivityMessage("No rubies for 5 minutes", currentData)
-                                lastInactivitySend = os.time()
-                                lastSendTime = os.time()
-                                lastThrowsTime = os.time()
-                                lastRubiesTime = os.time()
-                            end
-                        end
-                    else
+                end
+                
+                if lastData.rubies and currentData.rubies == lastData.rubies then
+                    if os.time() - lastRubiesTime >= 300 and not noRubiesSent then
+                        sendInactivityMessage("No rubies for 5 minutes", currentData)
+                        noRubiesSent = true
+                        lastSendTime = os.time()
+                    end
+                else
+                    if noRubiesSent then
+                        print("[RUBIES] Player started gaining rubies again, resetting timer")
+                        lastRubiesTime = os.time()
+                        noRubiesSent = false
+                    end
+                    if currentData.rubies > lastData.rubies then
                         lastRubiesTime = os.time()
                     end
                 end
