@@ -35,6 +35,7 @@ local LocalPlayer = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
 
 local InstantThrowEnabled = false
 local AutoTrainEnabled = false
@@ -55,7 +56,7 @@ local AutoHatchEnabled = false
 local SelectedEgg = ""
 local EggDeleteEnabled = false
 local InventoryDeleteEnabled = false
-local PetsToDelete = {}
+local SelectedRarityToDelete = "Common"
 
 local InstantThrowConnection = nil
 local AutoClaimConnection = nil
@@ -72,6 +73,8 @@ local WorldsList = {}
 local EnchantsList = {}
 local EggsList = {}
 local CurrentInventoryItems = {}
+local RarityNumbers = {}
+local RarityNames = {}
 
 local function SafeRequire(module)
     local success, result = pcall(function()
@@ -90,6 +93,33 @@ if paperModule then
     Paper = SafeRequire(paperModule)
 else
     print("[ERROR] Paper module NOT FOUND")
+end
+
+local rarityLib = ReplicatedStorage:FindFirstChild("Modules")
+if rarityLib then
+    rarityLib = rarityLib:FindFirstChild("Shared")
+    if rarityLib then
+        rarityLib = rarityLib:FindFirstChild("RarityLib")
+        if rarityLib then
+            local RarityLib = SafeRequire(rarityLib)
+            if RarityLib then
+                for rarityName, rarityNum in pairs(RarityLib) do
+                    if type(rarityNum) == "number" then
+                        table.insert(RarityNames, rarityName)
+                        RarityNumbers[rarityName] = rarityNum
+                    end
+                end
+                print("[DEBUG] Loaded RarityLib")
+            end
+        end
+    end
+end
+
+if #RarityNames == 0 then
+    RarityNames = {"Common", "Rare", "Epic", "Legendary", "Mythic", "Exotic", "Secret", "Celestial", "Divine", "Exclusive"}
+    for i, name in ipairs(RarityNames) do
+        RarityNumbers[name] = i
+    end
 end
 
 local chestsTable = ReplicatedStorage:FindFirstChild("Tables")
@@ -321,9 +351,6 @@ local function StopAutoUnlock()
 end
 
 local function GetItemDuration(itemName)
-    if string.find(itemName, "Potion") then
-        return 300
-    end
     return 300
 end
 
@@ -508,20 +535,31 @@ local function StopAutoSpaceEgg()
 end
 
 local function TeleportToEgg()
-    local eggModel = Workspace:FindFirstChild(SelectedEgg)
+    local eggModel = Workspace:FindFirstChild("Eggs")
     if eggModel then
-        local proximityPart = eggModel:FindFirstChild("ProximityPart") or eggModel:FindFirstChild("TouchInterest") or eggModel:FindFirstChild("Part")
-        if proximityPart then
-            local character = LocalPlayer.Character
-            if character then
-                local rootPart = character:FindFirstChild("HumanoidRootPart")
-                if rootPart then
-                    rootPart.CFrame = proximityPart.CFrame + Vector3.new(0, 3, 0)
-                    task.wait(0.5)
+        for _, egg in pairs(eggModel:GetChildren()) do
+            if egg.Name == SelectedEgg then
+                local proximityPart = egg:FindFirstChild("ProximityPart") or egg:FindFirstChild("TouchInterest") or egg:FindFirstChild("Part") or egg:FindFirstChildWhichIsA("BasePart")
+                if proximityPart then
+                    local character = LocalPlayer.Character
+                    if character then
+                        local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+                        if humanoidRootPart then
+                            local targetPosition = proximityPart.Position + Vector3.new(0, 3, 0)
+                            local tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Linear)
+                            local tween = TweenService:Create(humanoidRootPart, tweenInfo, {CFrame = CFrame.new(targetPosition)})
+                            tween:Play()
+                            tween.Completed:Wait()
+                            task.wait(0.3)
+                            return true
+                        end
+                    end
                 end
             end
         end
     end
+    print("[TELEPORT] Could not find egg:", SelectedEgg)
+    return false
 end
 
 local function HatchEgg()
@@ -554,21 +592,22 @@ local function SetupEggAutoDelete()
     if not remote then return end
     
     local eggData = EggsList[SelectedEgg]
-    local autoDeleteStat = Paper.Stats.Get("AutoDelete")
+    local targetRarityNum = RarityNumbers[SelectedRarityToDelete] or 1
     
     if eggData and eggData.Pets then
         for _, petInfo in pairs(eggData.Pets) do
             local petName = petInfo.Pet
-            local chance = petInfo.Chance or 0
+            local petRarity = petInfo.Rarity or "Common"
+            local petRarityNum = RarityNumbers[petRarity] or 1
             
-            if chance > 0.001 then
+            if petRarityNum <= targetRarityNum then
                 pcall(function()
                     remote:InvokeServer("Pet", {
                         Pet = petName,
                         Action = "AutoDelete",
                         Tier = "all"
                     })
-                    print("[EGG DELETE] Auto-deleting:", petName, "(" .. chance .. "%)")
+                    print("[EGG DELETE] Auto-deleting:", petName, "(", petRarity, ")")
                 end)
                 task.wait(0.05)
             else
@@ -578,7 +617,7 @@ local function SetupEggAutoDelete()
                         Action = "AutoDelete",
                         Tier = "all"
                     })
-                    print("[EGG DELETE] Removed auto-delete from rare pet:", petName)
+                    print("[EGG DELETE] Removed auto-delete from:", petName, "(", petRarity, ")")
                 end)
                 task.wait(0.05)
             end
@@ -621,12 +660,18 @@ end
 local function CheckAndDeleteInventoryPets()
     if not InventoryDeleteEnabled then return end
     
+    local targetRarityNum = RarityNumbers[SelectedRarityToDelete] or 1
     local pets = GetInventoryPets()
+    
     for _, pet in pairs(pets) do
-        local petName = pet:GetAttribute("PetName")
-        if PetsToDelete[petName] then
+        local petRarity = pet:GetAttribute("Rarity") or "Common"
+        local petRarityNum = RarityNumbers[petRarity] or 1
+        
+        if petRarityNum <= targetRarityNum then
+            local petName = pet:GetAttribute("PetName") or "Unknown"
+            print("[INVENTORY DELETE] Deleting:", petName, "(", petRarity, ")")
             DeletePet(pet.Name)
-            task.wait(0.5)
+            task.wait(0.3)
         end
     end
 end
@@ -666,7 +711,7 @@ local function StartAutoHatch()
             if AutoHatchEnabled and SelectedEgg and SelectedEgg ~= "" then
                 TeleportToEgg()
                 HatchEgg()
-                task.wait(2)
+                task.wait(3)
             end
         end)
     end
@@ -961,7 +1006,7 @@ HatchTab:CreateToggle({
 HatchTab:CreateSection("🗑️ PET DELETE SYSTEM")
 
 HatchTab:CreateToggle({
-    Name = "Delete Common Pets From Egg (Auto-Delete)",
+    Name = "Delete Pets From Egg (Auto-Delete by Rarity)",
     CurrentValue = false,
     Flag = "EggDeleteFlag",
     Callback = function(Value)
@@ -972,8 +1017,21 @@ HatchTab:CreateToggle({
     end
 })
 
+HatchTab:CreateDropdown({
+    Name = "Delete Rarity ≤ (Egg)",
+    Options = RarityNames,
+    CurrentOption = "Common",
+    Flag = "EggRaritySelect",
+    Callback = function(Value)
+        SelectedRarityToDelete = Value
+        if EggDeleteEnabled and SelectedEgg and SelectedEgg ~= "" then
+            SetupEggAutoDelete()
+        end
+    end
+})
+
 HatchTab:CreateToggle({
-    Name = "Delete Specific Pets From Inventory",
+    Name = "Delete Pets From Inventory (by Rarity)",
     CurrentValue = false,
     Flag = "InventoryDeleteFlag",
     Callback = function(Value)
@@ -986,28 +1044,18 @@ HatchTab:CreateToggle({
     end
 })
 
-local petNamesToDelete = {
-    "King Ben",
-    "Goo Axolotl",
-    "Ultra Capybara",
-    "Mystical Cat"
-}
-
-for _, petName in pairs(petNamesToDelete) do
-    HatchTab:CreateToggle({
-        Name = "Delete: " .. petName,
-        CurrentValue = false,
-        Flag = "DeletePet_" .. petName,
-        Callback = function(Value)
-            if Value then
-                PetsToDelete[petName] = true
-            else
-                PetsToDelete[petName] = nil
-            end
-            print("[DELETE LIST] Current:", table.concat(PetsToDelete, ", "))
+HatchTab:CreateDropdown({
+    Name = "Delete Rarity ≤ (Inventory)",
+    Options = RarityNames,
+    CurrentOption = "Common",
+    Flag = "InventoryRaritySelect",
+    Callback = function(Value)
+        SelectedRarityToDelete = Value
+        if InventoryDeleteEnabled then
+            CheckAndDeleteInventoryPets()
         end
-    })
-end
+    end
+})
 
 if Paper and Paper.Stats and Paper.Stats.Get("Items") then
     local itemsConnection = Paper.Stats.Get("Items").Changed:Connect(function()
