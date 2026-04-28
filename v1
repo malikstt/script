@@ -79,6 +79,8 @@ local AchievementsList = {}
 local PetsModules = {}
 local RarityNumbers = {}
 local RarityNames = {}
+local LastTeleportPosition = nil
+local TeleportCooldown = false
 
 local function SafeRequire(module)
     local success, result = pcall(function()
@@ -176,7 +178,6 @@ if achievementsTable then
     end
 end
 
--- Load all pet modules for rarity checking
 local petsFolder = ReplicatedStorage:FindFirstChild("Pets")
 if petsFolder then
     for _, petModule in pairs(petsFolder:GetChildren()) do
@@ -395,7 +396,8 @@ local function GetItemDuration(itemName)
     return 300
 end
 
-local function UseInventoryItem(itemName)
+-- Fixed Use Inventory Item with bulk quantity support
+local function UseInventoryItem(itemName, quantity)
     local remote = ReplicatedStorage:FindFirstChild("Paper")
     if remote then
         remote = remote:FindFirstChild("Remotes")
@@ -403,13 +405,13 @@ local function UseInventoryItem(itemName)
             remote = remote:FindFirstChild("__remotefunction")
             if remote then
                 local success, result = pcall(function()
-                    return remote:InvokeServer("Use Item", itemName, 1)
+                    return remote:InvokeServer("Use Item", itemName, quantity)
                 end)
                 if success and result then
-                    print("[INVENTORY] Used:", itemName)
+                    print("[INVENTORY] Used " .. quantity .. "x " .. itemName)
                     return true
                 else
-                    print("[INVENTORY] Failed to use:", itemName)
+                    print("[INVENTORY] Failed to use " .. itemName)
                 end
             end
         end
@@ -429,6 +431,14 @@ local function GetPlayerInventory()
     end
     table.sort(itemList)
     return itemList
+end
+
+local function GetItemCount(itemName)
+    local items = Paper.Stats.Get("Items")
+    if items and items.Value and items.Value[itemName] then
+        return items.Value[itemName]
+    end
+    return 0
 end
 
 local function UpdateInventoryDropdown()
@@ -473,9 +483,10 @@ local function StartAutoInventory()
                     local lastUsed = ItemTimers[itemName] or 0
                     local duration = GetItemDuration(itemName)
                     if currentTime - lastUsed >= duration then
-                        local items = Paper.Stats.Get("Items")
-                        if items and items.Value and items.Value[itemName] and items.Value[itemName] > 0 then
-                            UseInventoryItem(itemName)
+                        local itemCount = GetItemCount(itemName)
+                        if itemCount > 0 then
+                            local useAmount = math.min(itemCount, 500)
+                            UseInventoryItem(itemName, useAmount)
                             ItemTimers[itemName] = currentTime
                             task.wait(0.5)
                         end
@@ -587,11 +598,10 @@ local function StopAutoSpaceEgg()
     end
 end
 
--- Fixed Teleport and Hatch logic with table/string handling
+-- Fixed Teleport and Hatch logic with "Max" argument and optimized teleport
 local function TeleportAndHatch()
     if not AutoHatchEnabled then return end
     
-    -- Handle SelectedEgg being either string or table from dropdown
     local actualEggName = type(SelectedEgg) == "table" and SelectedEgg[1] or SelectedEgg
     if not actualEggName or actualEggName == "" then return end
 
@@ -608,8 +618,18 @@ local function TeleportAndHatch()
     local humanoidRootPart = character and character:FindFirstChild("HumanoidRootPart")
     
     if humanoidRootPart then
-        humanoidRootPart.CFrame = egg:GetPivot() + Vector3.new(0, 3, 0)
-        task.wait(0.1)
+        local targetPosition = egg:GetPivot()
+        local distanceFromEgg = (humanoidRootPart.Position - targetPosition.Position).Magnitude
+        
+        -- Only teleport if not already close to the egg (within 15 studs)
+        if distanceFromEgg > 15 and not TeleportCooldown then
+            TeleportCooldown = true
+            local randomHeight = math.random(3, 5)
+            humanoidRootPart.CFrame = targetPosition + Vector3.new(0, randomHeight, 0)
+            LastTeleportPosition = targetPosition.Position
+            task.wait(0.3)
+            TeleportCooldown = false
+        end
     end
 
     local remote = ReplicatedStorage:FindFirstChild("Paper")
@@ -619,7 +639,7 @@ local function TeleportAndHatch()
             remote = remote:FindFirstChild("__remotefunction")
             if remote then
                 pcall(function()
-                    remote:InvokeServer("Hatch Egg", actualEggName)
+                    remote:InvokeServer("Hatch Egg", actualEggName, "Max")
                     print("[HATCH] Hatched: " .. actualEggName)
                 end)
             end
@@ -627,7 +647,6 @@ local function TeleportAndHatch()
     end
 end
 
--- Fixed AutoHatch using task.spawn instead of heartbeat
 local function StartAutoHatch()
     if AutoHatchThread then
         task.cancel(AutoHatchThread)
@@ -651,7 +670,7 @@ local function StopAutoHatch()
     end
 end
 
--- Fixed SetupEggAutoDelete with dynamic pet rarity checking
+-- Fixed SetupEggAutoDelete with intelligent state checking
 local function SetupEggAutoDelete()
     if not EggDeleteEnabled then return end
     
@@ -668,7 +687,13 @@ local function SetupEggAutoDelete()
     
     local eggData = EggsList[actualEggName]
     
-    -- Collect rarities to delete based on selected rarities
+    -- Get current auto-delete settings
+    local autoDeleteData = Paper.Stats.Get("AutoDelete")
+    local currentAutoDelete = {}
+    if autoDeleteData and autoDeleteData.Value then
+        currentAutoDelete = autoDeleteData.Value
+    end
+    
     local raritiesToDelete = {}
     for _, rarityName in pairs(SelectedRarityToDelete) do
         raritiesToDelete[rarityName] = true
@@ -685,17 +710,28 @@ local function SetupEggAutoDelete()
                 petRarity = petModule.Rarity
             end
             
-            -- Check if this rarity should be deleted
             local shouldDelete = raritiesToDelete[petRarity] or false
+            local isCurrentlySet = currentAutoDelete[petName] == true
             
-            if shouldDelete then
+            -- Only fire if state needs to change
+            if shouldDelete and not isCurrentlySet then
                 pcall(function()
                     remote:InvokeServer("Pet", {
                         Pet = petName,
                         Action = "AutoDelete",
                         Tier = "all"
                     })
-                    print("[EGG DELETE] Auto-deleting: " .. petName .. " (" .. petRarity .. ")")
+                    print("[EGG DELETE] Enabled auto-delete: " .. petName .. " (" .. petRarity .. ")")
+                end)
+                task.wait(0.05)
+            elseif not shouldDelete and isCurrentlySet then
+                pcall(function()
+                    remote:InvokeServer("Pet", {
+                        Pet = petName,
+                        Action = "AutoDelete",
+                        Tier = "none"
+                    })
+                    print("[EGG DELETE] Disabled auto-delete: " .. petName .. " (" .. petRarity .. ")")
                 end)
                 task.wait(0.05)
             end
@@ -946,7 +982,7 @@ for _, name in ipairs(RarityNames) do
     table.insert(rarityOptions, name)
 end
 
--- UI Elements - No emojis
+-- UI Elements
 MainTab:CreateSection("Instant Throw")
 
 local InstantThrowToggle = MainTab:CreateToggle({
