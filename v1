@@ -396,7 +396,7 @@ local function GetItemDuration(itemName)
     return 300
 end
 
--- Fixed Use Inventory Item with bulk quantity support
+-- Fixed Use Inventory Item with proper args format
 local function UseInventoryItem(itemName, quantity)
     local remote = ReplicatedStorage:FindFirstChild("Paper")
     if remote then
@@ -469,6 +469,7 @@ local function EnchantPet(petGuid)
     end)
 end
 
+-- FIXED: StartAutoInventory with while loop to burn through all items
 local function StartAutoInventory()
     if AutoInventoryConnection then
         AutoInventoryConnection:Disconnect()
@@ -482,14 +483,25 @@ local function StartAutoInventory()
                 for _, itemName in pairs(SelectedInventoryItems) do
                     local lastUsed = ItemTimers[itemName] or 0
                     local duration = GetItemDuration(itemName)
+                    
                     if currentTime - lastUsed >= duration then
                         local itemCount = GetItemCount(itemName)
-                        if itemCount > 0 then
+                        
+                        -- Burn through all items in batches of 500
+                        while itemCount > 0 do
                             local useAmount = math.min(itemCount, 500)
-                            UseInventoryItem(itemName, useAmount)
-                            ItemTimers[itemName] = currentTime
-                            task.wait(0.5)
+                            local success = UseInventoryItem(itemName, useAmount)
+                            
+                            if not success then 
+                                break -- Stop if remote fails
+                            end
+                            
+                            task.wait(0.1) -- Small delay to prevent crashing
+                            itemCount = GetItemCount(itemName) -- Update count for next loop
                         end
+                        
+                        ItemTimers[itemName] = currentTime
+                        task.wait(0.5)
                     end
                 end
                 task.wait(1)
@@ -639,6 +651,7 @@ local function TeleportAndHatch()
             remote = remote:FindFirstChild("__remotefunction")
             if remote then
                 pcall(function()
+                    -- FIXED: Added "Max" argument
                     remote:InvokeServer("Hatch Egg", actualEggName, "Max")
                     print("[HATCH] Hatched: " .. actualEggName)
                 end)
@@ -670,7 +683,7 @@ local function StopAutoHatch()
     end
 end
 
--- Fixed SetupEggAutoDelete with proper nil check for number values
+-- FIXED: SetupEggAutoDelete with proper nil check (not == true)
 local function SetupEggAutoDelete()
     if not EggDeleteEnabled then return end
     
@@ -694,20 +707,17 @@ local function SetupEggAutoDelete()
         currentAutoDelete = autoDeleteStat.Value
     end
     
-    -- Determine which rarities should be deleted
     local raritiesToDelete = {}
     for _, rarityName in pairs(SelectedRarityToDelete) do
         raritiesToDelete[rarityName] = true
     end
     
-    -- Cache what we've already sent to avoid duplicate fires
     local pendingChanges = {}
     
     if eggData and eggData.Pets then
         for _, petInfo in pairs(eggData.Pets) do
             local petName = petInfo.Pet
             
-            -- Get pet rarity from module
             local petRarity = "Common"
             local petModule = PetsModules[petName]
             if petModule and petModule.Rarity then
@@ -715,15 +725,12 @@ local function SetupEggAutoDelete()
             end
             
             local shouldBeDeleted = raritiesToDelete[petRarity] or false
-            -- CRITICAL FIX: Check if value exists (not nil) - could be 7, true, or any truthy value
+            -- FIXED: Check if value exists (not nil) instead of == true
             local isCurrentlyDeleted = currentAutoDelete[petName] ~= nil
             
-            -- Only fire if the current state doesn't match what we want
-            -- AND we haven't already sent a change for this pet in this batch
             if shouldBeDeleted ~= isCurrentlyDeleted and not pendingChanges[petName] then
                 pendingChanges[petName] = true
                 
-                -- The AutoDelete remote toggles the state
                 pcall(function()
                     remote:InvokeServer("Pet", {
                         Pet = petName,
@@ -738,7 +745,6 @@ local function SetupEggAutoDelete()
         end
     end
     
-    -- Clean up pending changes after server sync delay
     task.spawn(function()
         task.wait(2)
         pendingChanges = {}
