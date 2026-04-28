@@ -1,5 +1,4 @@
 local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
-
 local Window = Rayfield:CreateWindow({
     Name = "Throw Sim Script",
     Icon = 0,
@@ -9,1572 +8,385 @@ local Window = Rayfield:CreateWindow({
         Enabled = true,
         FolderName = "ThrowSimScript",
         FileName = "Settings"
-    },
-    Discord = {
-        Enabled = false,
-        Invite = "noinvitelink",
-        RememberJoins = true
-    },
-    KeySystem = false,
-    KeySettings = {
-        Title = "Throw Sim Script",
-        Subtitle = "Key System",
-        Note = "No key required",
-        FileName = "Key"
     }
 })
+local GameTab = Window:CreateTab("Game", "gamepad")
 
-local MainTab = Window:CreateTab("Main", "sword")
-local MiscTab = Window:CreateTab("Misc", "package")
-local HatchTab = Window:CreateTab("Hatch", "egg")
-local RebirthUpgTab = Window:CreateTab("Rebirth/Upg", "arrow-up")
-
-print("[SCRIPT] Starting Throw Sim Script")
-
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
-local Workspace = game:GetService("Workspace")
 
-local InstantThrowEnabled = false
-local AutoTrainEnabled = false
-local AutoClaimChestsEnabled = false
-local AutoBuyObjectsEnabled = false
-local AutoUnlockWorldsEnabled = false
-local SelectedWorldMode = "Any Affordable World"
-local SelectedChests = {}
-
-local AutoUseInventoryEnabled = false
-local AutoEnchantEnabled = false
-local AutoClaimSpaceEggEnabled = false
-local SelectedInventoryItems = {}
-local SelectedEnchants = {}
-local AutoUseThread = nil
-
-local AutoHatchEnabled = false
-local SelectedEgg = ""
-local EggDeleteEnabled = false
-local InventoryDeleteEnabled = false
-local SelectedRarityToDelete = {}
-
-local AutoClaimAchievementsEnabled = false
-local SelectedAchievements = {}
-
--- Rebirth/Upg variables
-local AutoFeatures = {
-    Uni1AutoRebirth = false,
-    Uni2AutoRebirth = false,
-    Uni3AutoRebirth = false,
-    Uni1AutoUpgrades = false,
-    Uni2AutoUpgrades = false,
-    Uni3AutoUpgrades = false,
-}
-
-local SelectedValues = {
-    Uni1Rebirth = "Auto Rebirth",
-    Uni2Rebirth = "Auto Rebirth",
-    Uni3Rebirth = "Auto Rebirth",
-    Uni1Upgrades = {},
-    Uni2Upgrades = {},
-    Uni3Upgrades = {},
-}
-
-local Universe1Upgrades = {"Click Power", "Auto Click Speed", "Critical Chance", "Critical Damage", "Rebirth Multiplier", "Gem Multiplier"}
-local Universe2Upgrades = {"Essence Boost", "Machine Speed", "Production Rate", "Storage Capacity", "Auto Collect", "Double Essence"}
-local Universe3Upgrades = {"Universe Boost", "Mega Essence", "Time Warp", "Multiplier Mastery", "Speed Demon", "Ultimate Essence"}
-local RebirthOptions = {"Auto Rebirth", "Instant Rebirth", "Rebirth 1", "Rebirth 2", "Rebirth 3", "Rebirth 4", "Rebirth 5"}
-
-local InstantThrowConnection = nil
-local AutoClaimConnection = nil
-local AutoBuyConnection = nil
-local AutoUnlockConnection = nil
-local AutoInventoryConnection = nil
-local AutoEnchantConnection = nil
-local AutoSpaceEggConnection = nil
-local AutoHatchThread = nil
-local InventoryDeleteConnection = nil
-local AchievementConnection = nil
-local Paper = nil
-local ChestsList = {}
-local WorldsList = {}
-local EnchantsList = {}
-local EggsList = {}
-local AchievementsList = {}
-local PetsModules = {}
-local RarityNumbers = {}
-local RarityNames = {}
-local LastTeleportPosition = nil
-local TeleportCooldown = false
-local ItemsData = {}
-
-local function SafeRequire(module)
-    local success, result = pcall(function()
-        return require(module)
-    end)
-    if not success then
-        print("[FAILED] Could not require module:", module and module.Name or "nil")
-        return nil
+local function FormatNumber(num)
+    if not num then return "0" end
+    if num >= 1e33 then return string.format("%.1fDe", num / 1e33)
+    elseif num >= 1e30 then return string.format("%.1fNo", num / 1e30)
+    elseif num >= 1e27 then return string.format("%.1fOc", num / 1e27)
+    elseif num >= 1e24 then return string.format("%.1fSp", num / 1e24)
+    elseif num >= 1e21 then return string.format("%.1fSx", num / 1e21)
+    elseif num >= 1e18 then return string.format("%.1fQi", num / 1e18)
+    elseif num >= 1e15 then return string.format("%.1fQd", num / 1e15)
+    elseif num >= 1e12 then return string.format("%.1fT", num / 1e12)
+    elseif num >= 1e9 then return string.format("%.1fB", num / 1e9)
+    elseif num >= 1e6 then return string.format("%.1fM", num / 1e6)
+    elseif num >= 1e3 then return string.format("%.1fK", num / 1e3)
+    else return tostring(math.floor(num))
     end
-    return result
 end
 
-local paperModule = ReplicatedStorage:FindFirstChild("Paper")
-if paperModule then
-    print("[DEBUG] Found Paper module")
-    Paper = SafeRequire(paperModule)
-else
-    print("[ERROR] Paper module NOT FOUND")
-end
-
-local function GetPaperModule()
-    if Paper then return Paper end
+local Paper = nil
+local function GetPaper()
     local success, result = pcall(function()
         return require(ReplicatedStorage:WaitForChild("Paper"))
     end)
-    if success then
-        Paper = result
-        return Paper
-    end
-    return nil
+    if success then Paper = result end
+    return Paper
 end
 
-local RemotePath = ReplicatedStorage:FindFirstChild("Paper")
-local InvokeRemote = nil
-if RemotePath then
-    InvokeRemote = RemotePath:FindFirstChild("__remotefunction") or RemotePath:FindFirstChild("Remotes")
-    if not InvokeRemote and RemotePath:FindFirstChild("Remotes") then
-        InvokeRemote = RemotePath.Remotes:FindFirstChild("__remotefunction")
-    end
-end
-
-local function GetStat(statName)
-    local paper = GetPaperModule()
-    if not paper then return nil end
-    local success, result = pcall(function()
-        return paper.Stats.Get(statName)
+local RemoteFunction = nil
+local function GetRemote()
+    if RemoteFunction then return RemoteFunction end
+    local success = pcall(function()
+        local paperRemote = ReplicatedStorage:WaitForChild("Paper"):WaitForChild("Remotes")
+        RemoteFunction = paperRemote:WaitForChild("__remotefunction")
     end)
-    if success and result then
-        return result.Value
-    end
-    return nil
+    return RemoteFunction
 end
 
-local function FireRemote(remoteName, ...)
-    if InvokeRemote then
-        local success, result = pcall(function()
-            return InvokeRemote:InvokeServer(remoteName, ...)
+local function FireRebirth(rebirthNumber)
+    local remote = GetRemote()
+    if remote then
+        pcall(function()
+            remote:InvokeServer("Rebirth", rebirthNumber)
         end)
-        return success, result
-    end
-    return false, "Remote not found"
-end
-
-local rarityLib = ReplicatedStorage:FindFirstChild("Modules")
-if rarityLib then
-    rarityLib = rarityLib:FindFirstChild("Shared")
-    if rarityLib then
-        rarityLib = rarityLib:FindFirstChild("RarityLib")
-        if rarityLib then
-            local RarityLib = SafeRequire(rarityLib)
-            if RarityLib then
-                for rarityName, rarityNum in pairs(RarityLib) do
-                    if type(rarityNum) == "number" then
-                        table.insert(RarityNames, rarityName)
-                        RarityNumbers[rarityName] = rarityNum
-                    end
-                end
-                print("[DEBUG] Loaded RarityLib")
-            end
-        end
     end
 end
 
-if #RarityNames == 0 then
-    RarityNames = {"Common", "Rare", "Epic", "Legendary", "Mythic", "Exotic", "Secret", "Celestial", "Divine", "Exclusive"}
-    for i, name in ipairs(RarityNames) do
-        RarityNumbers[name] = i
+local function FireUpgrade(upgradeName)
+    local remote = GetRemote()
+    if remote then
+        pcall(function()
+            remote:InvokeServer("Upgrade", upgradeName)
+        end)
     end
 end
 
-local chestsTable = ReplicatedStorage:FindFirstChild("Tables")
-if chestsTable then
-    chestsTable = chestsTable:FindFirstChild("Chests")
-    if chestsTable then
-        ChestsList = SafeRequire(chestsTable) or {}
-        print("[DEBUG] Loaded Chests table")
+local function FireEssenceUpgrade(upgradeName)
+    local remote = GetRemote()
+    if remote then
+        pcall(function()
+            remote:InvokeServer("Essence Upgrade", upgradeName)
+        end)
     end
 end
 
-local worldsTable = ReplicatedStorage:FindFirstChild("Tables")
-if worldsTable then
-    worldsTable = worldsTable:FindFirstChild("Worlds")
-    if worldsTable then
-        WorldsList = SafeRequire(worldsTable) or {}
-        print("[DEBUG] Loaded Worlds table")
-    end
-end
-
-local enchantsTable = ReplicatedStorage:FindFirstChild("Tables")
-if enchantsTable then
-    enchantsTable = enchantsTable:FindFirstChild("Enchants")
-    if enchantsTable then
-        EnchantsList = SafeRequire(enchantsTable) or {}
-        print("[DEBUG] Loaded Enchants table")
-    end
-end
-
-local itemsTable = ReplicatedStorage:FindFirstChild("Tables")
-if itemsTable then
-    itemsTable = itemsTable:FindFirstChild("Items")
-    if itemsTable then
-        ItemsData = SafeRequire(itemsTable) or {}
-        print("[DEBUG] Loaded Items table")
-    end
-end
-
-local eggsTable = ReplicatedStorage:FindFirstChild("Tables")
-if eggsTable then
-    eggsTable = eggsTable:FindFirstChild("Eggs")
-    if eggsTable then
-        local allEggs = SafeRequire(eggsTable) or {}
-        for eggName, eggData in pairs(allEggs) do
-            if not eggData.Exclusive then
-                EggsList[eggName] = eggData
-            end
-        end
-        print("[DEBUG] Loaded Eggs table (filtered out exclusive eggs)")
-    end
-end
-
-local achievementsTable = ReplicatedStorage:FindFirstChild("Tables")
-if achievementsTable then
-    achievementsTable = achievementsTable:FindFirstChild("Achievements")
-    if achievementsTable then
-        AchievementsList = SafeRequire(achievementsTable) or {}
-        print("[DEBUG] Loaded Achievements table")
-    end
-end
-
-local petsFolder = ReplicatedStorage:FindFirstChild("Pets")
-if petsFolder then
-    for _, petModule in pairs(petsFolder:GetChildren()) do
-        if petModule:IsA("ModuleScript") then
-            local petData = SafeRequire(petModule)
-            if petData and petData.Rarity then
-                PetsModules[petModule.Name] = petData
-            end
-        end
-    end
-    print("[DEBUG] Loaded Pet modules for rarity checking")
-end
-
-local function SortTableAlphabetically(t)
-    local sorted = {}
-    for k, v in pairs(t) do
-        table.insert(sorted, k)
-    end
-    table.sort(sorted)
-    return sorted
-end
-
-local function GetThrownObject()
-    for _, obj in pairs(Workspace:GetDescendants()) do
-        if obj:IsA("BasePart") and obj:FindFirstChild("Creator") then
-            local success, creator = pcall(function()
-                return obj.Creator.Value
-            end)
-            if success and creator == LocalPlayer then
-                return obj
-            end
-        end
+local function GetStat(stat)
+    local paper = GetPaper()
+    if paper then
+        local success, result = pcall(function() return paper.Stats.Get(stat) end)
+        if success and result then return result.Value end
     end
     return nil
 end
 
-local function WaitForLanding()
-    local obj = GetThrownObject()
-    if not obj then return end
-    repeat
-        task.wait()
-        local vel = obj.AssemblyLinearVelocity
-        if vel.Magnitude < 1 then
-            task.wait(0.1)
-            break
-        end
-        obj = GetThrownObject()
-        if not obj then break end
-    until false
+local function GetMoneyStat(universe)
+    local paper = GetPaper()
+    if paper then
+        local UniverseModule = require(ReplicatedStorage:WaitForChild("Modules").Shared.Universe)
+        local success, result = pcall(function()
+            return UniverseModule.GetMoneyStat(LocalPlayer, universe)
+        end)
+        if success and result then return result.Value end
+    end
+    return nil
 end
 
-local function StartInstantThrow()
-    if InstantThrowConnection then
-        InstantThrowConnection:Disconnect()
-        InstantThrowConnection = nil
+local RebirthCosts = {Uni1 = {}, Uni2 = {}, Uni3 = {}}
+local RebirthDisplay = {Uni1 = {"Auto Rebirth"}, Uni2 = {"Auto Rebirth"}, Uni3 = {"Auto Rebirth"}}
+local UpgradeLists = {Uni1 = {}, Uni2 = {}, Uni3 = {}}
+
+local function LoadData()
+    local success1, rebirth1 = pcall(function() return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("Rebirths")) end)
+    if success1 and rebirth1 then
+        RebirthCosts.Uni1 = rebirth1
+        for i = 1, #rebirth1 do table.insert(RebirthDisplay.Uni1, FormatNumber(rebirth1[i])) end
     end
     
-    if InstantThrowEnabled and Paper then
-        InstantThrowConnection = RunService.Heartbeat:Connect(function()
-            if InstantThrowEnabled and Paper then
-                if AutoTrainEnabled then
-                    return
+    local success2, rebirth2 = pcall(function() return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("RebirthsUni2")) end)
+    if success2 and rebirth2 then
+        RebirthCosts.Uni2 = rebirth2
+        for i = 1, #rebirth2 do table.insert(RebirthDisplay.Uni2, FormatNumber(rebirth2[i])) end
+    end
+    
+    local success3, rebirth3 = pcall(function() return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("RebirthsUni3")) end)
+    if success3 and rebirth3 then
+        RebirthCosts.Uni3 = rebirth3
+        for i = 1, #rebirth3 do table.insert(RebirthDisplay.Uni3, FormatNumber(rebirth3[i])) end
+    end
+    
+    local success4, upgrades = pcall(function() return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("Upgrades")) end)
+    if success4 and upgrades then
+        for name, data in pairs(upgrades) do
+            if type(data) == "table" and data.StatName then
+                table.insert(UpgradeLists.Uni1, name)
+            end
+        end
+    end
+    
+    local success5, essence = pcall(function() return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("EssenceUpgrades")) end)
+    if success5 and essence then
+        for name, data in pairs(essence) do
+            if type(data) == "table" and data.StatName then
+                if data.Universe == 2 then
+                    table.insert(UpgradeLists.Uni2, name)
+                elseif data.Universe == 3 then
+                    table.insert(UpgradeLists.Uni3, name)
                 end
-                local raceStart = ReplicatedStorage:FindFirstChild("Values")
-                if raceStart then
-                    raceStart = raceStart:FindFirstChild("Race")
-                    if raceStart then
-                        raceStart = raceStart:FindFirstChild("RaceStart")
-                        if raceStart and raceStart.Value == 0 then
-                            pcall(function()
-                                Paper.Network.FireServer("Throw Object")
-                                WaitForLanding()
-                            end)
+            end
+        end
+    end
+end
+
+LoadData()
+
+local Auto = {rebirth = {false, false, false}, upgrades = {false, false, false}}
+local Selected = {rebirth = {"Auto Rebirth", "Auto Rebirth", "Auto Rebirth"}, upgrade = {nil, nil, nil}}
+
+-- Universe 1
+GameTab:CreateToggle({
+    Name = "Universe 1 Auto Rebirth",
+    CurrentValue = false,
+    Flag = "U1Rebirth",
+    Callback = function(v)
+        Auto.rebirth[1] = v
+        if v then task.spawn(function()
+            while Auto.rebirth[1] do
+                local money = GetMoneyStat(1)
+                if Selected.rebirth[1] ~= "Auto Rebirth" then
+                    for i, display in ipairs(RebirthDisplay.Uni1) do
+                        if display == Selected.rebirth[1] then
+                            local cost = RebirthCosts.Uni1[i]
+                            if money and money >= cost then
+                                FireRebirth(i)
+                            end
+                            break
+                        end
+                    end
+                elseif money then
+                    for i = #RebirthCosts.Uni1, 1, -1 do
+                        if money >= RebirthCosts.Uni1[i] then
+                            FireRebirth(i)
+                            break
                         end
                     end
                 end
                 task.wait()
             end
-        end)
-    end
-end
+        end) end
+    end,
+})
 
-local function StopInstantThrow()
-    if InstantThrowConnection then
-        InstantThrowConnection:Disconnect()
-        InstantThrowConnection = nil
-    end
-end
+GameTab:CreateDropdown({
+    Name = "Universe 1 Rebirth Cost",
+    Options = RebirthDisplay.Uni1,
+    CurrentOption = "Auto Rebirth",
+    MultipleOptions = false,
+    Flag = "U1RebirthSelect",
+    Callback = function(opt) Selected.rebirth[1] = opt end,
+})
 
-local function StartAutoClaim()
-    if AutoClaimConnection then
-        AutoClaimConnection:Disconnect()
-        AutoClaimConnection = nil
-    end
-    
-    if AutoClaimChestsEnabled then
-        AutoClaimConnection = RunService.Heartbeat:Connect(function()
-            if AutoClaimChestsEnabled then
-                for _, chestName in pairs(SelectedChests) do
-                    local remote = ReplicatedStorage:FindFirstChild("Paper")
-                    if remote then
-                        remote = remote:FindFirstChild("Remotes")
-                        if remote then
-                            remote = remote:FindFirstChild("__remotefunction")
-                            if remote then
-                                pcall(function()
-                                    remote:InvokeServer("Claim Chest", chestName)
-                                end)
-                            end
+GameTab:CreateToggle({
+    Name = "Universe 1 Auto Buy Upgrades",
+    CurrentValue = false,
+    Flag = "U1Upgrades",
+    Callback = function(v)
+        Auto.upgrades[1] = v
+        if v then task.spawn(function()
+            while Auto.upgrades[1] and Selected.upgrade[1] do
+                local skips = GetStat("RebirthSkips")
+                if skips then
+                    local upgrades = require(ReplicatedStorage.Tables.Upgrades)
+                    local data = upgrades[Selected.upgrade[1]]
+                    if data then
+                        local level = GetStat(data.StatName) or 0
+                        local cost = nil
+                        if data.OneTimeUpgrade and level < 1 then cost = data.Cost
+                        elseif not data.OneTimeUpgrade and (not data.Max or level < data.Max) then
+                            cost = type(data.UpgradeCosts) == "table" and data.UpgradeCosts[level + 1] or (type(data.UpgradeCosts) == "function" and data.UpgradeCosts(level))
                         end
-                    end
-                    task.wait(0.5)
-                end
-                task.wait(1)
-            end
-        end)
-    end
-end
-
-local function StopAutoClaim()
-    if AutoClaimConnection then
-        AutoClaimConnection:Disconnect()
-        AutoClaimConnection = nil
-    end
-end
-
-local function StartAutoBuy()
-    if AutoBuyConnection then
-        AutoBuyConnection:Disconnect()
-        AutoBuyConnection = nil
-    end
-    
-    if AutoBuyObjectsEnabled then
-        AutoBuyConnection = RunService.Heartbeat:Connect(function()
-            if AutoBuyObjectsEnabled then
-                local remote = ReplicatedStorage:FindFirstChild("Paper")
-                if remote then
-                    remote = remote:FindFirstChild("Remotes")
-                    if remote then
-                        remote = remote:FindFirstChild("__remotefunction")
-                        if remote then
-                            pcall(function()
-                                remote:InvokeServer("Buy Next Object")
-                            end)
-                        end
+                        if cost and skips >= cost then FireUpgrade(Selected.upgrade[1]) end
                     end
                 end
-                task.wait(0.5)
+                task.wait()
             end
-        end)
-    end
-end
+        end) end
+    end,
+})
 
-local function StopAutoBuy()
-    if AutoBuyConnection then
-        AutoBuyConnection:Disconnect()
-        AutoBuyConnection = nil
-    end
-end
+GameTab:CreateDropdown({
+    Name = "Universe 1 Upgrade",
+    Options = UpgradeLists.Uni1,
+    CurrentOption = {},
+    MultipleOptions = false,
+    Flag = "U1UpgradeSelect",
+    Callback = function(opt) Selected.upgrade[1] = opt end,
+})
 
-local function StartAutoUnlock()
-    if AutoUnlockConnection then
-        AutoUnlockConnection:Disconnect()
-        AutoUnlockConnection = nil
-    end
-    
-    if AutoUnlockWorldsEnabled then
-        AutoUnlockConnection = RunService.Heartbeat:Connect(function()
-            if AutoUnlockWorldsEnabled then
-                if SelectedWorldMode == "Any Affordable World" then
-                    local remote = ReplicatedStorage:FindFirstChild("Paper")
-                    if remote then
-                        remote = remote:FindFirstChild("Remotes")
-                        if remote then
-                            remote = remote:FindFirstChild("__remotefunction")
-                            if remote then
-                                pcall(function()
-                                    remote:InvokeServer("Unlock Next World")
-                                end)
-                            end
-                        end
-                    end
-                else
-                    for worldNum, worldData in pairs(WorldsList) do
-                        if worldData.WorldName == SelectedWorldMode then
-                            local remote = ReplicatedStorage:FindFirstChild("Paper")
-                            if remote then
-                                remote = remote:FindFirstChild("Remotes")
-                                if remote then
-                                    remote = remote:FindFirstChild("__remotefunction")
-                                    if remote then
-                                        pcall(function()
-                                            remote:InvokeServer("Set Current World", worldNum)
-                                        end)
-                                    end
-                                end
+-- Universe 2
+GameTab:CreateToggle({
+    Name = "Universe 2 Auto Rebirth",
+    CurrentValue = false,
+    Flag = "U2Rebirth",
+    Callback = function(v)
+        Auto.rebirth[2] = v
+        if v then task.spawn(function()
+            while Auto.rebirth[2] do
+                local essence = GetStat("Essence")
+                if Selected.rebirth[2] ~= "Auto Rebirth" then
+                    for i, display in ipairs(RebirthDisplay.Uni2) do
+                        if display == Selected.rebirth[2] then
+                            local cost = RebirthCosts.Uni2[i]
+                            if essence and essence >= cost then
+                                FireRebirth(i)
                             end
                             break
                         end
                     end
-                end
-                task.wait(1)
-            end
-        end)
-    end
-end
-
-local function StopAutoUnlock()
-    if AutoUnlockConnection then
-        AutoUnlockConnection:Disconnect()
-        AutoUnlockConnection = nil
-    end
-end
-
-local function UseInventoryItem(itemName, quantity)
-    local remote = ReplicatedStorage:FindFirstChild("Paper")
-    if remote then remote = remote:FindFirstChild("Remotes") end
-    if remote then remote = remote:FindFirstChild("__remotefunction") end
-    if remote then
-        local success, result = pcall(function()
-            return remote:InvokeServer("Use Item", itemName, quantity)
-        end)
-        if success then
-            print("[INVENTORY] Used " .. quantity .. "x " .. itemName)
-            return true
-        else
-            print("[INVENTORY] Failed: " .. tostring(result))
-            return false
-        end
-    end
-    print("[INVENTORY] Remote not found")
-    return false
-end
-
-local function GetPlayerInventory()
-    local success, items = pcall(function()
-        return Paper.Stats.Get("Items")
-    end)
-    if not success or not items or not items.Value then
-        return {}
-    end
-    
-    local itemList = {}
-    for name, amount in pairs(items.Value) do
-        if amount > 0 then
-            table.insert(itemList, name)
-        end
-    end
-    table.sort(itemList)
-    return itemList
-end
-
-local function GetUsableItemsForDropdown()
-    local allItems = GetPlayerInventory()
-    local usableItems = {}
-    
-    for _, itemName in ipairs(allItems) do
-        local itemData = ItemsData[itemName]
-        if itemData and itemData.Usable ~= false then
-            table.insert(usableItems, itemName)
-        end
-    end
-    
-    return usableItems
-end
-
-local function UpdateInventoryDropdown()
-    local usableItems = GetUsableItemsForDropdown()
-    if MiscTab:GetDropdown("InventoryDropdown") then
-        MiscTab:GetDropdown("InventoryDropdown"):SetOptions(usableItems)
-    end
-end
-
-local function StopAutoUse()
-    if AutoUseThread then
-        task.cancel(AutoUseThread)
-        AutoUseThread = nil
-    end
-end
-
-local function StartAutoUse()
-    StopAutoUse()
-    
-    if not AutoUseInventoryEnabled then return end
-    
-    AutoUseThread = task.spawn(function()
-        while AutoUseInventoryEnabled do
-            for _, itemName in pairs(SelectedInventoryItems) do
-                local remote = ReplicatedStorage:FindFirstChild("Paper")
-                if remote then remote = remote:FindFirstChild("Remotes") end
-                if remote then remote = remote:FindFirstChild("__remotefunction") end
-                
-                if remote then
-                    pcall(function()
-                        remote:InvokeServer("Use Item", itemName, 1)
-                        print("[USED] " .. itemName)
-                    end)
-                end
-                task.wait(0.1)
-            end
-            task.wait(1)
-        end
-    end)
-end
-
-local function HasSelectedEnchant(pet)
-    local currentEnchant = pet:GetAttribute("Enchant1") or ""
-    for _, enchantName in pairs(SelectedEnchants) do
-        if currentEnchant == enchantName then
-            return true
-        end
-    end
-    return false
-end
-
-local function EnchantPet(petGuid)
-    return pcall(function()
-        return Paper.Network.InvokeServer("Pet", {
-            ["Action"] = "Enchant",
-            ["Pet"] = petGuid
-        })
-    end)
-end
-
-local function StartAutoEnchant()
-    if AutoEnchantConnection then
-        AutoEnchantConnection:Disconnect()
-        AutoEnchantConnection = nil
-    end
-    
-    if AutoEnchantEnabled and Paper then
-        AutoEnchantConnection = RunService.Heartbeat:Connect(function()
-            if AutoEnchantEnabled and Paper then
-                local equippedPets = Paper.Stats.Get("Equipped Pets")
-                local enchantGems = Paper.Stats.Get("EnchantGems")
-                
-                if not equippedPets or not enchantGems then
-                    task.wait(1)
-                    return
-                end
-                
-                if enchantGems.Value == 0 then
-                    task.wait(5)
-                    return
-                end
-                
-                local petsToEnchant = {}
-                for _, pet in pairs(equippedPets:GetChildren()) do
-                    if not HasSelectedEnchant(pet) then
-                        table.insert(petsToEnchant, pet)
-                    end
-                end
-                
-                if #petsToEnchant == 0 then
-                    task.wait(5)
-                    return
-                end
-                
-                for _, pet in pairs(petsToEnchant) do
-                    if enchantGems.Value > 0 then
-                        local success, result = EnchantPet(pet.Name)
-                        if success then
-                            print("[ENCHANT] Enchanted pet:", pet.Name)
+                elseif essence then
+                    for i = #RebirthCosts.Uni2, 1, -1 do
+                        if essence >= RebirthCosts.Uni2[i] then
+                            FireRebirth(i)
+                            break
                         end
-                        task.wait(0.25)
-                    else
-                        break
                     end
                 end
-                task.wait(0.5)
+                task.wait()
             end
-        end)
-    end
-end
-
-local function StopAutoEnchant()
-    if AutoEnchantConnection then
-        AutoEnchantConnection:Disconnect()
-        AutoEnchantConnection = nil
-    end
-end
-
-local function StartAutoSpaceEgg()
-    if AutoSpaceEggConnection then
-        AutoSpaceEggConnection:Disconnect()
-        AutoSpaceEggConnection = nil
-    end
-    
-    if AutoClaimSpaceEggEnabled and Paper then
-        AutoSpaceEggConnection = RunService.Heartbeat:Connect(function()
-            if AutoClaimSpaceEggEnabled and Paper then
-                local freeTimer = Paper.Stats.Get("FreeRewardTimer")
-                if freeTimer then
-                    local timerValue = freeTimer.Value
-                    local remaining = 900 - timerValue
-                    
-                    if remaining <= 0 then
-                        pcall(function()
-                            Paper.Network.InvokeServer("Claim Free Reward")
-                            print("[SPACE EGG] Claimed")
-                        end)
-                        task.wait(5)
-                    end
-                end
-                task.wait(1)
-            end
-        end)
-    end
-end
-
-local function StopAutoSpaceEgg()
-    if AutoSpaceEggConnection then
-        AutoSpaceEggConnection:Disconnect()
-        AutoSpaceEggConnection = nil
-    end
-end
-
-local function TeleportAndHatch()
-    if not AutoHatchEnabled then return end
-    
-    local actualEggName = type(SelectedEgg) == "table" and SelectedEgg[1] or SelectedEgg
-    if not actualEggName or actualEggName == "" then return end
-
-    local eggFolder = Workspace:FindFirstChild("Eggs")
-    if not eggFolder then return end
-    
-    local egg = eggFolder:FindFirstChild(actualEggName)
-    if not egg then
-        print("[HATCH] Egg not found: " .. actualEggName)
-        return
-    end
-
-    local character = LocalPlayer.Character
-    local humanoidRootPart = character and character:FindFirstChild("HumanoidRootPart")
-    
-    if humanoidRootPart then
-        local targetPosition = egg:GetPivot()
-        local distanceFromEgg = (humanoidRootPart.Position - targetPosition.Position).Magnitude
-        
-        if distanceFromEgg > 15 and not TeleportCooldown then
-            TeleportCooldown = true
-            local randomHeight = math.random(3, 5)
-            humanoidRootPart.CFrame = targetPosition + Vector3.new(0, randomHeight, 0)
-            LastTeleportPosition = targetPosition.Position
-            task.wait(0.3)
-            TeleportCooldown = false
-        end
-    end
-
-    local remote = ReplicatedStorage:FindFirstChild("Paper")
-    if remote then
-        remote = remote:FindFirstChild("Remotes")
-        if remote then
-            remote = remote:FindFirstChild("__remotefunction")
-            if remote then
-                pcall(function()
-                    remote:InvokeServer("Hatch Egg", actualEggName, "Max")
-                    print("[HATCH] Hatched: " .. actualEggName)
-                end)
-            end
-        end
-    end
-end
-
-local function StartAutoHatch()
-    if AutoHatchThread then
-        task.cancel(AutoHatchThread)
-        AutoHatchThread = nil
-    end
-    
-    if AutoHatchEnabled then
-        AutoHatchThread = task.spawn(function()
-            while AutoHatchEnabled do
-                TeleportAndHatch()
-                task.wait(1.5)
-            end
-        end)
-    end
-end
-
-local function StopAutoHatch()
-    if AutoHatchThread then
-        task.cancel(AutoHatchThread)
-        AutoHatchThread = nil
-    end
-end
-
-local function SetupEggAutoDelete()
-    if not EggDeleteEnabled then return end
-    
-    local actualEggName = type(SelectedEgg) == "table" and SelectedEgg[1] or SelectedEgg
-    if not actualEggName or actualEggName == "" then return end
-    if not EggsList[actualEggName] then return end
-    
-    local remote = ReplicatedStorage:FindFirstChild("Paper")
-    if not remote then return end
-    remote = remote:FindFirstChild("Remotes")
-    if not remote then return end
-    remote = remote:FindFirstChild("__remotefunction")
-    if not remote then return end
-    
-    local eggData = EggsList[actualEggName]
-    
-    local autoDeleteData = Paper.Stats.Get("AutoDelete")
-    local currentAutoDelete = {}
-    if autoDeleteData and autoDeleteData.Value then
-        currentAutoDelete = autoDeleteData.Value
-    end
-    
-    local raritiesToDelete = {}
-    for _, rarityName in pairs(SelectedRarityToDelete) do
-        raritiesToDelete[rarityName] = true
-    end
-    
-    if eggData and eggData.Pets then
-        for _, petInfo in pairs(eggData.Pets) do
-            local petName = petInfo.Pet
-            
-            local petRarity = "Common"
-            local petModule = PetsModules[petName]
-            if petModule and petModule.Rarity then
-                petRarity = petModule.Rarity
-            end
-            
-            local shouldDelete = raritiesToDelete[petRarity] or false
-            local isCurrentlySet = currentAutoDelete[petName] == true
-            
-            if shouldDelete and not isCurrentlySet then
-                pcall(function()
-                    remote:InvokeServer("Pet", {
-                        Pet = petName,
-                        Action = "AutoDelete",
-                        Tier = "all"
-                    })
-                    print("[EGG DELETE] Enabled auto-delete: " .. petName .. " (" .. petRarity .. ")")
-                end)
-                task.wait(0.05)
-            elseif not shouldDelete and isCurrentlySet then
-                pcall(function()
-                    remote:InvokeServer("Pet", {
-                        Pet = petName,
-                        Action = "AutoDelete",
-                        Tier = "none"
-                    })
-                    print("[EGG DELETE] Disabled auto-delete: " .. petName .. " (" .. petRarity .. ")")
-                end)
-                task.wait(0.05)
-            end
-        end
-    end
-end
-
-local function GetInventoryPets()
-    local pets = {}
-    local petsFolder = Paper.Stats.Get("Pets")
-    if petsFolder then
-        for _, pet in pairs(petsFolder:GetChildren()) do
-            table.insert(pets, pet)
-        end
-    end
-    return pets
-end
-
-local function DeletePet(petId)
-    local remote = ReplicatedStorage:FindFirstChild("Paper")
-    if remote then
-        remote = remote:FindFirstChild("Remotes")
-        if remote then
-            remote = remote:FindFirstChild("__remotefunction")
-            if remote then
-                local success, result = pcall(function()
-                    return remote:InvokeServer("Pet", {
-                        Action = "Delete",
-                        Pets = {petId}
-                    })
-                end)
-                if success then
-                    print("[INVENTORY DELETE] Deleted pet: " .. petId)
-                end
-            end
-        end
-    end
-end
-
-local function CheckAndDeleteInventoryPets()
-    if not InventoryDeleteEnabled then return end
-    
-    local raritiesToDelete = {}
-    for _, rarityName in pairs(SelectedRarityToDelete) do
-        raritiesToDelete[rarityName] = true
-    end
-    
-    local pets = GetInventoryPets()
-    
-    for _, pet in pairs(pets) do
-        local petRarity = pet:GetAttribute("Rarity") or "Common"
-        
-        if raritiesToDelete[petRarity] then
-            local petName = pet:GetAttribute("PetName") or "Unknown"
-            print("[INVENTORY DELETE] Deleting: " .. petName .. " (" .. petRarity .. ")")
-            DeletePet(pet.Name)
-            task.wait(0.3)
-        end
-    end
-end
-
-local function StartInventoryDeleteLoop()
-    if InventoryDeleteConnection then
-        InventoryDeleteConnection:Disconnect()
-        InventoryDeleteConnection = nil
-    end
-    
-    if InventoryDeleteEnabled then
-        CheckAndDeleteInventoryPets()
-        InventoryDeleteConnection = RunService.Heartbeat:Connect(function()
-            if InventoryDeleteEnabled then
-                CheckAndDeleteInventoryPets()
-                task.wait(60)
-            end
-        end)
-    end
-end
-
-local function StopInventoryDeleteLoop()
-    if InventoryDeleteConnection then
-        InventoryDeleteConnection:Disconnect()
-        InventoryDeleteConnection = nil
-    end
-end
-
-local function ToggleAutoTrain(state)
-    AutoTrainEnabled = state
-    
-    if state then
-        if InstantThrowEnabled then
-            StopInstantThrow()
-        end
-        if Paper and Paper.Stats then
-            local success, autoTrainStat = pcall(function()
-                return Paper.Stats.Get("AutoTrain")
-            end)
-            if success and autoTrainStat then
-                pcall(function()
-                    autoTrainStat.Value = true
-                end)
-            end
-        end
-    else
-        if InstantThrowEnabled then
-            StartInstantThrow()
-        end
-        pcall(function()
-            local remote = ReplicatedStorage:FindFirstChild("Paper")
-            if remote then
-                remote = remote:FindFirstChild("Remotes")
-                if remote then
-                    remote = remote:FindFirstChild("__remoteevent")
-                    if remote then
-                        remote:FireServer("Stop Training")
-                    end
-                end
-            end
-        end)
-        if Paper and Paper.Stats then
-            local success, autoTrainStat = pcall(function()
-                return Paper.Stats.Get("AutoTrain")
-            end)
-            if success and autoTrainStat then
-                pcall(function()
-                    autoTrainStat.Value = false
-                end)
-            end
-        end
-    end
-end
-
-local achievementRemote = nil
-local achievementBusy = false
-
-local function GetAchievementRemote()
-    if achievementRemote then return achievementRemote end
-    local remote = ReplicatedStorage:FindFirstChild("Paper")
-    if remote then
-        remote = remote:FindFirstChild("Remotes")
-        if remote then
-            remote = remote:FindFirstChild("__remotefunction")
-            if remote then
-                achievementRemote = remote
-                return achievementRemote
-            end
-        end
-    end
-    return nil
-end
-
-local function ClaimAchievement(id, rank)
-    local remote = GetAchievementRemote()
-    if not remote then return false end
-    local success, result = pcall(function()
-        return remote:InvokeServer("Claim Achievement", id, rank)
-    end)
-    return success and result == true
-end
-
-local function ClaimAchievementChain(id, data)
-    local currentRank = Paper.Stats.Get(data.AchievementStat).Value
-    local progress = Paper.Stats.Get(data.Stat).Value
-    
-    for rank = currentRank + 1, #data.Rewards do
-        local reward = data.Rewards[rank]
-        if progress >= reward.Requirement then
-            print("[ACHIEVEMENT] Trying to claim " .. id .. " Rank " .. rank)
-            if ClaimAchievement(id, rank) then
-                print("[ACHIEVEMENT] Claimed!")
-                task.wait(0.5)
-            else
-                break
-            end
-        else
-            break
-        end
-    end
-end
-
-local function ScanAndClaimAchievements()
-    if not AutoClaimAchievementsEnabled then return end
-    if achievementBusy then return end
-    achievementBusy = true
-    
-    if #SelectedAchievements > 0 and not table.find(SelectedAchievements, "All") then
-        for _, achievementId in pairs(SelectedAchievements) do
-            local data = AchievementsList[achievementId]
-            if data then
-                ClaimAchievementChain(achievementId, data)
-                task.wait(0.3)
-            end
-        end
-    elseif table.find(SelectedAchievements, "All") or #SelectedAchievements == 0 then
-        for id, data in pairs(AchievementsList) do
-            ClaimAchievementChain(id, data)
-            task.wait(0.3)
-        end
-    end
-    
-    achievementBusy = false
-end
-
-local function StartAutoAchievements()
-    if AchievementConnection then
-        AchievementConnection:Disconnect()
-        AchievementConnection = nil
-    end
-    
-    if AutoClaimAchievementsEnabled then
-        ScanAndClaimAchievements()
-        AchievementConnection = RunService.Heartbeat:Connect(function()
-            if AutoClaimAchievementsEnabled then
-                ScanAndClaimAchievements()
-                task.wait(60)
-            end
-        end)
-    end
-end
-
-local function StopAutoAchievements()
-    if AchievementConnection then
-        AchievementConnection:Disconnect()
-        AchievementConnection = nil
-    end
-end
-
-local chestNames = SortTableAlphabetically(ChestsList)
-local worldNames = { "Any Affordable World" }
-for _, worldData in pairs(WorldsList) do
-    table.insert(worldNames, worldData.WorldName)
-end
-table.sort(worldNames, function(a, b) 
-    if a == "Any Affordable World" then return true
-    elseif b == "Any Affordable World" then return false
-    else return a < b end
-end)
-
-local enchantNames = SortTableAlphabetically(EnchantsList)
-local eggNames = SortTableAlphabetically(EggsList)
-
-local achievementNames = SortTableAlphabetically(AchievementsList)
-table.insert(achievementNames, 1, "All")
-
-local rarityOptions = {}
-for _, name in ipairs(RarityNames) do
-    table.insert(rarityOptions, name)
-end
-
--- MAIN TAB
-MainTab:CreateSection("Instant Throw")
-
-local InstantThrowToggle = MainTab:CreateToggle({
-    Name = "Instant Throw",
-    CurrentValue = false,
-    Flag = "InstantThrowFlag",
-    Callback = function(Value)
-        InstantThrowEnabled = Value
-        if Value then
-            if AutoTrainEnabled then
-                AutoTrainEnabled = false
-                AutoTrainToggle:SetValue(false)
-            end
-            StartInstantThrow()
-        else
-            StopInstantThrow()
-        end
-    end
-})
-
-MainTab:CreateSection("Auto Train")
-
-local AutoTrainToggle = MainTab:CreateToggle({
-    Name = "Auto Train",
-    CurrentValue = false,
-    Flag = "AutoTrainFlag",
-    Callback = function(Value)
-        ToggleAutoTrain(Value)
-    end
-})
-
-MainTab:CreateSection("Auto Claim Chests")
-
-MainTab:CreateToggle({
-    Name = "Auto Claim Chests",
-    CurrentValue = false,
-    Flag = "AutoClaimFlag",
-    Callback = function(Value)
-        AutoClaimChestsEnabled = Value
-        if Value then
-            StartAutoClaim()
-        else
-            StopAutoClaim()
-        end
-    end
-})
-
-MainTab:CreateDropdown({
-    Name = "Select Chests",
-    Options = chestNames,
-    CurrentOption = {},
-    Flag = "ChestSelection",
-    MultipleOptions = true,
-    Callback = function(Value)
-        SelectedChests = Value
-        print("[CHESTS] Selected: " .. table.concat(SelectedChests, ", "))
-    end
-})
-
-MainTab:CreateSection("Auto Buy Objects")
-
-MainTab:CreateToggle({
-    Name = "Auto Buy All Objects",
-    CurrentValue = false,
-    Flag = "AutoBuyFlag",
-    Callback = function(Value)
-        AutoBuyObjectsEnabled = Value
-        if Value then
-            StartAutoBuy()
-        else
-            StopAutoBuy()
-        end
-    end
-})
-
-MainTab:CreateSection("Auto Unlock Worlds")
-
-MainTab:CreateToggle({
-    Name = "Auto Unlock Worlds",
-    CurrentValue = false,
-    Flag = "AutoUnlockFlag",
-    Callback = function(Value)
-        AutoUnlockWorldsEnabled = Value
-        if Value then
-            StartAutoUnlock()
-        else
-            StopAutoUnlock()
-        end
-    end
-})
-
-MainTab:CreateDropdown({
-    Name = "Select World",
-    Options = worldNames,
-    CurrentOption = "Any Affordable World",
-    Flag = "WorldSelection",
-    Callback = function(Value)
-        SelectedWorldMode = Value
-    end
-})
-
-MainTab:CreateSection("Priority")
-
-MainTab:CreateParagraph({
-    Title = "How It Works",
-    Content = "Auto Train ON -> Instant Throw stops\nAuto Train OFF -> Instant Throw works\nOther features run independently"
-})
-
--- REBIRTH/UPG TAB
-local Universe1Section = RebirthUpgTab:CreateSection("Universe 1")
-local Universe2Section = RebirthUpgTab:CreateSection("Universe 2")
-local Universe3Section = RebirthUpgTab:CreateSection("Universe 3")
-
-RebirthUpgTab:CreateToggle({
-    Name = "Uni 1 Auto Rebirth",
-    CurrentValue = false,
-    Flag = "Uni1AutoRebirth",
-    Section = Universe1Section,
-    Callback = function(Value)
-        AutoFeatures.Uni1AutoRebirth = Value
-        if Value then
-            task.spawn(function()
-                while AutoFeatures.Uni1AutoRebirth do
-                    pcall(function()
-                        FireRemote("Rebirth")
-                    end)
-                    task.wait(2)
-                end
-            end)
-        end
+        end) end
     end,
 })
 
-RebirthUpgTab:CreateDropdown({
-    Name = "Select Uni 1 Rebirth",
-    Options = RebirthOptions,
+GameTab:CreateDropdown({
+    Name = "Universe 2 Rebirth Cost",
+    Options = RebirthDisplay.Uni2,
     CurrentOption = "Auto Rebirth",
-    Flag = "Uni1RebirthSelect",
-    Section = Universe1Section,
-    Callback = function(Option)
-        SelectedValues.Uni1Rebirth = Option
-    end,
+    MultipleOptions = false,
+    Flag = "U2RebirthSelect",
+    Callback = function(opt) Selected.rebirth[2] = opt end,
 })
 
-RebirthUpgTab:CreateToggle({
-    Name = "Uni 1 Auto Buy Upgrades",
+GameTab:CreateToggle({
+    Name = "Universe 2 Auto Buy Upgrades",
     CurrentValue = false,
-    Flag = "Uni1AutoUpgrades",
-    Section = Universe1Section,
-    Callback = function(Value)
-        AutoFeatures.Uni1AutoUpgrades = Value
-        if Value then
-            task.spawn(function()
-                while AutoFeatures.Uni1AutoUpgrades do
-                    for _, upgrade in pairs(SelectedValues.Uni1Upgrades) do
-                        pcall(function()
-                            FireRemote("Upgrade", upgrade)
-                        end)
-                        task.wait(0.5)
+    Flag = "U2Upgrades",
+    Callback = function(v)
+        Auto.upgrades[2] = v
+        if v then task.spawn(function()
+            while Auto.upgrades[2] and Selected.upgrade[2] do
+                local essence = GetStat("Essence")
+                if essence then
+                    local essenceUpgrades = require(ReplicatedStorage.Tables.EssenceUpgrades)
+                    local data = essenceUpgrades[Selected.upgrade[2]]
+                    if data then
+                        local level = GetStat(data.StatName) or 0
+                        local cost = nil
+                        if data.OneTimeUpgrade and level < 1 then cost = data.Cost
+                        elseif not data.OneTimeUpgrade and (not data.Max or level < data.Max) then
+                            cost = type(data.UpgradeCosts) == "table" and data.UpgradeCosts[level + 1] or (type(data.UpgradeCosts) == "function" and data.UpgradeCosts(level))
+                        end
+                        if cost and essence >= cost then FireEssenceUpgrade(Selected.upgrade[2]) end
                     end
-                    task.wait(3)
                 end
-            end)
-        end
+                task.wait()
+            end
+        end) end
     end,
 })
 
-RebirthUpgTab:CreateDropdown({
-    Name = "Select Uni 1 Upgrades",
-    Options = Universe1Upgrades,
+GameTab:CreateDropdown({
+    Name = "Universe 2 Upgrade",
+    Options = UpgradeLists.Uni2,
     CurrentOption = {},
-    MultiOptions = true,
-    Flag = "Uni1UpgradesSelect",
-    Section = Universe1Section,
-    Callback = function(Options)
-        SelectedValues.Uni1Upgrades = Options
-    end,
+    MultipleOptions = false,
+    Flag = "U2UpgradeSelect",
+    Callback = function(opt) Selected.upgrade[2] = opt end,
 })
 
-RebirthUpgTab:CreateToggle({
-    Name = "Uni 2 Auto Rebirth",
+-- Universe 3
+GameTab:CreateToggle({
+    Name = "Universe 3 Auto Rebirth",
     CurrentValue = false,
-    Flag = "Uni2AutoRebirth",
-    Section = Universe2Section,
-    Callback = function(Value)
-        AutoFeatures.Uni2AutoRebirth = Value
-        if Value then
-            task.spawn(function()
-                while AutoFeatures.Uni2AutoRebirth do
-                    pcall(function()
-                        FireRemote("EssenceRebirth")
-                    end)
-                    task.wait(2)
+    Flag = "U3Rebirth",
+    Callback = function(v)
+        Auto.rebirth[3] = v
+        if v then task.spawn(function()
+            while Auto.rebirth[3] do
+                local essence = GetStat("Essence")
+                if Selected.rebirth[3] ~= "Auto Rebirth" then
+                    for i, display in ipairs(RebirthDisplay.Uni3) do
+                        if display == Selected.rebirth[3] then
+                            local cost = RebirthCosts.Uni3[i]
+                            if essence and essence >= cost then
+                                FireRebirth(i)
+                            end
+                            break
+                        end
+                    end
+                elseif essence then
+                    for i = #RebirthCosts.Uni3, 1, -1 do
+                        if essence >= RebirthCosts.Uni3[i] then
+                            FireRebirth(i)
+                            break
+                        end
+                    end
                 end
-            end)
-        end
+                task.wait()
+            end
+        end) end
     end,
 })
 
-RebirthUpgTab:CreateDropdown({
-    Name = "Select Uni 2 Rebirth",
-    Options = RebirthOptions,
+GameTab:CreateDropdown({
+    Name = "Universe 3 Rebirth Cost",
+    Options = RebirthDisplay.Uni3,
     CurrentOption = "Auto Rebirth",
-    Flag = "Uni2RebirthSelect",
-    Section = Universe2Section,
-    Callback = function(Option)
-        SelectedValues.Uni2Rebirth = Option
-    end,
+    MultipleOptions = false,
+    Flag = "U3RebirthSelect",
+    Callback = function(opt) Selected.rebirth[3] = opt end,
 })
 
-RebirthUpgTab:CreateToggle({
-    Name = "Uni 2 Auto Buy Upgrades",
+GameTab:CreateToggle({
+    Name = "Universe 3 Auto Buy Upgrades",
     CurrentValue = false,
-    Flag = "Uni2AutoUpgrades",
-    Section = Universe2Section,
-    Callback = function(Value)
-        AutoFeatures.Uni2AutoUpgrades = Value
-        if Value then
-            task.spawn(function()
-                while AutoFeatures.Uni2AutoUpgrades do
-                    for _, upgrade in pairs(SelectedValues.Uni2Upgrades) do
-                        pcall(function()
-                            FireRemote("Essence Upgrade", upgrade)
-                        end)
-                        task.wait(0.5)
+    Flag = "U3Upgrades",
+    Callback = function(v)
+        Auto.upgrades[3] = v
+        if v then task.spawn(function()
+            while Auto.upgrades[3] and Selected.upgrade[3] do
+                local essence = GetStat("Essence")
+                if essence then
+                    local essenceUpgrades = require(ReplicatedStorage.Tables.EssenceUpgrades)
+                    local data = essenceUpgrades[Selected.upgrade[3]]
+                    if data then
+                        local level = GetStat(data.StatName) or 0
+                        local cost = nil
+                        if data.OneTimeUpgrade and level < 1 then cost = data.Cost
+                        elseif not data.OneTimeUpgrade and (not data.Max or level < data.Max) then
+                            cost = type(data.UpgradeCosts) == "table" and data.UpgradeCosts[level + 1] or (type(data.UpgradeCosts) == "function" and data.UpgradeCosts(level))
+                        end
+                        if cost and essence >= cost then FireEssenceUpgrade(Selected.upgrade[3]) end
                     end
-                    task.wait(3)
                 end
-            end)
-        end
+                task.wait()
+            end
+        end) end
     end,
 })
 
-RebirthUpgTab:CreateDropdown({
-    Name = "Select Uni 2 Upgrades",
-    Options = Universe2Upgrades,
+GameTab:CreateDropdown({
+    Name = "Universe 3 Upgrade",
+    Options = UpgradeLists.Uni3,
     CurrentOption = {},
-    MultiOptions = true,
-    Flag = "Uni2UpgradesSelect",
-    Section = Universe2Section,
-    Callback = function(Options)
-        SelectedValues.Uni2Upgrades = Options
-    end,
+    MultipleOptions = false,
+    Flag = "U3UpgradeSelect",
+    Callback = function(opt) Selected.upgrade[3] = opt end,
 })
-
-RebirthUpgTab:CreateToggle({
-    Name = "Uni 3 Auto Rebirth",
-    CurrentValue = false,
-    Flag = "Uni3AutoRebirth",
-    Section = Universe3Section,
-    Callback = function(Value)
-        AutoFeatures.Uni3AutoRebirth = Value
-        if Value then
-            task.spawn(function()
-                while AutoFeatures.Uni3AutoRebirth do
-                    pcall(function()
-                        FireRemote("EssenceRebirth")
-                    end)
-                    task.wait(2)
-                end
-            end)
-        end
-    end,
-})
-
-RebirthUpgTab:CreateDropdown({
-    Name = "Select Uni 3 Rebirth",
-    Options = RebirthOptions,
-    CurrentOption = "Auto Rebirth",
-    Flag = "Uni3RebirthSelect",
-    Section = Universe3Section,
-    Callback = function(Option)
-        SelectedValues.Uni3Rebirth = Option
-    end,
-})
-
-RebirthUpgTab:CreateToggle({
-    Name = "Uni 3 Auto Buy Upgrades",
-    CurrentValue = false,
-    Flag = "Uni3AutoUpgrades",
-    Section = Universe3Section,
-    Callback = function(Value)
-        AutoFeatures.Uni3AutoUpgrades = Value
-        if Value then
-            task.spawn(function()
-                while AutoFeatures.Uni3AutoUpgrades do
-                    for _, upgrade in pairs(SelectedValues.Uni3Upgrades) do
-                        pcall(function()
-                            FireRemote("Essence Upgrade", upgrade)
-                        end)
-                        task.wait(0.5)
-                    end
-                    task.wait(3)
-                end
-            end)
-        end
-    end,
-})
-
-RebirthUpgTab:CreateDropdown({
-    Name = "Select Uni 3 Upgrades",
-    Options = Universe3Upgrades,
-    CurrentOption = {},
-    MultiOptions = true,
-    Flag = "Uni3UpgradesSelect",
-    Section = Universe3Section,
-    Callback = function(Options)
-        SelectedValues.Uni3Upgrades = Options
-    end,
-})
-
--- MISC TAB
-MiscTab:CreateSection("Auto Use Inventory Items")
-
-MiscTab:CreateToggle({
-    Name = "Auto Use Inventory Items",
-    CurrentValue = false,
-    Flag = "AutoInventoryFlag",
-    Callback = function(Value)
-        AutoUseInventoryEnabled = Value
-        if Value then
-            UpdateInventoryDropdown()
-            StartAutoUse()
-        else
-            StopAutoUse()
-        end
-    end
-})
-
-MiscTab:CreateDropdown({
-    Name = "Select Items",
-    Options = GetUsableItemsForDropdown(),
-    CurrentOption = {},
-    Flag = "InventoryDropdown",
-    MultipleOptions = true,
-    Callback = function(Value)
-        SelectedInventoryItems = Value
-        print("[INVENTORY] Selected: " .. table.concat(SelectedInventoryItems, ", "))
-    end
-})
-
-MiscTab:CreateSection("Auto Claim Space Egg")
-
-MiscTab:CreateToggle({
-    Name = "Auto Claim Space Egg",
-    CurrentValue = false,
-    Flag = "AutoSpaceEggFlag",
-    Callback = function(Value)
-        AutoClaimSpaceEggEnabled = Value
-        if Value then
-            StartAutoSpaceEgg()
-        else
-            StopAutoSpaceEgg()
-        end
-    end
-})
-
-MiscTab:CreateSection("Auto Enchant Pets")
-
-MiscTab:CreateToggle({
-    Name = "Auto Enchant Equipped Pets",
-    CurrentValue = false,
-    Flag = "AutoEnchantFlag",
-    Callback = function(Value)
-        AutoEnchantEnabled = Value
-        if Value then
-            StartAutoEnchant()
-        else
-            StopAutoEnchant()
-        end
-    end
-})
-
-MiscTab:CreateDropdown({
-    Name = "Select Target Enchants",
-    Options = enchantNames,
-    CurrentOption = {},
-    Flag = "EnchantSelection",
-    MultipleOptions = true,
-    Callback = function(Value)
-        SelectedEnchants = Value
-        print("[ENCHANTS] Selected: " .. table.concat(SelectedEnchants, ", "))
-    end
-})
-
-MiscTab:CreateSection("Auto Claim Achievements")
-
-MiscTab:CreateToggle({
-    Name = "Auto Claim Achievements",
-    CurrentValue = false,
-    Flag = "AutoAchievementFlag",
-    Callback = function(Value)
-        AutoClaimAchievementsEnabled = Value
-        if Value then
-            StartAutoAchievements()
-        else
-            StopAutoAchievements()
-        end
-    end
-})
-
-MiscTab:CreateDropdown({
-    Name = "Select Achievements",
-    Options = achievementNames,
-    CurrentOption = {"All"},
-    Flag = "AchievementSelection",
-    MultipleOptions = true,
-    Callback = function(Value)
-        SelectedAchievements = Value
-        print("[ACHIEVEMENTS] Selected: " .. table.concat(SelectedAchievements, ", "))
-    end
-})
-
--- HATCH TAB
-HatchTab:CreateSection("Egg Selection")
-
-HatchTab:CreateDropdown({
-    Name = "Select Egg",
-    Options = eggNames,
-    CurrentOption = eggNames[1] or "",
-    Flag = "EggSelection",
-    Callback = function(Value)
-        SelectedEgg = Value
-        local actualEggName = type(Value) == "table" and Value[1] or Value
-        print("[EGG] Selected: " .. actualEggName)
-        if EggDeleteEnabled then
-            SetupEggAutoDelete()
-        end
-    end
-})
-
-HatchTab:CreateSection("Auto Hatch")
-
-HatchTab:CreateToggle({
-    Name = "Auto Hatch Selected Egg",
-    CurrentValue = false,
-    Flag = "AutoHatchFlag",
-    Callback = function(Value)
-        AutoHatchEnabled = Value
-        if Value then
-            StartAutoHatch()
-        else
-            StopAutoHatch()
-        end
-    end
-})
-
-HatchTab:CreateSection("Pet Delete System")
-
-HatchTab:CreateToggle({
-    Name = "Delete Pets From Egg",
-    CurrentValue = false,
-    Flag = "EggDeleteFlag",
-    Callback = function(Value)
-        EggDeleteEnabled = Value
-        if Value then
-            SetupEggAutoDelete()
-        end
-    end
-})
-
-HatchTab:CreateDropdown({
-    Name = "Delete Rarities (Egg)",
-    Options = rarityOptions,
-    CurrentOption = {"Common"},
-    Flag = "EggRaritySelect",
-    MultipleOptions = true,
-    Callback = function(Value)
-        SelectedRarityToDelete = Value
-        if EggDeleteEnabled then
-            SetupEggAutoDelete()
-        end
-    end
-})
-
-HatchTab:CreateToggle({
-    Name = "Delete Pets From Inventory",
-    CurrentValue = false,
-    Flag = "InventoryDeleteFlag",
-    Callback = function(Value)
-        InventoryDeleteEnabled = Value
-        if Value then
-            StartInventoryDeleteLoop()
-        else
-            StopInventoryDeleteLoop()
-        end
-    end
-})
-
-HatchTab:CreateDropdown({
-    Name = "Delete Rarities (Inventory)",
-    Options = rarityOptions,
-    CurrentOption = {"Common"},
-    Flag = "InventoryRaritySelect",
-    MultipleOptions = true,
-    Callback = function(Value)
-        SelectedRarityToDelete = Value
-        if InventoryDeleteEnabled then
-            CheckAndDeleteInventoryPets()
-        end
-    end
-})
-
-if Paper and Paper.Stats and Paper.Stats.Get("Items") then
-    local itemsConnection = Paper.Stats.Get("Items").Changed:Connect(function()
-        UpdateInventoryDropdown()
-        local currentOptions = MiscTab:GetDropdown("InventoryDropdown")
-        if currentOptions then
-            currentOptions:SetOptions(GetUsableItemsForDropdown())
-        end
-    end)
-end
-
-if Paper and Paper.Stats and AchievementsList then
-    for id, data in pairs(AchievementsList) do
-        local stat = Paper.Stats.Get(data.Stat)
-        if stat then
-            stat.Changed:Connect(function()
-                task.wait(0.5)
-                if AutoClaimAchievementsEnabled then
-                    ScanAndClaimAchievements()
-                end
-            end)
-        end
-    end
-end
-
-print("[SCRIPT] Script loaded successfully")
