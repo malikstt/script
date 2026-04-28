@@ -49,7 +49,7 @@ local AutoEnchantEnabled = false
 local AutoClaimSpaceEggEnabled = false
 local SelectedInventoryItems = {}
 local SelectedEnchants = {}
-local ItemTimers = {}
+local AutoUseThread = nil
 
 local AutoHatchEnabled = false
 local SelectedEgg = ""
@@ -402,18 +402,6 @@ local function StopAutoUnlock()
     end
 end
 
-local function GetItemDuration(itemName)
-    return 300
-end
-
-local function GetMaxAtOnce(itemName)
-    local itemData = ItemsData[itemName]
-    if itemData and itemData.MaxAtOnce then
-        return itemData.MaxAtOnce
-    end
-    return nil -- nil means use all available
-end
-
 local function UseInventoryItem(itemName, quantity)
     local remote = ReplicatedStorage:FindFirstChild("Paper")
     if remote then
@@ -427,8 +415,6 @@ local function UseInventoryItem(itemName, quantity)
                 if success and result then
                     print("[INVENTORY] Used " .. quantity .. "x " .. itemName)
                     return true
-                else
-                    print("[INVENTORY] Failed to use " .. itemName)
                 end
             end
         end
@@ -437,13 +423,17 @@ local function UseInventoryItem(itemName, quantity)
 end
 
 local function GetPlayerInventory()
-    local items = Paper.Stats.Get("Items")
+    local success, items = pcall(function()
+        return Paper.Stats.Get("Items")
+    end)
+    if not success or not items or not items.Value then
+        return {}
+    end
+    
     local itemList = {}
-    if items and items.Value then
-        for name, amount in pairs(items.Value) do
-            if amount > 0 then
-                table.insert(itemList, name)
-            end
+    for name, amount in pairs(items.Value) do
+        if amount > 0 then
+            table.insert(itemList, name)
         end
     end
     table.sort(itemList)
@@ -464,19 +454,51 @@ local function GetUsableItemsForDropdown()
     return usableItems
 end
 
-local function GetItemCount(itemName)
-    local items = Paper.Stats.Get("Items")
-    if items and items.Value and items.Value[itemName] then
-        return items.Value[itemName]
-    end
-    return 0
-end
-
 local function UpdateInventoryDropdown()
     local usableItems = GetUsableItemsForDropdown()
     if MiscTab:GetDropdown("InventoryDropdown") then
         MiscTab:GetDropdown("InventoryDropdown"):SetOptions(usableItems)
     end
+end
+
+local function StopAutoUse()
+    if AutoUseThread then
+        task.cancel(AutoUseThread)
+        AutoUseThread = nil
+    end
+end
+
+local function StartAutoUse()
+    StopAutoUse()
+    
+    if not AutoUseInventoryEnabled then return end
+    
+    AutoUseThread = task.spawn(function()
+        while AutoUseInventoryEnabled do
+            for _, itemName in pairs(SelectedInventoryItems) do
+                local success, items = pcall(function()
+                    return Paper.Stats.Get("Items")
+                end)
+                
+                if not success then break end
+                
+                local itemCount = 0
+                if items and items.Value then
+                    itemCount = items.Value[itemName] or 0
+                end
+                
+                if itemCount > 0 then
+                    local itemData = ItemsData[itemName]
+                    local maxAtOnce = itemData and itemData.MaxAtOnce
+                    local useAmount = maxAtOnce and math.min(itemCount, maxAtOnce) or itemCount
+                    
+                    UseInventoryItem(itemName, useAmount)
+                    task.wait(0.2)
+                end
+            end
+            task.wait(1)
+        end
+    end)
 end
 
 local function HasSelectedEnchant(pet)
@@ -496,53 +518,6 @@ local function EnchantPet(petGuid)
             ["Pet"] = petGuid
         })
     end)
-end
-
-local function StartAutoInventory()
-    if AutoInventoryConnection then
-        AutoInventoryConnection:Disconnect()
-        AutoInventoryConnection = nil
-    end
-    
-    if AutoUseInventoryEnabled and Paper then
-        AutoInventoryConnection = RunService.Heartbeat:Connect(function()
-            if AutoUseInventoryEnabled and Paper then
-                local currentTime = os.time()
-                for _, itemName in pairs(SelectedInventoryItems) do
-                    local lastUsed = ItemTimers[itemName] or 0
-                    local duration = GetItemDuration(itemName)
-                    
-                    if currentTime - lastUsed >= duration then
-                        local itemCount = GetItemCount(itemName)
-                        if itemCount > 0 then
-                            local maxAtOnce = GetMaxAtOnce(itemName)
-                            local useAmount
-                            
-                            if maxAtOnce then
-                                -- Has MaxAtOnce limit, use in batches
-                                useAmount = math.min(itemCount, maxAtOnce)
-                            else
-                                -- No limit, use all at once
-                                useAmount = itemCount
-                            end
-                            
-                            UseInventoryItem(itemName, useAmount)
-                            ItemTimers[itemName] = currentTime
-                            task.wait(0.5)
-                        end
-                    end
-                end
-                task.wait(1)
-            end
-        end)
-    end
-end
-
-local function StopAutoInventory()
-    if AutoInventoryConnection then
-        AutoInventoryConnection:Disconnect()
-        AutoInventoryConnection = nil
-    end
 end
 
 local function StartAutoEnchant()
@@ -1132,9 +1107,9 @@ MiscTab:CreateToggle({
         AutoUseInventoryEnabled = Value
         if Value then
             UpdateInventoryDropdown()
-            StartAutoInventory()
+            StartAutoUse()
         else
-            StopAutoInventory()
+            StopAutoUse()
         end
     end
 })
