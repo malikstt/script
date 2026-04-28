@@ -81,7 +81,7 @@ local RarityNumbers = {}
 local RarityNames = {}
 local LastTeleportPosition = nil
 local TeleportCooldown = false
-local ItemsData = {} -- Store items table data
+local ItemsData = {}
 
 local function SafeRequire(module)
     local success, result = pcall(function()
@@ -156,7 +156,6 @@ if enchantsTable then
     end
 end
 
--- Load Items table for usable checking
 local itemsTable = ReplicatedStorage:FindFirstChild("Tables")
 if itemsTable then
     itemsTable = itemsTable:FindFirstChild("Items")
@@ -407,7 +406,32 @@ local function GetItemDuration(itemName)
     return 300
 end
 
-local function UseInventoryItem(itemName, quantity)
+local function IsItemUsable(itemName)
+    local itemData = ItemsData[itemName]
+    if not itemData then
+        return false
+    end
+    return itemData.Usable ~= false
+end
+
+local function GetItemMaxAtOnce(itemName)
+    local itemData = ItemsData[itemName]
+    if not itemData then
+        return 1
+    end
+    return itemData.MaxAtOnce or 1
+end
+
+local function UseInventoryItem(itemName)
+    local maxAtOnce = GetItemMaxAtOnce(itemName)
+    local itemCount = GetItemCount(itemName)
+    
+    if itemCount <= 0 then
+        return false
+    end
+    
+    local useAmount = math.min(itemCount, maxAtOnce)
+    
     local remote = ReplicatedStorage:FindFirstChild("Paper")
     if remote then
         remote = remote:FindFirstChild("Remotes")
@@ -415,10 +439,10 @@ local function UseInventoryItem(itemName, quantity)
             remote = remote:FindFirstChild("__remotefunction")
             if remote then
                 local success, result = pcall(function()
-                    return remote:InvokeServer("Use Item", itemName, quantity)
+                    return remote:InvokeServer("Use Item", itemName, useAmount)
                 end)
                 if success and result then
-                    print("[INVENTORY] Used " .. quantity .. "x " .. itemName)
+                    print("[INVENTORY] Used " .. useAmount .. "x " .. itemName)
                     return true
                 else
                     print("[INVENTORY] Failed to use " .. itemName)
@@ -429,7 +453,6 @@ local function UseInventoryItem(itemName, quantity)
     return false
 end
 
--- Keep original GetPlayerInventory (shows ALL items player has)
 local function GetPlayerInventory()
     local items = Paper.Stats.Get("Items")
     local itemList = {}
@@ -444,14 +467,12 @@ local function GetPlayerInventory()
     return itemList
 end
 
--- NEW: Get ONLY usable items for dropdown display
 local function GetUsableItemsForDropdown()
     local allItems = GetPlayerInventory()
     local usableItems = {}
     
     for _, itemName in ipairs(allItems) do
-        local itemData = ItemsData[itemName]
-        if itemData and itemData.Usable == true then
+        if IsItemUsable(itemName) then
             table.insert(usableItems, itemName)
         end
     end
@@ -467,7 +488,6 @@ local function GetItemCount(itemName)
     return 0
 end
 
--- Update dropdown to show only usable items
 local function UpdateInventoryDropdown()
     local usableItems = GetUsableItemsForDropdown()
     if MiscTab:GetDropdown("InventoryDropdown") then
@@ -510,8 +530,9 @@ local function StartAutoInventory()
                     if currentTime - lastUsed >= duration then
                         local itemCount = GetItemCount(itemName)
                         if itemCount > 0 then
-                            local useAmount = math.min(itemCount, 500)
-                            UseInventoryItem(itemName, useAmount)
+                            local maxAtOnce = GetItemMaxAtOnce(itemName)
+                            local useAmount = math.min(itemCount, maxAtOnce)
+                            UseInventoryItem(itemName)
                             ItemTimers[itemName] = currentTime
                             task.wait(0.5)
                         end
@@ -825,7 +846,7 @@ local function StartInventoryDeleteLoop()
                 CheckAndDeleteInventoryPets()
                 task.wait(60)
             end
-        end)
+        })
     end
 end
 
@@ -1001,7 +1022,7 @@ end
 
 MainTab:CreateSection("Instant Throw")
 
-local InstantThrowToggle = MainTab:CreateToggle({
+MainTab:CreateToggle({
     Name = "Instant Throw",
     CurrentValue = false,
     Flag = "InstantThrowFlag",
@@ -1021,7 +1042,7 @@ local InstantThrowToggle = MainTab:CreateToggle({
 
 MainTab:CreateSection("Auto Train")
 
-local AutoTrainToggle = MainTab:CreateToggle({
+AutoTrainToggle = MainTab:CreateToggle({
     Name = "Auto Train",
     CurrentValue = false,
     Flag = "AutoTrainFlag",
@@ -1031,6 +1052,18 @@ local AutoTrainToggle = MainTab:CreateToggle({
 })
 
 MainTab:CreateSection("Auto Claim Chests")
+
+MainTab:CreateDropdown({
+    Name = "Select Chests",
+    Options = chestNames,
+    CurrentOption = {},
+    Flag = "ChestSelection",
+    MultipleOptions = true,
+    Callback = function(Value)
+        SelectedChests = Value
+        print("[CHESTS] Selected: " .. table.concat(SelectedChests, ", "))
+    end
+})
 
 MainTab:CreateToggle({
     Name = "Auto Claim Chests",
@@ -1043,18 +1076,6 @@ MainTab:CreateToggle({
         else
             StopAutoClaim()
         end
-    end
-})
-
-MainTab:CreateDropdown({
-    Name = "Select Chests",
-    Options = chestNames,
-    CurrentOption = {},
-    Flag = "ChestSelection",
-    MultipleOptions = true,
-    Callback = function(Value)
-        SelectedChests = Value
-        print("[CHESTS] Selected: " .. table.concat(SelectedChests, ", "))
     end
 })
 
@@ -1076,6 +1097,16 @@ MainTab:CreateToggle({
 
 MainTab:CreateSection("Auto Unlock Worlds")
 
+MainTab:CreateDropdown({
+    Name = "Select World",
+    Options = worldNames,
+    CurrentOption = "Any Affordable World",
+    Flag = "WorldSelection",
+    Callback = function(Value)
+        SelectedWorldMode = Value
+    end
+})
+
 MainTab:CreateToggle({
     Name = "Auto Unlock Worlds",
     CurrentValue = false,
@@ -1090,16 +1121,6 @@ MainTab:CreateToggle({
     end
 })
 
-MainTab:CreateDropdown({
-    Name = "Select World",
-    Options = worldNames,
-    CurrentOption = "Any Affordable World",
-    Flag = "WorldSelection",
-    Callback = function(Value)
-        SelectedWorldMode = Value
-    end
-})
-
 MainTab:CreateSection("Priority")
 
 MainTab:CreateParagraph({
@@ -1108,6 +1129,18 @@ MainTab:CreateParagraph({
 })
 
 MiscTab:CreateSection("Auto Use Inventory Items")
+
+MiscTab:CreateDropdown({
+    Name = "Select Items",
+    Options = GetUsableItemsForDropdown(),
+    CurrentOption = {},
+    Flag = "InventoryDropdown",
+    MultipleOptions = true,
+    Callback = function(Value)
+        SelectedInventoryItems = Value
+        print("[INVENTORY] Selected: " .. table.concat(SelectedInventoryItems, ", "))
+    end
+})
 
 MiscTab:CreateToggle({
     Name = "Auto Use Inventory Items",
@@ -1121,18 +1154,6 @@ MiscTab:CreateToggle({
         else
             StopAutoInventory()
         end
-    end
-})
-
-MiscTab:CreateDropdown({
-    Name = "Select Items",
-    Options = GetUsableItemsForDropdown(), -- Only shows usable items
-    CurrentOption = {},
-    Flag = "InventoryDropdown",
-    MultipleOptions = true,
-    Callback = function(Value)
-        SelectedInventoryItems = Value
-        print("[INVENTORY] Selected: " .. table.concat(SelectedInventoryItems, ", "))
     end
 })
 
@@ -1154,6 +1175,18 @@ MiscTab:CreateToggle({
 
 MiscTab:CreateSection("Auto Enchant Pets")
 
+MiscTab:CreateDropdown({
+    Name = "Select Target Enchants",
+    Options = enchantNames,
+    CurrentOption = {},
+    Flag = "EnchantSelection",
+    MultipleOptions = true,
+    Callback = function(Value)
+        SelectedEnchants = Value
+        print("[ENCHANTS] Selected: " .. table.concat(SelectedEnchants, ", "))
+    end
+})
+
 MiscTab:CreateToggle({
     Name = "Auto Enchant Equipped Pets",
     CurrentValue = false,
@@ -1168,19 +1201,19 @@ MiscTab:CreateToggle({
     end
 })
 
+MiscTab:CreateSection("Auto Claim Achievements")
+
 MiscTab:CreateDropdown({
-    Name = "Select Target Enchants",
-    Options = enchantNames,
-    CurrentOption = {},
-    Flag = "EnchantSelection",
+    Name = "Select Achievements",
+    Options = achievementNames,
+    CurrentOption = {"All"},
+    Flag = "AchievementSelection",
     MultipleOptions = true,
     Callback = function(Value)
-        SelectedEnchants = Value
-        print("[ENCHANTS] Selected: " .. table.concat(SelectedEnchants, ", "))
+        SelectedAchievements = Value
+        print("[ACHIEVEMENTS] Selected: " .. table.concat(SelectedAchievements, ", "))
     end
 })
-
-MiscTab:CreateSection("Auto Claim Achievements")
 
 MiscTab:CreateToggle({
     Name = "Auto Claim Achievements",
@@ -1193,18 +1226,6 @@ MiscTab:CreateToggle({
         else
             StopAutoAchievements()
         end
-    end
-})
-
-MiscTab:CreateDropdown({
-    Name = "Select Achievements",
-    Options = achievementNames,
-    CurrentOption = {"All"},
-    Flag = "AchievementSelection",
-    MultipleOptions = true,
-    Callback = function(Value)
-        SelectedAchievements = Value
-        print("[ACHIEVEMENTS] Selected: " .. table.concat(SelectedAchievements, ", "))
     end
 })
 
@@ -1243,18 +1264,6 @@ HatchTab:CreateToggle({
 
 HatchTab:CreateSection("Pet Delete System")
 
-HatchTab:CreateToggle({
-    Name = "Delete Pets From Egg",
-    CurrentValue = false,
-    Flag = "EggDeleteFlag",
-    Callback = function(Value)
-        EggDeleteEnabled = Value
-        if Value then
-            SetupEggAutoDelete()
-        end
-    end
-})
-
 HatchTab:CreateDropdown({
     Name = "Delete Rarities (Egg)",
     Options = rarityOptions,
@@ -1270,15 +1279,13 @@ HatchTab:CreateDropdown({
 })
 
 HatchTab:CreateToggle({
-    Name = "Delete Pets From Inventory",
+    Name = "Delete Pets From Egg",
     CurrentValue = false,
-    Flag = "InventoryDeleteFlag",
+    Flag = "EggDeleteFlag",
     Callback = function(Value)
-        InventoryDeleteEnabled = Value
+        EggDeleteEnabled = Value
         if Value then
-            StartInventoryDeleteLoop()
-        else
-            StopInventoryDeleteLoop()
+            SetupEggAutoDelete()
         end
     end
 })
@@ -1293,6 +1300,20 @@ HatchTab:CreateDropdown({
         SelectedRarityToDelete = Value
         if InventoryDeleteEnabled then
             CheckAndDeleteInventoryPets()
+        end
+    end
+})
+
+HatchTab:CreateToggle({
+    Name = "Delete Pets From Inventory",
+    CurrentValue = false,
+    Flag = "InventoryDeleteFlag",
+    Callback = function(Value)
+        InventoryDeleteEnabled = Value
+        if Value then
+            StartInventoryDeleteLoop()
+        else
+            StopInventoryDeleteLoop()
         end
     end
 })
