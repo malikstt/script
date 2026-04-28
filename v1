@@ -670,7 +670,7 @@ local function StopAutoHatch()
     end
 end
 
--- Fixed SetupEggAutoDelete with intelligent state checking
+-- Fixed SetupEggAutoDelete with proper nil check for number values
 local function SetupEggAutoDelete()
     if not EggDeleteEnabled then return end
     
@@ -687,17 +687,21 @@ local function SetupEggAutoDelete()
     
     local eggData = EggsList[actualEggName]
     
-    -- Get current auto-delete settings
-    local autoDeleteData = Paper.Stats.Get("AutoDelete")
+    -- Get current auto-delete settings (stores numbers like 7, not booleans)
+    local autoDeleteStat = Paper.Stats.Get("AutoDelete")
     local currentAutoDelete = {}
-    if autoDeleteData and autoDeleteData.Value then
-        currentAutoDelete = autoDeleteData.Value
+    if autoDeleteStat and autoDeleteStat.Value then
+        currentAutoDelete = autoDeleteStat.Value
     end
     
+    -- Determine which rarities should be deleted
     local raritiesToDelete = {}
     for _, rarityName in pairs(SelectedRarityToDelete) do
         raritiesToDelete[rarityName] = true
     end
+    
+    -- Cache what we've already sent to avoid duplicate fires
+    local pendingChanges = {}
     
     if eggData and eggData.Pets then
         for _, petInfo in pairs(eggData.Pets) do
@@ -710,33 +714,35 @@ local function SetupEggAutoDelete()
                 petRarity = petModule.Rarity
             end
             
-            local shouldDelete = raritiesToDelete[petRarity] or false
-            local isCurrentlySet = currentAutoDelete[petName] == true
+            local shouldBeDeleted = raritiesToDelete[petRarity] or false
+            -- CRITICAL FIX: Check if value exists (not nil) - could be 7, true, or any truthy value
+            local isCurrentlyDeleted = currentAutoDelete[petName] ~= nil
             
-            -- Only fire if state needs to change
-            if shouldDelete and not isCurrentlySet then
+            -- Only fire if the current state doesn't match what we want
+            -- AND we haven't already sent a change for this pet in this batch
+            if shouldBeDeleted ~= isCurrentlyDeleted and not pendingChanges[petName] then
+                pendingChanges[petName] = true
+                
+                -- The AutoDelete remote toggles the state
                 pcall(function()
                     remote:InvokeServer("Pet", {
                         Pet = petName,
                         Action = "AutoDelete",
                         Tier = "all"
                     })
-                    print("[EGG DELETE] Enabled auto-delete: " .. petName .. " (" .. petRarity .. ")")
-                end)
-                task.wait(0.05)
-            elseif not shouldDelete and isCurrentlySet then
-                pcall(function()
-                    remote:InvokeServer("Pet", {
-                        Pet = petName,
-                        Action = "AutoDelete",
-                        Tier = "none"
-                    })
-                    print("[EGG DELETE] Disabled auto-delete: " .. petName .. " (" .. petRarity .. ")")
+                    local action = shouldBeDeleted and "Enabled" or "Disabled"
+                    print("[EGG DELETE] " .. action .. " auto-delete: " .. petName .. " (" .. petRarity .. ")")
                 end)
                 task.wait(0.05)
             end
         end
     end
+    
+    -- Clean up pending changes after server sync delay
+    task.spawn(function()
+        task.wait(2)
+        pendingChanges = {}
+    end)
 end
 
 local function GetInventoryPets()
