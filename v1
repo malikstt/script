@@ -24,9 +24,9 @@ local Window = Rayfield:CreateWindow({
     }
 })
 
-local MainTab = Window:CreateTab("Main", "sword")  -- or "target", "flame", "zap"
-local MiscTab = Window:CreateTab("Misc", "package")  -- or "gift", "settings", "wand"
-local HatchTab = Window:CreateTab("Hatch", "egg")  -- Lucide has an egg icon!
+local MainTab = Window:CreateTab("Main", "sword")
+local MiscTab = Window:CreateTab("Misc", "package")
+local HatchTab = Window:CreateTab("Hatch", "egg")
 
 print("[SCRIPT] Starting Throw Sim Script")
 
@@ -67,7 +67,7 @@ local AutoUnlockConnection = nil
 local AutoInventoryConnection = nil
 local AutoEnchantConnection = nil
 local AutoSpaceEggConnection = nil
-local AutoHatchConnection = nil
+local AutoHatchThread = nil
 local InventoryDeleteConnection = nil
 local AchievementConnection = nil
 local Paper = nil
@@ -76,7 +76,7 @@ local WorldsList = {}
 local EnchantsList = {}
 local EggsList = {}
 local AchievementsList = {}
-local CurrentInventoryItems = {}
+local PetsModules = {}
 local RarityNumbers = {}
 local RarityNames = {}
 
@@ -85,7 +85,7 @@ local function SafeRequire(module)
         return require(module)
     end)
     if not success then
-        print("[FAILED] Could not require module:", module and module.Name or "nil", "Error:", result)
+        print("[FAILED] Could not require module:", module and module.Name or "nil")
         return nil
     end
     return result
@@ -174,6 +174,20 @@ if achievementsTable then
         AchievementsList = SafeRequire(achievementsTable) or {}
         print("[DEBUG] Loaded Achievements table")
     end
+end
+
+-- Load all pet modules for rarity checking
+local petsFolder = ReplicatedStorage:FindFirstChild("Pets")
+if petsFolder then
+    for _, petModule in pairs(petsFolder:GetChildren()) do
+        if petModule:IsA("ModuleScript") then
+            local petData = SafeRequire(petModule)
+            if petData and petData.Rarity then
+                PetsModules[petModule.Name] = petData
+            end
+        end
+    end
+    print("[DEBUG] Loaded Pet modules for rarity checking")
 end
 
 local function SortTableAlphabetically(t)
@@ -382,12 +396,23 @@ local function GetItemDuration(itemName)
 end
 
 local function UseInventoryItem(itemName)
-    local success, result = pcall(function()
-        return Paper.Network.InvokeServer("Use Item", itemName, 1)
-    end)
-    if success and result then
-        print("[INVENTORY] Used:", itemName)
-        return true
+    local remote = ReplicatedStorage:FindFirstChild("Paper")
+    if remote then
+        remote = remote:FindFirstChild("Remotes")
+        if remote then
+            remote = remote:FindFirstChild("__remotefunction")
+            if remote then
+                local success, result = pcall(function()
+                    return remote:InvokeServer("Use Item", itemName, 1)
+                end)
+                if success and result then
+                    print("[INVENTORY] Used:", itemName)
+                    return true
+                else
+                    print("[INVENTORY] Failed to use:", itemName)
+                end
+            end
+        end
     end
     return false
 end
@@ -544,7 +569,7 @@ local function StartAutoSpaceEgg()
                     if remaining <= 0 then
                         pcall(function()
                             Paper.Network.InvokeServer("Claim Free Reward")
-                            print("[SPACE EGG] Claimed at: " .. os.date("%H:%M:%S"))
+                            print("[SPACE EGG] Claimed")
                         end)
                         task.wait(5)
                     end
@@ -562,16 +587,20 @@ local function StopAutoSpaceEgg()
     end
 end
 
--- Refactored Teleport and Hatch logic
+-- Fixed Teleport and Hatch logic with table/string handling
 local function TeleportAndHatch()
-    if not AutoHatchEnabled or SelectedEgg == "" then return end
+    if not AutoHatchEnabled then return end
+    
+    -- Handle SelectedEgg being either string or table from dropdown
+    local actualEggName = type(SelectedEgg) == "table" and SelectedEgg[1] or SelectedEgg
+    if not actualEggName or actualEggName == "" then return end
 
     local eggFolder = Workspace:FindFirstChild("Eggs")
     if not eggFolder then return end
     
-    local egg = eggFolder:FindFirstChild(SelectedEgg)
+    local egg = eggFolder:FindFirstChild(actualEggName)
     if not egg then
-        warn("[HATCH] Egg not found: " .. SelectedEgg)
+        print("[HATCH] Egg not found: " .. actualEggName)
         return
     end
 
@@ -590,41 +619,45 @@ local function TeleportAndHatch()
             remote = remote:FindFirstChild("__remotefunction")
             if remote then
                 pcall(function()
-                    remote:InvokeServer("Hatch Egg", SelectedEgg)
-                    print("[HATCH] Hatched:", SelectedEgg)
+                    remote:InvokeServer("Hatch Egg", actualEggName)
+                    print("[HATCH] Hatched: " .. actualEggName)
                 end)
             end
         end
     end
 end
 
+-- Fixed AutoHatch using task.spawn instead of heartbeat
 local function StartAutoHatch()
-    if AutoHatchConnection then
-        AutoHatchConnection:Disconnect()
-        AutoHatchConnection = nil
+    if AutoHatchThread then
+        task.cancel(AutoHatchThread)
+        AutoHatchThread = nil
     end
     
-    if AutoHatchEnabled and SelectedEgg and SelectedEgg ~= "" then
-        AutoHatchConnection = RunService.Heartbeat:Connect(function()
-            if AutoHatchEnabled and SelectedEgg and SelectedEgg ~= "" then
+    if AutoHatchEnabled then
+        AutoHatchThread = task.spawn(function()
+            while AutoHatchEnabled do
                 TeleportAndHatch()
-                task.wait(0.5)
+                task.wait(1.5)
             end
         end)
     end
 end
 
 local function StopAutoHatch()
-    if AutoHatchConnection then
-        AutoHatchConnection:Disconnect()
-        AutoHatchConnection = nil
+    if AutoHatchThread then
+        task.cancel(AutoHatchThread)
+        AutoHatchThread = nil
     end
 end
 
+-- Fixed SetupEggAutoDelete with dynamic pet rarity checking
 local function SetupEggAutoDelete()
     if not EggDeleteEnabled then return end
-    if not SelectedEgg or SelectedEgg == "" then return end
-    if not EggsList[SelectedEgg] then return end
+    
+    local actualEggName = type(SelectedEgg) == "table" and SelectedEgg[1] or SelectedEgg
+    if not actualEggName or actualEggName == "" then return end
+    if not EggsList[actualEggName] then return end
     
     local remote = ReplicatedStorage:FindFirstChild("Paper")
     if not remote then return end
@@ -633,39 +666,36 @@ local function SetupEggAutoDelete()
     remote = remote:FindFirstChild("__remotefunction")
     if not remote then return end
     
-    local eggData = EggsList[SelectedEgg]
-    local lowestRarityNum = 100
+    local eggData = EggsList[actualEggName]
+    
+    -- Collect rarities to delete based on selected rarities
+    local raritiesToDelete = {}
     for _, rarityName in pairs(SelectedRarityToDelete) do
-        local rarityNum = RarityNumbers[rarityName] or 1
-        if rarityNum < lowestRarityNum then
-            lowestRarityNum = rarityNum
-        end
+        raritiesToDelete[rarityName] = true
     end
     
     if eggData and eggData.Pets then
         for _, petInfo in pairs(eggData.Pets) do
             local petName = petInfo.Pet
-            local petRarity = petInfo.Rarity or "Common"
-            local petRarityNum = RarityNumbers[petRarity] or 1
             
-            if petRarityNum <= lowestRarityNum then
+            -- Get pet rarity from module
+            local petRarity = "Common"
+            local petModule = PetsModules[petName]
+            if petModule and petModule.Rarity then
+                petRarity = petModule.Rarity
+            end
+            
+            -- Check if this rarity should be deleted
+            local shouldDelete = raritiesToDelete[petRarity] or false
+            
+            if shouldDelete then
                 pcall(function()
                     remote:InvokeServer("Pet", {
                         Pet = petName,
                         Action = "AutoDelete",
                         Tier = "all"
                     })
-                    print("[EGG DELETE] Auto-deleting:", petName, "(", petRarity, ")")
-                end)
-                task.wait(0.05)
-            else
-                pcall(function()
-                    remote:InvokeServer("Pet", {
-                        Pet = petName,
-                        Action = "AutoDelete",
-                        Tier = "all"
-                    })
-                    print("[EGG DELETE] Removed auto-delete from:", petName, "(", petRarity, ")")
+                    print("[EGG DELETE] Auto-deleting: " .. petName .. " (" .. petRarity .. ")")
                 end)
                 task.wait(0.05)
             end
@@ -698,7 +728,7 @@ local function DeletePet(petId)
                     })
                 end)
                 if success then
-                    print("[INVENTORY DELETE] Deleted pet:", petId)
+                    print("[INVENTORY DELETE] Deleted pet: " .. petId)
                 end
             end
         end
@@ -708,23 +738,19 @@ end
 local function CheckAndDeleteInventoryPets()
     if not InventoryDeleteEnabled then return end
     
-    local lowestRarityNum = 100
+    local raritiesToDelete = {}
     for _, rarityName in pairs(SelectedRarityToDelete) do
-        local rarityNum = RarityNumbers[rarityName] or 1
-        if rarityNum < lowestRarityNum then
-            lowestRarityNum = rarityNum
-        end
+        raritiesToDelete[rarityName] = true
     end
     
     local pets = GetInventoryPets()
     
     for _, pet in pairs(pets) do
         local petRarity = pet:GetAttribute("Rarity") or "Common"
-        local petRarityNum = RarityNumbers[petRarity] or 1
         
-        if petRarityNum <= lowestRarityNum then
+        if raritiesToDelete[petRarity] then
             local petName = pet:GetAttribute("PetName") or "Unknown"
-            print("[INVENTORY DELETE] Deleting:", petName, "(", petRarity, ")")
+            print("[INVENTORY DELETE] Deleting: " .. petName .. " (" .. petRarity .. ")")
             DeletePet(pet.Name)
             task.wait(0.3)
         end
@@ -920,7 +946,8 @@ for _, name in ipairs(RarityNames) do
     table.insert(rarityOptions, name)
 end
 
-MainTab:CreateSection("INSTANT THROW")
+-- UI Elements - No emojis
+MainTab:CreateSection("Instant Throw")
 
 local InstantThrowToggle = MainTab:CreateToggle({
     Name = "Instant Throw",
@@ -940,7 +967,7 @@ local InstantThrowToggle = MainTab:CreateToggle({
     end
 })
 
-MainTab:CreateSection("AUTO TRAIN")
+MainTab:CreateSection("Auto Train")
 
 local AutoTrainToggle = MainTab:CreateToggle({
     Name = "Auto Train",
@@ -951,7 +978,7 @@ local AutoTrainToggle = MainTab:CreateToggle({
     end
 })
 
-MainTab:CreateSection("AUTO CLAIM CHESTS")
+MainTab:CreateSection("Auto Claim Chests")
 
 MainTab:CreateToggle({
     Name = "Auto Claim Chests",
@@ -975,11 +1002,11 @@ MainTab:CreateDropdown({
     MultipleOptions = true,
     Callback = function(Value)
         SelectedChests = Value
-        print("[CHESTS] Selected:", table.concat(SelectedChests, ", "))
+        print("[CHESTS] Selected: " .. table.concat(SelectedChests, ", "))
     end
 })
 
-MainTab:CreateSection("AUTO BUY OBJECTS")
+MainTab:CreateSection("Auto Buy Objects")
 
 MainTab:CreateToggle({
     Name = "Auto Buy All Objects",
@@ -995,7 +1022,7 @@ MainTab:CreateToggle({
     end
 })
 
-MainTab:CreateSection("AUTO UNLOCK WORLDS")
+MainTab:CreateSection("Auto Unlock Worlds")
 
 MainTab:CreateToggle({
     Name = "Auto Unlock Worlds",
@@ -1021,14 +1048,14 @@ MainTab:CreateDropdown({
     end
 })
 
-MainTab:CreateSection("PRIORITY")
+MainTab:CreateSection("Priority")
 
 MainTab:CreateParagraph({
     Title = "How It Works",
-    Content = "Auto Train ON → Instant Throw stops\nAuto Train OFF → Instant Throw works\nOther features run independently"
+    Content = "Auto Train ON -> Instant Throw stops\nAuto Train OFF -> Instant Throw works\nOther features run independently"
 })
 
-MiscTab:CreateSection("AUTO USE INVENTORY ITEMS")
+MiscTab:CreateSection("Auto Use Inventory Items")
 
 MiscTab:CreateToggle({
     Name = "Auto Use Inventory Items",
@@ -1053,11 +1080,11 @@ MiscTab:CreateDropdown({
     MultipleOptions = true,
     Callback = function(Value)
         SelectedInventoryItems = Value
-        print("[INVENTORY] Selected:", table.concat(SelectedInventoryItems, ", "))
+        print("[INVENTORY] Selected: " .. table.concat(SelectedInventoryItems, ", "))
     end
 })
 
-MiscTab:CreateSection("AUTO CLAIM SPACE EGG")
+MiscTab:CreateSection("Auto Claim Space Egg")
 
 MiscTab:CreateToggle({
     Name = "Auto Claim Space Egg",
@@ -1073,7 +1100,7 @@ MiscTab:CreateToggle({
     end
 })
 
-MiscTab:CreateSection("AUTO ENCHANT PETS")
+MiscTab:CreateSection("Auto Enchant Pets")
 
 MiscTab:CreateToggle({
     Name = "Auto Enchant Equipped Pets",
@@ -1097,11 +1124,11 @@ MiscTab:CreateDropdown({
     MultipleOptions = true,
     Callback = function(Value)
         SelectedEnchants = Value
-        print("[ENCHANTS] Selected:", table.concat(SelectedEnchants, ", "))
+        print("[ENCHANTS] Selected: " .. table.concat(SelectedEnchants, ", "))
     end
 })
 
-MiscTab:CreateSection("AUTO CLAIM ACHIEVEMENTS")
+MiscTab:CreateSection("Auto Claim Achievements")
 
 MiscTab:CreateToggle({
     Name = "Auto Claim Achievements",
@@ -1125,11 +1152,11 @@ MiscTab:CreateDropdown({
     MultipleOptions = true,
     Callback = function(Value)
         SelectedAchievements = Value
-        print("[ACHIEVEMENTS] Selected:", table.concat(SelectedAchievements, ", "))
+        print("[ACHIEVEMENTS] Selected: " .. table.concat(SelectedAchievements, ", "))
     end
 })
 
-HatchTab:CreateSection("EGG SELECTION")
+HatchTab:CreateSection("Egg Selection")
 
 HatchTab:CreateDropdown({
     Name = "Select Egg",
@@ -1138,14 +1165,15 @@ HatchTab:CreateDropdown({
     Flag = "EggSelection",
     Callback = function(Value)
         SelectedEgg = Value
-        print("[EGG] Selected:", SelectedEgg)
+        local actualEggName = type(Value) == "table" and Value[1] or Value
+        print("[EGG] Selected: " .. actualEggName)
         if EggDeleteEnabled then
             SetupEggAutoDelete()
         end
     end
 })
 
-HatchTab:CreateSection("AUTO HATCH")
+HatchTab:CreateSection("Auto Hatch")
 
 HatchTab:CreateToggle({
     Name = "Auto Hatch Selected Egg",
@@ -1161,36 +1189,36 @@ HatchTab:CreateToggle({
     end
 })
 
-HatchTab:CreateSection("PET DELETE SYSTEM")
+HatchTab:CreateSection("Pet Delete System")
 
 HatchTab:CreateToggle({
-    Name = "Delete Pets From Egg (Auto-Delete by Rarity)",
+    Name = "Delete Pets From Egg",
     CurrentValue = false,
     Flag = "EggDeleteFlag",
     Callback = function(Value)
         EggDeleteEnabled = Value
-        if Value and SelectedEgg and SelectedEgg ~= "" then
+        if Value then
             SetupEggAutoDelete()
         end
     end
 })
 
 HatchTab:CreateDropdown({
-    Name = "Delete Rarity (Egg)",
+    Name = "Delete Rarities (Egg)",
     Options = rarityOptions,
     CurrentOption = {"Common"},
     Flag = "EggRaritySelect",
     MultipleOptions = true,
     Callback = function(Value)
         SelectedRarityToDelete = Value
-        if EggDeleteEnabled and SelectedEgg and SelectedEgg ~= "" then
+        if EggDeleteEnabled then
             SetupEggAutoDelete()
         end
     end
 })
 
 HatchTab:CreateToggle({
-    Name = "Delete Pets From Inventory (by Rarity)",
+    Name = "Delete Pets From Inventory",
     CurrentValue = false,
     Flag = "InventoryDeleteFlag",
     Callback = function(Value)
@@ -1204,7 +1232,7 @@ HatchTab:CreateToggle({
 })
 
 HatchTab:CreateDropdown({
-    Name = "Delete Rarity (Inventory)",
+    Name = "Delete Rarities (Inventory)",
     Options = rarityOptions,
     CurrentOption = {"Common"},
     Flag = "InventoryRaritySelect",
@@ -1241,4 +1269,4 @@ if Paper and Paper.Stats and AchievementsList then
     end
 end
 
-print("[SCRIPT] Script loaded")
+print("[SCRIPT] Script loaded successfully")
