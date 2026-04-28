@@ -61,15 +61,52 @@ local function GetStat(stat)
     return nil
 end
 
+local RebirthCostsUni1 = {}
+local RebirthCostsUni2 = {}
+local RebirthCostsUni3 = {}
+local RebirthOptionsUni1 = {"Auto Rebirth"}
+local RebirthOptionsUni2 = {"Auto Rebirth"}
+local RebirthOptionsUni3 = {"Auto Rebirth"}
 local UpgradePointUpgrades = {}
 local Universe2Upgrades = {}
 local Universe3Upgrades = {}
-local RebirthOptions = {"Auto Rebirth"}
 
-local function LoadData()
-    local paper = GetPaper()
-    if not paper then return end
+local function LoadRebirthCosts()
+    local success1, rebirthTable1 = pcall(function()
+        return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("Rebirths"))
+    end)
+    if success1 and rebirthTable1 then
+        RebirthCostsUni1 = rebirthTable1
+        RebirthOptionsUni1 = {"Auto Rebirth"}
+        for i = 1, #RebirthCostsUni1 do
+            table.insert(RebirthOptionsUni1, "Rebirth " .. i)
+        end
+    end
     
+    local success2, rebirthTable2 = pcall(function()
+        return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("RebirthsUni2"))
+    end)
+    if success2 and rebirthTable2 then
+        RebirthCostsUni2 = rebirthTable2
+        RebirthOptionsUni2 = {"Auto Rebirth"}
+        for i = 1, #RebirthCostsUni2 do
+            table.insert(RebirthOptionsUni2, "Rebirth " .. i)
+        end
+    end
+    
+    local success3, rebirthTable3 = pcall(function()
+        return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("RebirthsUni3"))
+    end)
+    if success3 and rebirthTable3 then
+        RebirthCostsUni3 = rebirthTable3
+        RebirthOptionsUni3 = {"Auto Rebirth"}
+        for i = 1, #RebirthCostsUni3 do
+            table.insert(RebirthOptionsUni3, "Rebirth " .. i)
+        end
+    end
+end
+
+local function LoadUpgrades()
     local success1, upgrades = pcall(function()
         return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("Upgrades"))
     end)
@@ -98,20 +135,10 @@ local function LoadData()
             end
         end
     end
-    
-    local success3, rebirthStat = pcall(function()
-        return paper.Stats.Get("Rebirths")
-    end)
-    if success3 and rebirthStat then
-        local maxRebirth = rebirthStat.Value or 0
-        RebirthOptions = {"Auto Rebirth"}
-        for i = 1, math.min(maxRebirth + 10, 50) do
-            table.insert(RebirthOptions, "Rebirth " .. i)
-        end
-    end
 end
 
-LoadData()
+LoadRebirthCosts()
+LoadUpgrades()
 
 local AutoFeatures = {
     Uni1AutoRebirth = false,
@@ -136,7 +163,7 @@ local Universe2Section = GameTab:CreateSection("Universe 2")
 local Universe3Section = GameTab:CreateSection("Universe 3")
 
 GameTab:CreateToggle({
-    Name = "Auto Rebirth",
+    Name = "Auto Rebirth Uni 1",
     CurrentValue = false,
     Flag = "Uni1AutoRebirth",
     Section = Universe1Section,
@@ -145,19 +172,15 @@ GameTab:CreateToggle({
         if Value then
             task.spawn(function()
                 while AutoFeatures.Uni1AutoRebirth do
-                    local success, rebirths = pcall(function()
-                        return GetStat("Rebirths")
-                    end)
-                    local success2, rebirthSkips = pcall(function()
-                        return GetStat("RebirthSkips")
-                    end)
+                    local rebirths = GetStat("Rebirths")
                     if SelectedValues.Uni1Rebirth ~= "Auto Rebirth" then
                         local targetNum = tonumber(SelectedValues.Uni1Rebirth:match("%d+"))
-                        if targetNum and rebirths and rebirths >= targetNum then
+                        local requiredCost = RebirthCostsUni1[targetNum]
+                        if targetNum and requiredCost and rebirths and rebirths >= requiredCost then
                             FireRemote("Rebirth")
                         end
                     else
-                        if rebirths and rebirthSkips then
+                        if rebirths then
                             FireRemote("Rebirth")
                         end
                     end
@@ -169,8 +192,8 @@ GameTab:CreateToggle({
 })
 
 GameTab:CreateDropdown({
-    Name = "Select Rebirth",
-    Options = RebirthOptions,
+    Name = "Select Rebirth Uni 1",
+    Options = RebirthOptionsUni1,
     CurrentOption = "Auto Rebirth",
     MultipleOptions = false,
     Flag = "Uni1RebirthSelect",
@@ -181,7 +204,7 @@ GameTab:CreateDropdown({
 })
 
 GameTab:CreateToggle({
-    Name = "Auto Buy Upgrades",
+    Name = "Auto Buy Upgrades Uni 1",
     CurrentValue = false,
     Flag = "Uni1AutoUpgrades",
     Section = Universe1Section,
@@ -190,43 +213,30 @@ GameTab:CreateToggle({
         if Value then
             task.spawn(function()
                 while AutoFeatures.Uni1AutoUpgrades and SelectedValues.Uni1Upgrade do
-                    local success, canAfford = pcall(function()
-                        local rebirthSkips = GetStat("RebirthSkips")
-                        local paper = GetPaper()
-                        if paper and SelectedValues.Uni1Upgrade then
-                            local upgradeData = nil
-                            local upgrades = require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("Upgrades"))
-                            for name, data in pairs(upgrades) do
-                                if name == SelectedValues.Uni1Upgrade then
-                                    upgradeData = data
-                                    break
+                    local rebirthSkips = GetStat("RebirthSkips")
+                    if rebirthSkips then
+                        local upgrades = require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("Upgrades"))
+                        local upgradeData = upgrades[SelectedValues.Uni1Upgrade]
+                        if upgradeData then
+                            local currentLevel = GetStat(upgradeData.StatName) or 0
+                            local cost = nil
+                            if upgradeData.OneTimeUpgrade then
+                                if currentLevel < 1 then
+                                    cost = upgradeData.Cost
+                                end
+                            else
+                                if not upgradeData.Max or currentLevel < upgradeData.Max then
+                                    if type(upgradeData.UpgradeCosts) == "table" then
+                                        cost = upgradeData.UpgradeCosts[currentLevel + 1]
+                                    elseif type(upgradeData.UpgradeCosts) == "function" then
+                                        cost = upgradeData.UpgradeCosts(currentLevel)
+                                    end
                                 end
                             end
-                            if upgradeData then
-                                local currentLevel = GetStat(upgradeData.StatName) or 0
-                                local cost = nil
-                                if upgradeData.OneTimeUpgrade then
-                                    cost = upgradeData.Cost
-                                    if currentLevel >= 1 then
-                                        return false
-                                    end
-                                else
-                                    if upgradeData.Max and currentLevel >= upgradeData.Max then
-                                        return false
-                                    end
-                                    if upgradeData.UpgradeCosts then
-                                        if type(upgradeData.UpgradeCosts) == "table" then
-                                            cost = upgradeData.UpgradeCosts[currentLevel + 1]
-                                        end
-                                    end
-                                end
-                                return cost and rebirthSkips and rebirthSkips >= cost
+                            if cost and rebirthSkips >= cost then
+                                FireRemote("Upgrade", SelectedValues.Uni1Upgrade)
                             end
                         end
-                        return false
-                    end)
-                    if canAfford then
-                        FireRemote("Upgrade", SelectedValues.Uni1Upgrade)
                     end
                     task.wait()
                 end
@@ -236,7 +246,7 @@ GameTab:CreateToggle({
 })
 
 GameTab:CreateDropdown({
-    Name = "Select Upgrade",
+    Name = "Select Upgrade Uni 1",
     Options = UpgradePointUpgrades,
     CurrentOption = {},
     MultipleOptions = false,
@@ -248,7 +258,7 @@ GameTab:CreateDropdown({
 })
 
 GameTab:CreateToggle({
-    Name = "Auto Rebirth",
+    Name = "Auto Rebirth Uni 2",
     CurrentValue = false,
     Flag = "Uni2AutoRebirth",
     Section = Universe2Section,
@@ -257,12 +267,11 @@ GameTab:CreateToggle({
         if Value then
             task.spawn(function()
                 while AutoFeatures.Uni2AutoRebirth do
-                    local success, essence = pcall(function()
-                        return GetStat("Essence")
-                    end)
+                    local essence = GetStat("Essence")
                     if SelectedValues.Uni2Rebirth ~= "Auto Rebirth" then
                         local targetNum = tonumber(SelectedValues.Uni2Rebirth:match("%d+"))
-                        if targetNum and essence and essence >= targetNum * 100 then
+                        local requiredCost = RebirthCostsUni2[targetNum]
+                        if targetNum and requiredCost and essence and essence >= requiredCost then
                             FireRemote("Essence Upgrade", "UniverseRebirth")
                         end
                     else
@@ -278,8 +287,8 @@ GameTab:CreateToggle({
 })
 
 GameTab:CreateDropdown({
-    Name = "Select Rebirth",
-    Options = RebirthOptions,
+    Name = "Select Rebirth Uni 2",
+    Options = RebirthOptionsUni2,
     CurrentOption = "Auto Rebirth",
     MultipleOptions = false,
     Flag = "Uni2RebirthSelect",
@@ -290,7 +299,7 @@ GameTab:CreateDropdown({
 })
 
 GameTab:CreateToggle({
-    Name = "Auto Buy Upgrades",
+    Name = "Auto Buy Upgrades Uni 2",
     CurrentValue = false,
     Flag = "Uni2AutoUpgrades",
     Section = Universe2Section,
@@ -299,43 +308,30 @@ GameTab:CreateToggle({
         if Value then
             task.spawn(function()
                 while AutoFeatures.Uni2AutoUpgrades and SelectedValues.Uni2Upgrade do
-                    local success, canAfford = pcall(function()
-                        local essence = GetStat("Essence")
-                        local paper = GetPaper()
-                        if paper and SelectedValues.Uni2Upgrade then
-                            local essenceUpgrades = require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("EssenceUpgrades"))
-                            local upgradeData = nil
-                            for name, data in pairs(essenceUpgrades) do
-                                if name == SelectedValues.Uni2Upgrade then
-                                    upgradeData = data
-                                    break
+                    local essence = GetStat("Essence")
+                    if essence then
+                        local essenceUpgrades = require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("EssenceUpgrades"))
+                        local upgradeData = essenceUpgrades[SelectedValues.Uni2Upgrade]
+                        if upgradeData then
+                            local currentLevel = GetStat(upgradeData.StatName) or 0
+                            local cost = nil
+                            if upgradeData.OneTimeUpgrade then
+                                if currentLevel < 1 then
+                                    cost = upgradeData.Cost
+                                end
+                            else
+                                if not upgradeData.Max or currentLevel < upgradeData.Max then
+                                    if type(upgradeData.UpgradeCosts) == "table" then
+                                        cost = upgradeData.UpgradeCosts[currentLevel + 1]
+                                    elseif type(upgradeData.UpgradeCosts) == "function" then
+                                        cost = upgradeData.UpgradeCosts(currentLevel)
+                                    end
                                 end
                             end
-                            if upgradeData then
-                                local currentLevel = GetStat(upgradeData.StatName) or 0
-                                local cost = nil
-                                if upgradeData.OneTimeUpgrade then
-                                    if currentLevel >= 1 then
-                                        return false
-                                    end
-                                    cost = upgradeData.Cost
-                                else
-                                    if upgradeData.Max and currentLevel >= upgradeData.Max then
-                                        return false
-                                    end
-                                    if upgradeData.UpgradeCosts then
-                                        if type(upgradeData.UpgradeCosts) == "table" then
-                                            cost = upgradeData.UpgradeCosts[currentLevel + 1]
-                                        end
-                                    end
-                                end
-                                return cost and essence and essence >= cost
+                            if cost and essence >= cost then
+                                FireRemote("Essence Upgrade", SelectedValues.Uni2Upgrade)
                             end
                         end
-                        return false
-                    end)
-                    if canAfford then
-                        FireRemote("Essence Upgrade", SelectedValues.Uni2Upgrade)
                     end
                     task.wait()
                 end
@@ -345,7 +341,7 @@ GameTab:CreateToggle({
 })
 
 GameTab:CreateDropdown({
-    Name = "Select Upgrade",
+    Name = "Select Upgrade Uni 2",
     Options = Universe2Upgrades,
     CurrentOption = {},
     MultipleOptions = false,
@@ -357,7 +353,7 @@ GameTab:CreateDropdown({
 })
 
 GameTab:CreateToggle({
-    Name = "Auto Rebirth",
+    Name = "Auto Rebirth Uni 3",
     CurrentValue = false,
     Flag = "Uni3AutoRebirth",
     Section = Universe3Section,
@@ -366,12 +362,11 @@ GameTab:CreateToggle({
         if Value then
             task.spawn(function()
                 while AutoFeatures.Uni3AutoRebirth do
-                    local success, essence = pcall(function()
-                        return GetStat("Essence")
-                    end)
+                    local essence = GetStat("Essence")
                     if SelectedValues.Uni3Rebirth ~= "Auto Rebirth" then
                         local targetNum = tonumber(SelectedValues.Uni3Rebirth:match("%d+"))
-                        if targetNum and essence and essence >= targetNum * 500 then
+                        local requiredCost = RebirthCostsUni3[targetNum]
+                        if targetNum and requiredCost and essence and essence >= requiredCost then
                             FireRemote("Essence Upgrade", "UniverseRebirth")
                         end
                     else
@@ -387,8 +382,8 @@ GameTab:CreateToggle({
 })
 
 GameTab:CreateDropdown({
-    Name = "Select Rebirth",
-    Options = RebirthOptions,
+    Name = "Select Rebirth Uni 3",
+    Options = RebirthOptionsUni3,
     CurrentOption = "Auto Rebirth",
     MultipleOptions = false,
     Flag = "Uni3RebirthSelect",
@@ -399,7 +394,7 @@ GameTab:CreateDropdown({
 })
 
 GameTab:CreateToggle({
-    Name = "Auto Buy Upgrades",
+    Name = "Auto Buy Upgrades Uni 3",
     CurrentValue = false,
     Flag = "Uni3AutoUpgrades",
     Section = Universe3Section,
@@ -408,43 +403,30 @@ GameTab:CreateToggle({
         if Value then
             task.spawn(function()
                 while AutoFeatures.Uni3AutoUpgrades and SelectedValues.Uni3Upgrade do
-                    local success, canAfford = pcall(function()
-                        local essence = GetStat("Essence")
-                        local paper = GetPaper()
-                        if paper and SelectedValues.Uni3Upgrade then
-                            local essenceUpgrades = require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("EssenceUpgrades"))
-                            local upgradeData = nil
-                            for name, data in pairs(essenceUpgrades) do
-                                if name == SelectedValues.Uni3Upgrade then
-                                    upgradeData = data
-                                    break
+                    local essence = GetStat("Essence")
+                    if essence then
+                        local essenceUpgrades = require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("EssenceUpgrades"))
+                        local upgradeData = essenceUpgrades[SelectedValues.Uni3Upgrade]
+                        if upgradeData then
+                            local currentLevel = GetStat(upgradeData.StatName) or 0
+                            local cost = nil
+                            if upgradeData.OneTimeUpgrade then
+                                if currentLevel < 1 then
+                                    cost = upgradeData.Cost
+                                end
+                            else
+                                if not upgradeData.Max or currentLevel < upgradeData.Max then
+                                    if type(upgradeData.UpgradeCosts) == "table" then
+                                        cost = upgradeData.UpgradeCosts[currentLevel + 1]
+                                    elseif type(upgradeData.UpgradeCosts) == "function" then
+                                        cost = upgradeData.UpgradeCosts(currentLevel)
+                                    end
                                 end
                             end
-                            if upgradeData then
-                                local currentLevel = GetStat(upgradeData.StatName) or 0
-                                local cost = nil
-                                if upgradeData.OneTimeUpgrade then
-                                    if currentLevel >= 1 then
-                                        return false
-                                    end
-                                    cost = upgradeData.Cost
-                                else
-                                    if upgradeData.Max and currentLevel >= upgradeData.Max then
-                                        return false
-                                    end
-                                    if upgradeData.UpgradeCosts then
-                                        if type(upgradeData.UpgradeCosts) == "table" then
-                                            cost = upgradeData.UpgradeCosts[currentLevel + 1]
-                                        end
-                                    end
-                                end
-                                return cost and essence and essence >= cost
+                            if cost and essence >= cost then
+                                FireRemote("Essence Upgrade", SelectedValues.Uni3Upgrade)
                             end
                         end
-                        return false
-                    end)
-                    if canAfford then
-                        FireRemote("Essence Upgrade", SelectedValues.Uni3Upgrade)
                     end
                     task.wait()
                 end
@@ -454,7 +436,7 @@ GameTab:CreateToggle({
 })
 
 GameTab:CreateDropdown({
-    Name = "Select Upgrade",
+    Name = "Select Upgrade Uni 3",
     Options = Universe3Upgrades,
     CurrentOption = {},
     MultipleOptions = false,
