@@ -8,20 +8,9 @@ local Window = Rayfield:CreateWindow({
         Enabled = true,
         FolderName = "ThrowSimScript",
         FileName = "Settings"
-    },
-    Discord = {
-        Enabled = false,
-        Invite = "noinvitelink",
-        RememberJoins = true
-    },
-    KeySystem = false,
-    KeySettings = {
-        Title = "Throw Sim Script",
-        Subtitle = "Key System",
-        Note = "No key required",
-        FileName = "Key"
     }
 })
+local GameTab = Window:CreateTab("Game", "gamepad")
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
@@ -72,13 +61,12 @@ local function GetStat(stat)
     return nil
 end
 
-local UpgradesTable = nil
-local EssenceUpgradesTable = nil
+local UpgradePointUpgrades = {}
 local Universe2Upgrades = {}
 local Universe3Upgrades = {}
-local UpgradePointUpgrades = {}
+local RebirthOptions = {"Auto Rebirth"}
 
-local function LoadTables()
+local function LoadData()
     local paper = GetPaper()
     if not paper then return end
     
@@ -86,7 +74,6 @@ local function LoadTables()
         return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("Upgrades"))
     end)
     if success1 and upgrades then
-        UpgradesTable = upgrades
         UpgradePointUpgrades = {}
         for name, data in pairs(upgrades) do
             if type(data) == "table" and data.StatName then
@@ -99,7 +86,6 @@ local function LoadTables()
         return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("EssenceUpgrades"))
     end)
     if success2 and essenceUpgrades then
-        EssenceUpgradesTable = essenceUpgrades
         Universe2Upgrades = {}
         Universe3Upgrades = {}
         for name, data in pairs(essenceUpgrades) do
@@ -112,32 +98,20 @@ local function LoadTables()
             end
         end
     end
-end
-
-local RebirthOptions = {}
-local function LoadRebirthOptions()
-    local paper = GetPaper()
-    if not paper then
-        RebirthOptions = {"Auto Rebirth"}
-        return
-    end
     
-    local success, rebirthStat = pcall(function()
+    local success3, rebirthStat = pcall(function()
         return paper.Stats.Get("Rebirths")
     end)
-    if success and rebirthStat then
+    if success3 and rebirthStat then
         local maxRebirth = rebirthStat.Value or 0
         RebirthOptions = {"Auto Rebirth"}
         for i = 1, math.min(maxRebirth + 10, 50) do
             table.insert(RebirthOptions, "Rebirth " .. i)
         end
-    else
-        RebirthOptions = {"Auto Rebirth"}
     end
 end
 
-LoadTables()
-LoadRebirthOptions()
+LoadData()
 
 local AutoFeatures = {
     Uni1AutoRebirth = false,
@@ -152,19 +126,17 @@ local SelectedValues = {
     Uni1Rebirth = "Auto Rebirth",
     Uni2Rebirth = "Auto Rebirth",
     Uni3Rebirth = "Auto Rebirth",
-    Uni1Upgrades = {},
-    Uni2Upgrades = {},
-    Uni3Upgrades = {},
+    Uni1Upgrade = nil,
+    Uni2Upgrade = nil,
+    Uni3Upgrade = nil,
 }
-
-local GameTab = Window:CreateTab("Game", "gamepad-2")
 
 local Universe1Section = GameTab:CreateSection("Universe 1")
 local Universe2Section = GameTab:CreateSection("Universe 2")
 local Universe3Section = GameTab:CreateSection("Universe 3")
 
-Rayfield:CreateToggle({
-    Name = "Uni 1 Auto Rebirth",
+GameTab:CreateToggle({
+    Name = "Auto Rebirth",
     CurrentValue = false,
     Flag = "Uni1AutoRebirth",
     Section = Universe1Section,
@@ -173,23 +145,34 @@ Rayfield:CreateToggle({
         if Value then
             task.spawn(function()
                 while AutoFeatures.Uni1AutoRebirth do
-                    local success, result = pcall(function()
-                        local rebirthStat = GetStat("Rebirths")
-                        if rebirthStat then
-                            FireRemote("Rebirth", SelectedValues.Uni1Rebirth)
-                        end
+                    local success, rebirths = pcall(function()
+                        return GetStat("Rebirths")
                     end)
-                    task.wait(2)
+                    local success2, rebirthSkips = pcall(function()
+                        return GetStat("RebirthSkips")
+                    end)
+                    if SelectedValues.Uni1Rebirth ~= "Auto Rebirth" then
+                        local targetNum = tonumber(SelectedValues.Uni1Rebirth:match("%d+"))
+                        if targetNum and rebirths and rebirths >= targetNum then
+                            FireRemote("Rebirth")
+                        end
+                    else
+                        if rebirths and rebirthSkips then
+                            FireRemote("Rebirth")
+                        end
+                    end
+                    task.wait()
                 end
             end)
         end
     end,
 })
 
-Rayfield:CreateDropdown({
-    Name = "Select Uni 1 Rebirth",
+GameTab:CreateDropdown({
+    Name = "Select Rebirth",
     Options = RebirthOptions,
     CurrentOption = "Auto Rebirth",
+    MultipleOptions = false,
     Flag = "Uni1RebirthSelect",
     Section = Universe1Section,
     Callback = function(Option)
@@ -197,8 +180,8 @@ Rayfield:CreateDropdown({
     end,
 })
 
-Rayfield:CreateToggle({
-    Name = "Uni 1 Auto Buy Upgrades",
+GameTab:CreateToggle({
+    Name = "Auto Buy Upgrades",
     CurrentValue = false,
     Flag = "Uni1AutoUpgrades",
     Section = Universe1Section,
@@ -206,34 +189,66 @@ Rayfield:CreateToggle({
         AutoFeatures.Uni1AutoUpgrades = Value
         if Value then
             task.spawn(function()
-                while AutoFeatures.Uni1AutoUpgrades do
-                    for _, upgrade in pairs(SelectedValues.Uni1Upgrades) do
-                        local success = pcall(function()
-                            FireRemote("Upgrade", upgrade)
-                        end)
-                        task.wait(0.5)
+                while AutoFeatures.Uni1AutoUpgrades and SelectedValues.Uni1Upgrade do
+                    local success, canAfford = pcall(function()
+                        local rebirthSkips = GetStat("RebirthSkips")
+                        local paper = GetPaper()
+                        if paper and SelectedValues.Uni1Upgrade then
+                            local upgradeData = nil
+                            local upgrades = require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("Upgrades"))
+                            for name, data in pairs(upgrades) do
+                                if name == SelectedValues.Uni1Upgrade then
+                                    upgradeData = data
+                                    break
+                                end
+                            end
+                            if upgradeData then
+                                local currentLevel = GetStat(upgradeData.StatName) or 0
+                                local cost = nil
+                                if upgradeData.OneTimeUpgrade then
+                                    cost = upgradeData.Cost
+                                    if currentLevel >= 1 then
+                                        return false
+                                    end
+                                else
+                                    if upgradeData.Max and currentLevel >= upgradeData.Max then
+                                        return false
+                                    end
+                                    if upgradeData.UpgradeCosts then
+                                        if type(upgradeData.UpgradeCosts) == "table" then
+                                            cost = upgradeData.UpgradeCosts[currentLevel + 1]
+                                        end
+                                    end
+                                end
+                                return cost and rebirthSkips and rebirthSkips >= cost
+                            end
+                        end
+                        return false
+                    end)
+                    if canAfford then
+                        FireRemote("Upgrade", SelectedValues.Uni1Upgrade)
                     end
-                    task.wait(3)
+                    task.wait()
                 end
             end)
         end
     end,
 })
 
-Rayfield:CreateDropdown({
-    Name = "Select Uni 1 Upgrades",
+GameTab:CreateDropdown({
+    Name = "Select Upgrade",
     Options = UpgradePointUpgrades,
     CurrentOption = {},
-    MultiOptions = true,
+    MultipleOptions = false,
     Flag = "Uni1UpgradesSelect",
     Section = Universe1Section,
-    Callback = function(Options)
-        SelectedValues.Uni1Upgrades = Options
+    Callback = function(Option)
+        SelectedValues.Uni1Upgrade = Option
     end,
 })
 
-Rayfield:CreateToggle({
-    Name = "Uni 2 Auto Rebirth",
+GameTab:CreateToggle({
+    Name = "Auto Rebirth",
     CurrentValue = false,
     Flag = "Uni2AutoRebirth",
     Section = Universe2Section,
@@ -242,23 +257,31 @@ Rayfield:CreateToggle({
         if Value then
             task.spawn(function()
                 while AutoFeatures.Uni2AutoRebirth do
-                    local success = pcall(function()
-                        local currentUniverse = GetStat("CurrentUniverse")
-                        if currentUniverse == 2 then
-                            FireRemote("Essence Upgrade", SelectedValues.Uni2Rebirth)
-                        end
+                    local success, essence = pcall(function()
+                        return GetStat("Essence")
                     end)
-                    task.wait(2)
+                    if SelectedValues.Uni2Rebirth ~= "Auto Rebirth" then
+                        local targetNum = tonumber(SelectedValues.Uni2Rebirth:match("%d+"))
+                        if targetNum and essence and essence >= targetNum * 100 then
+                            FireRemote("Essence Upgrade", "UniverseRebirth")
+                        end
+                    else
+                        if essence and essence > 0 then
+                            FireRemote("Essence Upgrade", "UniverseRebirth")
+                        end
+                    end
+                    task.wait()
                 end
             end)
         end
     end,
 })
 
-Rayfield:CreateDropdown({
-    Name = "Select Uni 2 Rebirth",
+GameTab:CreateDropdown({
+    Name = "Select Rebirth",
     Options = RebirthOptions,
     CurrentOption = "Auto Rebirth",
+    MultipleOptions = false,
     Flag = "Uni2RebirthSelect",
     Section = Universe2Section,
     Callback = function(Option)
@@ -266,8 +289,8 @@ Rayfield:CreateDropdown({
     end,
 })
 
-Rayfield:CreateToggle({
-    Name = "Uni 2 Auto Buy Upgrades",
+GameTab:CreateToggle({
+    Name = "Auto Buy Upgrades",
     CurrentValue = false,
     Flag = "Uni2AutoUpgrades",
     Section = Universe2Section,
@@ -275,34 +298,66 @@ Rayfield:CreateToggle({
         AutoFeatures.Uni2AutoUpgrades = Value
         if Value then
             task.spawn(function()
-                while AutoFeatures.Uni2AutoUpgrades do
-                    for _, upgrade in pairs(SelectedValues.Uni2Upgrades) do
-                        local success = pcall(function()
-                            FireRemote("Essence Upgrade", upgrade)
-                        end)
-                        task.wait(0.5)
+                while AutoFeatures.Uni2AutoUpgrades and SelectedValues.Uni2Upgrade do
+                    local success, canAfford = pcall(function()
+                        local essence = GetStat("Essence")
+                        local paper = GetPaper()
+                        if paper and SelectedValues.Uni2Upgrade then
+                            local essenceUpgrades = require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("EssenceUpgrades"))
+                            local upgradeData = nil
+                            for name, data in pairs(essenceUpgrades) do
+                                if name == SelectedValues.Uni2Upgrade then
+                                    upgradeData = data
+                                    break
+                                end
+                            end
+                            if upgradeData then
+                                local currentLevel = GetStat(upgradeData.StatName) or 0
+                                local cost = nil
+                                if upgradeData.OneTimeUpgrade then
+                                    if currentLevel >= 1 then
+                                        return false
+                                    end
+                                    cost = upgradeData.Cost
+                                else
+                                    if upgradeData.Max and currentLevel >= upgradeData.Max then
+                                        return false
+                                    end
+                                    if upgradeData.UpgradeCosts then
+                                        if type(upgradeData.UpgradeCosts) == "table" then
+                                            cost = upgradeData.UpgradeCosts[currentLevel + 1]
+                                        end
+                                    end
+                                end
+                                return cost and essence and essence >= cost
+                            end
+                        end
+                        return false
+                    end)
+                    if canAfford then
+                        FireRemote("Essence Upgrade", SelectedValues.Uni2Upgrade)
                     end
-                    task.wait(3)
+                    task.wait()
                 end
             end)
         end
     end,
 })
 
-Rayfield:CreateDropdown({
-    Name = "Select Uni 2 Upgrades",
+GameTab:CreateDropdown({
+    Name = "Select Upgrade",
     Options = Universe2Upgrades,
     CurrentOption = {},
-    MultiOptions = true,
+    MultipleOptions = false,
     Flag = "Uni2UpgradesSelect",
     Section = Universe2Section,
-    Callback = function(Options)
-        SelectedValues.Uni2Upgrades = Options
+    Callback = function(Option)
+        SelectedValues.Uni2Upgrade = Option
     end,
 })
 
-Rayfield:CreateToggle({
-    Name = "Uni 3 Auto Rebirth",
+GameTab:CreateToggle({
+    Name = "Auto Rebirth",
     CurrentValue = false,
     Flag = "Uni3AutoRebirth",
     Section = Universe3Section,
@@ -311,23 +366,31 @@ Rayfield:CreateToggle({
         if Value then
             task.spawn(function()
                 while AutoFeatures.Uni3AutoRebirth do
-                    local success = pcall(function()
-                        local currentUniverse = GetStat("CurrentUniverse")
-                        if currentUniverse == 3 then
-                            FireRemote("Essence Upgrade", SelectedValues.Uni3Rebirth)
-                        end
+                    local success, essence = pcall(function()
+                        return GetStat("Essence")
                     end)
-                    task.wait(2)
+                    if SelectedValues.Uni3Rebirth ~= "Auto Rebirth" then
+                        local targetNum = tonumber(SelectedValues.Uni3Rebirth:match("%d+"))
+                        if targetNum and essence and essence >= targetNum * 500 then
+                            FireRemote("Essence Upgrade", "UniverseRebirth")
+                        end
+                    else
+                        if essence and essence > 0 then
+                            FireRemote("Essence Upgrade", "UniverseRebirth")
+                        end
+                    end
+                    task.wait()
                 end
             end)
         end
     end,
 })
 
-Rayfield:CreateDropdown({
-    Name = "Select Uni 3 Rebirth",
+GameTab:CreateDropdown({
+    Name = "Select Rebirth",
     Options = RebirthOptions,
     CurrentOption = "Auto Rebirth",
+    MultipleOptions = false,
     Flag = "Uni3RebirthSelect",
     Section = Universe3Section,
     Callback = function(Option)
@@ -335,8 +398,8 @@ Rayfield:CreateDropdown({
     end,
 })
 
-Rayfield:CreateToggle({
-    Name = "Uni 3 Auto Buy Upgrades",
+GameTab:CreateToggle({
+    Name = "Auto Buy Upgrades",
     CurrentValue = false,
     Flag = "Uni3AutoUpgrades",
     Section = Universe3Section,
@@ -344,28 +407,60 @@ Rayfield:CreateToggle({
         AutoFeatures.Uni3AutoUpgrades = Value
         if Value then
             task.spawn(function()
-                while AutoFeatures.Uni3AutoUpgrades do
-                    for _, upgrade in pairs(SelectedValues.Uni3Upgrades) do
-                        local success = pcall(function()
-                            FireRemote("Essence Upgrade", upgrade)
-                        end)
-                        task.wait(0.5)
+                while AutoFeatures.Uni3AutoUpgrades and SelectedValues.Uni3Upgrade do
+                    local success, canAfford = pcall(function()
+                        local essence = GetStat("Essence")
+                        local paper = GetPaper()
+                        if paper and SelectedValues.Uni3Upgrade then
+                            local essenceUpgrades = require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("EssenceUpgrades"))
+                            local upgradeData = nil
+                            for name, data in pairs(essenceUpgrades) do
+                                if name == SelectedValues.Uni3Upgrade then
+                                    upgradeData = data
+                                    break
+                                end
+                            end
+                            if upgradeData then
+                                local currentLevel = GetStat(upgradeData.StatName) or 0
+                                local cost = nil
+                                if upgradeData.OneTimeUpgrade then
+                                    if currentLevel >= 1 then
+                                        return false
+                                    end
+                                    cost = upgradeData.Cost
+                                else
+                                    if upgradeData.Max and currentLevel >= upgradeData.Max then
+                                        return false
+                                    end
+                                    if upgradeData.UpgradeCosts then
+                                        if type(upgradeData.UpgradeCosts) == "table" then
+                                            cost = upgradeData.UpgradeCosts[currentLevel + 1]
+                                        end
+                                    end
+                                end
+                                return cost and essence and essence >= cost
+                            end
+                        end
+                        return false
+                    end)
+                    if canAfford then
+                        FireRemote("Essence Upgrade", SelectedValues.Uni3Upgrade)
                     end
-                    task.wait(3)
+                    task.wait()
                 end
             end)
         end
     end,
 })
 
-Rayfield:CreateDropdown({
-    Name = "Select Uni 3 Upgrades",
+GameTab:CreateDropdown({
+    Name = "Select Upgrade",
     Options = Universe3Upgrades,
     CurrentOption = {},
-    MultiOptions = true,
+    MultipleOptions = false,
     Flag = "Uni3UpgradesSelect",
     Section = Universe3Section,
-    Callback = function(Options)
-        SelectedValues.Uni3Upgrades = Options
+    Callback = function(Option)
+        SelectedValues.Uni3Upgrade = Option
     end,
-      })
+})
