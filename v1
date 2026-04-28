@@ -396,8 +396,7 @@ local function GetItemDuration(itemName)
     return 300
 end
 
--- Fixed Use Inventory Item with proper args format
--- Fixed Use Inventory Item with correct unpack format
+-- Fixed Use Inventory Item with bulk quantity support
 local function UseInventoryItem(itemName, quantity)
     local remote = ReplicatedStorage:FindFirstChild("Paper")
     if remote then
@@ -405,20 +404,33 @@ local function UseInventoryItem(itemName, quantity)
         if remote then
             remote = remote:FindFirstChild("__remotefunction")
             if remote then
-                local args = {"Use Item", itemName, quantity}
                 local success, result = pcall(function()
-                    return remote:InvokeServer(unpack(args))
+                    return remote:InvokeServer("Use Item", itemName, quantity)
                 end)
                 if success and result then
                     print("[INVENTORY] Used " .. quantity .. "x " .. itemName)
                     return true
                 else
-                    print("[INVENTORY] Failed to use " .. itemName .. " - Error: " .. tostring(result))
+                    print("[INVENTORY] Failed to use " .. itemName)
                 end
             end
         end
     end
     return false
+end
+
+local function GetPlayerInventory()
+    local items = Paper.Stats.Get("Items")
+    local itemList = {}
+    if items and items.Value then
+        for name, amount in pairs(items.Value) do
+            if amount > 0 then
+                table.insert(itemList, name)
+            end
+        end
+    end
+    table.sort(itemList)
+    return itemList
 end
 
 local function GetItemCount(itemName)
@@ -427,52 +439,6 @@ local function GetItemCount(itemName)
         return items.Value[itemName]
     end
     return 0
-end
-
--- FIXED: StartAutoInventory with while loop to burn through all items
-local function StartAutoInventory()
-    if AutoInventoryConnection then
-        AutoInventoryConnection:Disconnect()
-        AutoInventoryConnection = nil
-    end
-    
-    if AutoUseInventoryEnabled and Paper then
-        AutoInventoryConnection = RunService.Heartbeat:Connect(function()
-            if AutoUseInventoryEnabled and Paper then
-                local currentTime = os.time()
-                for _, itemName in pairs(SelectedInventoryItems) do
-                    local lastUsed = ItemTimers[itemName] or 0
-                    local duration = GetItemDuration(itemName)
-                    
-                    if currentTime - lastUsed >= duration then
-                        local itemCount = GetItemCount(itemName)
-                        print("[INVENTORY] Found " .. itemCount .. "x " .. itemName .. " - Using all")
-                        
-                        -- Burn through ALL items in batches of 500
-                        local totalUsed = 0
-                        while itemCount > 0 do
-                            local useAmount = math.min(itemCount, 500)
-                            local success = UseInventoryItem(itemName, useAmount)
-                            
-                            if not success then 
-                                print("[INVENTORY] Stopped at " .. totalUsed .. "x " .. itemName .. " due to error")
-                                break -- Stop if remote fails
-                            end
-                            
-                            totalUsed = totalUsed + useAmount
-                            task.wait(0.1) -- Small delay to prevent crashing
-                            itemCount = GetItemCount(itemName) -- Update count for next loop
-                        end
-                        
-                        print("[INVENTORY] Used " .. totalUsed .. "x " .. itemName .. " total")
-                        ItemTimers[itemName] = currentTime
-                        task.wait(0.5)
-                    end
-                end
-                task.wait(1)
-            end
-        end)
-    end
 end
 
 local function UpdateInventoryDropdown()
@@ -503,7 +469,6 @@ local function EnchantPet(petGuid)
     end)
 end
 
--- FIXED: StartAutoInventory with while loop to burn through all items
 local function StartAutoInventory()
     if AutoInventoryConnection then
         AutoInventoryConnection:Disconnect()
@@ -517,25 +482,14 @@ local function StartAutoInventory()
                 for _, itemName in pairs(SelectedInventoryItems) do
                     local lastUsed = ItemTimers[itemName] or 0
                     local duration = GetItemDuration(itemName)
-                    
                     if currentTime - lastUsed >= duration then
                         local itemCount = GetItemCount(itemName)
-                        
-                        -- Burn through all items in batches of 500
-                        while itemCount > 0 do
+                        if itemCount > 0 then
                             local useAmount = math.min(itemCount, 500)
-                            local success = UseInventoryItem(itemName, useAmount)
-                            
-                            if not success then 
-                                break -- Stop if remote fails
-                            end
-                            
-                            task.wait(0.1) -- Small delay to prevent crashing
-                            itemCount = GetItemCount(itemName) -- Update count for next loop
+                            UseInventoryItem(itemName, useAmount)
+                            ItemTimers[itemName] = currentTime
+                            task.wait(0.5)
                         end
-                        
-                        ItemTimers[itemName] = currentTime
-                        task.wait(0.5)
                     end
                 end
                 task.wait(1)
@@ -685,7 +639,6 @@ local function TeleportAndHatch()
             remote = remote:FindFirstChild("__remotefunction")
             if remote then
                 pcall(function()
-                    -- FIXED: Added "Max" argument
                     remote:InvokeServer("Hatch Egg", actualEggName, "Max")
                     print("[HATCH] Hatched: " .. actualEggName)
                 end)
@@ -717,7 +670,7 @@ local function StopAutoHatch()
     end
 end
 
--- FIXED: SetupEggAutoDelete with proper nil check (not == true)
+-- Fixed SetupEggAutoDelete with intelligent state checking
 local function SetupEggAutoDelete()
     if not EggDeleteEnabled then return end
     
@@ -734,11 +687,11 @@ local function SetupEggAutoDelete()
     
     local eggData = EggsList[actualEggName]
     
-    -- Get current auto-delete settings (stores numbers like 7, not booleans)
-    local autoDeleteStat = Paper.Stats.Get("AutoDelete")
+    -- Get current auto-delete settings
+    local autoDeleteData = Paper.Stats.Get("AutoDelete")
     local currentAutoDelete = {}
-    if autoDeleteStat and autoDeleteStat.Value then
-        currentAutoDelete = autoDeleteStat.Value
+    if autoDeleteData and autoDeleteData.Value then
+        currentAutoDelete = autoDeleteData.Value
     end
     
     local raritiesToDelete = {}
@@ -746,43 +699,44 @@ local function SetupEggAutoDelete()
         raritiesToDelete[rarityName] = true
     end
     
-    local pendingChanges = {}
-    
     if eggData and eggData.Pets then
         for _, petInfo in pairs(eggData.Pets) do
             local petName = petInfo.Pet
             
+            -- Get pet rarity from module
             local petRarity = "Common"
             local petModule = PetsModules[petName]
             if petModule and petModule.Rarity then
                 petRarity = petModule.Rarity
             end
             
-            local shouldBeDeleted = raritiesToDelete[petRarity] or false
-            -- FIXED: Check if value exists (not nil) instead of == true
-            local isCurrentlyDeleted = currentAutoDelete[petName] ~= nil
+            local shouldDelete = raritiesToDelete[petRarity] or false
+            local isCurrentlySet = currentAutoDelete[petName] == true
             
-            if shouldBeDeleted ~= isCurrentlyDeleted and not pendingChanges[petName] then
-                pendingChanges[petName] = true
-                
+            -- Only fire if state needs to change
+            if shouldDelete and not isCurrentlySet then
                 pcall(function()
                     remote:InvokeServer("Pet", {
                         Pet = petName,
                         Action = "AutoDelete",
                         Tier = "all"
                     })
-                    local action = shouldBeDeleted and "Enabled" or "Disabled"
-                    print("[EGG DELETE] " .. action .. " auto-delete: " .. petName .. " (" .. petRarity .. ")")
+                    print("[EGG DELETE] Enabled auto-delete: " .. petName .. " (" .. petRarity .. ")")
+                end)
+                task.wait(0.05)
+            elseif not shouldDelete and isCurrentlySet then
+                pcall(function()
+                    remote:InvokeServer("Pet", {
+                        Pet = petName,
+                        Action = "AutoDelete",
+                        Tier = "none"
+                    })
+                    print("[EGG DELETE] Disabled auto-delete: " .. petName .. " (" .. petRarity .. ")")
                 end)
                 task.wait(0.05)
             end
         end
     end
-    
-    task.spawn(function()
-        task.wait(2)
-        pendingChanges = {}
-    end)
 end
 
 local function GetInventoryPets()
