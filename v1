@@ -24,9 +24,9 @@ local Window = Rayfield:CreateWindow({
     }
 })
 
-local MainTab = Window:CreateTab("Main", 0)
-local MiscTab = Window:CreateTab("Misc", 0)
-local HatchTab = Window:CreateTab("Hatch", 0)
+local MainTab = Window:CreateTab("💪 Main", "rbxassetid://93947353250488")
+local MiscTab = Window:CreateTab("🎁 Misc", "rbxassetid://126594882958545")
+local HatchTab = Window:CreateTab("🥚 Hatch", "rbxassetid://80914973237193")
 
 print("[SCRIPT] Starting Throw Sim Script")
 
@@ -56,7 +56,10 @@ local AutoHatchEnabled = false
 local SelectedEgg = ""
 local EggDeleteEnabled = false
 local InventoryDeleteEnabled = false
-local SelectedRarityToDelete = "Common"
+local SelectedRarityToDelete = {}  -- Changed to table for multi-select
+
+local AutoClaimAchievementsEnabled = false
+local SelectedAchievements = {}  -- For multi-select achievements
 
 local InstantThrowConnection = nil
 local AutoClaimConnection = nil
@@ -67,11 +70,13 @@ local AutoEnchantConnection = nil
 local AutoSpaceEggConnection = nil
 local AutoHatchConnection = nil
 local InventoryDeleteConnection = nil
+local AchievementConnection = nil
 local Paper = nil
 local ChestsList = {}
 local WorldsList = {}
 local EnchantsList = {}
 local EggsList = {}
+local AchievementsList = {}
 local CurrentInventoryItems = {}
 local RarityNumbers = {}
 local RarityNames = {}
@@ -153,9 +158,33 @@ local eggsTable = ReplicatedStorage:FindFirstChild("Tables")
 if eggsTable then
     eggsTable = eggsTable:FindFirstChild("Eggs")
     if eggsTable then
-        EggsList = SafeRequire(eggsTable) or {}
-        print("[DEBUG] Loaded Eggs table")
+        local allEggs = SafeRequire(eggsTable) or {}
+        -- Filter out exclusive eggs
+        for eggName, eggData in pairs(allEggs) do
+            if not eggData.Exclusive then
+                EggsList[eggName] = eggData
+            end
+        end
+        print("[DEBUG] Loaded Eggs table (filtered out exclusive eggs)")
     end
+end
+
+local achievementsTable = ReplicatedStorage:FindFirstChild("Tables")
+if achievementsTable then
+    achievementsTable = achievementsTable:FindFirstChild("Achievements")
+    if achievementsTable then
+        AchievementsList = SafeRequire(achievementsTable) or {}
+        print("[DEBUG] Loaded Achievements table")
+    end
+end
+
+local function SortTableAlphabetically(t)
+    local sorted = {}
+    for k, v in pairs(t) do
+        table.insert(sorted, k)
+    end
+    table.sort(sorted)
+    return sorted
 end
 
 local function GetThrownObject()
@@ -375,6 +404,7 @@ local function GetPlayerInventory()
             end
         end
     end
+    table.sort(itemList)
     return itemList
 end
 
@@ -608,7 +638,13 @@ local function SetupEggAutoDelete()
     if not remote then return end
     
     local eggData = EggsList[SelectedEgg]
-    local targetRarityNum = RarityNumbers[SelectedRarityToDelete] or 1
+    local lowestRarityNum = 100
+    for _, rarityName in pairs(SelectedRarityToDelete) do
+        local rarityNum = RarityNumbers[rarityName] or 1
+        if rarityNum < lowestRarityNum then
+            lowestRarityNum = rarityNum
+        end
+    end
     
     if eggData and eggData.Pets then
         for _, petInfo in pairs(eggData.Pets) do
@@ -616,7 +652,7 @@ local function SetupEggAutoDelete()
             local petRarity = petInfo.Rarity or "Common"
             local petRarityNum = RarityNumbers[petRarity] or 1
             
-            if petRarityNum <= targetRarityNum then
+            if petRarityNum <= lowestRarityNum then
                 pcall(function()
                     remote:InvokeServer("Pet", {
                         Pet = petName,
@@ -676,14 +712,21 @@ end
 local function CheckAndDeleteInventoryPets()
     if not InventoryDeleteEnabled then return end
     
-    local targetRarityNum = RarityNumbers[SelectedRarityToDelete] or 1
+    local lowestRarityNum = 100
+    for _, rarityName in pairs(SelectedRarityToDelete) do
+        local rarityNum = RarityNumbers[rarityName] or 1
+        if rarityNum < lowestRarityNum then
+            lowestRarityNum = rarityNum
+        end
+    end
+    
     local pets = GetInventoryPets()
     
     for _, pet in pairs(pets) do
         local petRarity = pet:GetAttribute("Rarity") or "Common"
         local petRarityNum = RarityNumbers[petRarity] or 1
         
-        if petRarityNum <= targetRarityNum then
+        if petRarityNum <= lowestRarityNum then
             local petName = pet:GetAttribute("PetName") or "Unknown"
             print("[INVENTORY DELETE] Deleting:", petName, "(", petRarity, ")")
             DeletePet(pet.Name)
@@ -790,24 +833,125 @@ local function ToggleAutoTrain(state)
     end
 end
 
-local chestNames = {}
-for chestName, chestData in pairs(ChestsList) do
-    table.insert(chestNames, chestName)
+-- Achievement Claiming System
+local achievementRemote = nil
+local achievementBusy = false
+
+local function GetAchievementRemote()
+    if achievementRemote then return achievementRemote end
+    local remote = ReplicatedStorage:FindFirstChild("Paper")
+    if remote then
+        remote = remote:FindFirstChild("Remotes")
+        if remote then
+            remote = remote:FindFirstChild("__remotefunction")
+            if remote then
+                achievementRemote = remote
+                return achievementRemote
+            end
+        end
+    end
+    return nil
 end
 
+local function ClaimAchievement(id, rank)
+    local remote = GetAchievementRemote()
+    if not remote then return false end
+    local success, result = pcall(function()
+        return remote:InvokeServer("Claim Achievement", id, rank)
+    end)
+    return success and result == true
+end
+
+local function ClaimAchievementChain(id, data)
+    local currentRank = Paper.Stats.Get(data.AchievementStat).Value
+    local progress = Paper.Stats.Get(data.Stat).Value
+    
+    for rank = currentRank + 1, #data.Rewards do
+        local reward = data.Rewards[rank]
+        if progress >= reward.Requirement then
+            print("[ACHIEVEMENT] Trying to claim " .. id .. " Rank " .. rank)
+            if ClaimAchievement(id, rank) then
+                print("[ACHIEVEMENT] Claimed!")
+                task.wait(0.5)
+            else
+                break
+            end
+        else
+            break
+        end
+    end
+end
+
+local function ScanAndClaimAchievements()
+    if not AutoClaimAchievementsEnabled then return end
+    if achievementBusy then return end
+    achievementBusy = true
+    
+    if #SelectedAchievements > 0 and not table.find(SelectedAchievements, "All") then
+        for _, achievementId in pairs(SelectedAchievements) do
+            local data = AchievementsList[achievementId]
+            if data then
+                ClaimAchievementChain(achievementId, data)
+                task.wait(0.3)
+            end
+        end
+    elseif table.find(SelectedAchievements, "All") or #SelectedAchievements == 0 then
+        for id, data in pairs(AchievementsList) do
+            ClaimAchievementChain(id, data)
+            task.wait(0.3)
+        end
+    end
+    
+    achievementBusy = false
+end
+
+local function StartAutoAchievements()
+    if AchievementConnection then
+        AchievementConnection:Disconnect()
+        AchievementConnection = nil
+    end
+    
+    if AutoClaimAchievementsEnabled then
+        ScanAndClaimAchievements()
+        AchievementConnection = RunService.Heartbeat:Connect(function()
+            if AutoClaimAchievementsEnabled then
+                ScanAndClaimAchievements()
+                task.wait(60)
+            end
+        end)
+    end
+end
+
+local function StopAutoAchievements()
+    if AchievementConnection then
+        AchievementConnection:Disconnect()
+        AchievementConnection = nil
+    end
+end
+
+-- Sort all lists alphabetically
+local chestNames = SortTableAlphabetically(ChestsList)
 local worldNames = { "Any Affordable World" }
-for worldNum, worldData in pairs(WorldsList) do
+for _, worldData in pairs(WorldsList) do
     table.insert(worldNames, worldData.WorldName)
 end
+table.sort(worldNames, function(a, b) 
+    if a == "Any Affordable World" then return true
+    elseif b == "Any Affordable World" then return false
+    else return a < b end
+end)
 
-local enchantNames = {}
-for enchantName, _ in pairs(EnchantsList) do
-    table.insert(enchantNames, enchantName)
-end
+local enchantNames = SortTableAlphabetically(EnchantsList)
+local eggNames = SortTableAlphabetically(EggsList)
 
-local eggNames = {}
-for eggName, _ in pairs(EggsList) do
-    table.insert(eggNames, eggName)
+-- Build achievement list
+local achievementNames = SortTableAlphabetically(AchievementsList)
+table.insert(achievementNames, 1, "All")
+
+-- Build rarity names for multi-select
+local rarityOptions = {}
+for _, name in ipairs(RarityNames) do
+    table.insert(rarityOptions, name)
 end
 
 MainTab:CreateSection("🔥 INSTANT THROW")
@@ -991,6 +1135,34 @@ MiscTab:CreateDropdown({
     end
 })
 
+MiscTab:CreateSection("🏆 AUTO CLAIM ACHIEVEMENTS")
+
+MiscTab:CreateToggle({
+    Name = "Auto Claim Achievements",
+    CurrentValue = false,
+    Flag = "AutoAchievementFlag",
+    Callback = function(Value)
+        AutoClaimAchievementsEnabled = Value
+        if Value then
+            StartAutoAchievements()
+        else
+            StopAutoAchievements()
+        end
+    end
+})
+
+MiscTab:CreateDropdown({
+    Name = "Select Achievements",
+    Options = achievementNames,
+    CurrentOption = {"All"},
+    Flag = "AchievementSelection",
+    MultipleOptions = true,
+    Callback = function(Value)
+        SelectedAchievements = Value
+        print("[ACHIEVEMENTS] Selected:", table.concat(SelectedAchievements, ", "))
+    end
+})
+
 HatchTab:CreateSection("🥚 EGG SELECTION")
 
 HatchTab:CreateDropdown({
@@ -1039,9 +1211,10 @@ HatchTab:CreateToggle({
 
 HatchTab:CreateDropdown({
     Name = "Delete Rarity ≤ (Egg)",
-    Options = RarityNames,
-    CurrentOption = "Common",
+    Options = rarityOptions,
+    CurrentOption = {"Common"},
     Flag = "EggRaritySelect",
+    MultipleOptions = true,
     Callback = function(Value)
         SelectedRarityToDelete = Value
         if EggDeleteEnabled and SelectedEgg and SelectedEgg ~= "" then
@@ -1066,9 +1239,10 @@ HatchTab:CreateToggle({
 
 HatchTab:CreateDropdown({
     Name = "Delete Rarity ≤ (Inventory)",
-    Options = RarityNames,
-    CurrentOption = "Common",
+    Options = rarityOptions,
+    CurrentOption = {"Common"},
     Flag = "InventoryRaritySelect",
+    MultipleOptions = true,
     Callback = function(Value)
         SelectedRarityToDelete = Value
         if InventoryDeleteEnabled then
@@ -1085,6 +1259,21 @@ if Paper and Paper.Stats and Paper.Stats.Get("Items") then
             currentOptions:SetOptions(GetPlayerInventory())
         end
     end)
+end
+
+-- Setup achievement stat monitoring
+if Paper and Paper.Stats and AchievementsList then
+    for id, data in pairs(AchievementsList) do
+        local stat = Paper.Stats.Get(data.Stat)
+        if stat then
+            stat.Changed:Connect(function()
+                task.wait(0.5)
+                if AutoClaimAchievementsEnabled then
+                    ScanAndClaimAchievements()
+                end
+            end)
+        end
+    end
 end
 
 print("[SCRIPT] Script loaded")
