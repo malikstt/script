@@ -24,9 +24,9 @@ local Window = Rayfield:CreateWindow({
     }
 })
 
-local MainTab = Window:CreateTab(" Main", "rbxassetid://93947353250488")
-local MiscTab = Window:CreateTab(" Misc", "rbxassetid://126594882958545")
-local HatchTab = Window:CreateTab(" Hatch", "rbxassetid://80914973237193")
+local MainTab = Window:CreateTab("Main", "93947353250488")
+local MiscTab = Window:CreateTab("Misc", "126594882958545")
+local HatchTab = Window:CreateTab("Hatch", "80914973237193")
 
 print("[SCRIPT] Starting Throw Sim Script")
 
@@ -35,7 +35,6 @@ local LocalPlayer = Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
-local TweenService = game:GetService("TweenService")
 
 local InstantThrowEnabled = false
 local AutoTrainEnabled = false
@@ -56,10 +55,10 @@ local AutoHatchEnabled = false
 local SelectedEgg = ""
 local EggDeleteEnabled = false
 local InventoryDeleteEnabled = false
-local SelectedRarityToDelete = {}  -- Changed to table for multi-select
+local SelectedRarityToDelete = {}
 
 local AutoClaimAchievementsEnabled = false
-local SelectedAchievements = {}  -- For multi-select achievements
+local SelectedAchievements = {}
 
 local InstantThrowConnection = nil
 local AutoClaimConnection = nil
@@ -159,7 +158,6 @@ if eggsTable then
     eggsTable = eggsTable:FindFirstChild("Eggs")
     if eggsTable then
         local allEggs = SafeRequire(eggsTable) or {}
-        -- Filter out exclusive eggs
         for eggName, eggData in pairs(allEggs) do
             if not eggData.Exclusive then
                 EggsList[eggName] = eggData
@@ -564,65 +562,63 @@ local function StopAutoSpaceEgg()
     end
 end
 
-local function TeleportToEgg(eggName)
-    local character = LocalPlayer.Character
-    if not character then return false end
-    
-    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
-    if not humanoidRootPart then return false end
-    
-    local eggsFolder = Workspace:FindFirstChild("Eggs")
-    if not eggsFolder then return false end
-    
-    local targetEgg = eggsFolder:FindFirstChild(eggName)
-    if not targetEgg then return false end
-    
-    local proximityPart = targetEgg:FindFirstChild("ProximityPart") or targetEgg:FindFirstChildWhichIsA("BasePart")
-    if not proximityPart then return false end
-    
-    local targetPosition = proximityPart.Position + Vector3.new(0, 3, 0)
-    
-    local tween = TweenService:Create(humanoidRootPart, TweenInfo.new(0.5, Enum.EasingStyle.Linear), {
-        CFrame = CFrame.new(targetPosition)
-    })
-    tween:Play()
-    tween.Completed:Wait()
-    
-    local maxAttempts = 20
-    local attempt = 0
-    while attempt < maxAttempts do
-        task.wait(0.1)
-        local currentPos = humanoidRootPart.Position
-        local distance = (currentPos - targetPosition).Magnitude
-        if distance < 10 then
-            return true
-        end
-        attempt = attempt + 1
-    end
-    
-    return false
-end
+-- Refactored Teleport and Hatch logic
+local function TeleportAndHatch()
+    if not AutoHatchEnabled or SelectedEgg == "" then return end
 
-local function HatchEgg(eggName)
+    local eggFolder = Workspace:FindFirstChild("Eggs")
+    if not eggFolder then return end
+    
+    local egg = eggFolder:FindFirstChild(SelectedEgg)
+    if not egg then
+        warn("[HATCH] Egg not found: " .. SelectedEgg)
+        return
+    end
+
+    local character = LocalPlayer.Character
+    local humanoidRootPart = character and character:FindFirstChild("HumanoidRootPart")
+    
+    if humanoidRootPart then
+        humanoidRootPart.CFrame = egg:GetPivot() + Vector3.new(0, 3, 0)
+        task.wait(0.1)
+    end
+
     local remote = ReplicatedStorage:FindFirstChild("Paper")
     if remote then
         remote = remote:FindFirstChild("Remotes")
         if remote then
             remote = remote:FindFirstChild("__remotefunction")
             if remote then
-                local success, result = pcall(function()
-                    return remote:InvokeServer("Hatch Egg", eggName)
+                pcall(function()
+                    remote:InvokeServer("Hatch Egg", SelectedEgg)
+                    print("[HATCH] Hatched:", SelectedEgg)
                 end)
-                if success then
-                    print("[HATCH] Hatched:", eggName)
-                    return true
-                else
-                    print("[HATCH] Failed:", result)
-                end
             end
         end
     end
-    return false
+end
+
+local function StartAutoHatch()
+    if AutoHatchConnection then
+        AutoHatchConnection:Disconnect()
+        AutoHatchConnection = nil
+    end
+    
+    if AutoHatchEnabled and SelectedEgg and SelectedEgg ~= "" then
+        AutoHatchConnection = RunService.Heartbeat:Connect(function()
+            if AutoHatchEnabled and SelectedEgg and SelectedEgg ~= "" then
+                TeleportAndHatch()
+                task.wait(0.5)
+            end
+        end)
+    end
+end
+
+local function StopAutoHatch()
+    if AutoHatchConnection then
+        AutoHatchConnection:Disconnect()
+        AutoHatchConnection = nil
+    end
 end
 
 local function SetupEggAutoDelete()
@@ -756,34 +752,6 @@ local function StopInventoryDeleteLoop()
     if InventoryDeleteConnection then
         InventoryDeleteConnection:Disconnect()
         InventoryDeleteConnection = nil
-    end
-end
-
-local function StartAutoHatch()
-    if AutoHatchConnection then
-        AutoHatchConnection:Disconnect()
-        AutoHatchConnection = nil
-    end
-    
-    if AutoHatchEnabled and SelectedEgg and SelectedEgg ~= "" then
-        AutoHatchConnection = RunService.Heartbeat:Connect(function()
-            if AutoHatchEnabled and SelectedEgg and SelectedEgg ~= "" then
-                local teleported = TeleportToEgg(SelectedEgg)
-                if teleported then
-                    HatchEgg(SelectedEgg)
-                else
-                    print("[HATCH] Failed to teleport to egg:", SelectedEgg)
-                end
-                task.wait(3)
-            end
-        end)
-    end
-end
-
-local function StopAutoHatch()
-    if AutoHatchConnection then
-        AutoHatchConnection:Disconnect()
-        AutoHatchConnection = nil
     end
 end
 
@@ -944,17 +912,15 @@ end)
 local enchantNames = SortTableAlphabetically(EnchantsList)
 local eggNames = SortTableAlphabetically(EggsList)
 
--- Build achievement list
 local achievementNames = SortTableAlphabetically(AchievementsList)
 table.insert(achievementNames, 1, "All")
 
--- Build rarity names for multi-select
 local rarityOptions = {}
 for _, name in ipairs(RarityNames) do
     table.insert(rarityOptions, name)
 end
 
-MainTab:CreateSection("🔥 INSTANT THROW")
+MainTab:CreateSection("INSTANT THROW")
 
 local InstantThrowToggle = MainTab:CreateToggle({
     Name = "Instant Throw",
@@ -974,7 +940,7 @@ local InstantThrowToggle = MainTab:CreateToggle({
     end
 })
 
-MainTab:CreateSection("💪 AUTO TRAIN")
+MainTab:CreateSection("AUTO TRAIN")
 
 local AutoTrainToggle = MainTab:CreateToggle({
     Name = "Auto Train",
@@ -985,7 +951,7 @@ local AutoTrainToggle = MainTab:CreateToggle({
     end
 })
 
-MainTab:CreateSection("🎁 AUTO CLAIM CHESTS")
+MainTab:CreateSection("AUTO CLAIM CHESTS")
 
 MainTab:CreateToggle({
     Name = "Auto Claim Chests",
@@ -1013,7 +979,7 @@ MainTab:CreateDropdown({
     end
 })
 
-MainTab:CreateSection("🛒 AUTO BUY OBJECTS")
+MainTab:CreateSection("AUTO BUY OBJECTS")
 
 MainTab:CreateToggle({
     Name = "Auto Buy All Objects",
@@ -1029,7 +995,7 @@ MainTab:CreateToggle({
     end
 })
 
-MainTab:CreateSection("🌍 AUTO UNLOCK WORLDS")
+MainTab:CreateSection("AUTO UNLOCK WORLDS")
 
 MainTab:CreateToggle({
     Name = "Auto Unlock Worlds",
@@ -1055,14 +1021,14 @@ MainTab:CreateDropdown({
     end
 })
 
-MainTab:CreateSection("⚡ PRIORITY")
+MainTab:CreateSection("PRIORITY")
 
 MainTab:CreateParagraph({
     Title = "How It Works",
-    Content = "• Auto Train ON → Instant Throw stops\n• Auto Train OFF → Instant Throw works\n• Other features run independently"
+    Content = "Auto Train ON → Instant Throw stops\nAuto Train OFF → Instant Throw works\nOther features run independently"
 })
 
-MiscTab:CreateSection("📦 AUTO USE INVENTORY ITEMS")
+MiscTab:CreateSection("AUTO USE INVENTORY ITEMS")
 
 MiscTab:CreateToggle({
     Name = "Auto Use Inventory Items",
@@ -1091,7 +1057,7 @@ MiscTab:CreateDropdown({
     end
 })
 
-MiscTab:CreateSection("🥚 AUTO CLAIM SPACE EGG")
+MiscTab:CreateSection("AUTO CLAIM SPACE EGG")
 
 MiscTab:CreateToggle({
     Name = "Auto Claim Space Egg",
@@ -1107,7 +1073,7 @@ MiscTab:CreateToggle({
     end
 })
 
-MiscTab:CreateSection("✨ AUTO ENCHANT PETS")
+MiscTab:CreateSection("AUTO ENCHANT PETS")
 
 MiscTab:CreateToggle({
     Name = "Auto Enchant Equipped Pets",
@@ -1135,7 +1101,7 @@ MiscTab:CreateDropdown({
     end
 })
 
-MiscTab:CreateSection("🏆 AUTO CLAIM ACHIEVEMENTS")
+MiscTab:CreateSection("AUTO CLAIM ACHIEVEMENTS")
 
 MiscTab:CreateToggle({
     Name = "Auto Claim Achievements",
@@ -1163,7 +1129,7 @@ MiscTab:CreateDropdown({
     end
 })
 
-HatchTab:CreateSection("🥚 EGG SELECTION")
+HatchTab:CreateSection("EGG SELECTION")
 
 HatchTab:CreateDropdown({
     Name = "Select Egg",
@@ -1179,7 +1145,7 @@ HatchTab:CreateDropdown({
     end
 })
 
-HatchTab:CreateSection("🐣 AUTO HATCH")
+HatchTab:CreateSection("AUTO HATCH")
 
 HatchTab:CreateToggle({
     Name = "Auto Hatch Selected Egg",
@@ -1195,7 +1161,7 @@ HatchTab:CreateToggle({
     end
 })
 
-HatchTab:CreateSection("🗑️ PET DELETE SYSTEM")
+HatchTab:CreateSection("PET DELETE SYSTEM")
 
 HatchTab:CreateToggle({
     Name = "Delete Pets From Egg (Auto-Delete by Rarity)",
@@ -1210,7 +1176,7 @@ HatchTab:CreateToggle({
 })
 
 HatchTab:CreateDropdown({
-    Name = "Delete Rarity ≤ (Egg)",
+    Name = "Delete Rarity (Egg)",
     Options = rarityOptions,
     CurrentOption = {"Common"},
     Flag = "EggRaritySelect",
@@ -1238,7 +1204,7 @@ HatchTab:CreateToggle({
 })
 
 HatchTab:CreateDropdown({
-    Name = "Delete Rarity ≤ (Inventory)",
+    Name = "Delete Rarity (Inventory)",
     Options = rarityOptions,
     CurrentOption = {"Common"},
     Flag = "InventoryRaritySelect",
@@ -1261,7 +1227,6 @@ if Paper and Paper.Stats and Paper.Stats.Get("Items") then
     end)
 end
 
--- Setup achievement stat monitoring
 if Paper and Paper.Stats and AchievementsList then
     for id, data in pairs(AchievementsList) do
         local stat = Paper.Stats.Get(data.Stat)
