@@ -4,9 +4,8 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local webhookUrl = "https://discord.com/api/webhooks/1497999446028587128/nTY1lOe95jZXpEMXJu0oxqG3RXkp75gqy70qswx44o9ummGlLNEe_RyYpszPo_YxwlI0"
-
 local targetPlayer = "shakeem_29"
-local pingRoleId = "1500202097063366656"
+local roleId = "1500202097063366656"
 
 local allowedPets = {
     ["The Last Creature"] = true,
@@ -21,8 +20,8 @@ local petData = {
         RainbowImage = "https://media.discordapp.net/attachments/1324005436470333480/1354849450811719710/Rainbow11.png?ex=69f772e0&is=69f62160&hm=668fe4ef61278a005e3845bf08b77e7d966875c384b1f1020383c9122a0a7fb7&=&format=png",
         Rarity = "Secret",
         Power = 5000000,
-        Boost = 0,
-        Chance = 3500000
+        Chance = 3500000,
+        Egg = "Unknown Egg"
     },
     ["Revenge Beast"] = {
         Icon = "98885950170122",
@@ -30,108 +29,79 @@ local petData = {
         RainbowImage = "https://media.discordapp.net/attachments/1324005436470333480/1354849451868553359/Rainbow31.png?ex=69f772e1&is=69f62161&hm=f23ad0d442d69a8584d8d290e165411eb273c657afc80ac82a766dd4fea62aab&=&format=png",
         Rarity = "Secret",
         Power = 8500000,
-        Boost = 0,
-        Chance = 25000000
+        Chance = 25000000,
+        Egg = "Wireframe Egg"
     },
     ["Phoenix Clash"] = {
         Icon = "113388848167059",
         IconGold = "119131749559164",
         Rarity = "Celestial",
         Power = 20000000,
-        Boost = 0,
-        Chance = 300000000
+        Chance = 300000000,
+        Egg = "Wireframe Egg"
     }
-}
-
-local petEggs = {
-    ["The Last Creature"] = "Unknown Egg",
-    ["Revenge Beast"] = "Unknown Egg",
-    ["Phoenix Clash"] = "Wireframe Egg"
 }
 
 local sentMessages = {}
 local petImageCache = {}
+local userIdCache = nil
+local avatarUrlCache = nil
 
-print("Bot started - Monitoring " .. targetPlayer)
-
-local function getPlayerStats()
-    local stats = ReplicatedStorage:FindFirstChild("Stats")
-    if not stats then return nil end
-    
-    local targetStats = stats:FindFirstChild(targetPlayer)
-    if not targetStats then return nil end
-    
-    local analytics = targetStats:FindFirstChild("Analytics")
-    local eggStats = targetStats:FindFirstChild("EggStats")
-    local petStats = targetStats:FindFirstChild("PetStats")
-    local friends = targetStats:FindFirstChild("Friends")
-    
-    local totalEggs = analytics and analytics:FindFirstChild("EggsHatched") and analytics.EggsHatched.Value or 0
-    local formattedEggs = tostring(totalEggs):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
-    
-    local sessionTime = analytics and analytics:FindFirstChild("SessionTime") and analytics.SessionTime.Value or 0
-    local sessionHours = math.floor(sessionTime / 3600)
-    local sessionMinutes = math.floor((sessionTime % 3600) / 60)
-    
-    local totalTimePlayed = analytics and analytics:FindFirstChild("TimePlayed") and analytics.TimePlayed.Value or 0
-    local totalDays = math.floor(totalTimePlayed / 86400)
-    local totalHours = math.floor((totalTimePlayed % 86400) / 3600)
-    
-    local hatchSpeed = eggStats and eggStats:FindFirstChild("HatchSpeed") and eggStats.HatchSpeed.Value or 0
-    local formattedHatchSpeed = string.format("%.2f", hatchSpeed)
-    
-    local luck = eggStats and eggStats:FindFirstChild("Luck") and eggStats.Luck.Value or 0
-    local formattedLuck = string.format("%.2fx", luck)
-    
-    local petCount = petStats and petStats:FindFirstChild("PetCount") and petStats.PetCount.Value or 0
-    local petStorage = petStats and petStats:FindFirstChild("PetStorage") and petStats.PetStorage.Value or 0
-    
-    local friendsCount = friends and friends.Value or 0
-    
-    return {
-        totalEggs = formattedEggs,
-        sessionHours = sessionHours,
-        sessionMinutes = sessionMinutes,
-        totalDays = totalDays,
-        totalHours = totalHours,
-        hatchSpeed = formattedHatchSpeed,
-        luck = formattedLuck,
-        petCount = petCount,
-        petStorage = petStorage,
-        friendsCount = friendsCount
-    }
+local function formatCommas(n)
+    local num = tostring(n):reverse():gsub("(%d%d%d)", "%1,"):reverse()
+    return num:gsub("^,", "")
 end
 
-local function formatNumber(num)
-    if num >= 1000000000 then
-        local formatted = string.format("%.1fB", num / 1000000000)
-        return formatted:gsub("%.0B", "B")
-    elseif num >= 1000000 then
-        local formatted = string.format("%.1fM", num / 1000000)
-        return formatted:gsub("%.0M", "M")
-    elseif num >= 1000 then
-        local formatted = string.format("%.1fK", num / 1000)
-        return formatted:gsub("%.0K", "K")
-    else
-        return tostring(num)
+local function formatChance(chance)
+    return "1 in " .. formatCommas(chance)
+end
+
+local function formatPower(n)
+    if n >= 1e9 then return string.format("%.1fB", n/1e9):gsub("%.0B","B")
+    elseif n >= 1e6 then return string.format("%.1fM", n/1e6):gsub("%.0M","M")
+    elseif n >= 1e3 then return string.format("%.1fK", n/1e3):gsub("%.0K","K")
+    else return tostring(n) end
+end
+
+local function getUserId()
+    if userIdCache then return userIdCache end
+    local url = "https://users.roblox.com/v1/usernames/users"
+    local body = { usernames = {targetPlayer} }
+    local success, response = pcall(function()
+        return request({
+            Url = url,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = HttpService:JSONEncode(body)
+        })
+    end)
+    if success and response and response.Success then
+        local data = HttpService:JSONDecode(response.Body)
+        if data.data and data.data[1] then
+            userIdCache = data.data[1].id
+            return userIdCache
+        end
     end
+    return nil
 end
 
-local function getChanceText(chance)
-    return string.format("1 in %s", formatNumber(chance))
-end
-
-local function stripFontTags(str)
-    return str:gsub("<.->", "")
-end
-
-local function extractPlayerName(text)
-    local atIndex = string.find(text, "@")
-    if not atIndex then return nil end
-    local startPos = atIndex + 1
-    local endPos = string.find(text, " ", startPos)
-    if not endPos then return nil end
-    return string.sub(text, startPos, endPos - 1)
+local function getAvatarUrl(userId)
+    if avatarUrlCache then return avatarUrlCache end
+    local url = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds="..userId.."&size=420x420&format=Png&isCircular=true"
+    local success, response = pcall(function()
+        return request({
+            Url = url,
+            Method = "GET"
+        })
+    end)
+    if success and response and response.Success then
+        local data = HttpService:JSONDecode(response.Body)
+        if data and data.data and data.data[1] and data.data[1].imageUrl then
+            avatarUrlCache = data.data[1].imageUrl
+            return avatarUrlCache
+        end
+    end
+    return nil
 end
 
 local function getPetImageUrl(petName, variant)
@@ -175,58 +145,89 @@ local function getPetImageUrl(petName, variant)
     return nil
 end
 
-local function sendWebhook(petName, variant, messageTimestamp)
+local function getStats()
+    local s = ReplicatedStorage:FindFirstChild("Stats")
+    local p = s and s:FindFirstChild(targetPlayer)
+    if not p then return nil end
+
+    local a, e, ps = p:FindFirstChild("Analytics"), p:FindFirstChild("EggStats"), p:FindFirstChild("PetStats")
+
+    local eggs = a and a:FindFirstChild("EggsHatched") and a.EggsHatched.Value or 0
+    local session = a and a:FindFirstChild("SessionTime") and a.SessionTime.Value or 0
+    local total = a and a:FindFirstChild("TimePlayed") and a.TimePlayed.Value or 0
+
+    return {
+        Eggs = formatCommas(eggs),
+        Session = string.format("%dh %dm", session//3600, (session%3600)//60),
+        TimePlayed = string.format("%dd %dh", total//86400, (total%86400)//3600),
+        HatchSpeed = e and e:FindFirstChild("HatchSpeed") and string.format("%.2f", e.HatchSpeed.Value) or "0",
+        Luck = e and e:FindFirstChild("Luck") and string.format("%.2fx", e.Luck.Value) or "0x",
+        Inv = ps and ps:FindFirstChild("PetCount") and ps:FindFirstChild("PetStorage")
+            and (formatCommas(ps.PetCount.Value) .. "/" .. formatCommas(ps.PetStorage.Value)) or "0/0"
+    }
+end
+
+local function stripFontTags(str)
+    return str:gsub("<.->", "")
+end
+
+local function extractPlayerName(text)
+    local atIndex = string.find(text, "@")
+    if not atIndex then return nil end
+    local startPos = atIndex + 1
+    local endPos = string.find(text, " ", startPos)
+    if not endPos then return nil end
+    return string.sub(text, startPos, endPos - 1)
+end
+
+local function sendWebhook(petName, variant)
     local pet = petData[petName]
     if not pet then return end
     
     local thumbnailUrl = getPetImageUrl(petName, variant)
     if not thumbnailUrl then return end
     
-    local stats = getPlayerStats()
-    local discordTimestamp = string.format("<t:%d:R>", messageTimestamp)
+    local userId = getUserId()
+    local avatarUrl = userId and getAvatarUrl(userId) or "https://www.roblox.com/headshot-thumbnail/image?userId=1&width=420&height=420&format=png"
+    local stats = getStats()
     
-    local statsText = ""
-    if stats then
-        statsText = string.format([[
-**📊 %s's Stats**
-> 🥚 Total Eggs: **%s**
-> ⏱️ Session: **%dh %dm**
-> ⏰ Total: **%dd %dh**
-> ⚡ Hatch Speed: **%s**
-> 🍀 Luck: **%s**
-> 📦 Inventory: **%s/%s**
-> 👥 Friends: **%s**]], 
-            targetPlayer,
-            stats.totalEggs,
-            stats.sessionHours, stats.sessionMinutes,
-            stats.totalDays, stats.totalHours,
-            stats.hatchSpeed,
-            stats.luck,
-            stats.petCount,
-            stats.petStorage,
-            stats.friendsCount)
-    else
-        statsText = "❌ Failed to fetch stats"
+    local chance = pet.Chance
+    if variant == "Rainbow" then
+        chance = chance * 100
+    elseif variant == "Golden" then
+        chance = chance * 20
+    end
+    
+    local statsText = stats and string.format(
+        "🥚 Eggs: **%s**\n⏱️ Session: **%s**\n⏰ Time Played: **%s**\n⚡ Hatch Speed: **%s**\n🍀 Luck: **%s**\n📦 Inv: **%s**",
+        stats.Eggs, stats.Session, stats.TimePlayed, stats.HatchSpeed, stats.Luck, stats.Inv
+    ) or "❌ No stats"
+    
+    local power = pet.Power
+    if variant == "Rainbow" then
+        power = math.floor(power * 1.5)
+    elseif variant == "Golden" then
+        power = math.floor(power * 1.25)
     end
     
     local payload = {
         username = "SS",
-        content = string.format("<@&%s>", pingRoleId),
+        content = "<@&"..roleId..">",
         embeds = {{
-            title = string.format("🎉 %s Hatched a %s %s!", targetPlayer, variant, petName),
-            description = string.format("**Egg:** %s\n**Chance:** %s", 
-                petEggs[petName] or "Unknown", 
-                getChanceText(pet.Chance)),
+            title = string.format("%s hatched %s %s!", targetPlayer, variant, petName),
+            description = string.format(
+                "**Egg:** %s\n**Chance:** %s\n**Power:** %s\n\n%s",
+                pet.Egg,
+                formatChance(chance),
+                formatPower(power),
+                statsText
+            ),
             color = pet.Rarity == "Secret" and 0x9b59b6 or 0x3498db,
-            thumbnail = {url = thumbnailUrl, width = 256, height = 256},
-            fields = {
-                {name = "Rarity", value = pet.Rarity, inline = true},
-                {name = "Variant", value = variant, inline = true},
-                {name = "Power", value = formatNumber(pet.Power), inline = true},
-                {name = "Stats", value = statsText, inline = false},
-                {name = "Time", value = discordTimestamp, inline = false}
-            },
-            footer = {text = "xx"}
+            thumbnail = { url = thumbnailUrl },
+            author = {
+                name = targetPlayer,
+                icon_url = avatarUrl
+            }
         }}
     }
     
@@ -240,7 +241,6 @@ local function sendWebhook(petName, variant, messageTimestamp)
     end)
 end
 
--- Preload images
 for petName, pet in pairs(petData) do
     task.spawn(function()
         if pet.Icon then getPetImageUrl(petName, "Normal") end
@@ -249,6 +249,13 @@ for petName, pet in pairs(petData) do
     end)
     task.wait(0.2)
 end
+
+task.spawn(function()
+    getUserId()
+    task.wait(1)
+    local id = getUserId()
+    if id then getAvatarUrl(id) end
+end)
 
 TextChatService.OnIncomingMessage = function(message)
     if not message.Text then return end
@@ -288,6 +295,8 @@ TextChatService.OnIncomingMessage = function(message)
         end
         
         sentMessages[messageKey] = currentTimestamp
-        sendWebhook(detectedPet, variant, currentTimestamp)
+        sendWebhook(detectedPet, variant)
     end)
 end
+
+print("Monitoring " .. targetPlayer)
