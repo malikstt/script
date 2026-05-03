@@ -35,7 +35,7 @@ darkBG.Parent = screenGui
 local menuWindow = Instance.new("Frame")
 menuWindow.Name = "MenuWindow"
 menuWindow.AnchorPoint = Vector2.new(0.5, 0.5)
-menuWindow.Size = UDim2.new(0.65, 0, 0.70, 0)
+menuWindow.Size = UDim2.new(0.75, 0, 0.80, 0)
 menuWindow.Position = UDim2.new(0.5, 0, 0.5, 0)
 menuWindow.BackgroundColor3 = Color3.fromRGB(14, 14, 24)
 menuWindow.BorderSizePixel = 0
@@ -338,9 +338,8 @@ LogService.MessageOut:Connect(function(message, msgType)
 	addLogEntry(message, msgType)
 end)
 
--- Store toggle controls in a table for later access
+-- Store toggle controls
 local toggleControls = {}
-local toggleStates = {}
 
 local function createToggle(parent, yPos, labelText, defaultOn, onEnable, onDisable)
 	local row = Instance.new("Frame")
@@ -415,13 +414,12 @@ local function createToggle(parent, yPos, labelText, defaultOn, onEnable, onDisa
 		end
 	end)
 
-	-- Store the controls for later manipulation
 	local control = {
 		row = row,
 		track = track,
 		knob = knob,
 		setState = setState,
-		isOn = isOn,
+		getIsOn = function() return isOn end,
 		onEnable = onEnable,
 		onDisable = onDisable
 	}
@@ -463,7 +461,6 @@ local function enableAntiAfk()
 	end
 
 	antiAfkConnection = player.Idled:Connect(function()
-		local vim = Instance.new("VirtualInputManager")
 		pcall(function()
 			game:GetService("VirtualInputManager"):SendKeyEvent(true, Enum.KeyCode.ButtonL3, false, game)
 			game:GetService("VirtualInputManager"):SendKeyEvent(false, Enum.KeyCode.ButtonL3, false, game)
@@ -484,7 +481,7 @@ local function disableAntiAfk()
 	addLogEntry("Anti AFK disabled", Enum.MessageType.MessageInfo)
 end
 
--- Create toggles with default OFF (false)
+-- Create toggles with default OFF
 local antiAfkToggle, antiAfkControl = createToggle(mainPage, 8, "Anti AFK", false, enableAntiAfk, disableAntiAfk)
 local webhookBotToggle, webhookControl = createToggle(mainPage, 60, "Start Webhook Bot", false, function()
 	pcall(function()
@@ -496,6 +493,71 @@ local shakeemToggle, shakeemControl = createToggle(mainPage, 112, "Start for sha
 		loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/test4"))()
 	end)
 end, function() end)
+
+-- Helper function to get random normal egg name
+local function getRandomNormalEggName()
+	local ok, EggsModule = pcall(function()
+		return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("Eggs"))
+	end)
+	if not ok or not EggsModule then return nil end
+	
+	local normalEggs = {}
+	for name, data in pairs(EggsModule) do
+		if not data.Exclusive then
+			table.insert(normalEggs, name)
+		end
+	end
+	
+	if #normalEggs > 0 then
+		return normalEggs[math.random(1, #normalEggs)]
+	end
+	return nil
+end
+
+-- Setup viewport for a random normal egg
+local randomNormalEggName = getRandomNormalEggName()
+local normalEggViewport = nil
+
+local function setupNormalEggViewport()
+	if not randomNormalEggName then return end
+	
+	local eggsFolder = Workspace:FindFirstChild("Eggs")
+	if not eggsFolder then return end
+	
+	local eggModel = eggsFolder:FindFirstChild(randomNormalEggName)
+	if not eggModel then return end
+	
+	normalEggViewport = Instance.new("ViewportFrame")
+	normalEggViewport.Size = UDim2.new(1, 0, 1, 0)
+	normalEggViewport.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+	normalEggViewport.BorderSizePixel = 0
+	normalEggViewport.ZIndex = 13
+	
+	local camera = Instance.new("Camera")
+	camera.Parent = normalEggViewport
+	normalEggViewport.CurrentCamera = camera
+	
+	local clone = eggModel:Clone()
+	clone.Parent = normalEggViewport
+	
+	if clone:IsA("Model") then
+		clone:PivotTo(CFrame.new(0, 0, 0))
+	end
+	
+	local cf, size = clone:GetBoundingBox()
+	camera.CFrame = CFrame.new(cf.Position + Vector3.new(0, 0, size.Magnitude * 1.5), cf.Position)
+	
+	local connection
+	connection = RunService.RenderStepped:Connect(function()
+		if clone and clone.Parent then
+			clone:PivotTo(clone:GetPivot() * CFrame.Angles(0, math.rad(1), 0))
+		else
+			if connection then connection:Disconnect() end
+		end
+	end)
+	
+	return normalEggViewport, connection, clone
+end
 
 local exclusiveEggsRow = Instance.new("Frame")
 exclusiveEggsRow.Size = UDim2.new(1, -24, 0, 44)
@@ -550,14 +612,11 @@ normalEggsBtn.Text = ""
 normalEggsBtn.ZIndex = 13
 normalEggsBtn.Parent = normalEggsRow
 
-local normalEggsIcon = Instance.new("TextLabel")
-normalEggsIcon.Size = UDim2.new(0, 36, 1, 0)
-normalEggsIcon.BackgroundTransparency = 1
-normalEggsIcon.Text = ""
-normalEggsIcon.TextSize = 22
-normalEggsIcon.Font = Enum.Font.GothamBold
-normalEggsIcon.ZIndex = 13
-normalEggsIcon.Parent = normalEggsRow
+local normalEggsIconContainer = Instance.new("Frame")
+normalEggsIconContainer.Size = UDim2.new(0, 36, 1, 0)
+normalEggsIconContainer.BackgroundTransparency = 1
+normalEggsIconContainer.ZIndex = 13
+normalEggsIconContainer.Parent = normalEggsRow
 
 local normalEggsLbl = Instance.new("TextLabel")
 normalEggsLbl.Size = UDim2.new(1, -60, 1, 0)
@@ -570,6 +629,12 @@ normalEggsLbl.Font = Enum.Font.GothamBold
 normalEggsLbl.TextXAlignment = Enum.TextXAlignment.Left
 normalEggsLbl.ZIndex = 13
 normalEggsLbl.Parent = normalEggsRow
+
+-- Setup random normal egg viewport
+local normalViewport, normalConnection, normalClone = setupNormalEggViewport()
+if normalViewport then
+	normalViewport.Parent = normalEggsIconContainer
+end
 
 local eggDashboard = nil
 local petViewScreen = nil
@@ -713,7 +778,7 @@ local function buildEggDashboard(eggType)
 
 	local dashboard = Instance.new("Frame")
 	dashboard.Name = "EggDashboard"
-	dashboard.Size = UDim2.new(0.65, 0, 0.70, 0)
+	dashboard.Size = UDim2.new(0.75, 0, 0.80, 0)
 	dashboard.AnchorPoint = Vector2.new(0.5, 0.5)
 	dashboard.Position = UDim2.new(0.5, 0, 0.5, 0)
 	dashboard.BackgroundColor3 = Color3.fromRGB(14, 14, 24)
@@ -996,7 +1061,7 @@ function buildPetView(eggName, eggData)
 
 	local view = Instance.new("Frame")
 	view.Name = "PetView"
-	view.Size = UDim2.new(0.65, 0, 0.70, 0)
+	view.Size = UDim2.new(0.75, 0, 0.80, 0)
 	view.AnchorPoint = Vector2.new(0.5, 0.5)
 	view.Position = UDim2.new(0.5, 0, 0.5, 0)
 	view.BackgroundColor3 = Color3.fromRGB(14, 14, 24)
@@ -1229,27 +1294,26 @@ RunService.RenderStepped:Connect(updateStats)
 
 task.spawn(function()
 	updateExclusiveEggsIcon()
-	-- REMOVED: enableAntiAfk() - no longer called immediately
 end)
 
 switchTab("Main")
--- Replace the delayed enable section at the end with this:
-task.wait(10)
 
--- Only enable if not already manually enabled by user
-if antiAfkControl and not antiAfkControl.isOn then
+-- 5 SECOND DELAY THEN ENABLE EVERYTHING (only if not already enabled)
+task.wait(5)
+
+if antiAfkControl and not antiAfkControl.getIsOn() then
     antiAfkControl.setState(true)
     antiAfkControl.onEnable()
 end
 
-if webhookControl and not webhookControl.isOn then
+if webhookControl and not webhookControl.getIsOn() then
     webhookControl.setState(true)
     webhookControl.onEnable()
 end
 
-if shakeemControl and not shakeemControl.isOn then
+if shakeemControl and not shakeemControl.getIsOn() then
     shakeemControl.setState(true)
     shakeemControl.onEnable()
 end
 
-addLogEntry("10 second delay completed - All features enabled!", Enum.MessageType.MessageInfo)
+addLogEntry("5 second delay completed - All features enabled!", Enum.MessageType.MessageInfo)
