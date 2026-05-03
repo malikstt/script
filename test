@@ -4,6 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ContentProvider = game:GetService("ContentProvider")
 local LogService = game:GetService("LogService")
 local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
@@ -431,6 +432,98 @@ normalEggsLbl.Parent = normalEggsRow
 
 local eggDashboard = nil
 local petViewScreen = nil
+local activeAnimations = {}
+
+local function stopAnimation(eggName)
+if activeAnimations[eggName] and activeAnimations[eggName].Connection then
+activeAnimations[eggName].Connection:Disconnect()
+activeAnimations[eggName] = nil
+end
+end
+
+local function setupEggViewport(viewportFrame, eggModel, eggName)
+local worldModel = Instance.new("WorldModel")
+worldModel.Parent = viewportFrame
+
+local camera = Instance.new("Camera")
+camera.Parent = viewportFrame
+viewportFrame.CurrentCamera = camera
+
+local light = Instance.new("PointLight")
+light.Brightness = 2
+light.Range = 10
+light.Shadows = false
+
+local function setupPartVisibility(part)
+part.Anchored = true
+part.CanCollide = false
+if part.Transparency == 1 then
+part.Transparency = 0.95
+end
+end
+
+local clone = eggModel:Clone()
+clone.Parent = worldModel
+clone:PivotTo(CFrame.new(0, 0, 0))
+
+for _, descendant in ipairs(clone:GetDescendants()) do
+if descendant:IsA("BasePart") then
+setupPartVisibility(descendant)
+elseif descendant:IsA("Decal") or descendant:IsA("Texture") then
+descendant.Enabled = true
+end
+end
+
+local primaryPart = clone.PrimaryPart
+if not primaryPart then
+for _, part in ipairs(clone:GetDescendants()) do
+if part:IsA("BasePart") then
+primaryPart = part
+break
+end
+end
+end
+
+if primaryPart then
+light.Parent = primaryPart
+else
+light.Parent = worldModel
+end
+
+local function updateCamera()
+local success, center, size = pcall(function()
+return clone:GetBoundingBox()
+end)
+
+if not success or not center or not size then
+camera.CFrame = CFrame.new(0, 0, 5)
+return
+end
+
+local maxDimension = math.max(size.X, size.Y, size.Z)
+local distance = maxDimension * 1.8
+local cameraPosition = center.Position + Vector3.new(0, size.Y * 0.2, distance)
+camera.CFrame = CFrame.new(cameraPosition, center.Position)
+end
+
+updateCamera()
+
+local connection
+connection = RunService.RenderStepped:Connect(function()
+if not clone.Parent then
+if connection then connection:Disconnect() end
+return
+end
+clone:PivotTo(clone:GetPivot() * CFrame.Angles(0, math.rad(1.5), 0))
+updateCamera()
+end)
+
+activeAnimations[eggName] = { Connection = connection, WorldModel = worldModel }
+end
+
+local function cleanupEggViewport(eggName)
+stopAnimation(eggName)
+end
 
 local function updateExclusiveEggsIcon()
 local ok, ItemsModule = pcall(function()
@@ -454,6 +547,9 @@ end
 
 local function buildEggDashboard(isExclusive)
 if eggDashboard and eggDashboard.Parent then
+for name, anim in pairs(activeAnimations) do
+cleanupEggViewport(name)
+end
 eggDashboard:Destroy()
 end
 
@@ -502,6 +598,9 @@ makeStroke(backBtnEgg, Color3.fromRGB(80, 80, 130), 1, 0.5)
 
 backBtnEgg.MouseButton1Click:Connect(function()
 if dashboard and dashboard.Parent then
+for name, anim in pairs(activeAnimations) do
+cleanupEggViewport(name)
+end
 dashboard:Destroy()
 eggDashboard = nil
 end
@@ -622,13 +721,6 @@ viewportFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 40)
 viewportFrame.ZIndex = 22
 viewportFrame.Parent = btn
 
-local worldModel = Instance.new("WorldModel")
-worldModel.Parent = viewportFrame
-
-local camera = Instance.new("Camera")
-camera.Parent = viewportFrame
-viewportFrame.CurrentCamera = camera
-
 local nameLbl = makeLabel(btn, eggName, UDim2.new(1, -8, 0.28, 0), Enum.Font.GothamBold, Color3.fromRGB(230, 230, 245), 22)
 nameLbl.Position = UDim2.new(0, 4, 0.72, 0)
 nameLbl.TextSize = 13
@@ -636,35 +728,31 @@ nameLbl.TextSize = 13
 btn.BackgroundTransparency = 1
 nameLbl.TextTransparency = 1
 
-task.spawn(function()
 local eggModel = Workspace:FindFirstChild("Eggs") and Workspace.Eggs:FindFirstChild(eggName)
-if eggModel then
-local clone = eggModel:Clone()
-clone.Parent = worldModel
-clone.Position = Vector3.zero
 
-local function setupCamera()
-local cf, size = nil, nil
-if clone:FindFirstChild("Handle") then
-local handle = clone.Handle
-cf = CFrame.new(handle.Position) * CFrame.new(0, 0, size and size.Magnitude * 1.5 or 3)
-size = handle.Size
+if eggModel then
+setupEggViewport(viewportFrame, eggModel, eggName)
 else
-cf = CFrame.new(0, 0, 3)
+warn("Egg model not found: " .. eggName)
+local fallbackPart = Instance.new("Part")
+fallbackPart.Shape = Enum.PartType.Ball
+fallbackPart.Size = Vector3.new(1.5, 1.5, 1.5)
+fallbackPart.BrickColor = BrickColor.new("Bright orange")
+fallbackPart.Material = Enum.Material.Neon
+fallbackPart.Anchored = true
+fallbackPart.CanCollide = false
+fallbackPart.Parent = viewportFrame
+
+local fallbackCamera = Instance.new("Camera")
+fallbackCamera.Parent = viewportFrame
+viewportFrame.CurrentCamera = fallbackCamera
+fallbackCamera.CFrame = CFrame.new(0, 0, 3)
+
+local fallbackLight = Instance.new("PointLight")
+fallbackLight.Brightness = 2
+fallbackLight.Range = 8
+fallbackLight.Parent = fallbackPart
 end
-camera.CFrame = cf
-end
-setupCamera()
-else
-local fallback = Instance.new("Part")
-fallback.Shape = Enum.PartType.Ball
-fallback.Size = Vector3.new(2, 2, 2)
-fallback.BrickColor = BrickColor.new("Bright orange")
-fallback.Material = Enum.Material.Neon
-fallback.Parent = worldModel
-camera.CFrame = CFrame.new(0, 0, 4)
-end
-end)
 
 local delay = (i - 1) * 0.04
 local fi = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -962,6 +1050,9 @@ petViewScreen = nil
 selectedPets = {}
 end
 if eggDashboard and eggDashboard.Parent then
+for name, anim in pairs(activeAnimations) do
+cleanupEggViewport(name)
+end
 eggDashboard.Visible = true
 else
 menuWindow.Visible = true
