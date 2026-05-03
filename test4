@@ -46,8 +46,16 @@ local sentMessages = {}
 local petImageCache = {}
 local userIdCache = nil
 local avatarUrlCache = nil
+local statsCache = nil
+local lastStatsFetch = 0
 
-print("Started the bot plz be in same server, bot ver : v2.0")
+-- Failed items tracking for retries
+local failedUserIds = false
+local failedAvatar = false
+local failedStats = false
+local failedPets = {} -- {petName, variant}
+
+print("Started the bot, bot ver : v3.2")
 
 local function formatCommas(n)
     local num = tostring(n):reverse():gsub("(%d%d%d)", "%1,"):reverse()
@@ -67,8 +75,10 @@ end
 
 local function getUserId()
     if userIdCache then return userIdCache end
+    
     local url = "https://users.roblox.com/v1/usernames/users"
     local body = { usernames = {targetPlayer} }
+    
     local success, response = pcall(function()
         return request({
             Url = url,
@@ -77,42 +87,52 @@ local function getUserId()
             Body = HttpService:JSONEncode(body)
         })
     end)
+    
     if success and response and response.Success then
         local data = HttpService:JSONDecode(response.Body)
         if data.data and data.data[1] then
             userIdCache = data.data[1].id
+            failedUserIds = false
             return userIdCache
         end
     end
+    
+    failedUserIds = true
     return nil
 end
 
 local function getAvatarUrl(userId)
     if avatarUrlCache then return avatarUrlCache end
+    
     local url = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds="..userId.."&size=420x420&format=Png&isCircular=true"
+    
     local success, response = pcall(function()
         return request({
             Url = url,
             Method = "GET"
         })
     end)
+    
     if success and response and response.Success then
         local data = HttpService:JSONDecode(response.Body)
         if data and data.data and data.data[1] and data.data[1].imageUrl then
             avatarUrlCache = data.data[1].imageUrl
+            failedAvatar = false
             return avatarUrlCache
         end
     end
+    
+    failedAvatar = true
     return nil
 end
 
-local function getPetImageUrl(petName, variant)
+local function getPetImageUrl(petName, variant, noCache)
     local pet = petData[petName]
     if not pet then return nil end
     
     local cacheKey = petName .. "_" .. variant
     
-    if petImageCache[cacheKey] then
+    if not noCache and petImageCache[cacheKey] then
         return petImageCache[cacheKey]
     end
     
@@ -126,48 +146,102 @@ local function getPetImageUrl(petName, variant)
     
     local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetId.."&size=420x420&format=Png&isCircular=false"
     
-    for attempt = 1, 5 do
-        local success, response = pcall(function()
-            return request({
-                Url = url,
-                Method = "GET"
-            })
-        end)
-        
-        if success and response and response.Success then
-            local data = HttpService:JSONDecode(response.Body)
-            if data and data.data and data.data[1] and data.data[1].state == "Completed" and data.data[1].imageUrl then
-                petImageCache[cacheKey] = data.data[1].imageUrl
-                return data.data[1].imageUrl
-            end
+    local success, response = pcall(function()
+        return request({
+            Url = url,
+            Method = "GET"
+        })
+    end)
+    
+    if success and response and response.Success then
+        local data = HttpService:JSONDecode(response.Body)
+        if data and data.data and data.data[1] and data.data[1].state == "Completed" and data.data[1].imageUrl then
+            petImageCache[cacheKey] = data.data[1].imageUrl
+            return data.data[1].imageUrl
         end
-        task.wait(0.7)
     end
     
     return nil
 end
 
 local function getStats()
-    local s = ReplicatedStorage:FindFirstChild("Stats")
-    local p = s and s:FindFirstChild(targetPlayer)
-    if not p then return nil end
-
-    local a, e, ps = p:FindFirstChild("Analytics"), p:FindFirstChild("EggStats"), p:FindFirstChild("PetStats")
-
-    local eggs = a and a:FindFirstChild("EggsHatched") and a.EggsHatched.Value or 0
-    local session = a and a:FindFirstChild("SessionTime") and a.SessionTime.Value or 0
-    local total = a and a:FindFirstChild("TimePlayed") and a.TimePlayed.Value or 0
-
-    return {
-        Eggs = formatCommas(eggs),
-        Session = string.format("%dh %dm", session//3600, (session%3600)//60),
-        TimePlayed = string.format("%dd %dh", total//86400, (total%86400)//3600),
-        HatchSpeed = e and e:FindFirstChild("HatchSpeed") and string.format("%.2f", e.HatchSpeed.Value) or "0",
-        Luck = e and e:FindFirstChild("Luck") and string.format("%.2fx", e.Luck.Value) or "0x",
-        Inv = ps and ps:FindFirstChild("PetCount") and ps:FindFirstChild("PetStorage")
-            and (formatCommas(ps.PetCount.Value) .. "/" .. formatCommas(ps.PetStorage.Value)) or "0/0"
-    }
+    local currentTime = os.time()
+    if statsCache and (currentTime - lastStatsFetch) < 10 then
+        return statsCache
+    end
+    
+    local success, result = pcall(function()
+        local s = ReplicatedStorage:FindFirstChild("Stats")
+        if not s then return nil end
+        
+        local p = s:FindFirstChild(targetPlayer)
+        if not p then return nil end
+        
+        local a = p:FindFirstChild("Analytics")
+        local e = p:FindFirstChild("EggStats")
+        local ps = p:FindFirstChild("PetStats")
+        
+        if not a then return nil end
+        
+        local eggs = a:FindFirstChild("EggsHatched") and a.EggsHatched.Value or 0
+        local session = a:FindFirstChild("SessionTime") and a.SessionTime.Value or 0
+        local total = a:FindFirstChild("TimePlayed") and a.TimePlayed.Value or 0
+        
+        return {
+            Eggs = formatCommas(eggs),
+            Session = string.format("%dh %dm", session//3600, (session%3600)//60),
+            TimePlayed = string.format("%dd %dh", total//86400, (total%86400)//3600),
+            HatchSpeed = e and e:FindFirstChild("HatchSpeed") and string.format("%.2f", e.HatchSpeed.Value) or "N/A",
+            Luck = e and e:FindFirstChild("Luck") and string.format("%.2fx", e.Luck.Value) or "N/A",
+            Inv = ps and ps:FindFirstChild("PetCount") and ps:FindFirstChild("PetStorage") and
+                (formatCommas(ps.PetCount.Value) .. "/" .. formatCommas(ps.PetStorage.Value)) or "N/A"
+        }
+    end)
+    
+    if success and result then
+        statsCache = result
+        lastStatsFetch = currentTime
+        failedStats = false
+        return result
+    end
+    
+    failedStats = true
+    return nil
 end
+
+-- Retry failed pet images every minute
+task.spawn(function()
+    while true do
+        task.wait(60) -- Every minute
+        
+        if #failedPets > 0 then
+            print("[RETRY] Retrying " .. #failedPets .. " failed pet images...")
+            for i = #failedPets, 1, -1 do
+                local petInfo = failedPets[i]
+                local url = getPetImageUrl(petInfo.petName, petInfo.variant, true)
+                if url then
+                    print("[RETRY] Successfully loaded: " .. petInfo.petName .. " (" .. petInfo.variant .. ")")
+                    table.remove(failedPets, i)
+                else
+                    print("[RETRY] Still failed: " .. petInfo.petName .. " (" .. petInfo.variant .. ")")
+                end
+                task.wait(0.5)
+            end
+        end
+        
+        -- Retry user ID if failed
+        if failedUserIds and not userIdCache then
+            print("[RETRY] Attempting to fetch User ID...")
+            getUserId()
+        end
+        
+        -- Retry avatar if failed
+        if failedAvatar and userIdCache and not avatarUrlCache then
+            print("[RETRY] Attempting to fetch Avatar...")
+            getAvatarUrl(userIdCache)
+        end
+    end
+end)
 
 local function stripFontTags(str)
     return str:gsub("<.->", "")
@@ -184,14 +258,54 @@ end
 
 local function sendWebhook(petName, variant)
     local pet = petData[petName]
-    if not pet then return end
+    if not pet then 
+        return 
+    end
     
-    local thumbnailUrl = getPetImageUrl(petName, variant)
-    if not thumbnailUrl then return end
+    local thumbnailUrl = getPetImageUrl(petName, variant, false)
+    if not thumbnailUrl then
+        -- Add to failed queue for retry
+        local alreadyQueued = false
+        for _, v in pairs(failedPets) do
+            if v.petName == petName and v.variant == variant then
+                alreadyQueued = true
+                break
+            end
+        end
+        if not alreadyQueued then
+            table.insert(failedPets, {petName = petName, variant = variant})
+        end
+        return
+    end
     
     local userId = getUserId()
-    local avatarUrl = userId and getAvatarUrl(userId) or "https://www.roblox.com/headshot-thumbnail/image?userId=1&width=420&height=420&format=png"
+    local avatarUrl = userId and getAvatarUrl(userId) or nil
+    
     local stats = getStats()
+    local hasIssues = false
+    local issuesList = {}
+    
+    local statsText
+    if stats then
+        statsText = string.format(
+            "🥚 Eggs: **%s**\n⏱️ Session: **%s**\n⏰ Time Played: **%s**\n⚡ Hatch Speed: **%s**\n🍀 Luck: **%s**\n📦 Inv: **%s**",
+            stats.Eggs, stats.Session, stats.TimePlayed, stats.HatchSpeed, stats.Luck, stats.Inv
+        )
+    else
+        hasIssues = true
+        table.insert(issuesList, "❌ Stats failed to load")
+        statsText = "❌ Stats failed to load"
+    end
+    
+    if not userId then
+        hasIssues = true
+        table.insert(issuesList, "❌ User not found")
+    end
+    
+    if not avatarUrl then
+        hasIssues = true
+        table.insert(issuesList, "❌ Avatar failed to load")
+    end
     
     local chance = pet.Chance
     if variant == "Rainbow" then
@@ -200,11 +314,6 @@ local function sendWebhook(petName, variant)
         chance = chance * 20
     end
     
-    local statsText = stats and string.format(
-        "🥚 Eggs: **%s**\n⏱️ Session: **%s**\n⏰ Time Played: **%s**\n⚡ Hatch Speed: **%s**\n🍀 Luck: **%s**\n📦 Inv: **%s**",
-        stats.Eggs, stats.Session, stats.TimePlayed, stats.HatchSpeed, stats.Luck, stats.Inv
-    ) or "❌ No stats"
-    
     local power = pet.Power
     if variant == "Rainbow" then
         power = math.floor(power * 1.5)
@@ -212,26 +321,39 @@ local function sendWebhook(petName, variant)
         power = math.floor(power * 1.25)
     end
     
+    local description = string.format(
+        "**Egg:** %s\n**Chance:** %s\n**Power:** %s\n\n**Stats:**\n%s",
+        pet.Egg,
+        formatChance(chance),
+        formatPower(power),
+        statsText
+    )
+    
+    if hasIssues then
+        description = description .. "\n\n**Issues:**\n" .. table.concat(issuesList, "\n")
+    end
+    
     local payload = {
         username = "SS",
         content = "<@&"..roleId..">",
         embeds = {{
             title = string.format("%s hatched %s %s!", targetPlayer, variant, petName),
-            description = string.format(
-                "**Egg:** %s\n**Chance:** %s\n**Power:** %s\n\n%s",
-                pet.Egg,
-                formatChance(chance),
-                formatPower(power),
-                statsText
-            ),
+            description = description,
             color = pet.Rarity == "Secret" and 0x9b59b6 or 0x3498db,
-            thumbnail = { url = thumbnailUrl },
-            author = {
-                name = targetPlayer,
-                icon_url = avatarUrl
-            }
+            thumbnail = { url = thumbnailUrl }
         }}
     }
+    
+    if avatarUrl then
+        payload.embeds[1].author = {
+            name = targetPlayer,
+            icon_url = avatarUrl
+        }
+    else
+        payload.embeds[1].author = {
+            name = targetPlayer
+        }
+    end
     
     pcall(function()
         request({
@@ -243,20 +365,38 @@ local function sendWebhook(petName, variant)
     end)
 end
 
+-- Preload pet images (initial attempt)
 for petName, pet in pairs(petData) do
     task.spawn(function()
-        if pet.Icon then getPetImageUrl(petName, "Normal") end
-        if pet.IconGold then task.wait(0.2); getPetImageUrl(petName, "Golden") end
-        if pet.RainbowImage then task.wait(0.2); getPetImageUrl(petName, "Rainbow") end
+        if pet.Icon then 
+            local url = getPetImageUrl(petName, "Normal", false)
+            if not url then
+                table.insert(failedPets, {petName = petName, variant = "Normal"})
+            end
+        end
+        task.wait(0.2)
+        if pet.IconGold then 
+            local url = getPetImageUrl(petName, "Golden", false)
+            if not url then
+                table.insert(failedPets, {petName = petName, variant = "Golden"})
+            end
+        end
+        task.wait(0.2)
+        if pet.RainbowImage then 
+            -- Rainbow uses direct URL, should never fail
+            petImageCache[petName .. "_Rainbow"] = pet.RainbowImage
+        end
     end)
     task.wait(0.2)
 end
 
+-- Preload user info
 task.spawn(function()
     getUserId()
     task.wait(1)
-    local id = getUserId()
-    if id then getAvatarUrl(id) end
+    if userIdCache then
+        getAvatarUrl(userIdCache)
+    end
 end)
 
 TextChatService.OnIncomingMessage = function(message)
@@ -280,7 +420,9 @@ TextChatService.OnIncomingMessage = function(message)
             end
         end
         
-        if not detectedPet then return end
+        if not detectedPet then
+            return
+        end
         
         local variant = "Normal"
         if string.find(loweredText, "rainbow") then
@@ -300,3 +442,5 @@ TextChatService.OnIncomingMessage = function(message)
         sendWebhook(detectedPet, variant)
     end)
 end
+
+print("Bot v3.2 ready - Listening for " .. targetPlayer)
