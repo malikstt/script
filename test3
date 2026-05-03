@@ -1,5 +1,6 @@
 local TextChatService = game:GetService("TextChatService")
 local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
 
 local webhookUrl = "https://discord.com/api/webhooks/1492622522339037315/wC2sJfo1IepeHxG4sLAb9226eLBu91EKFmjb6TFi5CBXaSsbSRRUGp84MpZIzOFsIAZd"
 
@@ -205,164 +206,8 @@ local allowedPets = {
 
 local sentMessages = {}
 local petImageCache = {}
-local failedPets = {}
 
-print("Successfully started the bot, current version: v22")
-
-local function preloadAssetImageUrl(assetId, maxAttempts, cache, assetName)
-	if not assetId then return nil end
-	
-	if cache[assetId] then
-		return cache[assetId]
-	end
-	
-	local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetId.."&size=420x420&format=Png&isCircular=false"
-	
-	for attempt = 1, maxAttempts do
-		local success, response = pcall(function()
-			return request({
-				Url = url,
-				Method = "GET"
-			})
-		end)
-		
-		if success and response and response.Success then
-			local data = HttpService:JSONDecode(response.Body)
-			
-			if data and data.data and data.data[1] then
-				local thumb = data.data[1]
-				
-				if thumb.state == "Completed" and thumb.imageUrl then
-					cache[assetId] = thumb.imageUrl
-					return thumb.imageUrl
-				end
-			end
-		end
-		
-		if attempt < maxAttempts then
-			task.wait(0.7)
-		end
-	end
-	
-	table.insert(failedPets, {name = assetName, assetId = assetId})
-	
-	return nil
-end
-
-local function retryFailed()
-	while true do
-		task.wait(math.random(60, 300))
-		
-		if #failedPets > 0 then
-			print(string.format("[RETRY] Retrying %d failed pets...", #failedPets))
-			for i = #failedPets, 1, -1 do
-				local pet = failedPets[i]
-				local url = preloadAssetImageUrl(pet.assetId, 10, petImageCache, pet.name)
-				if url then
-					petImageCache[pet.name] = url
-					print(string.format("[RETRY] Successfully loaded pet: %s", pet.name))
-					table.remove(failedPets, i)
-				else
-					print(string.format("[RETRY] Still failed: %s", pet.name))
-				end
-				task.wait(0.5)
-			end
-		end
-	end
-end
-
-local function getPetImageUrl(petName, variant)
-	local pet = petData[petName]
-	if not pet then return nil end
-	
-	local cacheKey = petName .. "_" .. variant
-	
-	if petImageCache[cacheKey] then
-		return petImageCache[cacheKey]
-	end
-	
-	if variant == "Rainbow" and pet.RainbowImage then
-		petImageCache[cacheKey] = pet.RainbowImage
-		return pet.RainbowImage
-	end
-	
-	local assetId = nil
-	if variant == "Golden" then
-		assetId = pet.IconGold
-	else
-		assetId = pet.Icon
-	end
-	
-	if not assetId then return nil end
-	
-	local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetId.."&size=420x420&format=Png&isCircular=false"
-	
-	while true do
-		local success, response = pcall(function()
-			return request({
-				Url = url,
-				Method = "GET"
-			})
-		end)
-		
-		if success and response and response.Success then
-			local data = HttpService:JSONDecode(response.Body)
-			
-			if data and data.data and data.data[1] then
-				local thumb = data.data[1]
-				
-				if thumb.state == "Completed" and thumb.imageUrl then
-					petImageCache[cacheKey] = thumb.imageUrl
-					return thumb.imageUrl
-				end
-			end
-		end
-		
-		task.wait(0.7)
-	end
-	
-	return nil
-end
-
-local function preloadPetImages()
-	print("Pre-loading pet images...")
-	for petName, pet in pairs(petData) do
-		task.spawn(function()
-			if pet.Icon then
-				local cacheKey = petName .. "_Normal"
-				local url = preloadAssetImageUrl(pet.Icon, 10, petImageCache, cacheKey)
-				if url then
-					petImageCache[cacheKey] = url
-					print("  Loaded: " .. petName .. " (Normal)")
-				else
-					print("  Failed (after 10 attempts): " .. petName .. " (Normal)")
-				end
-			end
-			task.wait(0.2)
-			
-			if pet.IconGold then
-				local cacheKey = petName .. "_Golden"
-				local url = preloadAssetImageUrl(pet.IconGold, 10, petImageCache, cacheKey)
-				if url then
-					petImageCache[cacheKey] = url
-					print("  Loaded: " .. petName .. " (Golden)")
-				else
-					print("  Failed (after 10 attempts): " .. petName .. " (Golden)")
-				end
-			end
-			task.wait(0.2)
-			
-			if pet.RainbowImage then
-				petImageCache[petName .. "_Rainbow"] = pet.RainbowImage
-				print("  Loaded: " .. petName .. " (Rainbow - direct)")
-			end
-		end)
-		task.wait(0.2)
-	end
-end
-
-preloadPetImages()
-task.spawn(retryFailed)
+print("Successfully started the bot, current version: v24 (TextChatService.MessageReceived)")
 
 local function formatNumber(num)
 	if num >= 1000000000 then
@@ -571,8 +416,55 @@ local function getPingString(petName, rarity)
 	return ""
 end
 
-local function sendWebhook(playerName, petName, variant, userId, messageTimestamp)
-	print(string.format("[WEBHOOK] Starting for %s - %s (%s)", playerName, petName, variant))
+local function getPetImageUrl(petName, variant)
+	local pet = petData[petName]
+	if not pet then return nil end
+	
+	local cacheKey = petName .. "_" .. variant
+	
+	if petImageCache[cacheKey] then
+		return petImageCache[cacheKey]
+	end
+	
+	if variant == "Rainbow" and pet.RainbowImage then
+		petImageCache[cacheKey] = pet.RainbowImage
+		return pet.RainbowImage
+	end
+	
+	local assetId = nil
+	if variant == "Golden" then
+		assetId = pet.IconGold
+	else
+		assetId = pet.Icon
+	end
+	
+	if not assetId then return nil end
+	
+	local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetId.."&size=420x420&format=Png&isCircular=false"
+	
+	for attempt = 1, 3 do
+		local success, response = pcall(function()
+			return request({
+				Url = url,
+				Method = "GET"
+			})
+		end)
+		
+		if success and response and response.Success then
+			local data = HttpService:JSONDecode(response.Body)
+			if data and data.data and data.data[1] and data.data[1].imageUrl then
+				petImageCache[cacheKey] = data.data[1].imageUrl
+				return data.data[1].imageUrl
+			end
+		end
+		task.wait(0.5)
+	end
+	
+	return nil
+end
+
+local function sendWebhook(playerName, petName, variant, userId, messageTimestamp, petImageUrl)
+	print(string.format("[WEBHOOK] Sending for %s - %s (%s)", playerName, petName, variant))
 	
 	local pet = petData[petName]
 	if not pet then
@@ -581,13 +473,6 @@ local function sendWebhook(playerName, petName, variant, userId, messageTimestam
 	end
 	
 	local eggName = petEggs[petName] or "Unknown Egg"
-	
-	local thumbnailUrl = getPetImageUrl(petName, variant)
-	
-	if not thumbnailUrl then
-		print("[WEBHOOK] Failed to load pet image")
-		return
-	end
 	
 	local avatarUrl = nil
 	local presence = "Unknown"
@@ -642,7 +527,7 @@ local function sendWebhook(playerName, petName, variant, userId, messageTimestam
 			description = string.format("Hatched **%s** %s!\nFrom Egg: **%s**", petName, chanceText, eggName),
 			color = 0x000000,
 			thumbnail = {
-				url = thumbnailUrl,
+				url = petImageUrl,
 				width = 256,
 				height = 256
 			},
@@ -693,56 +578,57 @@ local function sendWebhook(playerName, petName, variant, userId, messageTimestam
 	end
 end
 
-if TextChatService.OnIncomingMessage then
-	TextChatService.OnIncomingMessage = function(message)
-		if not message.Text then return end
+TextChatService.MessageReceived:Connect(function(message)
+	if not message or not message.Text then return end
+	
+	local messageText = message.Text
+	if type(messageText) ~= "string" or messageText == "" then return end
+	
+	pcall(function()
+		local text = stripFontTags(messageText)
+		local loweredText = string.lower(text)
 		
-		pcall(function()
-			local text = stripFontTags(message.Text)
-			local loweredText = string.lower(text)
-			
-			local playerName = extractPlayerName(text)
-			if not playerName then 
-				return 
+		local playerName = extractPlayerName(text)
+		if not playerName then return end
+		
+		local detectedPet = nil
+		for petName in pairs(allowedPets) do
+			if string.find(loweredText, string.lower(petName), 1, true) then
+				detectedPet = petName
+				break
 			end
-			
-			local detectedPet = nil
-			for petName in pairs(allowedPets) do
-				if string.find(loweredText, string.lower(petName), 1, true) then
-					detectedPet = petName
-					break
-				end
-			end
-			
-			if not detectedPet then
+		end
+		
+		if not detectedPet then return end
+		
+		local variant = "Normal"
+		if string.find(loweredText, "rainbow") then
+			variant = "Rainbow"
+		elseif string.find(loweredText, "golden") then
+			variant = "Golden"
+		end
+		
+		local duplicateKey = playerName .. "_" .. detectedPet .. "_" .. variant
+		local currentTime = os.time()
+		
+		if sentMessages[duplicateKey] then
+			local timeDiff = currentTime - sentMessages[duplicateKey]
+			if timeDiff < 5 then
 				return
 			end
-			
-			local variant = "Normal"
-			if string.find(loweredText, "rainbow") then
-				variant = "Rainbow"
-			elseif string.find(loweredText, "golden") then
-				variant = "Golden"
+		end
+		
+		sentMessages[duplicateKey] = currentTime
+		
+		for key, timestamp in pairs(sentMessages) do
+			if currentTime - timestamp > 5 then
+				sentMessages[key] = nil
 			end
-			
-			local messageKey = playerName .. "_" .. detectedPet .. "_" .. variant
-			
-			if sentMessages[messageKey] then
-				return
-			end
-			
-			local currentTimestamp = os.time()
-			sentMessages[messageKey] = currentTimestamp
-			
-			local currentTime = os.time()
-			for key, timestamp in pairs(sentMessages) do
-				if currentTime - timestamp > 5 then
-					sentMessages[key] = nil
-				end
-			end
-			
-			print(string.format("[DETECT] %s hatched %s (%s)", playerName, detectedPet, variant))
-			
+		end
+		
+		print(string.format("[DETECT] %s hatched %s (%s)", playerName, detectedPet, variant))
+		
+		task.spawn(function()
 			local userId = nil
 			local attempts = 0
 			while not userId and attempts < 5 do
@@ -751,9 +637,12 @@ if TextChatService.OnIncomingMessage then
 				userId = getUserIdFromUsername(playerName)
 			end
 			
-			sendWebhook(playerName, detectedPet, variant, userId, currentTimestamp)
+			local petImageUrl = getPetImageUrl(detectedPet, variant)
+			if petImageUrl then
+				sendWebhook(playerName, detectedPet, variant, userId, currentTime, petImageUrl)
+			end
 		end)
-	end
-else
-	print("Error: TextChatService.OnIncomingMessage is not available")
-end
+	end)
+end)
+
+print("TextChatService.MessageReceived connected successfully")
