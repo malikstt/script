@@ -202,6 +202,30 @@ local function rarityColor(rarity)
 	return RARITY_COLORS[rarity] or Color3.fromRGB(200, 200, 200)
 end
 
+local function showErrorPopup(message)
+	local popup = Instance.new("Frame")
+	popup.Size = UDim2.new(0, 320, 0, 80)
+	popup.AnchorPoint = Vector2.new(0.5, 0.5)
+	popup.Position = UDim2.new(0.5, 0, 0.5, 0)
+	popup.BackgroundColor3 = Color3.fromRGB(20, 20, 35)
+	popup.BorderSizePixel = 0
+	popup.ZIndex = 50
+	popup.Parent = screenGui
+	makeCorner(popup, 10)
+	makeStroke(popup, Color3.fromRGB(200, 50, 50), 2, 0.3)
+	
+	local text = makeLabel(popup, message, UDim2.new(1, -20, 1, 0), Enum.Font.GothamBold, Color3.fromRGB(255, 100, 100), 51)
+	text.TextSize = 14
+	text.TextWrapped = true
+	
+	popup.BackgroundTransparency = 1
+	tw(popup, TweenInfo.new(0.3), { BackgroundTransparency = 0 })
+	task.wait(2.5)
+	tw(popup, TweenInfo.new(0.3), { BackgroundTransparency = 1 })
+	task.wait(0.3)
+	popup:Destroy()
+end
+
 local tabs = {}
 local activeTab = nil
 
@@ -338,10 +362,9 @@ LogService.MessageOut:Connect(function(message, msgType)
 	addLogEntry(message, msgType)
 end)
 
--- Store toggle controls
 local toggleControls = {}
 
-local function createToggle(parent, yPos, labelText, defaultOn, onEnable, onDisable)
+local function createToggle(parent, yPos, labelText, defaultOn, onEnable, onDisable, preventDisable)
 	local row = Instance.new("Frame")
 	row.Size = UDim2.new(1, -24, 0, 44)
 	row.Position = UDim2.new(0, 12, 0, yPos)
@@ -384,8 +407,13 @@ local function createToggle(parent, yPos, labelText, defaultOn, onEnable, onDisa
 	makeCorner(knob, 9)
 
 	local isOn = defaultOn
+	local disabled = false
 
-	local function setState(on)
+	local function setState(on, bypassPrevent)
+		if preventDisable and isOn and not on and not bypassPrevent then
+			showErrorPopup("❌ Cannot disable " .. labelText .. " after enabled!\nRestart game to disable.")
+			return
+		end
 		isOn = on
 		if on then
 			tw(track, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(80, 200, 120) })
@@ -406,10 +434,16 @@ local function createToggle(parent, yPos, labelText, defaultOn, onEnable, onDisa
 	clickBtn.Parent = row
 
 	clickBtn.MouseButton1Click:Connect(function()
-		setState(not isOn)
-		if isOn then
+		local newState = not isOn
+		if newState then
+			setState(true)
 			if onEnable then onEnable() end
 		else
+			if preventDisable and isOn then
+				showErrorPopup("❌ Cannot disable " .. labelText .. " after enabled!\nRestart game to disable.")
+				return
+			end
+			setState(false)
 			if onDisable then onDisable() end
 		end
 	end)
@@ -481,20 +515,23 @@ local function disableAntiAfk()
 	addLogEntry("Anti AFK disabled", Enum.MessageType.MessageInfo)
 end
 
--- Create toggles with default OFF
-local antiAfkToggle, antiAfkControl = createToggle(mainPage, 8, "Anti AFK", false, enableAntiAfk, disableAntiAfk)
+-- Create toggles (Anti AFK can be disabled, others cannot)
+local antiAfkToggle, antiAfkControl = createToggle(mainPage, 8, "Anti AFK", false, enableAntiAfk, disableAntiAfk, false)
+
 local webhookBotToggle, webhookControl = createToggle(mainPage, 60, "Start Webhook Bot", false, function()
 	pcall(function()
 		loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/test3"))()
+		addLogEntry("Webhook Bot script loaded!", Enum.MessageType.MessageInfo)
 	end)
-end, function() end)
+end, function() end, true) -- preventDisable = true
+
 local shakeemToggle, shakeemControl = createToggle(mainPage, 112, "Start for shakeem_29", false, function()
 	pcall(function()
 		loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/test4"))()
+		addLogEntry("Shakeem script loaded!", Enum.MessageType.MessageInfo)
 	end)
-end, function() end)
+end, function() end, true) -- preventDisable = true
 
--- Helper function to get random normal egg name
 local function getRandomNormalEggName()
 	local ok, EggsModule = pcall(function()
 		return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("Eggs"))
@@ -514,31 +551,32 @@ local function getRandomNormalEggName()
 	return nil
 end
 
--- Setup viewport for a random normal egg
 local randomNormalEggName = getRandomNormalEggName()
 local normalEggViewport = nil
+local normalEggConnection = nil
+local normalEggClone = nil
 
 local function setupNormalEggViewport()
-	if not randomNormalEggName then return end
+	if not randomNormalEggName then return nil end
 	
 	local eggsFolder = Workspace:FindFirstChild("Eggs")
-	if not eggsFolder then return end
+	if not eggsFolder then return nil end
 	
 	local eggModel = eggsFolder:FindFirstChild(randomNormalEggName)
-	if not eggModel then return end
+	if not eggModel then return nil end
 	
-	normalEggViewport = Instance.new("ViewportFrame")
-	normalEggViewport.Size = UDim2.new(1, 0, 1, 0)
-	normalEggViewport.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
-	normalEggViewport.BorderSizePixel = 0
-	normalEggViewport.ZIndex = 13
+	local viewport = Instance.new("ViewportFrame")
+	viewport.Size = UDim2.new(1, 0, 1, 0)
+	viewport.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+	viewport.BorderSizePixel = 0
+	viewport.ZIndex = 13
 	
 	local camera = Instance.new("Camera")
-	camera.Parent = normalEggViewport
-	normalEggViewport.CurrentCamera = camera
+	camera.Parent = viewport
+	viewport.CurrentCamera = camera
 	
 	local clone = eggModel:Clone()
-	clone.Parent = normalEggViewport
+	clone.Parent = viewport
 	
 	if clone:IsA("Model") then
 		clone:PivotTo(CFrame.new(0, 0, 0))
@@ -547,16 +585,13 @@ local function setupNormalEggViewport()
 	local cf, size = clone:GetBoundingBox()
 	camera.CFrame = CFrame.new(cf.Position + Vector3.new(0, 0, size.Magnitude * 1.5), cf.Position)
 	
-	local connection
-	connection = RunService.RenderStepped:Connect(function()
+	local connection = RunService.RenderStepped:Connect(function()
 		if clone and clone.Parent then
 			clone:PivotTo(clone:GetPivot() * CFrame.Angles(0, math.rad(1), 0))
-		else
-			if connection then connection:Disconnect() end
 		end
 	end)
 	
-	return normalEggViewport, connection, clone
+	return viewport, connection, clone
 end
 
 local exclusiveEggsRow = Instance.new("Frame")
@@ -630,10 +665,11 @@ normalEggsLbl.TextXAlignment = Enum.TextXAlignment.Left
 normalEggsLbl.ZIndex = 13
 normalEggsLbl.Parent = normalEggsRow
 
--- Setup random normal egg viewport
-local normalViewport, normalConnection, normalClone = setupNormalEggViewport()
+local normalViewport, normalConn, normalClone = setupNormalEggViewport()
 if normalViewport then
 	normalViewport.Parent = normalEggsIconContainer
+	normalEggConnection = normalConn
+	normalEggClone = normalClone
 end
 
 local eggDashboard = nil
