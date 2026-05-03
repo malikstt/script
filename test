@@ -384,7 +384,7 @@ local exclusiveEggsLbl = Instance.new("TextLabel")
 exclusiveEggsLbl.Size = UDim2.new(1, -60, 1, 0)
 exclusiveEggsLbl.Position = UDim2.new(0, 40, 0, 0)
 exclusiveEggsLbl.BackgroundTransparency = 1
-exclusiveEggsLbl.Text = "Exclusive Eggs ›"
+exclusiveEggsLbl.Text = "All Eggs ›"
 exclusiveEggsLbl.TextColor3 = Color3.fromRGB(210, 210, 235)
 exclusiveEggsLbl.TextSize = 13
 exclusiveEggsLbl.Font = Enum.Font.GothamBold
@@ -434,7 +434,35 @@ local eggDashboard = nil
 local petViewScreen = nil
 local activeAnimations = {}
 
-local function setupEggViewport(viewportFrame, eggModel, eggName)
+local function setupEggViewport(viewportFrame, eggName)
+local eggsFolder = Workspace:FindFirstChild("Eggs")
+if not eggsFolder then
+warn("No Eggs folder found in Workspace")
+local fallback = Instance.new("TextLabel")
+fallback.Size = UDim2.new(1, 0, 1, 0)
+fallback.BackgroundTransparency = 1
+fallback.Text = "🥚"
+fallback.TextSize = 40
+fallback.TextColor3 = Color3.fromRGB(255, 200, 100)
+fallback.Font = Enum.Font.GothamBold
+fallback.Parent = viewportFrame
+return
+end
+
+local eggModel = eggsFolder:FindFirstChild(eggName)
+if not eggModel then
+warn("Egg model not found: " .. eggName)
+local fallback = Instance.new("TextLabel")
+fallback.Size = UDim2.new(1, 0, 1, 0)
+fallback.BackgroundTransparency = 1
+fallback.Text = "🥚"
+fallback.TextSize = 40
+fallback.TextColor3 = Color3.fromRGB(255, 200, 100)
+fallback.Font = Enum.Font.GothamBold
+fallback.Parent = viewportFrame
+return
+end
+
 local camera = Instance.new("Camera")
 camera.Parent = viewportFrame
 viewportFrame.CurrentCamera = camera
@@ -473,27 +501,7 @@ activeAnimations[eggName] = nil
 end
 end
 
-local function updateExclusiveEggsIcon()
-local ok, ItemsModule = pcall(function()
-return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("Items"))
-end)
-if not ok or not ItemsModule then return end
-
-for name, data in pairs(ItemsModule) do
-if data.Type == "Egg" and data.Rarity == "Exclusive" then
-local iconId = nil
-if data.Icon then
-iconId = tostring(data.Icon):match("%d+")
-end
-if iconId then
-exclusiveEggsIcon.Image = "rbxassetid://" .. iconId
-end
-break
-end
-end
-end
-
-local function buildEggDashboard(isExclusive)
+local function buildEggDashboard(filterType)
 if eggDashboard and eggDashboard.Parent then
 for name, anim in pairs(activeAnimations) do
 cleanupEggViewport(name)
@@ -503,10 +511,12 @@ end
 
 menuWindow.Visible = false
 
-local ok, ItemsModule = pcall(function()
-return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("Items"))
+local ok, EggsModule = pcall(function()
+return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("Eggs"))
 end)
-if not ok or not ItemsModule then
+
+if not ok or not EggsModule then
+addLogEntry("Failed to load Tables.Eggs module", Enum.MessageType.MessageError)
 menuWindow.Visible = true
 return
 end
@@ -555,7 +565,8 @@ end
 menuWindow.Visible = true
 end)
 
-local headerTitle = makeLabel(header, (isExclusive and "🔮 Exclusive Eggs" or "🥚 Normal Eggs"), UDim2.new(1, -110, 1, 0), Enum.Font.GothamBold, Color3.fromRGB(240, 240, 255), 22)
+local titleText = (filterType == "exclusive" and "🔮 Exclusive Eggs") or (filterType == "normal" and "🥚 Normal Eggs") or "🥚 All Eggs"
+local headerTitle = makeLabel(header, titleText, UDim2.new(1, -110, 1, 0), Enum.Font.GothamBold, Color3.fromRGB(240, 240, 255), 22)
 headerTitle.Position = UDim2.new(0, 100, 0, 0)
 headerTitle.TextXAlignment = Enum.TextXAlignment.Left
 headerTitle.TextSize = 18
@@ -589,29 +600,30 @@ gridPad.PaddingRight = UDim.new(0, 16)
 gridPad.Parent = scroll
 
 local function updateCellSize()
-local w = math.floor(scroll.AbsoluteSize.X * 0.22)
-gridLayout.CellSize = UDim2.new(0.22, 0, 0, w + 36)
+local width = scroll.AbsoluteSize.X
+local cell = math.floor(width / 8) - 10
+gridLayout.CellSize = UDim2.new(0, cell, 0, cell + 36)
 end
 scroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateCellSize)
 updateCellSize()
 
 local eggList = {}
-for name, data in pairs(ItemsModule) do
-if data.Type == "Egg" then
-if isExclusive and data.Rarity == "Exclusive" then
+for name, data in pairs(EggsModule) do
+if filterType == "exclusive" and data.Rarity == "Exclusive" then
 table.insert(eggList, { name = name, data = data })
-elseif not isExclusive and data.Rarity ~= "Exclusive" then
+elseif filterType == "normal" and data.Rarity ~= "Exclusive" then
+table.insert(eggList, { name = name, data = data })
+elseif filterType == "all" then
 table.insert(eggList, { name = name, data = data })
 end
 end
-end
-table.sort(eggList, function(a, b) return a.name < b.name end)
 
-local eggsFolder = Workspace:FindFirstChild("Eggs")
+table.sort(eggList, function(a, b) return a.name < b.name end)
 
 for i, entry in ipairs(eggList) do
 local eggName = entry.name
 local eggData = entry.data
+local hasIcon = eggData.Icon and eggData.Icon ~= ""
 
 local btn = Instance.new("TextButton")
 btn.Name = "Egg_" .. eggName
@@ -625,11 +637,15 @@ btn.Parent = scroll
 makeCorner(btn, 12)
 makeStroke(btn, Color3.fromRGB(70, 70, 120), 1.5, 0.5)
 
-if isExclusive then
-local iconId = nil
-if eggData.Icon then
-iconId = tostring(eggData.Icon):match("%d+")
-end
+local nameLbl = makeLabel(btn, eggName, UDim2.new(1, -8, 0.28, 0), Enum.Font.GothamBold, Color3.fromRGB(230, 230, 245), 22)
+nameLbl.Position = UDim2.new(0, 4, 0.72, 0)
+nameLbl.TextSize = 13
+
+btn.BackgroundTransparency = 1
+nameLbl.TextTransparency = 1
+
+if hasIcon then
+local iconId = tostring(eggData.Icon):match("%d+")
 local img = Instance.new("ImageLabel")
 img.Size = UDim2.new(1, -16, 0.7, 0)
 img.Position = UDim2.new(0, 8, 0, 8)
@@ -638,31 +654,13 @@ img.Image = iconId and ("rbxassetid://" .. iconId) or ""
 img.ScaleType = Enum.ScaleType.Fit
 img.ZIndex = 22
 img.Parent = btn
-
-local nameLbl = makeLabel(btn, eggName, UDim2.new(1, -8, 0.28, 0), Enum.Font.GothamBold, Color3.fromRGB(230, 230, 245), 22)
-nameLbl.Position = UDim2.new(0, 4, 0.72, 0)
-nameLbl.TextSize = 13
-
-btn.BackgroundTransparency = 1
 img.ImageTransparency = 1
-nameLbl.TextTransparency = 1
 
-local delay = (i - 1) * 0.04
-local fi = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-task.delay(delay, function()
-if not btn.Parent then return end
-tw(btn, fi, { BackgroundTransparency = 0 })
-tw(img, fi, { ImageTransparency = 0 })
-tw(nameLbl, fi, { TextTransparency = 0 })
-end)
-
-btn.MouseButton1Click:Connect(function()
-if petViewScreen and petViewScreen.Parent then
-return
+task.delay((i - 1) * 0.04, function()
+if btn.Parent then
+tw(img, TweenInfo.new(0.3), { ImageTransparency = 0 })
 end
-buildPetView(eggName, eggData, true)
 end)
-
 else
 local viewportFrame = Instance.new("ViewportFrame")
 viewportFrame.Size = UDim2.new(1, -16, 0.7, 0)
@@ -671,28 +669,7 @@ viewportFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
 viewportFrame.BorderSizePixel = 0
 viewportFrame.ZIndex = 22
 viewportFrame.Parent = btn
-
-local nameLbl = makeLabel(btn, eggName, UDim2.new(1, -8, 0.28, 0), Enum.Font.GothamBold, Color3.fromRGB(230, 230, 245), 22)
-nameLbl.Position = UDim2.new(0, 4, 0.72, 0)
-nameLbl.TextSize = 13
-
-btn.BackgroundTransparency = 1
-nameLbl.TextTransparency = 1
-
-local eggModel = eggsFolder and eggsFolder:FindFirstChild(eggName)
-
-if eggModel then
-setupEggViewport(viewportFrame, eggModel, eggName)
-else
-warn("Egg model not found in Workspace.Eggs: " .. eggName)
-local fallbackText = Instance.new("TextLabel")
-fallbackText.Size = UDim2.new(1, 0, 1, 0)
-fallbackText.BackgroundTransparency = 1
-fallbackText.Text = "🥚"
-fallbackText.TextSize = 40
-fallbackText.TextColor3 = Color3.fromRGB(255, 200, 100)
-fallbackText.Font = Enum.Font.GothamBold
-fallbackText.Parent = viewportFrame
+setupEggViewport(viewportFrame, eggName)
 end
 
 local delay = (i - 1) * 0.04
@@ -704,16 +681,13 @@ tw(nameLbl, fi, { TextTransparency = 0 })
 end)
 
 btn.MouseButton1Click:Connect(function()
-if petViewScreen and petViewScreen.Parent then
-return
-end
-buildPetView(eggName, eggData, false)
+if petViewScreen and petViewScreen.Parent then return end
+buildPetView(eggName, eggData)
 end)
 end
 end
-end
 
-function buildPetView(eggName, eggData, isExclusive)
+function buildPetView(eggName, eggData)
 if eggDashboard then
 eggDashboard.Visible = false
 end
@@ -748,25 +722,20 @@ local petDataList = {}
 local okEggs, EggsModule = pcall(function()
 return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("Eggs"))
 end)
-if not okEggs or not EggsModule then
-end
 
-local eggEntry = EggsModule and EggsModule[eggName]
+if okEggs and EggsModule then
+local eggEntry = EggsModule[eggName]
 local petsArray = eggEntry and eggEntry.Pets
 
 if type(petsArray) == "table" then
 local PetsFolder = ReplicatedStorage:WaitForChild("Pets")
-
 local imagesToPreload = {}
 
 for _, petInfo in ipairs(petsArray) do
 local petName = petInfo.Pet
 local chanceValue = petInfo.Chance
 
-if not petName then
-continue
-end
-
+if petName then
 local ok2, petData = pcall(function()
 return require(PetsFolder:WaitForChild(petName, 5))
 end)
@@ -781,16 +750,16 @@ local safeName = (type(petData.PetName) == "string" and petData.PetName ~= "") a
 local safeRarity = (type(petData.Rarity) == "string" and petData.Rarity ~= "") and petData.Rarity or "Common"
 local safeChance = tonumber(chanceValue) or 0
 
-local entry = {
+table.insert(petDataList, {
 name = safeName,
 rarity = safeRarity,
 chance = safeChance,
 iconId = iconId,
-}
-table.insert(petDataList, entry)
+})
 
 if iconId then
 table.insert(imagesToPreload, "rbxassetid://" .. iconId)
+end
 end
 end
 end
@@ -799,6 +768,7 @@ if #imagesToPreload > 0 then
 pcall(function()
 ContentProvider:PreloadAsync(imagesToPreload)
 end)
+end
 end
 end
 
@@ -1002,11 +972,11 @@ end)
 end
 
 exclusiveEggsBtn.MouseButton1Click:Connect(function()
-buildEggDashboard(true)
+buildEggDashboard("all")
 end)
 
 normalEggsBtn.MouseButton1Click:Connect(function()
-buildEggDashboard(false)
+buildEggDashboard("normal")
 end)
 
 local logLines = {}
@@ -1089,7 +1059,6 @@ addLogEntry(message, msgType)
 end)
 
 task.spawn(function()
-updateExclusiveEggsIcon()
 enableAntiAfk()
 end)
 
