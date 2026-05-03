@@ -422,45 +422,39 @@ local function enableAntiAfk()
 
 	local player = game:GetService("Players").LocalPlayer
 
-	local function destroyScript(paths)
-		for _, path in ipairs(paths) do
-			local success, obj = pcall(function()
-				local current = path[1]
-				for i = 2, #path do
-					current = current[path[i]]
-				end
-				return current
-			end)
-			if success and obj then
-				obj:Destroy()
-				addLogEntry("Destroyed: " .. table.concat(path, "."), Enum.MessageType.MessageInfo)
-			else
-				addLogEntry("Not found: " .. table.concat(path, "."), Enum.MessageType.MessageWarning)
+	local pathsToDestroy = {
+		{ player, "PlayerScripts", "AutoRejoin" },
+		{ player, "PlayerScripts", "AutoJoin" },
+		{ game:GetService("StarterPlayer"), "StarterPlayerScripts", "AutoRejoin" },
+		{ game:GetService("StarterPlayer"), "StarterPlayerScripts", "AutoJoin" },
+		{ ReplicatedStorage, "StarterPlayer", "StarterPlayerScripts", "Game", "AutoRejoin" },
+	}
+
+	for _, path in ipairs(pathsToDestroy) do
+		local ok, obj = pcall(function()
+			local current = path[1]
+			for i = 2, #path do
+				current = current:WaitForChild(path[i], 1)
 			end
+			return current
+		end)
+		if ok and obj then
+			local name = tostring(path[#path])
+			pcall(function() obj:Destroy() end)
+			addLogEntry("Anti AFK: destroyed " .. name, Enum.MessageType.MessageInfo)
 		end
 	end
 
-	local pathsToDestroy = {
-		{game:GetService("Players").LocalPlayer, "PlayerScripts", "AutoRejoin"},
-		{game:GetService("StarterPlayer"), "StarterPlayerScripts", "AutoRejoin"},
-		{game:GetService("Players").LocalPlayer, "PlayerScripts", "AutoJoin"},
-		{game:GetService("StarterPlayer"), "StarterPlayerScripts", "AutoJoin"},
-		{ReplicatedStorage, "StarterPlayer", "StarterPlayerScripts", "Game", "AutoRejoin"}
-	}
-
-	destroyScript(pathsToDestroy)
-
-	local connections = getconnections(player.Idled)
-	local disabledCount = 0
-	for _, x in pairs(connections) do
-		x:Disable()
-		disabledCount = disabledCount + 1
-	end
-	addLogEntry("Disabled " .. disabledCount .. " Idled connection(s)", Enum.MessageType.MessageInfo)
-
 	antiAfkConnection = player.Idled:Connect(function()
+		local vim = Instance.new("VirtualInputManager")
+		pcall(function()
+			game:GetService("VirtualInputManager"):SendKeyEvent(true, Enum.KeyCode.ButtonL3, false, game)
+			game:GetService("VirtualInputManager"):SendKeyEvent(false, Enum.KeyCode.ButtonL3, false, game)
+		end)
 		addLogEntry("Anti-AFK prevented idle kick", Enum.MessageType.MessageInfo)
 	end)
+
+	addLogEntry("Anti AFK enabled", Enum.MessageType.MessageInfo)
 end
 
 local function disableAntiAfk()
@@ -631,23 +625,31 @@ local function cleanupEggViewport(eggName)
 end
 
 local function getRandomExclusiveEggIcon()
-	local ok, ItemsModule = pcall(function()
+	local ok, EggsModule = pcall(function()
+		return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("Eggs"))
+	end)
+	if not ok or not EggsModule then return nil end
+
+	local okItems, ItemsModule = pcall(function()
 		return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("Items"))
 	end)
-	if not ok or not ItemsModule then return nil end
+	if not okItems or not ItemsModule then return nil end
 
-	local exclusiveEggs = {}
-	for name, data in pairs(ItemsModule) do
-		if data.Type == "Egg" and data.Rarity == "Exclusive" and data.Icon then
-			local iconId = data.Icon:match("%d+")
-			if iconId then
-				table.insert(exclusiveEggs, iconId)
+	local exclusiveIcons = {}
+	for name, data in pairs(EggsModule) do
+		if data.Exclusive == true then
+			local itemData = ItemsModule[name]
+			if itemData and itemData.Icon then
+				local iconId = tostring(itemData.Icon):match("%d+")
+				if iconId then
+					table.insert(exclusiveIcons, iconId)
+				end
 			end
 		end
 	end
 
-	if #exclusiveEggs > 0 then
-		return "rbxassetid://" .. exclusiveEggs[math.random(1, #exclusiveEggs)]
+	if #exclusiveIcons > 0 then
+		return "rbxassetid://" .. exclusiveIcons[math.random(1, #exclusiveIcons)]
 	end
 	return nil
 end
@@ -674,26 +676,25 @@ local function buildEggDashboard(eggType)
 	-- FIX: exclusive eggs come from Tables.Items, normal eggs come from Tables.Eggs
 	local sourceModule = nil
 
-	if eggType == "exclusive" then
-		local ok, ItemsModule = pcall(function()
-			return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("Items"))
-		end)
-		if not ok or not ItemsModule then
-			addLogEntry("Failed to load Tables.Items module", Enum.MessageType.MessageError)
-			menuWindow.Visible = true
-			return
-		end
-		sourceModule = ItemsModule
+	local ok, EggsModule = pcall(function()
+		return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("Eggs"))
+	end)
+	if not ok or not EggsModule then
+		addLogEntry("Failed to load Tables.Eggs module", Enum.MessageType.MessageError)
+		menuWindow.Visible = true
+		return
+	end
+	sourceModule = EggsModule
+
+	-- Cache Items module once for icon lookups
+	local ItemsModule = nil
+	local okItems, itemsResult = pcall(function()
+		return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("Items"))
+	end)
+	if okItems and itemsResult then
+		ItemsModule = itemsResult
 	else
-		local ok, EggsModule = pcall(function()
-			return require(ReplicatedStorage:WaitForChild("Tables"):WaitForChild("Eggs"))
-		end)
-		if not ok or not EggsModule then
-			addLogEntry("Failed to load Tables.Eggs module", Enum.MessageType.MessageError)
-			menuWindow.Visible = true
-			return
-		end
-		sourceModule = EggsModule
+		addLogEntry("Failed to load Tables.Items module for icons", Enum.MessageType.MessageWarning)
 	end
 
 	local dashboard = Instance.new("Frame")
@@ -795,17 +796,16 @@ local function buildEggDashboard(eggType)
 	local eggList = {}
 
 	if eggType == "exclusive" then
-		-- FIX: exclusive eggs are in Items with Type=="Egg" and Rarity=="Exclusive"
 		for name, data in pairs(sourceModule) do
-			if data.Type == "Egg" and data.Rarity == "Exclusive" then
+			if data.Exclusive == true then
 				table.insert(eggList, { name = name, data = data })
 			end
 		end
 	else
-		-- FIX: normal eggs are everything in Tables.Eggs
-		-- Tables.Eggs only contains non-exclusive eggs so no rarity filter needed
 		for name, data in pairs(sourceModule) do
-			table.insert(eggList, { name = name, data = data })
+			if not data.Exclusive then
+				table.insert(eggList, { name = name, data = data })
+			end
 		end
 	end
 
@@ -835,10 +835,9 @@ local function buildEggDashboard(eggType)
 		nameLbl.TextTransparency = 1
 
 		if eggType == "exclusive" then
-			-- FIX: use data.Icon from Items module, extract digits only
 			local iconId = nil
-			if eggData.Icon then
-				iconId = tostring(eggData.Icon):match("%d+")
+			if ItemsModule and ItemsModule[eggName] and ItemsModule[eggName].Icon then
+				iconId = tostring(ItemsModule[eggName].Icon):match("%d+")
 			end
 			local img = Instance.new("ImageLabel")
 			img.Size = UDim2.new(1, -16, 0.7, 0)
