@@ -5,10 +5,7 @@ local Players = game:GetService("Players")
 local webhookUrl = "https://discord.com/api/webhooks/1495059756371546345/L3e0gHM3cdJAhq80YGviVwkvNOcJKOKYjerPBRPp2I5mli4FZ7r8vD7-8LPrBqWODKNw"
 
 local Source = ReplicatedStorage:WaitForChild("Source", 30)
-if not Source then
-    warn("[RollWatcher] ReplicatedStorage.Source not found.")
-    return
-end
+if not Source then return end
 
 local Items = Source:WaitForChild("Game"):WaitForChild("Items")
 local Roll = Source:WaitForChild("Features"):WaitForChild("Roll")
@@ -19,18 +16,6 @@ local RarityTiers = require(Items:WaitForChild("RarityTiers"))
 
 local sentMessages = {}
 local localPlayer = Players.LocalPlayer
-
-local rarityEmojis = {
-    ["Common"] = "⚪",
-    ["Uncommon"] = "🟢",
-    ["Rare"] = "🔵",
-    ["Epic"] = "🟣",
-    ["Legendary"] = "🟠",
-    ["Mythic"] = "🔴",
-    ["Divine"] = "✨",
-    ["Celestial"] = "⭐",
-    ["Secret"] = "🔮",
-}
 
 local function getRarityName(odds)
     if not odds or odds <= 0 then return "Unknown" end
@@ -60,10 +45,10 @@ local function getResultsFingerprint(results)
     return count .. "|" .. table.concat(parts, ",")
 end
 
-local function waitForImageLoad(imageUrl, maxAttempts)
+local function waitForImageLoad(imageUrl)
     if not imageUrl or imageUrl == "N/A" then return nil end
     
-    for attempt = 1, maxAttempts do
+    for attempt = 1, 5 do
         local success, response = pcall(function()
             return request({
                 Url = imageUrl,
@@ -84,21 +69,18 @@ local function getAssetImageUrl(assetId)
     
     local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..tostring(assetId).."&size=420x420&format=Png&isCircular=false"
     
-    for attempt = 1, 3 do
-        local success, response = pcall(function()
-            return request({
-                Url = url,
-                Method = "GET"
-            })
-        end)
-        
-        if success and response and response.Success then
-            local data = HttpService:JSONDecode(response.Body)
-            if data and data.data and data.data[1] and data.data[1].imageUrl then
-                return data.data[1].imageUrl
-            end
+    local success, response = pcall(function()
+        return request({
+            Url = url,
+            Method = "GET"
+        })
+    end)
+    
+    if success and response and response.Success then
+        local data = HttpService:JSONDecode(response.Body)
+        if data and data.data and data.data[1] and data.data[1].imageUrl then
+            return data.data[1].imageUrl
         end
-        task.wait(0.5)
     end
     return nil
 end
@@ -115,149 +97,51 @@ local function formatNumber(num)
     end
 end
 
-local function getRarityColor(rarity)
-    local colors = {
-        ["Common"] = 0x808080,
-        ["Uncommon"] = 0x00FF00,
-        ["Rare"] = 0x4287f5,
-        ["Epic"] = 0x9b59b6,
-        ["Legendary"] = 0xffa500,
-        ["Mythic"] = 0xff0000,
-        ["Divine"] = 0xffd700,
-        ["Celestial"] = 0x00ffff,
-        ["Secret"] = 0xff69b4,
-    }
-    return colors[rarity] or 0xffffff
-end
-
-local function getPlayerAvatarUrl(userId)
-    local url = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds="..userId.."&size=420x420&format=Png&isCircular=true"
-    
-    local success, response = pcall(function()
-        return request({
-            Url = url,
-            Method = "GET"
-        })
-    end)
-    
-    if success and response and response.Success then
-        local data = HttpService:JSONDecode(response.Body)
-        if data and data.data and data.data[1] and data.data[1].imageUrl then
-            return data.data[1].imageUrl
-        end
-    end
-    return "https://www.roblox.com/headshot-thumbnail/image?userId=1&width=420&height=420&format=png"
-end
-
-local function getUserIdFromUsername(username)
-    local url = "https://users.roblox.com/v1/usernames/users"
-    local body = {
-        usernames = {username}
-    }
-    
-    local success, response = pcall(function()
-        return request({
-            Url = url,
-            Method = "POST",
-            Headers = {
-                ["Content-Type"] = "application/json"
-            },
-            Body = HttpService:JSONEncode(body)
-        })
-    end)
-    
-    if success and response and response.Success then
-        local data = HttpService:JSONDecode(response.Body)
-        if data.data and data.data[1] then
-            return data.data[1].id
-        end
-    end
-    return nil
-end
-
-local function sendWebhook(playerName, petName, rarity, chance, imageUrl, odds)
-    local emoji = rarityEmojis[rarity] or "🎲"
-    local color = getRarityColor(rarity)
+local function sendWebhook(playerName, petName, rarity, chance, imageUrl)
     local displayChance = chance
-    
-    if odds and odds > 0 then
-        local oneIn = math.floor(1 / odds + 0.5)
-        displayChance = string.format("1 in %s", formatNumber(oneIn))
-    end
-    
-    local avatarUrl = nil
-    local profileLink = nil
-    
-    local userId = getUserIdFromUsername(playerName)
-    if userId then
-        avatarUrl = getPlayerAvatarUrl(userId)
-        profileLink = string.format("https://www.roblox.com/users/%d/profile", userId)
-    end
-    
-    if not avatarUrl then
-        avatarUrl = "https://www.roblox.com/headshot-thumbnail/image?userId=1&width=420&height=420&format=png"
+    if chance and chance:match("1 in") then
+        displayChance = chance
     end
     
     local finalImageUrl = nil
     if imageUrl and imageUrl ~= "N/A" then
-        if string.match(imageUrl, "^%d+$") then
+        if string.match(tostring(imageUrl), "^%d+$") then
             finalImageUrl = getAssetImageUrl(imageUrl)
         else
             finalImageUrl = imageUrl
         end
         
         if finalImageUrl then
-            finalImageUrl = waitForImageLoad(finalImageUrl, 5)
+            finalImageUrl = waitForImageLoad(finalImageUrl)
         end
     end
     
     local payload = {
-        username = "Roll Watcher",
-        avatar_url = "https://cdn.discordapp.com/icons/1324005436470333480/a_1e2f3b4c5d6e7f8g9h0i1j2k3l4m5n6o.png",
+        username = "makik",
         embeds = {{
-            title = string.format("%s %s Hatched a %s %s", emoji, playerName, rarity, petName),
-            description = string.format("**%s** just hatched **%s**!", playerName, petName),
-            color = color,
+            title = string.format("%s - %s", petName, rarity),
+            description = string.format("**%s** hatched **%s**!", playerName, petName),
             thumbnail = finalImageUrl and {
                 url = finalImageUrl,
                 width = 256,
                 height = 256
             } or nil,
-            author = {
-                name = playerName,
-                icon_url = avatarUrl,
-                url = profileLink
-            },
             fields = {
                 {
-                    name = "⭐ Rarity",
-                    value = string.format("%s %s", emoji, rarity),
+                    name = "Rarity",
+                    value = rarity,
                     inline = true
                 },
                 {
-                    name = "🎲 Chance",
+                    name = "Chance",
                     value = displayChance,
                     inline = true
-                },
-                {
-                    name = "🆔 Pet ID",
-                    value = string.format("`%s`", petName:gsub(" ", "_"):lower()),
-                    inline = false
                 }
-            },
-            footer = {
-                text = "Roll Watcher • Auto Detected",
-                icon_url = "https://cdn.discordapp.com/icons/1324005436470333480/a_1e2f3b4c5d6e7f8g9h0i1j2k3l4m5n6o.png"
-            },
-            timestamp = os.date("!%Y-%m-%dT%H:%M:%S.000Z")
+            }
         }}
     }
     
-    if not finalImageUrl then
-        payload.embeds[1].description = payload.embeds[1].description .. "\n\n*(Image failed to load)*"
-    end
-    
-    local success, err = pcall(function()
+    pcall(function()
         request({
             Url = webhookUrl,
             Method = "POST",
@@ -267,18 +151,9 @@ local function sendWebhook(playerName, petName, rarity, chance, imageUrl, odds)
             Body = HttpService:JSONEncode(payload)
         })
     end)
-    
-    if success then
-        print(string.format("[WEBHOOK] Sent: %s hatched %s (%s)", playerName, petName, rarity))
-    else
-        print(string.format("[WEBHOOK] Failed: %s", err))
-    end
 end
 
-print("[RollWatcher] Watching for roll results...")
-
 local lastFingerprint = nil
-local lastProcessedRolls = {}
 
 while true do
     task.wait(0.1)
@@ -291,4 +166,37 @@ while true do
     if fingerprint ~= lastFingerprint then
         lastFingerprint = fingerprint
 
-        if type(results) == "table" and
+        if type(results) == "table" and #results > 0 then
+            for i, result in ipairs(results) do
+                local item = getActualItem(result)
+                if not item then continue end
+
+                local id = tostring(item.id or "unknown")
+                local sok, slime = pcall(SlimeData.getSlime, id)
+                slime = sok and slime or nil
+
+                local name = slime and slime.name or id
+                local image = slime and slime.image or "N/A"
+                local odds = slime and slime.odds or nil
+                local rarity = odds and getRarityName(odds) or "Unknown"
+                local chance = odds and string.format("1 in %s", math.floor(1 / odds + 0.5)) or "N/A"
+                
+                local playerName = localPlayer and localPlayer.Name or "Unknown"
+                
+                local duplicateKey = playerName .. "_" .. name
+                if sentMessages[duplicateKey] then
+                    local currentTime = os.time()
+                    if currentTime - sentMessages[duplicateKey] < 3 then
+                        continue
+                    end
+                end
+                
+                sentMessages[duplicateKey] = os.time()
+                
+                task.spawn(function()
+                    sendWebhook(playerName, name, rarity, chance, image)
+                end)
+            end
+        end
+    end
+end
