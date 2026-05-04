@@ -1,325 +1,294 @@
-local L0_0, L1_1, L2_2, L3_3, L4_4, L5_5, L6_6, L7_7, L8_8, L9_9, L10_10, L11_11, L12_12, L13_13, L14_14, L15_15, L16_16, L17_17, L18_18, L19_19, L20_20, L21_21, L22_22, L23_23, L24_24, L25_25
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
 
-L0_0 = game:GetService("Players")
-L1_1 = game:GetService("RunService")
-L2_2 = game:GetService("ReplicatedStorage")
-L3_3 = game:GetService("VirtualUser")
-L4_4 = game:GetService("HttpService")
-L5_5 = game:GetService("TeleportService")
-L6_6 = L0_0.LocalPlayer
+local webhookUrl = "https://discord.com/api/webhooks/1495059756371546345/L3e0gHM3cdJAhq80YGviVwkvNOcJKOKYjerPBRPp2I5mli4FZ7r8vD7-8LPrBqWODKNw"
 
-L7_7 = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
-L8_8 = {
-  ROLL_DELAY = 0.1,
-  EQUIP_DELAY = 1,
-  UPGRADE_DELAY = 0.1,
-  LOOT_DELAY = 1,
-  ENEMY_TWEEN_SPEED = 150,
-  ENEMY_LERP_ALPHA = 0.25,
-  ENEMY_CHECK_DELAY = 0.05,
-  ZONE_BUY_DELAY = 10,
-  ZONE_TELEPORT_DELAY = 10,
-  INDEX_DELAY = 0.5,
-  REBIRTH_DELAY = 1,
-  POTION_DELAY = 1,
-  RECIPE_DELAY = 5,
-  RECIPE_TIMEOUT = 3,
-  CRAFT_DELAY = 2,
-  CODE_DELAY = 1,
-  SAFE_ZONE_RATIO = 0.75,
-  ENEMY_VALID_RATIO = 0.75,
-  STAND_OFFSET_Y = 5,
-  WALK_SPEED = 16,
-  MAX_ZOOM = 400
+local Source = ReplicatedStorage:WaitForChild("Source", 30)
+if not Source then
+    warn("[RollWatcher] ReplicatedStorage.Source not found.")
+    return
+end
+
+local Items = Source:WaitForChild("Game"):WaitForChild("Items")
+local Roll = Source:WaitForChild("Features"):WaitForChild("Roll")
+
+local RollSlice = require(Roll:WaitForChild("RollSlice"))
+local SlimeData = require(Items:WaitForChild("Slimes"))
+local RarityTiers = require(Items:WaitForChild("RarityTiers"))
+
+local sentMessages = {}
+local localPlayer = Players.LocalPlayer
+
+local rarityEmojis = {
+    ["Common"] = "⚪",
+    ["Uncommon"] = "🟢",
+    ["Rare"] = "🔵",
+    ["Epic"] = "🟣",
+    ["Legendary"] = "🟠",
+    ["Mythic"] = "🔴",
+    ["Divine"] = "✨",
+    ["Celestial"] = "⭐",
+    ["Secret"] = "🔮",
 }
 
-L9_9 = L7_7:CreateWindow({
-  Name = "Slime RNG | MalikHub",
-  LoadingTitle = "Slime RNG",
-  LoadingSubtitle = "by Malik • MalikHub",
-  Theme = "Default",
-  ConfigurationSaving = {
-    Enabled = true,
-    FolderName = "MalikHub",
-    FileName = "SlimeRNG"
-  }
-})
+local function getRarityName(odds)
+    if not odds or odds <= 0 then return "Unknown" end
+    local ok, tier = pcall(RarityTiers.getTier, odds)
+    return (ok and tier and tier.name) or "Unknown"
+end
 
-L10_10 = L9_9:CreateTab("Auto")
-L11_11 = L9_9:CreateTab("Upgrades & Zones")
-L12_12 = L9_9:CreateTab("Misc")
-L13_13 = L9_9:CreateTab("Settings")
-
-L14_14 = false
-L15_15 = false
-L16_16 = false
-L17_17 = false
-L18_18 = false
-L19_19 = false
-L20_20 = false
-L21_21 = false
-L22_22 = false
-L23_23 = false
-
-L10_10:CreateSection("Farming")
-
-L10_10:CreateToggle({
-  Name = "Auto Roll",
-  CurrentValue = false,
-  Flag = "AutoRoll",
-  Callback = function(L0_26)
-    L14_14 = L0_26
-    if L14_14 then
-      task.spawn(function()
-        while L14_14 do
-          pcall(function()
-            L2_2:WaitForChild("Remotes"):WaitForChild("Roll"):InvokeServer()
-          end)
-          task.wait(L8_8.ROLL_DELAY)
+local function getActualItem(result)
+    if type(result) ~= "table" then return nil end
+    for _, entry in ipairs(result) do
+        if type(entry) == "table" and entry.id then
+            return entry
         end
-      end)
     end
-  end
-})
+    return nil
+end
 
-L10_10:CreateToggle({
-  Name = "Auto Equip Best",
-  CurrentValue = false,
-  Flag = "AutoEquip",
-  Callback = function(L0_27)
-    L15_15 = L0_27
-    if L15_15 then
-      task.spawn(function()
-        while L15_15 do
-          pcall(function()
-            L2_2:WaitForChild("Remotes"):WaitForChild("EquipBest"):InvokeServer()
-          end)
-          task.wait(L8_8.EQUIP_DELAY)
+local function getResultsFingerprint(results)
+    if type(results) ~= "table" then return "nil" end
+    local count = #results
+    if count == 0 then return "empty" end
+    local parts = {}
+    for i, result in ipairs(results) do
+        local item = getActualItem(result)
+        parts[i] = item and tostring(item.id) or tostring(i)
+    end
+    return count .. "|" .. table.concat(parts, ",")
+end
+
+local function waitForImageLoad(imageUrl, maxAttempts)
+    if not imageUrl or imageUrl == "N/A" then return nil end
+    
+    for attempt = 1, maxAttempts do
+        local success, response = pcall(function()
+            return request({
+                Url = imageUrl,
+                Method = "HEAD"
+            })
+        end)
+        
+        if success and response and response.Success then
+            return imageUrl
         end
-      end)
+        task.wait(0.5)
     end
-  end
-})
+    return nil
+end
 
-L10_10:CreateToggle({
-  Name = "Auto Loot",
-  CurrentValue = false,
-  Flag = "AutoLoot",
-  Callback = function(L0_28)
-    L16_16 = L0_28
-    if L16_16 then
-      task.spawn(function()
-        while L16_16 do
-          pcall(function()
-            for L4_29, L5_30 in ipairs(workspace.Drops:GetChildren()) do
-              if L5_30:IsA("Model") and L5_30.PrimaryPart then
-                L6_6.Character.HumanoidRootPart.CFrame = L5_30.PrimaryPart.CFrame
-                L2_2:WaitForChild("Remotes"):WaitForChild("CollectDrop"):FireServer(L5_30)
-              end
+local function getAssetImageUrl(assetId)
+    if not assetId or assetId == "N/A" then return nil end
+    
+    local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..tostring(assetId).."&size=420x420&format=Png&isCircular=false"
+    
+    for attempt = 1, 3 do
+        local success, response = pcall(function()
+            return request({
+                Url = url,
+                Method = "GET"
+            })
+        end)
+        
+        if success and response and response.Success then
+            local data = HttpService:JSONDecode(response.Body)
+            if data and data.data and data.data[1] and data.data[1].imageUrl then
+                return data.data[1].imageUrl
             end
-          end)
-          task.wait(L8_8.LOOT_DELAY)
         end
-      end)
+        task.wait(0.5)
     end
-  end
-})
+    return nil
+end
 
-L10_10:CreateToggle({
-  Name = "Auto Farm Enemies",
-  CurrentValue = false,
-  Flag = "AutoEnemy",
-  Callback = function(L0_31)
-    L17_17 = L0_31
-    if L17_17 then
-      task.spawn(function()
-        while L17_17 do
-          pcall(function()
-            local L0_32 = workspace:FindFirstChild("Enemies")
-            if L0_32 and L6_6.Character and L6_6.Character:FindFirstChild("HumanoidRootPart") then
-              local L1_33 = L6_6.Character.HumanoidRootPart
-              for L5_34, L6_35 in ipairs(L0_32:GetChildren()) do
-                if not L17_17 then
-                  break
-                end
-                if L6_35:FindFirstChild("HumanoidRootPart") and L6_35:FindFirstChild("Humanoid") and L6_35.Humanoid.Health > 0 then
-                  local L7_36 = L6_35.HumanoidRootPart.CFrame * CFrame.new(0, L8_8.STAND_OFFSET_Y, 0)
-                  L1_33.CFrame = L1_33.CFrame:Lerp(L7_36, L8_8.ENEMY_LERP_ALPHA)
-                  L2_2:WaitForChild("Remotes"):WaitForChild("AttackEnemy"):FireServer(L6_35)
-                end
-                task.wait(L8_8.ENEMY_CHECK_DELAY)
-              end
-            end
-          end)
-          task.wait(L8_8.ENEMY_CHECK_DELAY)
-        end
-      end)
-    end
-  end
-})
-
-L11_11:CreateSection("Upgrades")
-
-L11_11:CreateToggle({
-  Name = "Auto Upgrade",
-  CurrentValue = false,
-  Flag = "AutoUpgrade",
-  Callback = function(L0_37)
-    L18_18 = L0_37
-    if L18_18 then
-      task.spawn(function()
-        while L18_18 do
-          pcall(function()
-            L2_2:WaitForChild("Remotes"):WaitForChild("Upgrade"):InvokeServer()
-          end)
-          task.wait(L8_8.UPGRADE_DELAY)
-        end
-      end)
-    end
-  end
-})
-
-L11_11:CreateToggle({
-  Name = "Auto Buy Zones",
-  CurrentValue = false,
-  Flag = "AutoZone",
-  Callback = function(L0_38)
-    L19_19 = L0_38
-    if L19_19 then
-      task.spawn(function()
-        while L19_19 do
-          pcall(function()
-            L2_2:WaitForChild("Remotes"):WaitForChild("BuyZone"):InvokeServer()
-          end)
-          task.wait(L8_8.ZONE_BUY_DELAY)
-        end
-      end)
-    end
-  end
-})
-
-L11_11:CreateToggle({
-  Name = "Auto Rebirth",
-  CurrentValue = false,
-  Flag = "AutoRebirth",
-  Callback = function(L0_39)
-    L20_20 = L0_39
-    if L20_20 then
-      task.spawn(function()
-        while L20_20 do
-          pcall(function()
-            L2_2:WaitForChild("Remotes"):WaitForChild("Rebirth"):InvokeServer()
-          end)
-          task.wait(L8_8.REBIRTH_DELAY)
-        end
-      end)
-    end
-  end
-})
-
-L11_11:CreateToggle({
-  Name = "Auto Craft",
-  CurrentValue = false,
-  Flag = "AutoCraft",
-  Callback = function(L0_40)
-    L21_21 = L0_40
-    if L21_21 then
-      task.spawn(function()
-        while L21_21 do
-          pcall(function()
-            L2_2:WaitForChild("Remotes"):WaitForChild("Craft"):InvokeServer()
-          end)
-          task.wait(L8_8.CRAFT_DELAY)
-        end
-      end)
-    end
-  end
-})
-
-L11_11:CreateToggle({
-  Name = "Auto Potions",
-  CurrentValue = false,
-  Flag = "AutoPotions",
-  Callback = function(L0_41)
-    L22_22 = L0_41
-    if L22_22 then
-      task.spawn(function()
-        while L22_22 do
-          pcall(function()
-            L2_2:WaitForChild("Remotes"):WaitForChild("UsePotion"):InvokeServer()
-          end)
-          task.wait(L8_8.POTION_DELAY)
-        end
-      end)
-    end
-  end
-})
-
-L12_12:CreateSection("Server & UI")
-
-L12_12:CreateSlider({
-  Name = "WalkSpeed",
-  Range = {16, 200},
-  Increment = 1,
-  Suffix = "WS",
-  CurrentValue = 16,
-  Flag = "WalkSpeedSlider",
-  Callback = function(L0_42)
-    L8_8.WALK_SPEED = L0_42
-    if L6_6.Character and L6_6.Character:FindFirstChild("Humanoid") then
-      L6_6.Character.Humanoid.WalkSpeed = L0_42
-    end
-  end
-})
-
-L12_12:CreateButton({
-  Name = "Server Hop",
-  Callback = function()
-    pcall(function()
-      local L0_43 = L4_4:JSONDecode(game:HttpGet("https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"))
-      for L4_44, L5_45 in ipairs(L0_43.data) do
-        if L5_45.playing < L5_45.maxPlayers then
-          L5_5:TeleportToPlaceInstance(game.PlaceId, L5_45.id, L6_6)
-          break
-        end
-      end
-    end)
-  end
-})
-
-L12_12:CreateButton({
-  Name = "Copy Discord Link",
-  Callback = function()
-    if setclipboard then
-      setclipboard("https://discord.gg/fEqNyqDhmr")
-      L7_7:Notify({
-        Title = "MalikHub",
-        Content = "Copied Discord link to clipboard!",
-        Duration = 3
-      })
-    end
-  end
-})
-
-L13_13:CreateSection("Anti AFK")
-
-L13_13:CreateToggle({
-  Name = "Enable Anti AFK",
-  CurrentValue = false,
-  Flag = "AntiAFK",
-  Callback = function(L0_46)
-    if L0_46 then
-      L25_25 = L6_6.Idled:Connect(function()
-        L3_3:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
-        task.wait(1)
-        L3_3:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
-      end)
+local function formatNumber(num)
+    if num >= 1000000000 then
+        return string.format("%.1fB", num / 1000000000):gsub("%.0B", "B")
+    elseif num >= 1000000 then
+        return string.format("%.1fM", num / 1000000):gsub("%.0M", "M")
+    elseif num >= 1000 then
+        return string.format("%.1fK", num / 1000):gsub("%.0K", "K")
     else
-      if L25_25 then
-        L25_25:Disconnect()
-      end
+        return tostring(num)
     end
-  end
-})
+end
 
-L7_7:LoadConfiguration()
+local function getRarityColor(rarity)
+    local colors = {
+        ["Common"] = 0x808080,
+        ["Uncommon"] = 0x00FF00,
+        ["Rare"] = 0x4287f5,
+        ["Epic"] = 0x9b59b6,
+        ["Legendary"] = 0xffa500,
+        ["Mythic"] = 0xff0000,
+        ["Divine"] = 0xffd700,
+        ["Celestial"] = 0x00ffff,
+        ["Secret"] = 0xff69b4,
+    }
+    return colors[rarity] or 0xffffff
+end
+
+local function getPlayerAvatarUrl(userId)
+    local url = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds="..userId.."&size=420x420&format=Png&isCircular=true"
+    
+    local success, response = pcall(function()
+        return request({
+            Url = url,
+            Method = "GET"
+        })
+    end)
+    
+    if success and response and response.Success then
+        local data = HttpService:JSONDecode(response.Body)
+        if data and data.data and data.data[1] and data.data[1].imageUrl then
+            return data.data[1].imageUrl
+        end
+    end
+    return "https://www.roblox.com/headshot-thumbnail/image?userId=1&width=420&height=420&format=png"
+end
+
+local function getUserIdFromUsername(username)
+    local url = "https://users.roblox.com/v1/usernames/users"
+    local body = {
+        usernames = {username}
+    }
+    
+    local success, response = pcall(function()
+        return request({
+            Url = url,
+            Method = "POST",
+            Headers = {
+                ["Content-Type"] = "application/json"
+            },
+            Body = HttpService:JSONEncode(body)
+        })
+    end)
+    
+    if success and response and response.Success then
+        local data = HttpService:JSONDecode(response.Body)
+        if data.data and data.data[1] then
+            return data.data[1].id
+        end
+    end
+    return nil
+end
+
+local function sendWebhook(playerName, petName, rarity, chance, imageUrl, odds)
+    local emoji = rarityEmojis[rarity] or "🎲"
+    local color = getRarityColor(rarity)
+    local displayChance = chance
+    
+    if odds and odds > 0 then
+        local oneIn = math.floor(1 / odds + 0.5)
+        displayChance = string.format("1 in %s", formatNumber(oneIn))
+    end
+    
+    local avatarUrl = nil
+    local profileLink = nil
+    
+    local userId = getUserIdFromUsername(playerName)
+    if userId then
+        avatarUrl = getPlayerAvatarUrl(userId)
+        profileLink = string.format("https://www.roblox.com/users/%d/profile", userId)
+    end
+    
+    if not avatarUrl then
+        avatarUrl = "https://www.roblox.com/headshot-thumbnail/image?userId=1&width=420&height=420&format=png"
+    end
+    
+    local finalImageUrl = nil
+    if imageUrl and imageUrl ~= "N/A" then
+        if string.match(imageUrl, "^%d+$") then
+            finalImageUrl = getAssetImageUrl(imageUrl)
+        else
+            finalImageUrl = imageUrl
+        end
+        
+        if finalImageUrl then
+            finalImageUrl = waitForImageLoad(finalImageUrl, 5)
+        end
+    end
+    
+    local payload = {
+        username = "Roll Watcher",
+        avatar_url = "https://cdn.discordapp.com/icons/1324005436470333480/a_1e2f3b4c5d6e7f8g9h0i1j2k3l4m5n6o.png",
+        embeds = {{
+            title = string.format("%s %s Hatched a %s %s", emoji, playerName, rarity, petName),
+            description = string.format("**%s** just hatched **%s**!", playerName, petName),
+            color = color,
+            thumbnail = finalImageUrl and {
+                url = finalImageUrl,
+                width = 256,
+                height = 256
+            } or nil,
+            author = {
+                name = playerName,
+                icon_url = avatarUrl,
+                url = profileLink
+            },
+            fields = {
+                {
+                    name = "⭐ Rarity",
+                    value = string.format("%s %s", emoji, rarity),
+                    inline = true
+                },
+                {
+                    name = "🎲 Chance",
+                    value = displayChance,
+                    inline = true
+                },
+                {
+                    name = "🆔 Pet ID",
+                    value = string.format("`%s`", petName:gsub(" ", "_"):lower()),
+                    inline = false
+                }
+            },
+            footer = {
+                text = "Roll Watcher • Auto Detected",
+                icon_url = "https://cdn.discordapp.com/icons/1324005436470333480/a_1e2f3b4c5d6e7f8g9h0i1j2k3l4m5n6o.png"
+            },
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%S.000Z")
+        }}
+    }
+    
+    if not finalImageUrl then
+        payload.embeds[1].description = payload.embeds[1].description .. "\n\n*(Image failed to load)*"
+    end
+    
+    local success, err = pcall(function()
+        request({
+            Url = webhookUrl,
+            Method = "POST",
+            Headers = {
+                ["Content-Type"] = "application/json"
+            },
+            Body = HttpService:JSONEncode(payload)
+        })
+    end)
+    
+    if success then
+        print(string.format("[WEBHOOK] Sent: %s hatched %s (%s)", playerName, petName, rarity))
+    else
+        print(string.format("[WEBHOOK] Failed: %s", err))
+    end
+end
+
+print("[RollWatcher] Watching for roll results...")
+
+local lastFingerprint = nil
+local lastProcessedRolls = {}
+
+while true do
+    task.wait(0.1)
+
+    local ok, results = pcall(RollSlice.rollResults)
+    if not ok then continue end
+
+    local fingerprint = getResultsFingerprint(results)
+
+    if fingerprint ~= lastFingerprint then
+        lastFingerprint = fingerprint
+
+        if type(results) == "table" and
