@@ -7,51 +7,58 @@ local webhookUrl = "https://discord.com/api/webhooks/1495059756371546345/L3e0gHM
 local Slimes = require(ReplicatedStorage.Source.Game.Items.Slimes)
 
 local sentMessages = {}
+local petImageCache = {}
 local localPlayer = Players.LocalPlayer
 
-local function extractAssetIdFromRbxAsset(rbxAssetUrl)
-    if not rbxAssetUrl or rbxAssetUrl == "N/A" then return nil end
-    local assetId = string.match(rbxAssetUrl, "rbxassetid://(%d+)")
-    return assetId
-end
+print("G")
+print("[RollWatcher] Started")
 
 local function getAssetImageUrl(assetId)
     if not assetId then return nil end
     
     local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetId.."&size=420x420&format=Png&isCircular=false"
     
-    local success, response = pcall(function()
-        return request({
-            Url = url,
-            Method = "GET"
-        })
-    end)
-    
-    if success and response and response.Success then
-        local data = HttpService:JSONDecode(response.Body)
-        if data and data.data and data.data[1] and data.data[1].imageUrl then
-            return data.data[1].imageUrl
-        end
-    end
-    return nil
-end
-
-local function waitForImageLoad(imageUrl)
-    if not imageUrl then return nil end
-    
-    for attempt = 1, 5 do
+    for attempt = 1, 3 do
         local success, response = pcall(function()
             return request({
-                Url = imageUrl,
-                Method = "HEAD"
+                Url = url,
+                Method = "GET"
             })
         end)
         
         if success and response and response.Success then
-            return imageUrl
+            local data = HttpService:JSONDecode(response.Body)
+            if data and data.data and data.data[1] and data.data[1].imageUrl then
+                return data.data[1].imageUrl
+            end
         end
         task.wait(0.5)
     end
+    
+    return nil
+end
+
+local function getPetImageUrl(slime)
+    if not slime then return nil end
+    
+    local cacheKey = slime.id .. "_image"
+    
+    if petImageCache[cacheKey] then
+        return petImageCache[cacheKey]
+    end
+    
+    local imagePath = slime.image
+    if not imagePath then return nil end
+    
+    local assetId = string.match(imagePath, "rbxassetid://(%d+)")
+    if not assetId then return nil end
+    
+    local imageUrl = getAssetImageUrl(assetId)
+    if imageUrl then
+        petImageCache[cacheKey] = imageUrl
+        return imageUrl
+    end
+    
     return nil
 end
 
@@ -67,47 +74,20 @@ local function formatNumber(num)
     end
 end
 
-local function getRarityFromOdds(odds)
-    if not odds or odds <= 0 then return "Unknown" end
-    if odds >= 0.1 then return "Common"
-    elseif odds >= 0.01 then return "Uncommon"
-    elseif odds >= 0.001 then return "Rare"
-    elseif odds >= 0.0001 then return "Epic"
-    elseif odds >= 0.00001 then return "Legendary"
-    elseif odds >= 0.000001 then return "Mythic"
-    else return "Divine"
-    end
-end
-
-local function sendWebhook(playerName, petName, rarity, chance, imageUrl)
-    local finalImageUrl = nil
-    
-    if imageUrl then
-        local assetId = extractAssetIdFromRbxAsset(imageUrl)
-        if assetId then
-            finalImageUrl = getAssetImageUrl(assetId)
-            if finalImageUrl then
-                finalImageUrl = waitForImageLoad(finalImageUrl)
-            end
-        end
-    end
+local function sendWebhook(playerName, petName, chance, imageUrl)
+    print("[WEBHOOK] Sending for " .. petName)
     
     local payload = {
         username = "makik",
         embeds = {{
-            title = string.format("%s - %s", petName, rarity),
+            title = petName,
             description = string.format("**%s** hatched **%s**!", playerName, petName),
-            thumbnail = finalImageUrl and {
-                url = finalImageUrl,
+            thumbnail = imageUrl and {
+                url = imageUrl,
                 width = 256,
                 height = 256
             } or nil,
             fields = {
-                {
-                    name = "Rarity",
-                    value = rarity,
-                    inline = true
-                },
                 {
                     name = "Chance",
                     value = chance,
@@ -117,7 +97,7 @@ local function sendWebhook(playerName, petName, rarity, chance, imageUrl)
         }}
     }
     
-    pcall(function()
+    local success, err = pcall(function()
         request({
             Url = webhookUrl,
             Method = "POST",
@@ -127,10 +107,13 @@ local function sendWebhook(playerName, petName, rarity, chance, imageUrl)
             Body = HttpService:JSONEncode(payload)
         })
     end)
+    
+    if success then
+        print("[WEBHOOK] Sent successfully for " .. petName)
+    else
+        print("[WEBHOOK] Failed: " .. tostring(err))
+    end
 end
-
-print("G")
-print("[RollWatcher] Watching for roll results...")
 
 local lastRolls = {}
 
@@ -138,32 +121,37 @@ while true do
     task.wait(0.5)
     
     local sortedSlimes = Slimes.getSortedSlimes()
-    if not sortedSlimes then continue end
+    if not sortedSlimes then 
+        print("[ERROR] Could not get sorted slimes")
+        continue 
+    end
     
     for _, slime in ipairs(sortedSlimes) do
-        if slime and slime.name and slime.odds then
-            if not lastRolls[slime.id] then
-                lastRolls[slime.id] = slime.rollOdds or 0
-            elseif lastRolls[slime.id] ~= slime.rollOdds then
-                lastRolls[slime.id] = slime.rollOdds or 0
+        if slime and slime.id and slime.rollOdds then
+            local currentOdds = slime.rollOdds
+            local lastOdds = lastRolls[slime.id]
+            
+            if lastOdds == nil and currentOdds > 0 then
+                lastRolls[slime.id] = currentOdds
+                print("[NEW] Found slime: " .. slime.name .. " - Odds: " .. currentOdds)
+            elseif lastOdds ~= nil and lastOdds ~= currentOdds and currentOdds > 0 then
+                lastRolls[slime.id] = currentOdds
                 
                 local playerName = localPlayer and localPlayer.Name or "Unknown"
-                local name = slime.name
-                local odds = slime.odds
-                local rarity = getRarityFromOdds(odds)
+                local petName = slime.name
+                local odds = slime.odds or 0
                 local chance = string.format("1 in %s", formatNumber(math.floor(1 / odds + 0.5)))
-                local image = slime.image
                 
-                local duplicateKey = playerName .. "_" .. name
-                if not sentMessages[duplicateKey] or os.time() - sentMessages[duplicateKey] >= 3 then
-                    sentMessages[duplicateKey] = os.time()
-                    
-                    print(string.format("[ROLL] %s hatched %s (%s)", playerName, name, rarity))
-                    
-                    task.spawn(function()
-                        sendWebhook(playerName, name, rarity, chance, image)
-                    end)
+                print("[HATCH] " .. playerName .. " hatched " .. petName)
+                
+                local imageUrl = getPetImageUrl(slime)
+                if imageUrl then
+                    print("[IMAGE] Loaded thumbnail for " .. petName)
+                else
+                    print("[IMAGE] Could not load thumbnail for " .. petName)
                 end
+                
+                sendWebhook(playerName, petName, chance, imageUrl)
             end
         end
     end
