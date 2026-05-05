@@ -21,6 +21,43 @@ local Mutations   = require(MutationsFolder:WaitForChild("Mutations"))
 local DataClient  = require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("DataService")).client
 
 local sentMessages = {}
+local myPlayer = Players.LocalPlayer
+
+local function formatNumber(num)
+    if type(num) ~= "number" then return tostring(num) end
+    local absNum = math.abs(num)
+    local suffix = ""
+    local divisor = 1
+    
+    if absNum >= 1e15 then
+        suffix = "Qn"
+        divisor = 1e15
+    elseif absNum >= 1e12 then
+        suffix = "Qd"
+        divisor = 1e12
+    elseif absNum >= 1e9 then
+        suffix = "B"
+        divisor = 1e9
+    elseif absNum >= 1e6 then
+        suffix = "M"
+        divisor = 1e6
+    elseif absNum >= 1e3 then
+        suffix = "K"
+        divisor = 1e3
+    end
+    
+    if suffix ~= "" then
+        local formatted = num / divisor
+        -- Check if it's a whole number or has decimal .0
+        if math.abs(formatted - math.floor(formatted)) < 0.01 then
+            return string.format("%d%s", math.floor(formatted), suffix)
+        else
+            -- Show 1 decimal place only if needed
+            return string.format("%.1f%s", formatted, suffix):gsub("%.0f", "")
+        end
+    end
+    return tostring(math.floor(num))
+end
 
 local function getRarityName(odds)
     if not odds or odds <= 0 then return "Unknown" end
@@ -82,8 +119,34 @@ local function getAssetImageUrl(assetId)
     return nil
 end
 
-local function sendWebhook(playerName, displayName, rarity, chanceText, statsText, mutationsText, imageUrl, isInverted)
+local function getThumbnailSize(mutations)
+    if not mutations then return 64 end
+    if mutations.huge then
+        return 128  -- Huge = largest
+    elseif mutations.big then
+        return 96   -- Big = medium-large
+    end
+    return 64       -- Normal = default
+end
+
+local function getEmbedColor(mutations)
+    if not mutations then return nil end
+    if mutations.inverted then
+        return 0x9b59b6 -- Purple for inverted
+    elseif mutations.huge then
+        return 0xf1c40f -- Gold for huge
+    elseif mutations.big then
+        return 0xe67e22 -- Orange for big
+    elseif mutations.shiny then
+        return 0xf39c12 -- Yellow-gold for shiny
+    end
+    return nil
+end
+
+local function sendWebhook(playerName, displayName, rarity, chanceText, statsText, mutations, imageUrl)
     local finalImageUrl = nil
+    local thumbnailSize = getThumbnailSize(mutations)
+    
     if imageUrl and imageUrl ~= "N/A" then
         local assetId = string.match(imageUrl, "rbxassetid://(%d+)")
         if assetId then
@@ -91,10 +154,10 @@ local function sendWebhook(playerName, displayName, rarity, chanceText, statsTex
         end
     end
     
-    local description = string.format("**%s** hatched **%s**!", playerName, displayName)
-    if mutationsText and mutationsText ~= "" then
-        description = description .. "\n\n**Mutations:** " .. mutationsText
-    end
+    -- Hide player name behind spoiler tag (click to reveal)
+    local hiddenName = "||" .. playerName .. "||"
+    
+    local description = string.format("**%s** hatched **%s**!", hiddenName, displayName)
     
     local fields = {
         {name = "Rarity", value = rarity, inline = true},
@@ -105,14 +168,16 @@ local function sendWebhook(playerName, displayName, rarity, chanceText, statsTex
         table.insert(fields, {name = "Stats", value = statsText, inline = true})
     end
     
+    local embedColor = getEmbedColor(mutations)
+    
     local payload = {
         username = "makik",
         embeds = {{
             title = displayName,
             description = description,
-            thumbnail = finalImageUrl and {url = finalImageUrl, width = 256, height = 256} or nil,
+            thumbnail = finalImageUrl and {url = finalImageUrl, width = thumbnailSize, height = thumbnailSize} or nil,
             fields = fields,
-            color = isInverted and 0x9b59b6 or nil
+            color = embedColor
         }}
     }
     
@@ -163,57 +228,46 @@ while true do
                 local baseHp        = slime and slime.health or 0
                 local rarity        = baseOdds and getRarityName(baseOdds) or "Unknown"
 
+                -- Calculate final values with mutations
                 local oddsMultiplier = mutations and Mutations.getVisualOddsMultiplier(mutations) or 1
                 local statBonus      = mutations and Mutations.getStatBonus(mutations, "damage") or 1
                 local finalOdds      = baseOdds and (baseOdds / oddsMultiplier) or nil
                 local finalDmg       = baseDmg * statBonus
                 local finalHp        = baseHp * statBonus
 
-                local baseChance     = baseOdds and string.format("1 in %s", math.floor(1 / baseOdds + 0.5)) or "N/A"
-                local finalChance    = finalOdds and string.format("1 in %s (%.0fx rarer)", math.floor(1 / finalOdds + 0.5), oddsMultiplier) or baseChance
-                local chanceText     = mutations and finalChance or baseChance
+                -- Format chance (only final, no multiplier text)
+                local chanceText = finalOdds and string.format("1 in %s", formatNumber(math.floor(1 / finalOdds + 0.5))) or "N/A"
                 
+                -- Format stats (only final values)
                 local statsText = ""
-                if baseDmg > 0 and baseHp > 0 then
-                    if mutations then
-                        statsText = string.format("⚔️ %d → %d  ❤️ %d → %d", baseDmg, finalDmg, baseHp, finalHp)
-                    else
-                        statsText = string.format("⚔️ %d  ❤️ %d", baseDmg, baseHp)
-                    end
-                elseif baseDmg > 0 then
-                    statsText = mutations and string.format("⚔️ %d → %d", baseDmg, finalDmg) or string.format("⚔️ %d", baseDmg)
-                elseif baseHp > 0 then
-                    statsText = mutations and string.format("❤️ %d → %d", baseHp, finalHp) or string.format("❤️ %d", baseHp)
+                if finalDmg > 0 and finalHp > 0 then
+                    statsText = string.format("⚔️ %s  ❤️ %s", formatNumber(finalDmg), formatNumber(finalHp))
+                elseif finalDmg > 0 then
+                    statsText = string.format("⚔️ %s", formatNumber(finalDmg))
+                elseif finalHp > 0 then
+                    statsText = string.format("❤️ %s", formatNumber(finalHp))
                 end
                 
-                local mutationsText = ""
-                if mutations then
-                    local mutList = Mutations.getIds(mutations)
-                    mutationsText = table.concat(mutList, ", ")
-                end
-                
+                -- Build display name with mutation prefixes
                 local displayName = mutations and Mutations.getDisplayName(name, mutations) or name
                 
-                local players = Players:GetPlayers()
-                local randomPlayer = players[math.random(1, #players)]
-                local playerName = randomPlayer and randomPlayer.Name or "Someone"
+                -- Use actual player name (hidden in webhook via spoiler)
+                local playerName = myPlayer and myPlayer.Name or "Someone"
                 
-                local duplicateKey = playerName .. "_" .. displayName .. "_" .. tostring(os.time() / 10)
+                -- Anti-spam key (only send each unique hatch once)
+                local duplicateKey = playerName .. "_" .. displayName .. "_" .. tostring(os.time())
                 if not sentMessages[duplicateKey] then
                     sentMessages[duplicateKey] = os.time()
                     
                     print(string.format("%s roll : %s (%s)", ordinal(totalRolls), displayName, id))
                     print(string.format("  Rarity       : %s", rarity))
-                    print(string.format("  Base Chance  : %s", baseChance))
-                    if mutations then
-                        print(string.format("  Mutated Chance : %s  (%dx rarer)", finalChance, math.floor(oddsMultiplier + 0.5)))
-                    end
+                    print(string.format("  Chance       : %s", chanceText))
                     print(string.format("  Image        : %s", image))
-                    if baseDmg > 0 then
-                        print(string.format("  Damage       : %s", mutations and string.format("%d → %d (x%d)", baseDmg, finalDmg, statBonus) or tostring(baseDmg)))
+                    if finalDmg > 0 then
+                        print(string.format("  Damage       : %s", formatNumber(finalDmg)))
                     end
-                    if baseHp > 0 then
-                        print(string.format("  Health       : %s", mutations and string.format("%d → %d (x%d)", baseHp, finalHp, statBonus) or tostring(baseHp)))
+                    if finalHp > 0 then
+                        print(string.format("  Health       : %s", formatNumber(finalHp)))
                     end
                     if mutations then
                         local mutList = Mutations.getIds(mutations)
@@ -221,7 +275,7 @@ while true do
                     end
                     
                     task.spawn(function()
-                        sendWebhook(playerName, displayName, rarity, chanceText, statsText, mutationsText, image, isInverted)
+                        sendWebhook(playerName, displayName, rarity, chanceText, statsText, mutations, image)
                     end)
                 end
             end
