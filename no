@@ -332,7 +332,7 @@ local function buildHUD(playerGui)
 		Padding = UDim.new(0, 10),
 	})
 
-	local function makeStatRow(parent, assetId, startVal)
+	local function makeStatRowWithLabel(parent, assetId, labelText, startVal)
 		local row = makeFrame({
 			Size = UDim2.fromScale(1, 0.28),
 			BackgroundColor3 = Color3.fromRGB(14, 16, 24),
@@ -357,9 +357,19 @@ local function buildHUD(playerGui)
 			DominantAxis = Enum.DominantAxis.Height,
 		}, iconImg)
 
-		local valLbl = makeLabel({
-			Size = UDim2.fromScale(0.74, 0.8),
+		local textLabel = makeLabel({
+			Size = UDim2.fromScale(0.35, 0.8),
 			Position = UDim2.fromScale(0.24, 0.1),
+			Text = labelText,
+			TextColor3 = PALETTE.dim,
+			Font = Enum.Font.Gotham,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextScaled = true,
+		}, row)
+
+		local valLbl = makeLabel({
+			Size = UDim2.fromScale(0.37, 0.8),
+			Position = UDim2.fromScale(0.61, 0.1),
 			Text = startVal or "0",
 			TextColor3 = PALETTE.text,
 			Font = Enum.Font.GothamBold,
@@ -369,9 +379,9 @@ local function buildHUD(playerGui)
 		return row, valLbl
 	end
 
-	local rebirthRow, rebirthVal = makeStatRow(leftPanel, ASSET_IDS.rebirth, "0")
-	local goopRow, goopVal = makeStatRow(leftPanel, ASSET_IDS.goop, "0")
-	local coinsRow, coinsVal = makeStatRow(leftPanel, ASSET_IDS.coins, "0")
+	local rebirthRow, rebirthVal = makeStatRowWithLabel(leftPanel, ASSET_IDS.rebirth, "Rebirths", "0")
+	local goopRow, goopVal = makeStatRowWithLabel(leftPanel, ASSET_IDS.goop, "Goop", "0")
+	local coinsRow, coinsVal = makeStatRowWithLabel(leftPanel, ASSET_IDS.coins, "Coins", "0")
 
 	local rightPanel = makeFrame({
 		Name = "RightPanel",
@@ -427,7 +437,7 @@ local function buildHUD(playerGui)
 		return row, valLbl
 	end
 
-	local function makeStatRowWithLabel(parent, assetId, labelText, startVal)
+	local function makeStatRowWithLabelRight(parent, assetId, labelText, startVal)
 		local row = makeFrame({
 			Size = UDim2.fromScale(1, 0.28),
 			BackgroundColor3 = Color3.fromRGB(14, 16, 24),
@@ -475,8 +485,8 @@ local function buildHUD(playerGui)
 	end
 
 	local rollsRow, rollsVal = makeStatRowWithEmoji(rightPanel, "🎲", "0")
-	local killsRow, killsVal = makeStatRow(rightPanel, ASSET_IDS.kills, "0")
-	local zoneRow, zoneVal = makeStatRowWithLabel(rightPanel, ASSET_IDS.zone, "Zone", "0")
+	local killsRow, killsVal = makeStatRowWithLabelRight(rightPanel, ASSET_IDS.kills, "Kills", "0")
+	local zoneRow, zoneVal = makeStatRowWithLabelRight(rightPanel, ASSET_IDS.zone, "Zone", "0")
 
 	local statusPanel = makeFrame({
 		Name = "StatusPanel",
@@ -546,6 +556,8 @@ local function runStatusSystem(refs)
 	local prevKills = safeGet("stats", "kills")
 	local prevRolls = safeGet("stats", "rolls")
 	local diceThread = nil
+	local rollingActive = false
+	local rollingStartTime = 0
 
 	local function setStatus(text, color)
 		if text == lastStatus then return end
@@ -566,14 +578,24 @@ local function runStatusSystem(refs)
 	end
 
 	local function startDiceAnim()
+		rollingActive = true
+		rollingStartTime = os.clock()
 		diceThread = task.spawn(function()
 			local i = 1
-			while true do
+			while rollingActive do
 				refs.statusLabel.Text = DICE_FRAMES[i] .. " Rolling"
 				i = (i % #DICE_FRAMES) + 1
 				task.wait(0.1)
 			end
 		end)
+	end
+
+	local function stopDiceAnim()
+		rollingActive = false
+		if diceThread then
+			task.cancel(diceThread)
+			diceThread = nil
+		end
 	end
 
 	local function pickStatus()
@@ -611,17 +633,29 @@ local function runStatusSystem(refs)
 
 		if rolls > prevRolls then
 			prevRolls = rolls
-			if lastStatus ~= "Rolling" then
-				lastStatus = "Rolling"
-				if diceThread then task.cancel(diceThread) end
-				refs.statusLabel.TextColor3 = PALETTE.void
-				tweenProp(refs.statusLabel, {TextTransparency = 1}, 0.15)
-				task.delay(0.15, function()
-					tweenProp(refs.statusLabel, {TextTransparency = 0}, 0.2)
-					startDiceAnim()
-				end)
+			if not rollingActive then
+				if lastStatus ~= "Rolling" then
+					lastStatus = "Rolling"
+					stopDiceAnim()
+					refs.statusLabel.TextColor3 = PALETTE.void
+					tweenProp(refs.statusLabel, {TextTransparency = 1}, 0.15)
+					task.delay(0.15, function()
+						tweenProp(refs.statusLabel, {TextTransparency = 0}, 0.2)
+						startDiceAnim()
+					end)
+				end
 			end
 			return
+		end
+
+		if rollingActive then
+			local elapsedRolling = os.clock() - rollingStartTime
+			if elapsedRolling >= STATUS_INTERVAL then
+				stopDiceAnim()
+				setStatus("Idle", PALETTE.dim)
+			else
+				return
+			end
 		end
 
 		local filtered = {}
