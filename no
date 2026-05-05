@@ -2,18 +2,13 @@ local HttpService = game:GetService("HttpService")
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
 local VirtualUser = game:GetService("VirtualUser")
-local lp = Players.LocalPlayer
+local UserInputService = game:GetService("UserInputService")
 
 local webhookUrl = "https://discord.com/api/webhooks/1495059756371546345/L3e0gHM3cdJAhq80YGviVwkvNOcJKOKYjerPBRPp2I5mli4FZ7r8vD7-8LPrBqWODKNw"
 
 if not request then
-    warn("[ServerFetcher] No request function available. Aborting.")
     return
 end
-
--- ANTI AFK TOGGLE STATE
-local antiAfkEnabled = false
-local antiAfkConnection = nil
 
 local CONFIG = {
     PLACE_ID       = game.PlaceId,
@@ -26,19 +21,13 @@ local CONFIG = {
     MAX_PAGES      = 500,
 }
 
--- EDITABLE CONFIGS
-local userConfig = {
-    webhookUrl = webhookUrl,
-    limit = CONFIG.LIMIT,
-    maxPages = CONFIG.MAX_PAGES,
-}
-
 -- STATE
-local fetchActive     = false
 local paused          = false
 local fetchStopped    = false
+local isRunning       = false
 local startTime       = os.clock()
 local duplicateCount  = 0
+local antiAfkEnabled  = false
 
 -- Filter state
 local filterActiveOnly  = false
@@ -46,10 +35,8 @@ local filterEmptyOnly   = false
 local filterHideFull    = false
 
 -- Feed management
-local MAX_FEED_ENTRIES  = 50
+local MAX_FEED_ENTRIES  = 7
 local feedEntries       = {}
-local feedUI = nil
-local feedContainer = nil
 
 -- Collected data
 local jobIdSet   = {}
@@ -58,15 +45,8 @@ local pageCount  = 0
 local activeCount = 0
 local emptyCount  = 0
 
--- Safe pcall wrapper for all functions
-local function safeCall(func, ...)
-    local success, result = pcall(func, ...)
-    if not success then
-        warn("Error: " .. tostring(result))
-        addDetailedFeedEntry("Error: " .. tostring(result), 4)
-    end
-    return success, result
-end
+-- Anti-AFK connection
+local antiAfkConnection = nil
 
 -- ============================================================
 -- GUI SETUP
@@ -78,117 +58,275 @@ screenGui.Parent = gethui and gethui() or game:GetService("CoreGui")
 
 -- Main frame
 local main = Instance.new("Frame")
-main.Size = UDim2.new(0, 650, 0, 420)
-main.Position = UDim2.new(0.5, -325, 0.5, -210)
-main.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+main.Size = UDim2.new(0, 500, 0, 520)
+main.Position = UDim2.new(0, 20, 0.5, -260)
+main.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
 main.BorderSizePixel = 0
 main.Active = true
 main.Draggable = true
 main.Parent = screenGui
-Instance.new("UICorner", main).CornerRadius = UDim.new(0, 12)
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
 
--- Main horizontal layout
-local mainLayout = Instance.new("UIListLayout")
-mainLayout.FillDirection = Enum.FillDirection.Horizontal
-mainLayout.Padding = UDim.new(0, 0)
-mainLayout.SortOrder = Enum.SortOrder.LayoutOrder
-mainLayout.Parent = main
+local mainGrad = Instance.new("UIGradient")
+mainGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(22, 22, 32)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(12, 12, 16)),
+})
+mainGrad.Rotation = 135
+mainGrad.Parent = main
 
--- ============================================================
--- LEFT PANEL (Stats & Progress)
--- ============================================================
-local leftPanel = Instance.new("Frame")
-leftPanel.Size = UDim2.new(0, 280, 1, 0)
-leftPanel.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
-leftPanel.BorderSizePixel = 0
-leftPanel.Parent = main
-Instance.new("UICorner", leftPanel).CornerRadius = UDim.new(0, 12)
+local stroke = Instance.new("UIStroke")
+stroke.Color = Color3.fromRGB(50, 80, 140)
+stroke.Thickness = 1
+stroke.Transparency = 0.5
+stroke.Parent = main
 
-local leftPadding = Instance.new("UIPadding")
-leftPadding.PaddingLeft = UDim.new(0, 12)
-leftPadding.PaddingTop = UDim.new(0, 12)
-leftPadding.PaddingRight = UDim.new(0, 12)
-leftPadding.PaddingBottom = UDim.new(0, 12)
-leftPadding.Parent = leftPanel
+-- Title bar
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 40)
+titleBar.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+titleBar.BorderSizePixel = 0
+titleBar.Parent = main
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 10)
 
--- Title
+local titleGrad = Instance.new("UIGradient")
+titleGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(30, 50, 100)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(18, 18, 28)),
+})
+titleGrad.Rotation = 90
+titleGrad.Parent = titleBar
+
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 30)
+title.Size = UDim2.new(1, -12, 1, 0)
+title.Position = UDim2.new(0, 12, 0, 0)
 title.BackgroundTransparency = 1
 title.Text = "Server Fetcher"
-title.TextColor3 = Color3.fromRGB(255, 255, 255)
-title.TextSize = 18
+title.TextColor3 = Color3.fromRGB(220, 230, 255)
+title.TextSize = 14
 title.Font = Enum.Font.GothamBold
-title.TextXAlignment = Enum.TextXAlignment.Center
-title.Parent = leftPanel
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = titleBar
 
--- Stats container
-local statsContainer = Instance.new("Frame")
-statsContainer.Size = UDim2.new(1, 0, 0, 180)
-statsContainer.Position = UDim2.new(0, 0, 0, 40)
-statsContainer.BackgroundTransparency = 1
-statsContainer.Parent = leftPanel
+-- ============================================================
+-- HELPER: Modern Toggle Button
+-- ============================================================
+local function createModernToggle(parent, yPos, label, defaultState, callback)
+    local container = Instance.new("Frame")
+    container.Size = UDim2.new(0, 230, 0, 32)
+    container.Position = UDim2.new(0, 10, 0, yPos)
+    container.BackgroundTransparency = 1
+    container.Parent = parent
+    
+    local labelText = Instance.new("TextLabel")
+    labelText.Size = UDim2.new(0, 150, 1, 0)
+    labelText.BackgroundTransparency = 1
+    labelText.Text = label
+    labelText.TextColor3 = Color3.fromRGB(200, 200, 220)
+    labelText.TextSize = 13
+    labelText.Font = Enum.Font.GothamSemibold
+    labelText.TextXAlignment = Enum.TextXAlignment.Left
+    labelText.Parent = container
+    
+    local toggleBtn = Instance.new("TextButton")
+    toggleBtn.Size = UDim2.new(0, 50, 0, 24)
+    toggleBtn.Position = UDim2.new(1, -50, 0.5, -12)
+    toggleBtn.BackgroundColor3 = defaultState and Color3.fromRGB(60, 180, 100) or Color3.fromRGB(60, 60, 80)
+    toggleBtn.BorderSizePixel = 0
+    toggleBtn.Text = defaultState and "ON" or "OFF"
+    toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggleBtn.TextSize = 11
+    toggleBtn.Font = Enum.Font.GothamBold
+    toggleBtn.Parent = container
+    Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(1, 0)
+    
+    local state = defaultState
+    
+    toggleBtn.MouseButton1Click:Connect(function()
+        state = not state
+        toggleBtn.BackgroundColor3 = state and Color3.fromRGB(60, 180, 100) or Color3.fromRGB(60, 60, 80)
+        toggleBtn.Text = state and "ON" or "OFF"
+        if callback then callback(state) end
+    end)
+    
+    return toggleBtn, function() return state end
+end
 
-local function makeStatRow(yPos, labelText)
+-- ============================================================
+-- HELPER: make a stat row label
+-- ============================================================
+local function makeLabel(parent, yPos, labelText, defaultVal, color)
+    local container = Instance.new("Frame")
+    container.Size = UDim2.new(0, 220, 0, 24)
+    container.Position = UDim2.new(0, 10, 0, yPos)
+    container.BackgroundTransparency = 1
+    container.Parent = parent
+
     local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(0.6, 0, 0, 22)
-    lbl.Position = UDim2.new(0, 0, 0, yPos)
+    lbl.Size = UDim2.new(0.60, 0, 1, 0)
     lbl.BackgroundTransparency = 1
     lbl.Text = labelText
     lbl.TextColor3 = Color3.fromRGB(140, 148, 170)
     lbl.TextSize = 12
     lbl.Font = Enum.Font.Gotham
     lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.Parent = statsContainer
-    
+    lbl.Parent = container
+
     local val = Instance.new("TextLabel")
-    val.Size = UDim2.new(0.4, 0, 0, 22)
-    val.Position = UDim2.new(0.6, 0, 0, yPos)
+    val.Size = UDim2.new(0.40, 0, 1, 0)
+    val.Position = UDim2.new(0.60, 0, 0, 0)
     val.BackgroundTransparency = 1
-    val.Text = "0"
-    val.TextColor3 = Color3.fromRGB(255, 255, 255)
+    val.Text = defaultVal
+    val.TextColor3 = color or Color3.fromRGB(255, 255, 255)
     val.TextSize = 12
     val.Font = Enum.Font.GothamBold
     val.TextXAlignment = Enum.TextXAlignment.Right
-    val.Parent = statsContainer
-    
+    val.Parent = container
+
     return val
 end
 
-local valStatus = makeStatRow(0)
-local valPage = makeStatRow(25)
-local valTotal = makeStatRow(50)
-local valActive = makeStatRow(75)
-local valEmpty = makeStatRow(100)
-local valDupes = makeStatRow(125)
-local valSpeed = makeStatRow(150)
+-- Stat rows (Left column)
+local leftColumn = Instance.new("Frame")
+leftColumn.Size = UDim2.new(0, 240, 1, -50)
+leftColumn.Position = UDim2.new(0, 0, 0, 40)
+leftColumn.BackgroundTransparency = 1
+leftColumn.Parent = main
 
-valStatus.Text = "Idle"
-valPage.Text = "0"
+local valStatus    = makeLabel(leftColumn, 10, "Status:", "Idle", Color3.fromRGB(255, 200, 50))
+local valPage      = makeLabel(leftColumn, 36, "Pages fetched:", "0", Color3.fromRGB(220, 220, 255))
+local valTotal     = makeLabel(leftColumn, 62, "Unique servers:", "0", Color3.fromRGB(100, 200, 255))
+local valActive    = makeLabel(leftColumn, 88, "Active servers:", "0", Color3.fromRGB(100, 255, 140))
+local valEmpty     = makeLabel(leftColumn, 114, "Empty servers:", "0", Color3.fromRGB(200, 200, 200))
+local valDupes     = makeLabel(leftColumn, 140, "Duplicates skipped:", "0", Color3.fromRGB(180, 130, 255))
+local valSpeed     = makeLabel(leftColumn, 166, "Speed:", "—", Color3.fromRGB(255, 220, 80))
 
-local function updateStats(page, total, active, empty, dupes, sps)
-    valPage.Text = tostring(page)
-    valTotal.Text = tostring(total)
-    valActive.Text = tostring(active)
-    valEmpty.Text = tostring(empty)
-    valDupes.Text = tostring(dupes)
-    valSpeed.Text = string.format("%.0f/s", sps or 0)
-    
-    valActive.TextColor3 = active > 0 and Color3.fromRGB(100, 255, 140) or Color3.fromRGB(100, 100, 120)
-    if empty > active then
-        valEmpty.TextColor3 = Color3.fromRGB(255, 120, 120)
+-- Right column (Configs)
+local rightColumn = Instance.new("Frame")
+rightColumn.Size = UDim2.new(0, 230, 1, -50)
+rightColumn.Position = UDim2.new(1, -240, 0, 40)
+rightColumn.BackgroundTransparency = 1
+rightColumn.Parent = main
+
+-- Anti-AFK Toggle
+local antiAfkToggle, getAntiAfkState = createModernToggle(rightColumn, 10, "Anti-AFK", false, function(state)
+    antiAfkEnabled = state
+    if antiAfkEnabled then
+        if not antiAfkConnection then
+            local lp = Players.LocalPlayer
+            antiAfkConnection = lp.Idled:Connect(function()
+                if VirtualUser then
+                    VirtualUser:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                    task.wait(1)
+                    VirtualUser:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                end
+            end)
+            for _, x in pairs(getconnections(lp.Idled)) do
+                x:Disable()
+            end
+        end
     else
-        valEmpty.TextColor3 = Color3.fromRGB(200, 200, 200)
+        if antiAfkConnection then
+            antiAfkConnection:Disconnect()
+            antiAfkConnection = nil
+        end
     end
+end)
+
+-- Config sliders/inputs
+local function createSlider(parent, yPos, label, minVal, maxVal, defaultVal, callback)
+    local container = Instance.new("Frame")
+    container.Size = UDim2.new(0, 210, 0, 50)
+    container.Position = UDim2.new(0, 10, 0, yPos)
+    container.BackgroundTransparency = 1
+    container.Parent = parent
+    
+    local labelText = Instance.new("TextLabel")
+    labelText.Size = UDim2.new(1, 0, 0, 20)
+    labelText.BackgroundTransparency = 1
+    labelText.Text = label .. ": " .. tostring(defaultVal)
+    labelText.TextColor3 = Color3.fromRGB(200, 200, 220)
+    labelText.TextSize = 12
+    labelText.Font = Enum.Font.Gotham
+    labelText.TextXAlignment = Enum.TextXAlignment.Left
+    labelText.Parent = container
+    
+    local slider = Instance.new("Frame")
+    slider.Size = UDim2.new(1, 0, 0, 4)
+    slider.Position = UDim2.new(0, 0, 0, 28)
+    slider.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+    slider.BorderSizePixel = 0
+    slider.Parent = container
+    Instance.new("UICorner", slider).CornerRadius = UDim.new(1, 0)
+    
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new((defaultVal - minVal) / (maxVal - minVal), 0, 1, 0)
+    fill.BackgroundColor3 = Color3.fromRGB(60, 130, 255)
+    fill.BorderSizePixel = 0
+    fill.Parent = slider
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+    
+    local value = defaultVal
+    local dragging = false
+    
+    local function updateValue(input)
+        local relativeX = math.clamp((input.Position.X - slider.AbsolutePosition.X) / slider.AbsoluteSize.X, 0, 1)
+        value = minVal + (relativeX * (maxVal - minVal))
+        value = math.floor(value)
+        fill.Size = UDim2.new(relativeX, 0, 1, 0)
+        labelText.Text = label .. ": " .. tostring(value)
+        if callback then callback(value) end
+    end
+    
+    slider.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            updateValue(input)
+        end
+    end)
+    
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            updateValue(input)
+        end
+    end)
+    
+    return function() return value end
 end
+
+createSlider(rightColumn, 50, "Max Pages", 10, 1000, CONFIG.MAX_PAGES, function(val)
+    CONFIG.MAX_PAGES = val
+end)
+
+createSlider(rightColumn, 110, "Servers per page", 10, 100, CONFIG.LIMIT, function(val)
+    CONFIG.LIMIT = val
+end)
+
+createSlider(rightColumn, 170, "Wait between pages", 0.1, 2, CONFIG.BASE_WAIT, function(val)
+    CONFIG.BASE_WAIT = val
+end)
+
+-- Divider
+local divider = Instance.new("Frame")
+divider.Size = UDim2.new(1, -20, 0, 1)
+divider.Position = UDim2.new(0, 10, 0, 230)
+divider.BackgroundColor3 = Color3.fromRGB(40, 45, 65)
+divider.BorderSizePixel = 0
+divider.Parent = rightColumn
 
 -- Progress bar
 local progressBg = Instance.new("Frame")
-progressBg.Size = UDim2.new(1, 0, 0, 8)
-progressBg.Position = UDim2.new(0, 0, 0, 235)
-progressBg.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+progressBg.Size = UDim2.new(1, -20, 0, 10)
+progressBg.Position = UDim2.new(0, 10, 0, 245)
+progressBg.BackgroundColor3 = Color3.fromRGB(28, 30, 45)
 progressBg.BorderSizePixel = 0
-progressBg.Parent = leftPanel
+progressBg.Parent = rightColumn
 Instance.new("UICorner", progressBg).CornerRadius = UDim.new(1, 0)
 
 local progressFill = Instance.new("Frame")
@@ -198,406 +336,194 @@ progressFill.BorderSizePixel = 0
 progressFill.Parent = progressBg
 Instance.new("UICorner", progressFill).CornerRadius = UDim.new(1, 0)
 
-local function updateProgress(current, max)
-    local ratio = math.clamp(current / math.max(max, 1), 0, 1)
-    pcall(function()
-        TweenService:Create(progressFill, TweenInfo.new(0.3, Enum.EasingStyle.Quad), {
-            Size = UDim2.new(ratio, 0, 1, 0)
-        }):Play()
-    end)
-end
+local progressGrad = Instance.new("UIGradient")
+progressGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(60, 160, 255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(120, 80, 255)),
+})
+progressGrad.Parent = progressFill
 
 -- ============================================================
--- RIGHT PANEL (Controls & Config)
+-- START/STOP BUTTONS
 -- ============================================================
-local rightPanel = Instance.new("Frame")
-rightPanel.Size = UDim2.new(0, 370, 1, 0)
-rightPanel.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
-rightPanel.BorderSizePixel = 0
-rightPanel.Parent = main
-Instance.new("UICorner", rightPanel).CornerRadius = UDim.new(0, 12)
+local buttonContainer = Instance.new("Frame")
+buttonContainer.Size = UDim2.new(1, -20, 0, 40)
+buttonContainer.Position = UDim2.new(0, 10, 0, 265)
+buttonContainer.BackgroundTransparency = 1
+buttonContainer.Parent = rightColumn
 
-local rightPadding = Instance.new("UIPadding")
-rightPadding.PaddingLeft = UDim.new(0, 16)
-rightPadding.PaddingTop = UDim.new(0, 12)
-rightPadding.PaddingRight = UDim.new(0, 16)
-rightPadding.PaddingBottom = UDim.new(0, 12)
-rightPadding.Parent = rightPanel
-
--- ============================================================
--- RAYFIELD STYLE TOGGLES
--- ============================================================
-local function createRayfieldToggle(parent, yPos, labelText, defaultState, callback)
-    local toggleFrame = Instance.new("Frame")
-    toggleFrame.Size = UDim2.new(1, 0, 0, 32)
-    toggleFrame.Position = UDim2.new(0, 0, 0, yPos)
-    toggleFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
-    toggleFrame.BorderSizePixel = 0
-    toggleFrame.Parent = parent
-    Instance.new("UICorner", toggleFrame).CornerRadius = UDim.new(0, 8)
-    
-    local toggleLabel = Instance.new("TextLabel")
-    toggleLabel.Size = UDim2.new(0.7, 0, 1, 0)
-    toggleLabel.Position = UDim2.new(0, 12, 0, 0)
-    toggleLabel.BackgroundTransparency = 1
-    toggleLabel.Text = labelText
-    toggleLabel.TextColor3 = Color3.fromRGB(220, 220, 240)
-    toggleLabel.TextSize = 12
-    toggleLabel.Font = Enum.Font.GothamBold
-    toggleLabel.TextXAlignment = Enum.TextXAlignment.Left
-    toggleLabel.Parent = toggleFrame
-    
-    local toggleBtn = Instance.new("TextButton")
-    toggleBtn.Size = UDim2.new(0, 50, 0, 24)
-    toggleBtn.Position = UDim2.new(1, -60, 0.5, -12)
-    toggleBtn.BackgroundColor3 = defaultState and Color3.fromRGB(60, 180, 100) or Color3.fromRGB(60, 60, 80)
-    toggleBtn.BorderSizePixel = 0
-    toggleBtn.Text = defaultState and "ON" or "OFF"
-    toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    toggleBtn.TextSize = 11
-    toggleBtn.Font = Enum.Font.GothamBold
-    toggleBtn.Parent = toggleFrame
-    Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 12)
-    
-    local state = defaultState
-    toggleBtn.MouseButton1Click:Connect(function()
-        state = not state
-        toggleBtn.BackgroundColor3 = state and Color3.fromRGB(60, 180, 100) or Color3.fromRGB(60, 60, 80)
-        toggleBtn.Text = state and "ON" or "OFF"
-        pcall(function() callback(state) end)
-    end)
-    
-    return toggleBtn
-end
-
--- CONFIG SECTION
-local configHeader = Instance.new("TextLabel")
-configHeader.Size = UDim2.new(1, 0, 0, 20)
-configHeader.Position = UDim2.new(0, 0, 0, 0)
-configHeader.BackgroundTransparency = 1
-configHeader.Text = "CONFIGURATION"
-configHeader.TextColor3 = Color3.fromRGB(70, 100, 180)
-configHeader.TextSize = 10
-configHeader.Font = Enum.Font.GothamBold
-configHeader.TextXAlignment = Enum.TextXAlignment.Left
-configHeader.Parent = rightPanel
-
--- Webhook edit
-local webhookLabel = Instance.new("TextLabel")
-webhookLabel.Size = UDim2.new(1, 0, 0, 14)
-webhookLabel.Position = UDim2.new(0, 0, 0, 25)
-webhookLabel.BackgroundTransparency = 1
-webhookLabel.Text = "Webhook URL:"
-webhookLabel.TextColor3 = Color3.fromRGB(160, 160, 180)
-webhookLabel.TextSize = 10
-webhookLabel.Font = Enum.Font.Gotham
-webhookLabel.TextXAlignment = Enum.TextXAlignment.Left
-webhookLabel.Parent = rightPanel
-
-local webhookBox = Instance.new("TextBox")
-webhookBox.Size = UDim2.new(1, 0, 0, 28)
-webhookBox.Position = UDim2.new(0, 0, 0, 40)
-webhookBox.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
-webhookBox.BorderSizePixel = 0
-webhookBox.Text = webhookUrl
-webhookBox.TextColor3 = Color3.fromRGB(200, 200, 255)
-webhookBox.TextSize = 9
-webhookBox.Font = Enum.Font.Gotham
-webhookBox.TextXAlignment = Enum.TextXAlignment.Left
-webhookBox.Parent = rightPanel
-Instance.new("UICorner", webhookBox).CornerRadius = UDim.new(0, 6)
-
-webhookBox:GetPropertyChangedSignal("Text"):Connect(function()
-    userConfig.webhookUrl = webhookBox.Text
-end)
-
--- Limit edit
-local limitLabel = Instance.new("TextLabel")
-limitLabel.Size = UDim2.new(0.5, 0, 0, 14)
-limitLabel.Position = UDim2.new(0, 0, 0, 78)
-limitLabel.BackgroundTransparency = 1
-limitLabel.Text = "Per Page Limit:"
-limitLabel.TextColor3 = Color3.fromRGB(160, 160, 180)
-limitLabel.TextSize = 10
-limitLabel.Font = Enum.Font.Gotham
-limitLabel.TextXAlignment = Enum.TextXAlignment.Left
-limitLabel.Parent = rightPanel
-
-local limitBox = Instance.new("TextBox")
-limitBox.Size = UDim2.new(0.4, 0, 0, 26)
-limitBox.Position = UDim2.new(0.5, 0, 0, 74)
-limitBox.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
-limitBox.BorderSizePixel = 0
-limitBox.Text = tostring(CONFIG.LIMIT)
-limitBox.TextColor3 = Color3.fromRGB(200, 200, 255)
-limitBox.TextSize = 11
-limitBox.Font = Enum.Font.GothamBold
-limitBox.TextXAlignment = Enum.TextXAlignment.Center
-limitBox.Parent = rightPanel
-Instance.new("UICorner", limitBox).CornerRadius = UDim.new(0, 6)
-
-limitBox:GetPropertyChangedSignal("Text"):Connect(function()
-    local val = tonumber(limitBox.Text)
-    if val and val >= 10 and val <= 100 then
-        CONFIG.LIMIT = val
-        userConfig.limit = val
-    end
-end)
-
--- ============================================================
--- BUTTONS
--- ============================================================
-local buttonY = 115
-local function makeButton(parent, xPos, w, text, bgColor)
+local function makeModernButton(parent, xPos, w, text, bgColor)
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, w, 0, 32)
-    btn.Position = UDim2.new(0, xPos, 0, buttonY)
+    btn.Size = UDim2.new(0, w, 0, 34)
+    btn.Position = UDim2.new(0, xPos, 0, 0)
     btn.BackgroundColor3 = bgColor
     btn.BorderSizePixel = 0
     btn.Text = text
     btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    btn.TextSize = 11
+    btn.TextSize = 13
     btn.Font = Enum.Font.GothamBold
     btn.Parent = parent
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+    
+    local grad = Instance.new("UIGradient")
+    grad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, bgColor),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(bgColor.r * 0.8, bgColor.g * 0.8, bgColor.b * 0.8)),
+    })
+    grad.Parent = btn
+    
     return btn
 end
 
-local btnStart = makeButton(rightPanel, 0, 85, "START", Color3.fromRGB(40, 120, 60))
-local btnPause = makeButton(rightPanel, 93, 85, "PAUSE", Color3.fromRGB(40, 80, 160))
-local btnSendNow = makeButton(rightPanel, 186, 85, "SEND", Color3.fromRGB(30, 100, 60))
-local btnSendStop = makeButton(rightPanel, 279, 85, "STOP", Color3.fromRGB(120, 40, 40))
-local btnFeed = makeButton(rightPanel, 0, 85, "FEED", Color3.fromRGB(80, 60, 120))
-btnFeed.Position = UDim2.new(0, 0, 0, 155)
+local btnStart = makeModernButton(buttonContainer, 0, 100, "START", Color3.fromRGB(40, 140, 60))
+local btnStop = makeModernButton(buttonContainer, 110, 100, "STOP", Color3.fromRGB(180, 50, 40))
 
--- Toggles (Rayfield style)
-local filterY = 200
-createRayfieldToggle(rightPanel, filterY, "Active Only", false, function(state) filterActiveOnly = state end)
-createRayfieldToggle(rightPanel, filterY + 38, "Empty Only", false, function(state) filterEmptyOnly = state end)
-createRayfieldToggle(rightPanel, filterY + 76, "Hide Full", false, function(state) filterHideFull = state end)
-createRayfieldToggle(rightPanel, filterY + 114, "Anti AFK", false, function(state) 
-    antiAfkEnabled = state
-    if antiAfkEnabled then
-        if antiAfkConnection then pcall(function() antiAfkConnection:Disconnect() end) end
-        antiAfkConnection = lp.Idled:Connect(function()
-            pcall(function()
-                VirtualUser:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
-                task.wait(1)
-                VirtualUser:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
-            end)
-        end)
-        for _, x in pairs(getconnections(lp.Idled)) do pcall(function() x:Disable() end) end
-        addDetailedFeedEntry("[ANTI-AFK] Enabled", 1)
-    else
-        if antiAfkConnection then 
-            pcall(function() antiAfkConnection:Disconnect() end)
-            antiAfkConnection = nil
-        end
-        addDetailedFeedEntry("[ANTI-AFK] Disabled", 2)
-    end
-end)
+-- Open Feed button
+local btnOpenFeed = makeModernButton(rightColumn, 10, 210, "OPEN FEED LOG", Color3.fromRGB(60, 80, 140))
+btnOpenFeed.Position = UDim2.new(0, 10, 0, 315)
 
 -- ============================================================
--- POPUP FEED UI
+-- FEED PANEL (separate window)
 -- ============================================================
-local function createFeedUI()
-    if feedUI then
-        feedUI.Visible = not feedUI.Visible
-        if feedUI.Visible then
-            -- Refresh feed entries
-            for _, entry in ipairs(feedEntries) do
-                if entry and entry.Parent then
-                    entry.LayoutOrder = 0
-                end
-            end
-        end
-        return
-    end
+local feedPanel = nil
+local feedPanelVisible = false
+
+local function createFeedPanel()
+    if feedPanel then return end
     
-    feedUI = Instance.new("Frame")
-    feedUI.Size = UDim2.new(0, 500, 0, 400)
-    feedUI.Position = UDim2.new(0.5, -250, 0.5, -200)
-    feedUI.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
-    feedUI.BorderSizePixel = 0
-    feedUI.BackgroundTransparency = 0.05
-    feedUI.Parent = screenGui
-    Instance.new("UICorner", feedUI).CornerRadius = UDim.new(0, 12)
+    feedPanel = Instance.new("Frame")
+    feedPanel.Size = UDim2.new(0, 350, 0, 400)
+    feedPanel.Position = UDim2.new(0, 540, 0.5, -200)
+    feedPanel.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
+    feedPanel.BorderSizePixel = 0
+    feedPanel.Visible = false
+    feedPanel.Parent = screenGui
+    Instance.new("UICorner", feedPanel).CornerRadius = UDim.new(0, 10)
+    feedPanel.Active = true
+    feedPanel.Draggable = true
     
-    local dragBar = Instance.new("Frame")
-    dragBar.Size = UDim2.new(1, 0, 0, 30)
-    dragBar.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
-    dragBar.BorderSizePixel = 0
-    dragBar.Parent = feedUI
-    Instance.new("UICorner", dragBar).CornerRadius = UDim.new(0, 12)
+    local feedTitle = Instance.new("Frame")
+    feedTitle.Size = UDim2.new(1, 0, 0, 35)
+    feedTitle.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+    feedTitle.BorderSizePixel = 0
+    feedTitle.Parent = feedPanel
+    Instance.new("UICorner", feedTitle).CornerRadius = UDim.new(0, 10)
     
-    local dragTitle = Instance.new("TextLabel")
-    dragTitle.Size = UDim2.new(1, -40, 1, 0)
-    dragTitle.Position = UDim2.new(0, 16, 0, 0)
-    dragTitle.BackgroundTransparency = 1
-    dragTitle.Text = "LIVE ACTIVITY FEED"
-    dragTitle.TextColor3 = Color3.fromRGB(100, 130, 200)
-    dragTitle.TextSize = 12
-    dragTitle.Font = Enum.Font.GothamBold
-    dragTitle.TextXAlignment = Enum.TextXAlignment.Left
-    dragTitle.Parent = dragBar
+    local feedTitleText = Instance.new("TextLabel")
+    feedTitleText.Size = UDim2.new(1, -35, 1, 0)
+    feedTitleText.Position = UDim2.new(0, 10, 0, 0)
+    feedTitleText.BackgroundTransparency = 1
+    feedTitleText.Text = "Activity Log"
+    feedTitleText.TextColor3 = Color3.fromRGB(220, 230, 255)
+    feedTitleText.TextSize = 14
+    feedTitleText.Font = Enum.Font.GothamBold
+    feedTitleText.TextXAlignment = Enum.TextXAlignment.Left
+    feedTitleText.Parent = feedTitle
     
     local closeBtn = Instance.new("TextButton")
-    closeBtn.Size = UDim2.new(0, 28, 0, 28)
-    closeBtn.Position = UDim2.new(1, -32, 0, 1)
-    closeBtn.BackgroundColor3 = Color3.fromRGB(60, 40, 40)
+    closeBtn.Size = UDim2.new(0, 30, 0, 30)
+    closeBtn.Position = UDim2.new(1, -35, 0, 2)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 40)
     closeBtn.BorderSizePixel = 0
     closeBtn.Text = "X"
     closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     closeBtn.TextSize = 14
     closeBtn.Font = Enum.Font.GothamBold
-    closeBtn.Parent = dragBar
-    Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
-    closeBtn.MouseButton1Click:Connect(function()
-        feedUI.Visible = false
-    end)
+    closeBtn.Parent = feedTitle
+    Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 5)
     
-    feedContainer = Instance.new("Frame")
-    feedContainer.Size = UDim2.new(1, -16, 1, -42)
-    feedContainer.Position = UDim2.new(0, 8, 0, 38)
-    feedContainer.BackgroundColor3 = Color3.fromRGB(8, 10, 18)
-    feedContainer.BorderSizePixel = 0
-    feedContainer.ClipsDescendants = true
-    feedContainer.Parent = feedUI
-    Instance.new("UICorner", feedContainer).CornerRadius = UDim.new(0, 8)
+    local feedContent = Instance.new("ScrollingFrame")
+    feedContent.Size = UDim2.new(1, -20, 1, -55)
+    feedContent.Position = UDim2.new(0, 10, 0, 45)
+    feedContent.BackgroundColor3 = Color3.fromRGB(10, 12, 20)
+    feedContent.BorderSizePixel = 0
+    feedContent.CanvasSize = UDim2.new(0, 0, 0, 0)
+    feedContent.ScrollBarThickness = 6
+    feedContent.Parent = feedPanel
+    Instance.new("UICorner", feedContent).CornerRadius = UDim.new(0, 6)
     
-    local feedLayout = Instance.new("UIListLayout")
-    feedLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    feedLayout.Padding = UDim.new(0, 2)
-    feedLayout.VerticalAlignment = Enum.VerticalAlignment.Top
-    feedLayout.Parent = feedContainer
+    local feedList = Instance.new("UIListLayout")
+    feedList.SortOrder = Enum.SortOrder.LayoutOrder
+    feedList.Padding = UDim.new(0, 4)
+    feedList.Parent = feedContent
     
     local feedPadding = Instance.new("UIPadding")
-    feedPadding.PaddingTop = UDim.new(0, 4)
-    feedPadding.PaddingLeft = UDim.new(0, 6)
-    feedPadding.PaddingRight = UDim.new(0, 6)
-    feedPadding.Parent = feedContainer
+    feedPadding.PaddingTop = UDim.new(0, 5)
+    feedPadding.PaddingLeft = UDim.new(0, 5)
+    feedPadding.PaddingRight = UDim.new(0, 5)
+    feedPadding.Parent = feedContent
     
-    feedUI:GetPropertyChangedSignal("Visible"):Connect(function()
-        if feedUI.Visible then
-            for i, e in ipairs(feedEntries) do
-                e.LayoutOrder = i
-            end
-        end
+    closeBtn.MouseButton1Click:Connect(function()
+        feedPanel.Visible = false
+        feedPanelVisible = false
     end)
     
-    feedUI.Visible = true
+    return feedPanel, feedContent, feedList
 end
 
-btnFeed.MouseButton1Click:Connect(createFeedUI)
+local feedLogs = {}
+local feedContentFrame, feedListLayout
 
--- ============================================================
--- DETAILED LIVE FEED FUNCTION
--- ============================================================
-function addDetailedFeedEntry(message, msgType)
-    if not feedContainer then return end
-    
-    while #feedEntries >= MAX_FEED_ENTRIES do
-        local oldest = table.remove(feedEntries, #feedEntries)
-        if oldest and oldest.Parent then
-            pcall(function() oldest:Destroy() end)
-        end
+local function addToFeedLog(message, isError)
+    if not feedPanel then
+        local panel, content, layout = createFeedPanel()
+        feedContentFrame = content
+        feedListLayout = layout
     end
     
-    local colors = {
-        [1] = Color3.fromRGB(30, 70, 40),
-        [2] = Color3.fromRGB(25, 45, 70),
-        [3] = Color3.fromRGB(70, 55, 30),
-        [4] = Color3.fromRGB(70, 35, 35),
-        [5] = Color3.fromRGB(70, 40, 30),
-    }
-    local textColors = {
-        [1] = Color3.fromRGB(100, 255, 140),
-        [2] = Color3.fromRGB(150, 180, 255),
-        [3] = Color3.fromRGB(255, 200, 100),
-        [4] = Color3.fromRGB(255, 120, 120),
-        [5] = Color3.fromRGB(255, 160, 80),
-    }
-    local icons = {
-        [1] = "✓",
-        [2] = "ℹ",
-        [3] = "⚠",
-        [4] = "✗",
-        [5] = "⌛",
-    }
+    local timestamp = os.date("%H:%M:%S")
+    local logEntry = Instance.new("TextLabel")
+    logEntry.Size = UDim2.new(1, 0, 0, 20)
+    logEntry.BackgroundTransparency = 1
+    logEntry.Text = string.format("[%s] %s", timestamp, message)
+    logEntry.TextColor3 = isError and Color3.fromRGB(255, 100, 100) or Color3.fromRGB(180, 200, 220)
+    logEntry.TextSize = 11
+    logEntry.Font = Enum.Font.Code
+    logEntry.TextXAlignment = Enum.TextXAlignment.Left
+    logEntry.TextWrapped = true
+    logEntry.Parent = feedContentFrame
+    logEntry.LayoutOrder = #feedLogs + 1
     
-    local entry = Instance.new("Frame")
-    entry.Size = UDim2.new(1, 0, 0, 24)
-    entry.BackgroundColor3 = colors[msgType] or Color3.fromRGB(20, 22, 35)
-    entry.BorderSizePixel = 0
-    entry.LayoutOrder = 0
-    entry.BackgroundTransparency = 0.4
-    entry.Parent = feedContainer
-    Instance.new("UICorner", entry).CornerRadius = UDim.new(0, 4)
+    table.insert(feedLogs, logEntry)
     
-    for i, e in ipairs(feedEntries) do
-        e.LayoutOrder = i
-    end
-    table.insert(feedEntries, 1, entry)
-    
-    local timeLbl = Instance.new("TextLabel")
-    timeLbl.Size = UDim2.new(0, 50, 1, 0)
-    timeLbl.Position = UDim2.new(0, 4, 0, 0)
-    timeLbl.BackgroundTransparency = 1
-    timeLbl.Text = os.date("%H:%M:%S")
-    timeLbl.TextColor3 = Color3.fromRGB(100, 110, 140)
-    timeLbl.TextSize = 9
-    timeLbl.Font = Enum.Font.Gotham
-    timeLbl.TextXAlignment = Enum.TextXAlignment.Left
-    timeLbl.Parent = entry
-    
-    local iconLbl = Instance.new("TextLabel")
-    iconLbl.Size = UDim2.new(0, 20, 1, 0)
-    iconLbl.Position = UDim2.new(0, 56, 0, 0)
-    iconLbl.BackgroundTransparency = 1
-    iconLbl.Text = icons[msgType] or "•"
-    iconLbl.TextColor3 = textColors[msgType] or Color3.fromRGB(200, 200, 200)
-    iconLbl.TextSize = 11
-    iconLbl.Font = Enum.Font.GothamBold
-    iconLbl.TextXAlignment = Enum.TextXAlignment.Center
-    iconLbl.Parent = entry
-    
-    local msgLbl = Instance.new("TextLabel")
-    msgLbl.Size = UDim2.new(1, -86, 1, 0)
-    msgLbl.Position = UDim2.new(0, 80, 0, 0)
-    msgLbl.BackgroundTransparency = 1
-    msgLbl.Text = message
-    msgLbl.TextColor3 = textColors[msgType] or Color3.fromRGB(200, 210, 240)
-    msgLbl.TextSize = 10
-    msgLbl.Font = Enum.Font.Gotham
-    msgLbl.TextXAlignment = Enum.TextXAlignment.Left
-    msgLbl.TextWrapped = true
-    msgLbl.Parent = entry
-    
-    pcall(function()
-        TweenService:Create(entry, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
-            BackgroundTransparency = 0.2
-        }):Play()
-    end)
+    task.wait(0.1)
+    feedContentFrame.CanvasSize = UDim2.new(0, 0, 0, feedListLayout.AbsoluteContentSize.Y + 10)
+    feedContentFrame.CanvasPosition = Vector2.new(0, feedListLayout.AbsoluteContentSize.Y)
 end
+
+btnOpenFeed.MouseButton1Click:Connect(function()
+    if not feedPanel then
+        createFeedPanel()
+    end
+    feedPanel.Visible = not feedPanelVisible
+    feedPanelVisible = feedPanel.Visible
+end)
 
 -- ============================================================
 -- UTILITY FUNCTIONS
 -- ============================================================
 local function setStatus(text, color)
     valStatus.Text = text
-    valStatus.TextColor3 = color or Color3.fromRGB(255, 200, 80)
+    valStatus.TextColor3 = color or Color3.fromRGB(255, 200, 50)
+end
+
+local function updateProgress(current, max)
+    local ratio = math.clamp(current / math.max(max, 1), 0, 1)
+    TweenService:Create(progressFill, TweenInfo.new(0.4, Enum.EasingStyle.Quad), {
+        Size = UDim2.new(ratio, 0, 1, 0)
+    }):Play()
 end
 
 local function formatJobId(id)
-    return string.sub(id, 1, 8)
+    return string.sub(id, 1, 8) .. "..."
 end
 
 local function getReportContent()
     local lines = {
         "=== SERVER STATUS REPORT ===",
         string.format("Total Fetched: %d", #jobIdList),
-        string.format("Active: %d", activeCount),
-        string.format("Empty: %d", emptyCount),
+        string.format("Active (playing > 0): %d", activeCount),
+        string.format("Empty (0 players): %d", emptyCount),
         string.format("Duplicates Skipped: %d", duplicateCount),
         "",
         "=== FILTERS APPLIED ===",
@@ -613,7 +539,7 @@ local function getReportContent()
         if filterEmptyOnly and server.active then skip = true end
         if filterHideFull and server.playing >= server.maxPlayers and server.maxPlayers > 0 then skip = true end
         if not skip then
-            table.insert(lines, string.format("%s | %s | %d/%d",
+            table.insert(lines, string.format("%s | %s | %d/%d players",
                 server.active and "ACTIVE" or "EMPTY",
                 server.id, server.playing, server.maxPlayers))
         end
@@ -621,34 +547,101 @@ local function getReportContent()
     return table.concat(lines, "\n")
 end
 
-local function backoffWait(attempt, isRateLimit)
-    local baseWait = isRateLimit and 8 or 0.8
-    local waitTime = math.min(baseWait * (CONFIG.BACKOFF_BASE ^ (attempt - 1)), CONFIG.BACKOFF_MAX)
-    local jitter = waitTime * 0.3 * (math.random() * 2 - 1)
-    local finalWait = math.max(0.5, waitTime + jitter)
+local function updateStats(page, total, active, empty, newPage)
+    valPage.Text   = tostring(page)
+    valTotal.Text  = tostring(total)
+    valActive.Text = tostring(active)
+    valEmpty.Text  = tostring(empty)
+    valDupes.Text  = tostring(duplicateCount)
     
-    if isRateLimit then
-        addDetailedFeedEntry(string.format("Rate limited! Waiting %.1fs (retry %d/%d)", finalWait, attempt, CONFIG.MAX_RETRIES), 5)
-        setStatus("Rate Limited", Color3.fromRGB(255, 120, 80))
-    else
-        addDetailedFeedEntry(string.format("Request failed, waiting %.1fs (retry %d/%d)", finalWait, attempt, CONFIG.MAX_RETRIES), 3)
-        setStatus("Retrying...", Color3.fromRGB(255, 180, 80))
-    end
+    valActive.TextColor3 = active > 0 and Color3.fromRGB(100, 255, 140) or Color3.fromRGB(100, 100, 120)
+    valEmpty.TextColor3 = (empty > active) and Color3.fromRGB(255, 120, 120) or Color3.fromRGB(200, 200, 200)
     
-    local startWait = os.clock()
-    while os.clock() - startWait < finalWait and not fetchStopped and not paused do
-        task.wait(0.1)
-    end
-    return finalWait
+    local elapsed = math.max(os.clock() - startTime, 0.001)
+    local sps = total / elapsed
+    valSpeed.Text = string.format("%.0f srv/s", sps)
+    
+    updateProgress(page, CONFIG.MAX_PAGES)
 end
 
-local function sendReport(summaryText, fileContent, filename)
-    addDetailedFeedEntry("Sending report to Discord...", 2)
-    setStatus("Sending...", Color3.fromRGB(255, 200, 80))
+local function backoffWait(attempt, isRateLimit)
+    local base = isRateLimit and 8 or 0.8
+    local wait = math.min(base * (CONFIG.BACKOFF_BASE ^ (attempt - 1)), CONFIG.BACKOFF_MAX)
+    local jitter = wait * 0.3 * (math.random() * 2 - 1)
+    local final = math.max(0.5, wait + jitter)
+    addToFeedLog(string.format("Waiting %.1fs (attempt %d)", final, attempt))
+    task.wait(final)
+end
+
+-- ============================================================
+-- LIVE FEED (TO MAIN PANEL)
+-- ============================================================
+local function addFeedEntry(server)
+    while #feedEntries >= MAX_FEED_ENTRIES do
+        local oldest = table.remove(feedEntries, #feedEntries)
+        if oldest and oldest.Parent then
+            oldest:Destroy()
+        end
+    end
+
+    local entry = Instance.new("Frame")
+    entry.Size = UDim2.new(0, 230, 0, 18)
+    entry.BackgroundColor3 = server.active and Color3.fromRGB(18, 35, 28) or Color3.fromRGB(20, 22, 35)
+    entry.BorderSizePixel = 0
+    entry.LayoutOrder = 0
+    entry.BackgroundTransparency = 1
+    entry.Parent = leftColumn
+    entry.Position = UDim2.new(0, 10, 0, 195 + (#feedEntries * 20))
+    Instance.new("UICorner", entry).CornerRadius = UDim.new(0, 4)
     
+    table.insert(feedEntries, 1, entry)
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -6, 1, 0)
+    lbl.Position = UDim2.new(0, 3, 0, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = string.format("%s  %s  %d/%d",
+        server.active and "●" or "○",
+        formatJobId(server.id),
+        server.playing, server.maxPlayers)
+    lbl.TextColor3 = server.active and Color3.fromRGB(100, 255, 160) or Color3.fromRGB(160, 170, 200)
+    lbl.TextSize = 10
+    lbl.Font = Enum.Font.Code
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.TextTransparency = 1
+    lbl.Parent = entry
+
+    TweenService:Create(entry, TweenInfo.new(0.25), { BackgroundTransparency = 0.5 }):Play()
+    TweenService:Create(lbl, TweenInfo.new(0.25), { TextTransparency = 0 }):Play()
+
+    task.delay(3, function()
+        if entry and entry.Parent then
+            TweenService:Create(entry, TweenInfo.new(0.5), { BackgroundTransparency = 1 }):Play()
+            TweenService:Create(lbl, TweenInfo.new(0.5), { TextTransparency = 1 }):Play()
+            task.wait(0.5)
+            if entry and entry.Parent then
+                for i, e in ipairs(feedEntries) do
+                    if e == entry then
+                        table.remove(feedEntries, i)
+                        break
+                    end
+                end
+                entry:Destroy()
+            end
+        end
+    end)
+end
+
+-- ============================================================
+-- WEBHOOK SEND
+-- ============================================================
+local function sendReport(summaryText, fileContent, filename)
+    setStatus("Sending...", Color3.fromRGB(255, 200, 50))
+    addToFeedLog("Sending report to Discord...")
+
     local boundary = "----Boundary" .. tostring(math.random(100000, 999999))
     local payload = HttpService:JSONEncode({ username = "Server Fetcher", content = summaryText })
-    
+
     local body = "--" .. boundary .. "\r\n"
         .. 'Content-Disposition: form-data; name="payload_json"\r\n'
         .. "Content-Type: application/json\r\n\r\n"
@@ -658,22 +651,22 @@ local function sendReport(summaryText, fileContent, filename)
         .. "Content-Type: text/plain\r\n\r\n"
         .. fileContent .. "\r\n"
         .. "--" .. boundary .. "--\r\n"
-    
-    local success, err = pcall(function()
+
+    local success = pcall(function()
         request({
-            Url = userConfig.webhookUrl,
+            Url = webhookUrl,
             Method = "POST",
             Headers = { ["Content-Type"] = "multipart/form-data; boundary=" .. boundary },
             Body = body,
         })
     end)
-    
+
     if success then
-        addDetailedFeedEntry("Report sent: " .. filename, 1)
-        setStatus("Sent!", Color3.fromRGB(100, 255, 140))
+        addToFeedLog("Report sent to Discord!")
+        setStatus("Sent", Color3.fromRGB(100, 255, 140))
     else
-        addDetailedFeedEntry("Send failed: " .. tostring(err), 4)
-        setStatus("Send Failed", Color3.fromRGB(255, 80, 80))
+        addToFeedLog("Webhook failed", true)
+        setStatus("Failed", Color3.fromRGB(255, 80, 80))
     end
 end
 
@@ -683,37 +676,29 @@ end
 local function fetchPage(cursor)
     local url = string.format(
         "https://games.roblox.com/v1/games/%d/servers/Public?limit=%d",
-        CONFIG.PLACE_ID, userConfig.limit
+        CONFIG.PLACE_ID, CONFIG.LIMIT
     )
     if cursor and cursor ~= "" then
         url = url .. "&cursor=" .. HttpService:UrlEncode(cursor)
     end
-    
-    addDetailedFeedEntry(string.format("Fetching page %d...", pageCount + 1), 2)
-    
+
     for attempt = 1, CONFIG.MAX_RETRIES do
-        if fetchStopped or paused then return nil end
-        
         local success, response = pcall(function()
             return request({ Url = url, Method = "GET" })
         end)
-        
+
         if not success then
-            addDetailedFeedEntry("Request error: " .. tostring(response), 4)
             backoffWait(attempt, false)
         elseif response.StatusCode == 429 then
-            addDetailedFeedEntry("Rate limited (429) - Too many requests", 5)
+            setStatus("Rate Limited", Color3.fromRGB(255, 80, 80))
             backoffWait(attempt, true)
         elseif response.StatusCode ~= 200 then
-            addDetailedFeedEntry(string.format("HTTP Error %d", response.StatusCode), 3)
             backoffWait(attempt, false)
         else
             local decodeOk, data = pcall(HttpService.JSONDecode, HttpService, response.Body)
             if decodeOk and type(data) == "table" and type(data.data) == "table" then
-                addDetailedFeedEntry(string.format("Page %d fetched, got %d servers", pageCount + 1, #data.data), 1)
                 return data
             end
-            addDetailedFeedEntry("Failed to parse response", 4)
             backoffWait(attempt, false)
         end
     end
@@ -721,186 +706,181 @@ local function fetchPage(cursor)
 end
 
 -- ============================================================
--- MAIN EXECUTION FUNCTION
+-- RESET FUNCTION
 -- ============================================================
-local function startFetching()
-    if fetchActive then
-        addDetailedFeedEntry("Fetch already in progress!", 3)
-        return
-    end
-    
-    fetchActive = true
-    fetchStopped = false
-    paused = false
-    btnPause.Text = "PAUSE"
-    btnPause.BackgroundColor3 = Color3.fromRGB(40, 80, 160)
-    
+local function resetState()
     jobIdSet = {}
     jobIdList = {}
     pageCount = 0
     activeCount = 0
     emptyCount = 0
     duplicateCount = 0
+    fetchStopped = false
+    paused = false
     startTime = os.clock()
     
-    addDetailedFeedEntry("========== FETCHING STARTED ==========", 1)
-    addDetailedFeedEntry(string.format("Place ID: %d, Limit: %d", CONFIG.PLACE_ID, userConfig.limit), 2)
-    setStatus("Fetching...", Color3.fromRGB(100, 200, 255))
-    
-    local cursor = nil
-    local cursorStallCount = 0
-    
-    repeat
-        while paused and not fetchStopped do
-            task.wait(0.5)
+    for _, entry in ipairs(feedEntries) do
+        if entry and entry.Parent then
+            entry:Destroy()
         end
-        
-        if fetchStopped then
-            addDetailedFeedEntry("Fetch stopped by user", 3)
-            break
-        end
-        
-        local data = fetchPage(cursor)
-        
-        if not data then
-            addDetailedFeedEntry("Failed to fetch page, stopping", 4)
-            setStatus("Aborted", Color3.fromRGB(255, 80, 80))
-            break
-        end
-        
-        local newThisPage = 0
-        for _, server in ipairs(data.data) do
-            local id = server.id
-            if id then
-                if not jobIdSet[id] then
-                    jobIdSet[id] = true
-                    local playing = server.playing or 0
-                    local isActive = playing > 0
-                    table.insert(jobIdList, {
-                        id = id,
-                        playing = playing,
-                        maxPlayers = server.maxPlayers or 0,
-                        active = isActive,
-                    })
-                    newThisPage = newThisPage + 1
-                    if isActive then
-                        activeCount = activeCount + 1
-                    else
-                        emptyCount = emptyCount + 1
-                    end
-                else
-                    duplicateCount = duplicateCount + 1
-                end
-            end
-        end
-        
-        pageCount = pageCount + 1
-        local elapsed = math.max(os.clock() - startTime, 0.001)
-        local sps = #jobIdList / elapsed
-        
-        addDetailedFeedEntry(string.format("Page %d: +%d new (Total: %d, Active: %d, Empty: %d)", 
-            pageCount, newThisPage, #jobIdList, activeCount, emptyCount), 1)
-        
-        updateStats(pageCount, #jobIdList, activeCount, emptyCount, duplicateCount, sps)
-        updateProgress(pageCount, userConfig.maxPages)
-        
-        local nextCursor = data.nextPageCursor
-        if nextCursor == cursor then
-            cursorStallCount = cursorStallCount + 1
-            if cursorStallCount >= CONFIG.CURSOR_RETRIES then
-                addDetailedFeedEntry("Cursor stuck, aborting", 4)
-                break
-            end
-            backoffWait(cursorStallCount, false)
-        else
-            cursorStallCount = 0
-            cursor = nextCursor
-            if cursor then
-                task.wait(CONFIG.BASE_WAIT)
-            end
-        end
-        
-    until not cursor or pageCount >= userConfig.maxPages or fetchStopped
-    
-    if not fetchStopped then
-        addDetailedFeedEntry(string.format("Fetch complete! Total: %d servers", #jobIdList), 1)
-        setStatus("Done", Color3.fromRGB(100, 255, 140))
-        
-        local reportContent = getReportContent()
-        local summary = string.format("**Server Fetcher Complete**\n\nTotal: **%d** | Active: **%d** | Empty: **%d** | Dupes: **%d**",
-            #jobIdList, activeCount, emptyCount, duplicateCount)
-        local timestamp = os.date("%Y-%m-%d_%H-%M-%S") or tostring(os.time())
-        sendReport(summary, reportContent, "servers_" .. timestamp .. ".txt")
     end
+    feedEntries = {}
     
-    updateProgress(userConfig.maxPages, userConfig.maxPages)
-    fetchActive = false
+    updateStats(0, 0, 0, 0, 0)
+    setStatus("Idle", Color3.fromRGB(255, 200, 50))
+    updateProgress(0, 1)
+    addToFeedLog("Fetching started")
 end
 
 -- ============================================================
--- BUTTON CALLBACKS
+-- MAIN EXECUTION
 -- ============================================================
-btnStart.MouseButton1Click:Connect(function()
-    if fetchActive then
-        addDetailedFeedEntry("Already fetching!", 3)
-    else
-        addDetailedFeedEntry("Starting server fetch...", 1)
-        task.spawn(startFetching)
-    end
-end)
+local fetchCoroutine = nil
 
-btnPause.MouseButton1Click:Connect(function()
-    if not fetchActive then
-        addDetailedFeedEntry("No active fetch to pause", 3)
+local function startFetching()
+    if fetchCoroutine then
+        addToFeedLog("Already running!")
         return
     end
-    paused = not paused
-    if paused then
-        btnPause.Text = "RESUME"
-        btnPause.BackgroundColor3 = Color3.fromRGB(120, 80, 30)
-        setStatus("Paused", Color3.fromRGB(255, 180, 80))
-        addDetailedFeedEntry("Fetching paused", 2)
-    else
-        btnPause.Text = "PAUSE"
-        btnPause.BackgroundColor3 = Color3.fromRGB(40, 80, 160)
+    
+    resetState()
+    isRunning = true
+    
+    fetchCoroutine = task.spawn(function()
         setStatus("Fetching...", Color3.fromRGB(100, 200, 255))
-        addDetailedFeedEntry("Resuming fetch...", 1)
-    end
-end)
-
-btnSendNow.MouseButton1Click:Connect(function()
-    task.spawn(function()
-        if #jobIdList == 0 then
-            addDetailedFeedEntry("No servers fetched yet", 3)
-            return
+        
+        local cursor = nil
+        local cursorStallCount = 0
+        
+        repeat
+            while paused do
+                task.wait(0.5)
+            end
+            
+            if fetchStopped then
+                break
+            end
+            
+            local data = fetchPage(cursor)
+            
+            if not data then
+                setStatus("Aborted", Color3.fromRGB(255, 80, 80))
+                break
+            end
+            
+            local newThisPage = 0
+            for _, server in ipairs(data.data) do
+                local id = server.id
+                if id then
+                    if not jobIdSet[id] then
+                        jobIdSet[id] = true
+                        local playing = server.playing or 0
+                        local isActive = playing > 0
+                        local entry = {
+                            id         = id,
+                            playing    = playing,
+                            maxPlayers = server.maxPlayers or 0,
+                            active     = isActive,
+                        }
+                        table.insert(jobIdList, entry)
+                        newThisPage = newThisPage + 1
+                        if isActive then
+                            activeCount = activeCount + 1
+                        else
+                            emptyCount = emptyCount + 1
+                        end
+                        addFeedEntry(entry)
+                        addToFeedLog(string.format("Found %s: %s (%d/%d players)", 
+                            isActive and "ACTIVE" or "EMPTY", formatJobId(id), playing, server.maxPlayers or 0))
+                    else
+                        duplicateCount = duplicateCount + 1
+                    end
+                end
+            end
+            
+            pageCount = pageCount + 1
+            setStatus(string.format("Page %d", pageCount), Color3.fromRGB(100, 200, 255))
+            updateStats(pageCount, #jobIdList, activeCount, emptyCount, newThisPage)
+            addToFeedLog(string.format("Page %d complete - %d new servers", pageCount, newThisPage))
+            
+            local nextCursor = nil
+            if data.nextPageCursor and data.nextPageCursor ~= "" then
+                nextCursor = data.nextPageCursor
+            end
+            
+            if nextCursor == cursor then
+                cursorStallCount = cursorStallCount + 1
+                if cursorStallCount >= CONFIG.CURSOR_RETRIES then
+                    setStatus("Aborted", Color3.fromRGB(255, 80, 80))
+                    break
+                end
+                backoffWait(cursorStallCount, false)
+            else
+                cursorStallCount = 0
+            end
+            
+            cursor = nextCursor
+            
+            if cursor then
+                task.wait(CONFIG.BASE_WAIT)
+            end
+            
+        until not cursor or pageCount >= CONFIG.MAX_PAGES or fetchStopped
+        
+        if not fetchStopped then
+            setStatus("Building report...", Color3.fromRGB(255, 200, 50))
+            
+            local reportContent = getReportContent()
+            local summary = string.format(
+                "**Server Fetcher Complete**\n\nTotal: **%d** | Active: **%d** | Empty: **%d** | Dupes skipped: **%d**\nFull list attached.",
+                #jobIdList, activeCount, emptyCount, duplicateCount)
+            
+            local timestamp = os.date("%Y-%m-%d_%H-%M-%S")
+            if not timestamp or timestamp == "" then
+                timestamp = tostring(os.time())
+            end
+            
+            sendReport(summary, reportContent, "servers_" .. timestamp .. ".txt")
         end
-        addDetailedFeedEntry("Sending partial report...", 2)
-        local content = getReportContent()
-        local summary = string.format("**Partial Report**\nTotal: **%d** | Active: **%d** | Empty: **%d** | Dupes: **%d**",
-            #jobIdList, activeCount, emptyCount, duplicateCount)
-        local ts = tostring(os.time())
-        sendReport(summary, content, "partial_" .. ts .. ".txt")
+        
+        setStatus("Done", Color3.fromRGB(100, 255, 140))
+        updateProgress(CONFIG.MAX_PAGES, CONFIG.MAX_PAGES)
+        addToFeedLog(string.format("Complete! %d servers fetched", #jobIdList))
+        
+        fetchCoroutine = nil
+        isRunning = false
     end)
-end)
+end
 
-btnSendStop.MouseButton1Click:Connect(function()
-    if not fetchActive then
-        addDetailedFeedEntry("No active fetch to stop", 3)
+local function stopFetching(sendReport_)
+    if not isRunning then
+        addToFeedLog("Not running!")
         return
     end
-    addDetailedFeedEntry("Stopping fetch and sending report...", 3)
+    
     fetchStopped = true
     paused = false
-    task.spawn(function()
-        local content = getReportContent()
-        local summary = string.format("**Stopped Report**\nTotal: **%d** | Active: **%d** | Empty: **%d** | Dupes: **%d**",
-            #jobIdList, activeCount, emptyCount, duplicateCount)
-        local ts = tostring(os.time())
-        sendReport(summary, content, "stopped_" .. ts .. ".txt")
+    
+    if sendReport_ then
+        task.spawn(function()
+            local content = getReportContent()
+            local summary = string.format(
+                "**Final Report (Stopped)**\nTotal: **%d** | Active: **%d** | Empty: **%d** | Dupes skipped: **%d**\nFull list attached.",
+                #jobIdList, activeCount, emptyCount, duplicateCount)
+            local ts = tostring(os.time())
+            sendReport(summary, content, "stopped_" .. ts .. ".txt")
+            setStatus("Stopped", Color3.fromRGB(255, 80, 80))
+        end)
+    else
         setStatus("Stopped", Color3.fromRGB(255, 80, 80))
-        fetchActive = false
-    end)
-end)
+        addToFeedLog("Fetching stopped by user")
+    end
+    
+    isRunning = false
+    fetchCoroutine = nil
+end
 
-addDetailedFeedEntry("UI Loaded - Click START to begin", 1)
-addDetailedFeedEntry("Click FEED button to open activity log", 2)
+btnStart.MouseButton1Click:Connect(startFetching)
+btnStop.MouseButton1Click:Connect(function() stopFetching(true) end)
+
+addToFeedLog("UI Loaded - Ready to start fetching servers")
