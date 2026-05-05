@@ -1,1 +1,227 @@
-HI
+local HttpService = game:GetService("HttpService")
+
+local webhookUrl = "YOUR_WEBHOOK_URL_HERE"
+
+local request = request or http_request or (syn and syn.request)
+if not request then
+    warn("[ServerFetcher] No HTTP request function available. Aborting.")
+    return
+end
+
+-- ─── CONFIG ───────────────────────────────────────────────────────────────────
+local CONFIG = {
+    PLACE_ID       = game.PlaceId,
+    LIMIT          = 100,
+    TARGET         = 700,
+    MAX_RETRIES    = 5,
+    BASE_WAIT      = 0.3,
+    BACKOFF_BASE   = 1.5,
+    BACKOFF_MAX    = 30,
+    CURSOR_RETRIES = 3,
+}
+-- ──────────────────────────────────────────────────────────────────────────────
+
+local jobIdSet  = {}
+local jobIdList = {}
+local pageCount    = 0
+local totalFetched = 0
+
+local function log(tag, msg)
+    print(string.format("[ServerFetcher][%s] %s", tag, msg))
+end
+
+local function backoffWait(attempt, isRateLimit)
+    local base   = isRateLimit and 5 or 0.5
+    local wait   = math.min(base * (CONFIG.BACKOFF_BASE ^ (attempt - 1)), CONFIG.BACKOFF_MAX)
+    local jitter = wait * 0.2 * (math.random() * 2 - 1)
+    task.wait(math.max(0.1, wait + jitter))
+end
+
+local function fetchPage(cursor)
+    local url = string.format(
+        "https://games.roblox.com/v1/games/%d/servers/Public?limit=%d&sortOrder=Asc&excludeFullGames=false",
+        CONFIG.PLACE_ID, CONFIG.LIMIT
+    )
+    if cursor and cursor ~= "" then
+        url = url .. "&cursor=" .. HttpService:UrlEncode(cursor)
+    end
+
+    for attempt = 1, CONFIG.MAX_RETRIES do
+        local ok, response = pcall(request, { Url = url, Method = "GET" })
+
+        if not ok then
+            log("ERROR", "request() threw: " .. tostring(response))
+            backoffWait(attempt, false)
+        elseif response.StatusCode == 429 then
+            log("RATE_LIMIT", "429 on attempt " .. attempt)
+            backoffWait(attempt, true)
+        elseif response.StatusCode ~= 200 then
+            log("WARN", "HTTP " .. response.StatusCode .. " on attempt " .. attempt)
+            backoffWait(attempt, false)
+        else
+            local decodeOk, data = pcall(HttpService.JSONDecode, HttpService, response.Body)
+            if decodeOk and type(data) == "table" and type(data.data) == "table" then
+                return data
+            end
+            log("WARN", "Bad JSON on attempt " .. attempt)
+            backoffWait(attempt, false)
+        end
+    end
+
+    log("FAIL", "All retries exhausted.")
+    return nil
+end
+
+local function sendReport(summaryText, fileContent, filename)
+    local boundary = "----Boundary" .. tostring(math.random(100000, 999999))
+
+    local payload = HttpService:JSONEncode({
+        username = "Server Fetcher",
+        content  = summaryText,
+    })
+
+    local body = "--" .. boundary .. "\r\n"
+        .. 'Content-Disposition: form-data; name="payload_json"\r\n'
+        .. "Content-Type: application/json\r\n\r\n"
+        .. payload .. "\r\n"
+        .. "--" .. boundary .. "\r\n"
+        .. 'Content-Disposition: form-data; name="file"; filename="' .. filename .. '"\r\n'
+        .. "Content-Type: text/plain\r\n\r\n"
+        .. fileContent .. "\r\n"
+        .. "--" .. boundary .. "--\r\n"
+
+    local ok, err = pcall(function()
+        request({
+            Url     = webhookUrl,
+            Method  = "POST",
+            Headers = { ["Content-Type"] = "multipart/form-data; boundary=" .. boundary },
+            Body    = body,
+        })
+    end)
+
+    if ok then
+        log("WEBHOOK", "Message + file sent: " .. filename)
+    else
+        log("ERROR", "Webhook failed: " .. tostring(err))
+    end
+end
+
+-- ─── MAIN LOOP ────────────────────────────────────────────────────────────────
+log("START", string.format("PlaceId %d | Target: %d", CONFIG.PLACE_ID, CONFIG.TARGET))
+
+local cursor           = nil
+local lastCursor       = nil
+local cursorStallCount = 0
+
+repeat
+    local data = fetchPage(cursor)
+
+    if not data then
+        log("ABORT", "fetchPage returned nil. Stopping.")
+        break
+    end
+
+    local newThisPage = 0
+    for _, server in ipairs(data.data) do
+        local id = server.id
+        if id and not jobIdSet[id] then
+            jobIdSet[id] = true
+            table.insert(jobIdList, {
+                id         = id,
+                playing    = server.playing    or 0,
+                maxPlayers = server.maxPlayers or 0,
+                active     = (server.playing   or 0) > 0,
+            })
+            newThisPage = newThisPage + 1
+        end
+    end
+
+    pageCount    = pageCount + 1
+    totalFetched = #jobIdList
+
+    log("PAGE", string.format("#%d | new=%d | total=%d", pageCount, newThisPage, totalFetched))
+
+    local nextCursor = nil
+    if data.nextPageCursor and data.nextPageCursor ~= "" then
+        nextCursor = data.nextPageCursor
+    end
+
+    if nextCursor ~= nil and nextCursor == lastCursor then
+        cursorStallCount = cursorStallCount + 1
+        log("WARN", "Cursor stalled x" .. cursorStallCount)
+        if cursorStallCount >= CONFIG.CURSOR_RETRIES then
+            log("ABORT", "Cursor stuck. Stopping.")
+            break
+        end
+        backoffWait(cursorStallCount, false)
+    else
+        cursorStallCount = 0
+    end
+
+    lastCursor = cursor
+    cursor     = nextCursor
+
+    if cursor then task.wait(CONFIG.BASE_WAIT) end
+
+until (not cursor) or (totalFetched >= CONFIG.TARGET)
+
+-- ─── BUILD REPORT ─────────────────────────────────────────────────────────────
+local activeCount = 0
+local deadCount   = 0
+
+local reportLines = {}
+table.insert(reportLines, "=== SERVER STATUS REPORT ===")
+table.insert(reportLines, string.format("Total Fetched: %d", totalFetched))
+-- placeholders filled after count
+local activeLine = #reportLines + 1
+table.insert(reportLines, "")
+local deadLine = #reportLines + 1
+table.insert(reportLines, "")
+table.insert(reportLines, "")
+table.insert(reportLines, "=== DETAILED LIST ===")
+table.insert(reportLines, "")
+
+for _, server in ipairs(jobIdList) do
+    if server.active then
+        activeCount = activeCount + 1
+    else
+        deadCount = deadCount + 1
+    end
+    table.insert(reportLines, string.format("%s | %s | %d/%d players",
+        server.active and "ACTIVE" or "EMPTY",
+        server.id,
+        server.playing,
+        server.maxPlayers
+    ))
+end
+
+reportLines[activeLine] = string.format("Active (playing > 0): %d", activeCount)
+reportLines[deadLine]   = string.format("Empty  (0 players):   %d", deadCount)
+
+local reportContent = table.concat(reportLines, "\n")
+
+-- ─── SEND TO DISCORD ──────────────────────────────────────────────────────────
+local summary = string.format(
+    "**Server Fetcher Complete**\n\nTotal: **%d** | Active: **%d** | Empty: **%d**\n📁 Full list attached.",
+    totalFetched, activeCount, deadCount
+)
+
+local ok, timestamp = pcall(os.date, "%Y-%m-%d_%H-%M-%S")
+if not ok then timestamp = tostring(os.time()) end
+
+sendReport(summary, reportContent, "servers_" .. timestamp .. ".txt")
+
+-- ─── CONSOLE SUMMARY ──────────────────────────────────────────────────────────
+log("DONE", string.format("Pages=%d | Unique=%d | Active=%d | Empty=%d",
+    pageCount, totalFetched, activeCount, deadCount))
+
+print("\n── First 10 active servers ──")
+local shown = 0
+for _, server in ipairs(jobIdList) do
+    if server.active then
+        print(string.format("  %s  (%d/%d)", server.id, server.playing, server.maxPlayers))
+        shown = shown + 1
+        if shown >= 10 then break end
+    end
+end
+if activeCount == 0 then print("  None found.") end
