@@ -587,6 +587,7 @@ end
 
 local function runStatusSystem(refs)
 	local lastStatus = ""
+	local lastStatusStartTime = 0
 	local prevCoins = safeGet("coins")
 	local prevRebirths = safeGet("rebirths")
 	local prevGoop = safeGet("goop")
@@ -594,15 +595,16 @@ local function runStatusSystem(refs)
 	local prevRolls = safeGet("stats", "rolls")
 	local diceThread = nil
 	local rollingActive = false
-	local rollingStartTime = 0
 
-	local function setStatus(text, color)
-		if text == lastStatus then return end
+	local function setStatus(text, color, force)
+		if not force and text == lastStatus then return end
 		lastStatus = text
+		lastStatusStartTime = os.clock()
 
 		if diceThread then
 			task.cancel(diceThread)
 			diceThread = nil
+			rollingActive = false
 		end
 
 		local lbl = refs.statusLabel
@@ -616,7 +618,6 @@ local function runStatusSystem(refs)
 
 	local function startDiceAnim()
 		rollingActive = true
-		rollingStartTime = os.clock()
 		diceThread = task.spawn(function()
 			local i = 1
 			while rollingActive do
@@ -627,86 +628,75 @@ local function runStatusSystem(refs)
 		end)
 	end
 
-	local function stopDiceAnim()
-		rollingActive = false
-		if diceThread then
-			task.cancel(diceThread)
-			diceThread = nil
-		end
-	end
-
-	local function pickStatus()
+	local function getLatestActivity()
 		local coins = safeGet("coins")
 		local rebirths = safeGet("rebirths")
 		local goop = safeGet("goop")
 		local kills = safeGet("stats", "kills")
 		local rolls = safeGet("stats", "rolls")
 
-		local candidates = {}
+		local activities = {}
 
+		if rolls > prevRolls then
+			table.insert(activities, {priority = 4, text = "Rolling", color = PALETTE.void, isRolling = true, value = rolls})
+		end
 		if coins > prevCoins then
-			table.insert(candidates, {"Farming Coins", PALETTE.gold})
+			table.insert(activities, {priority = 3, text = "Farming Coins", color = PALETTE.gold, value = coins})
 		end
 		if rebirths > prevRebirths then
-			table.insert(candidates, {
-				string.format("Rebirthed %s -> %s", formatNum(prevRebirths), formatNum(rebirths)),
-				PALETTE.diamond
-			})
+			table.insert(activities, {priority = 3, text = string.format("Rebirthed %s -> %s", formatNum(prevRebirths), formatNum(rebirths)), color = PALETTE.diamond, value = rebirths})
 		end
 		if goop > prevGoop then
-			table.insert(candidates, {
-				"Farming Goop: " .. formatNum(goop),
-				Color3.fromRGB(80, 220, 80)
-			})
+			table.insert(activities, {priority = 2, text = "Farming Goop: " .. formatNum(goop), color = Color3.fromRGB(80, 220, 80), value = goop})
 		end
 		if kills > prevKills then
-			table.insert(candidates, {"Fighting Slimes", Color3.fromRGB(255, 80, 80)})
+			table.insert(activities, {priority = 1, text = "Fighting Slimes", color = Color3.fromRGB(255, 80, 80), value = kills})
 		end
 
 		prevCoins = coins
 		prevRebirths = rebirths
 		prevGoop = goop
 		prevKills = kills
+		prevRolls = rolls
 
-		if rolls > prevRolls then
-			prevRolls = rolls
-			if not rollingActive then
-				if lastStatus ~= "Rolling" then
-					lastStatus = "Rolling"
-					stopDiceAnim()
-					refs.statusLabel.TextColor3 = PALETTE.void
-					tweenProp(refs.statusLabel, {TextTransparency = 1}, 0.15)
-					task.delay(0.15, function()
-						tweenProp(refs.statusLabel, {TextTransparency = 0}, 0.2)
-						startDiceAnim()
-					end)
+		if #activities > 0 then
+			table.sort(activities, function(a, b) return a.priority > b.priority end)
+			return activities[1]
+		end
+
+		return nil
+	end
+
+	local function pickStatus()
+		local activity = getLatestActivity()
+
+		if activity then
+			if activity.isRolling then
+				if not rollingActive then
+					setStatus("Rolling", PALETTE.void, true)
+					startDiceAnim()
+				end
+			else
+				if rollingActive then
+					rollingActive = false
+					if diceThread then
+						task.cancel(diceThread)
+						diceThread = nil
+					end
+				end
+				setStatus(activity.text, activity.color)
+			end
+		else
+			if rollingActive then
+				rollingActive = false
+				if diceThread then
+					task.cancel(diceThread)
+					diceThread = nil
 				end
 			end
-			return
-		end
-
-		if rollingActive then
-			local elapsedRolling = os.clock() - rollingStartTime
-			if elapsedRolling >= STATUS_INTERVAL then
-				stopDiceAnim()
+			if os.clock() - lastStatusStartTime >= STATUS_INTERVAL then
 				setStatus("Idle", PALETTE.dim)
-			else
-				return
 			end
-		end
-
-		local filtered = {}
-		for _, c in ipairs(candidates) do
-			if c[1] ~= lastStatus then
-				table.insert(filtered, c)
-			end
-		end
-
-		if #filtered > 0 then
-			local choice = filtered[math.random(1, #filtered)]
-			setStatus(choice[1], choice[2])
-		else
-			setStatus("Idle", PALETTE.dim)
 		end
 	end
 
