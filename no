@@ -2,9 +2,8 @@ local HttpService = game:GetService("HttpService")
 
 local webhookUrl = "https://discord.com/api/webhooks/1495059756371546345/L3e0gHM3cdJAhq80YGviVwkvNOcJKOKYjerPBRPp2I5mli4FZ7r8vD7-8LPrBqWODKNw"
 
-local request = request or http_request or (syn and syn.request)
 if not request then
-    warn("[ServerFetcher] No HTTP request function available. Aborting.")
+    warn("[ServerFetcher] No request function available. Aborting.")
     return
 end
 
@@ -19,6 +18,7 @@ local CONFIG = {
     MAX_PAGES      = 500,
 }
 
+-- GUI Setup
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "ServerFetcherGUI"
 screenGui.ResetOnSpawn = false
@@ -150,11 +150,17 @@ local function fetchPage(cursor)
     end
 
     for attempt = 1, CONFIG.MAX_RETRIES do
-        setBottom(string.format("📡 Fetching page %d (attempt %d)...", valPage.Text + 1, attempt))
-        local ok, response = pcall(request, { Url = url, Method = "GET" })
+        setBottom(string.format("📡 Fetching page %d (attempt %d)...", tonumber(valPage.Text) + 1, attempt))
+        
+        local success, response = pcall(function()
+            return request({
+                Url = url,
+                Method = "GET"
+            })
+        end)
 
-        if not ok then
-            log("ERROR", "request() threw: " .. tostring(response))
+        if not success then
+            log("ERROR", "request threw: " .. tostring(response))
             backoffWait(attempt, false)
         elseif response.StatusCode == 429 then
             log("RATE_LIMIT", "429 on attempt " .. attempt)
@@ -186,21 +192,21 @@ local function sendReport(summaryText, fileContent, filename)
         .. "Content-Type: application/json\r\n\r\n"
         .. payload .. "\r\n"
         .. "--" .. boundary .. "\r\n"
-        .. 'Content-Disposition: form-data; name="file"; filename="' .. filename .. '"\r\n"
+        .. 'Content-Disposition: form-data; name="file"; filename="' .. filename .. '"\r\n'
         .. "Content-Type: text/plain\r\n\r\n"
         .. fileContent .. "\r\n"
         .. "--" .. boundary .. "--\r\n"
 
-    local ok, err = pcall(function()
+    local success, err = pcall(function()
         request({
-            Url     = webhookUrl,
-            Method  = "POST",
+            Url = webhookUrl,
+            Method = "POST",
             Headers = { ["Content-Type"] = "multipart/form-data; boundary=" .. boundary },
-            Body    = body,
+            Body = body,
         })
     end)
 
-    if ok then
+    if success then
         log("WEBHOOK", "Sent: " .. filename)
         setBottom("✅ Report sent to Discord!")
     else
@@ -209,6 +215,7 @@ local function sendReport(summaryText, fileContent, filename)
     end
 end
 
+-- Main execution
 task.spawn(function()
     setStatus("Fetching...", Color3.fromRGB(255, 200, 50))
     log("START", string.format("PlaceId %d", CONFIG.PLACE_ID))
@@ -220,7 +227,6 @@ task.spawn(function()
     local emptyCount = 0
 
     local cursor = nil
-    local lastCursor = nil
     local cursorStallCount = 0
 
     repeat
@@ -278,7 +284,6 @@ task.spawn(function()
             cursorStallCount = 0
         end
 
-        lastCursor = cursor
         cursor = nextCursor
 
         if cursor then
@@ -310,7 +315,9 @@ task.spawn(function()
         #jobIdList, activeCount, emptyCount)
 
     local timestamp = os.date("%Y-%m-%d_%H-%M-%S")
-    if timestamp == "" then timestamp = tostring(os.time()) end
+    if timestamp == "" or not timestamp then 
+        timestamp = tostring(os.time()) 
+    end
 
     sendReport(summary, reportContent, "servers_" .. timestamp .. ".txt")
 
