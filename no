@@ -4,31 +4,26 @@ local Players = game:GetService("Players")
 
 local webhookUrl = "https://discord.com/api/webhooks/1495059756371546345/L3e0gHM3cdJAhq80YGviVwkvNOcJKOKYjerPBRPp2I5mli4FZ7r8vD7-8LPrBqWODKNw"
 
--- HTTP request function detection
 local request = request or http_request or (syn and syn.request)
 if not request then
     warn("[ServerFetcher] No HTTP request function available. Aborting.")
     return
 end
 
--- ─── CONFIG ───────────────────────────────────────────────────────────────────
 local CONFIG = {
     PLACE_ID       = game.PlaceId,
     LIMIT          = 100,
     TARGET         = 700,
-    MAX_RETRIES    = 5,
+    MAX_RETRIES    = 10,
     BASE_WAIT      = 0.3,
     BACKOFF_BASE   = 1.5,
     BACKOFF_MAX    = 30,
-    CURSOR_RETRIES = 3,
-    SERVER_TIMEOUT = 10, -- seconds to wait for server response
+    CURSOR_RETRIES = 5,
 }
--- ──────────────────────────────────────────────────────────────────────────────
 
-local jobIdSet   = {}
-local jobIdList  = {}
-local serverStatus = {} -- [jobId] = "active" or "dead"
-local pageCount  = 0
+local jobIdList = {}
+local serverData = {}
+local pageCount = 0
 local totalFetched = 0
 
 local function log(tag, msg)
@@ -44,7 +39,6 @@ local function backoffWait(attempt, isRateLimit)
     local wait = math.min(base * (CONFIG.BACKOFF_BASE ^ (attempt - 1)), CONFIG.BACKOFF_MAX)
     local jitter = wait * 0.2 * (math.random() * 2 - 1)
     local final = math.max(0.1, wait + jitter)
-    log("BACKOFF", string.format("Waiting %.2fs (attempt %d)", final, attempt))
     sleep(final)
 end
 
@@ -64,54 +58,21 @@ local function fetchPage(cursor)
         })
 
         if not ok then
-            log("ERROR", string.format("request() threw on attempt %d: %s", attempt, tostring(response)))
             backoffWait(attempt, false)
         elseif response.StatusCode == 429 then
-            log("RATE_LIMIT", string.format("429 on attempt %d", attempt))
             backoffWait(attempt, true)
         elseif response.StatusCode ~= 200 then
-            log("WARN", string.format("HTTP %d on attempt %d", response.StatusCode, attempt))
             backoffWait(attempt, false)
         else
             local decodeOk, data = pcall(HttpService.JSONDecode, HttpService, response.Body)
-            if not decodeOk or type(data) ~= "table" or type(data.data) ~= "table" then
-                log("WARN", string.format("Bad JSON on attempt %d", attempt))
-                backoffWait(attempt, false)
-            elseif #data.data == 0 and attempt < CONFIG.MAX_RETRIES then
-                log("WARN", string.format("Empty data array on attempt %d", attempt))
-                backoffWait(attempt, false)
-            else
+            if decodeOk and type(data) == "table" and type(data.data) == "table" then
                 return data
+            else
+                backoffWait(attempt, false)
             end
         end
     end
     return nil
-end
-
-local function checkServerStatus(jobId)
-    local url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?limit=100", CONFIG.PLACE_ID)
-    
-    for attempt = 1, 3 do
-        local ok, response = pcall(request, {
-            Url = url,
-            Method = "GET",
-            Timeout = CONFIG.SERVER_TIMEOUT
-        })
-        
-        if ok and response and response.StatusCode == 200 then
-            local decodeOk, data = pcall(HttpService.JSONDecode, HttpService, response.Body)
-            if decodeOk and data and data.data then
-                for _, server in ipairs(data.data) do
-                    if server.id == jobId then
-                        return true -- Found active server
-                    end
-                end
-            end
-            return false -- Not found (dead/inactive)
-        end
-        task.wait(0.5)
-    end
-    return false -- Assume dead if can't check
 end
 
 local function sendTextFile(content, filename)
@@ -124,20 +85,16 @@ local function sendTextFile(content, filename)
     body = body .. content .. "\r\n"
     body = body .. "--" .. boundary .. "--\r\n"
     
-    local ok, response = pcall(request, {
-        Url = webhookUrl,
-        Method = "POST",
-        Headers = {
-            ["Content-Type"] = "multipart/form-data; boundary=" .. boundary
-        },
-        Body = body
-    })
-    
-    if ok then
-        log("WEBHOOK", "File sent: " .. filename)
-    else
-        log("ERROR", "Failed to send file: " .. tostring(response))
-    end
+    pcall(function()
+        request({
+            Url = webhookUrl,
+            Method = "POST",
+            Headers = {
+                ["Content-Type"] = "multipart/form-data; boundary=" .. boundary
+            },
+            Body = body
+        })
+    end)
 end
 
 local function sendSummary(summaryText)
@@ -153,11 +110,9 @@ local function sendSummary(summaryText)
             Headers = {["Content-Type"] = "application/json"},
             Body = HttpService:JSONEncode(payload)
         })
-        log("WEBHOOK", "Summary sent")
     end)
 end
 
--- ─── MAIN LOOP ────────────────────────────────────────────────────────────────
 log("START", string.format("Fetching servers for PlaceId %d (target: %d)", CONFIG.PLACE_ID, CONFIG.TARGET))
 
 local cursor = nil
@@ -175,10 +130,28 @@ repeat
     local newThisPage = 0
     for _, server in ipairs(data.data) do
         local id = server.id
-        if id and not jobIdSet[id] then
-            jobIdSet[id] = true
-            table.insert(jobIdList, id)
-            newThisPage = newThisPage + 1
+        if id then
+            local playing = server.playing or 0
+            local maxPlayers = server.maxPlayers or 0
+            local isActive = playing > 0
+            
+            local existing = false
+            for _, existingServer in ipairs(jobIdList) do
+                if existingServer.id == id then
+                    existing = true
+                    break
+                end
+            end
+            
+            if not existing then
+                table.insert(jobIdList, {
+                    id = id,
+                    playing = playing,
+                    maxPlayers = maxPlayers,
+                    active = isActive
+                })
+                newThisPage = newThisPage + 1
+            end
         end
     end
 
@@ -187,7 +160,10 @@ repeat
 
     log("PAGE", string.format("#%d | new=%d | total=%d", pageCount, newThisPage, totalFetched))
 
-    local nextCursor = (data.nextPageCursor ~= "") and data.nextPageCursor or nil
+    local nextCursor = nil
+    if data.nextPageCursor and data.nextPageCursor ~= "" then
+        nextCursor = data.nextPageCursor
+    end
 
     if nextCursor == lastCursor then
         cursorStallCount = cursorStallCount + 1
@@ -209,32 +185,17 @@ repeat
 
 until (not cursor) or (totalFetched >= CONFIG.TARGET)
 
--- ─── CHECK SERVER STATUS ──────────────────────────────────────────────────────
-log("STATUS", string.format("Checking status for %d servers...", #jobIdList))
-
 local activeCount = 0
 local deadCount = 0
 
-for i, jobId in ipairs(jobIdList) do
-    log("CHECK", string.format("[%d/%d] Checking %s...", i, #jobIdList, jobId))
-    
-    local isActive = checkServerStatus(jobId)
-    
-    if isActive then
-        serverStatus[jobId] = "active"
+for _, server in ipairs(jobIdList) do
+    if server.active then
         activeCount = activeCount + 1
-        log("ACTIVE", jobId)
     else
-        serverStatus[jobId] = "dead"
         deadCount = deadCount + 1
-        log("DEAD", jobId)
     end
-    
-    -- Rate limiting for status checks
-    task.wait(0.2)
 end
 
--- ─── GENERATE REPORT ──────────────────────────────────────────────────────────
 local report = {}
 table.insert(report, "=== SERVER STATUS REPORT ===")
 table.insert(report, string.format("Total Fetched: %d", totalFetched))
@@ -244,34 +205,39 @@ table.insert(report, "")
 table.insert(report, "=== DETAILED LIST ===")
 table.insert(report, "")
 
-for _, jobId in ipairs(jobIdList) do
-    local status = serverStatus[jobId] or "unknown"
-    table.insert(report, string.format("%s | %s", status:upper(), jobId))
+for _, server in ipairs(jobIdList) do
+    local status = server.active and "ACTIVE" or "DEAD"
+    table.insert(report, string.format("%s | %s | Players: %d/%d", 
+        status, server.id, server.playing, server.maxPlayers))
 end
 
 local reportContent = table.concat(report, "\n")
 
--- ─── SEND TO WEBHOOK ─────────────────────────────────────────────────────────
-local summary = string.format("**Server Fetcher Complete**\n\nTotal Fetched: **%d**\nActive: **%d**\nDead: **%d**\n\n📁 File attached with full details", totalFetched, activeCount, deadCount)
+local summary = string.format("**Server Fetcher Complete**\n\nTotal Fetched: **%d**\nActive: **%d**\nDead: **%d**\n\n📁 File attached with full details", 
+    totalFetched, activeCount, deadCount)
 
--- Send summary message
 sendSummary(summary)
-
--- Send text file
 task.wait(1)
-sendTextFile(reportContent, string.format("servers_%s.txt", os.date("%Y-%m-%d_%H-%M-%S")))
 
--- ─── PRINT TO CONSOLE ─────────────────────────────────────────────────────────
+local timestamp = os.date("%Y-%m-%d_%H-%M-%S")
+if timestamp == "" or timestamp == nil then
+    timestamp = tostring(os.time())
+end
+sendTextFile(reportContent, string.format("servers_%s.txt", timestamp))
+
 log("DONE", string.format("Finished. Pages=%d | UniqueServers=%d | Active=%d | Dead=%d", 
     pageCount, #jobIdList, activeCount, deadCount))
 
--- Print first 10 active servers as example
 print("\n=== ACTIVE SERVERS (first 10) ===")
 local shown = 0
-for _, jobId in ipairs(jobIdList) do
-    if serverStatus[jobId] == "active" then
-        print(jobId)
+for _, server in ipairs(jobIdList) do
+    if server.active then
+        print(string.format("%s (%d/%d players)", server.id, server.playing, server.maxPlayers))
         shown = shown + 1
         if shown >= 10 then break end
     end
+end
+
+if activeCount == 0 then
+    print("No active servers found.")
 end
