@@ -7,27 +7,13 @@ local UpgradeRemote = ReplicatedStorage:WaitForChild("Packages"):WaitForChild("_
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
-local function getCurrency()
-    local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
-    if not leaderstats then
-        return 0, 0, 0
-    end
-    local coins = leaderstats:FindFirstChild("Coins") and leaderstats.Coins.Value or 0
-    local rollCurrency = leaderstats:FindFirstChild("RollCurrency") and leaderstats.RollCurrency.Value or 0
-    local goop = leaderstats:FindFirstChild("Goop") and leaderstats.Goop.Value or 0
-    return coins, rollCurrency, goop
-end
-
 local function getOwnedUpgrades()
     local owned = {}
     local success, result = pcall(function()
         local args = { "getOwned" }
-        local data = UpgradeRemote:InvokeServer(unpack(args))
-        if type(data) == "table" then
-            return data
-        end
+        return UpgradeRemote:InvokeServer(unpack(args))
     end)
-    if success and result then
+    if success and type(result) == "table" then
         return result
     end
     return owned
@@ -49,45 +35,36 @@ if UpgradeTree and UpgradeTree.main then
         end
     end
 else
-    for i = 1, 50 do
-        table.insert(allUpgrades, "backpack"..i)
-        table.insert(allUpgrades, "auto"..i)
-        table.insert(allUpgrades, "enemy"..i)
-        table.insert(allUpgrades, "slot"..i)
-        table.insert(allUpgrades, "coin"..i)
-        table.insert(allUpgrades, "overkill"..i)
-        table.insert(allUpgrades, "luck"..i)
-        table.insert(allUpgrades, "roll"..i)
-        table.insert(allUpgrades, "goop"..i)
-        table.insert(allUpgrades, "slime"..i)
-        table.insert(allUpgrades, "loot"..i)
-        table.insert(allUpgrades, "offline"..i)
-        table.insert(allUpgrades, "player"..i)
-        table.insert(allUpgrades, "teleport"..i)
-        table.insert(allUpgrades, "magnet"..i)
-        table.insert(allUpgrades, "speed"..i)
-        table.insert(allUpgrades, "friend"..i)
+    local upgradeNames = {
+        "backpack", "autoRoll", "rollSpeed", "cloverRolls", "bonusRolls", "extraRollChance",
+        "slots", "enemyCount", "enemySpawnSpeed", "slimeTargetRange", "bigSlimes", "hugeSlimes",
+        "shinySlimes", "invertedSlimes", "bigEnemies", "shinyEnemies", "hugeEnemies", "invertedEnemies",
+        "goop", "goopDropRate", "goldenRolls", "diamondRolls", "voidRolls", "luck",
+        "friendLuck", "friendLuckBoost", "coinIncome", "overkill", "offlineLootAmount",
+        "lootApple", "lootCarrot", "lootCherries", "lootGrapes", "lootBanana", "lootWatermelon",
+        "lootPizza", "lootChicken", "lootDrumstick", "lootLuck", "lootCurrency", "lootRollSpeed", "lootUltraLuck",
+        "walkSpeed", "teleporter", "magnet"
+    }
+    for _, name in ipairs(upgradeNames) do
+        for i = 1, 15 do
+            table.insert(allUpgrades, name .. i)
+        end
     end
 end
 
 local categoryOrder = {
-"backpack", "auto", "enemy", "slot", "coin", "overkill", "luck", "roll",
-"goop", "slime", "loot", "offline", "player", "teleport", "magnet", "speed", "friend"
+    "backpack", "auto", "enemy", "slot", "coin", "overkill", "luck", "roll",
+    "goop", "slime", "loot", "offline", "player", "teleport", "magnet", "speed", "friend"
 }
 
 local function getNumericSuffix(name)
     local num = name:match("(%d+)$")
     return num and tonumber(num) or nil
-end
+}
 
 local function buildOrderedUpgradeList()
-    local all = {}
-    for _, id in ipairs(allUpgrades) do
-        all[id] = true
-    end
-    
-    local ordered = {}
     local seen = {}
+    local ordered = {}
     
     for _, category in ipairs(categoryOrder) do
         local matched = {}
@@ -124,10 +101,10 @@ local totalUpgrades = #orderedUpgrades
 
 function UpgradeAutoBuyer:buyUpgrade(upgradeId)
     local args = { "requestUnlock", upgradeId }
-    local success = pcall(function()
+    local success, result = pcall(function()
         return UpgradeRemote:InvokeServer(unpack(args))
     end)
-    if success then
+    if success and result == true then
         print("PURCHASED: " .. upgradeId)
         return true
     end
@@ -137,12 +114,9 @@ end
 function UpgradeAutoBuyer:start()
     repeat task.wait() until LocalPlayer:FindFirstChild("leaderstats")
     
-    local coins, rollCurrency, goop = getCurrency()
-    print("Coins: " .. coins)
-    print("Roll Currency: " .. rollCurrency)
-    print("Goop: " .. goop)
+    print("Upgrade Auto Buyer Started")
     
-    while task.wait(1) do
+    while task.wait(0.5) do
         local owned = getOwnedUpgrades()
         local ownedCount = 0
         for _, id in ipairs(orderedUpgrades) do
