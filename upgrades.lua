@@ -113,14 +113,11 @@ local currencyType = upgradeData.cost.currency
 local requiredAmount = upgradeData.cost.amount
 local currencyAmount = 0
 if currencyType == "coins" then
-local success, result = pcall(function() return DataService:get("coins") end)
-currencyAmount = (success and result) or 0
+currencyAmount = DataService:get("coins") or 0
 elseif currencyType == "rollCurrency" then
-local success, result = pcall(function() return DataService:get("rollCurrency") end)
-currencyAmount = (success and result) or 0
+currencyAmount = DataService:get("rollCurrency") or 0
 elseif currencyType == "goop" then
-local success, result = pcall(function() return DataService:get("goop") end)
-currencyAmount = (success and result) or 0
+currencyAmount = DataService:get("goop") or 0
 end
 return currencyAmount >= requiredAmount
 end
@@ -128,17 +125,12 @@ end
 function UpgradeAutoBuyer:buyNext()
 local upgradeList = getUpgradeList()
 for _, upgradeId in ipairs(upgradeList) do
-local canAfford, affordError = pcall(function() return self:canAfford(upgradeId) end)
-if canAfford and affordError then
-local buySuccess, unlockError = pcall(function() return UpgradeService.unlockUpgrade(upgradeId) end)
-if buySuccess and unlockError then
+if self:canAfford(upgradeId) then
+local success = UpgradeService.unlockUpgrade(upgradeId)
+if success then
 print("PURCHASED: " .. upgradeId)
 task.wait(0.1)
 return true
-elseif buySuccess and not unlockError then
-print("FAILED TO PURCHASE: " .. upgradeId .. " (unlock returned false)")
-else
-print("ERROR BUYING: " .. upgradeId .. " - " .. tostring(unlockError))
 end
 end
 end
@@ -147,41 +139,16 @@ end
 
 function UpgradeAutoBuyer:start()
 print("=== UPGRADE AUTO BUYER STARTED ===")
-print("Waiting for data to load...")
-task.wait(3)
-
-local function getCurrency(name)
-local success, value = pcall(function() return DataService:get(name) end)
-if success then
-return value or 0
-else
-print("Warning: Could not get " .. name)
-return 0
-end
-end
-
-local coins = getCurrency("coins")
-local rollCurrency = getCurrency("rollCurrency")
-local goop = getCurrency("goop")
-
-print("Coins: " .. tostring(coins))
-print("Roll Currency: " .. tostring(rollCurrency))
-print("Goop: " .. tostring(goop))
-
-local upgradeCount = #getUpgradeList()
-print("Total upgrades in buy list: " .. upgradeCount)
+print("Coins: " .. tostring(DataService:get("coins") or 0))
+print("Roll Currency: " .. tostring(DataService:get("rollCurrency") or 0))
+print("Goop: " .. tostring(DataService:get("goop") or 0))
 print("===================================")
-
 while task.wait(1) do
-local bought = self:buyNext()
-if bought then
--- Print updated currency after purchase
-local newCoins = getCurrency("coins")
-local newRoll = getCurrency("rollCurrency")
-local newGoop = getCurrency("goop")
-print("  Current - Coins: " .. newCoins .. " | Roll: " .. newRoll .. " | Goop: " .. newGoop)
+self:buyNext()
 end
 end
-end
+
+-- ACTUALLY START THE SCRIPT
+UpgradeAutoBuyer:start()
 
 return UpgradeAutoBuyer
