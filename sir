@@ -10,9 +10,7 @@ local Players = game:GetService("Players")
 local function parseAbbreviatedNumber(val)
     if type(val) == "number" then return val end
     local s = tostring(val):gsub(",", ""):upper()
-    local multipliers = {
-        K = 1e3, M = 1e6, B = 1e9, T = 1e12, QD = 1e15, QN = 1e18
-    }
+    local multipliers = {K = 1e3, M = 1e6, B = 1e9, T = 1e12, QD = 1e15, QN = 1e18}
     local numberPart = s:match("[%d%.]+")
     local suffixPart = s:match("%a+")
     if numberPart and suffixPart and multipliers[suffixPart] then
@@ -42,32 +40,22 @@ local myPlayer = Players.LocalPlayer
 local function formatNumber(num)
     if type(num) ~= "number" then return tostring(num) end
     local absNum = math.abs(num)
-    if absNum >= 1e18 then return string.format("%.1fQn", num / 1e18)
-    elseif absNum >= 1e15 then return string.format("%.1fQd", num / 1e15)
-    elseif absNum >= 1e12 then return string.format("%.1fT", num / 1e12)
-    elseif absNum >= 1e9 then return string.format("%.1fB", num / 1e9)
-    elseif absNum >= 1e6 then return string.format("%.1fM", num / 1e6)
-    elseif absNum >= 1e3 then return string.format("%.1fK", num / 1e3)
+    local suffix, divisor = "", 1
+    if absNum >= 1e15 then suffix = "Qn"; divisor = 1e15
+    elseif absNum >= 1e12 then suffix = "Qd"; divisor = 1e12
+    elseif absNum >= 1e9 then suffix = "B"; divisor = 1e9
+    elseif absNum >= 1e6 then suffix = "M"; divisor = 1e6
+    elseif absNum >= 1e3 then suffix = "K"; divisor = 1e3 end
+
+    if suffix ~= "" then
+        local formatted = num / divisor
+        if math.abs(formatted - math.floor(formatted)) < 0.01 then
+            return string.format("%d%s", math.floor(formatted), suffix)
+        else
+            return string.format("%.1f%s", formatted, suffix):gsub("%.0f", "")
+        end
     end
     return tostring(math.floor(num))
-end
-
-local function getMutationMultiplier(mutations)
-    if not mutations then return 1 end
-    local h, s, i, b = mutations.huge==true, mutations.shiny==true, mutations.inverted==true, mutations.big==true
-    if h and s and i then return 625000000
-    elseif b and s and i then return 62500000
-    elseif h and i then return 2500000
-    elseif s and i then return 625000
-    elseif h and s then return 2500000
-    elseif b and i then return 250000
-    elseif s and b then return 25000
-    elseif i then return 2500
-    elseif h then return 1000
-    elseif s then return 250
-    elseif b then return 100
-    end
-    return 1
 end
 
 local function getRarityName(odds)
@@ -95,12 +83,13 @@ local function getResultsFingerprint(results)
 end
 
 local function ordinal(n)
+    local s = tostring(n)
     local last, tens = n % 10, n % 100
-    if tens >= 11 and tens <= 13 then return n .. "th" end
-    if last == 1 then return n .. "st" end
-    if last == 2 then return n .. "nd" end
-    if last == 3 then return n .. "rd" end
-    return n .. "th"
+    if tens >= 11 and tens <= 13 then return s .. "th" end
+    if last == 1 then return s .. "st" end
+    if last == 2 then return s .. "nd" end
+    if last == 3 then return s .. "rd" end
+    return s .. "th"
 end
 
 local function getAssetImageUrl(assetId)
@@ -126,7 +115,7 @@ local function sendWebhook(playerName, displayName, rarity, chanceText, statsTex
         embeds = {{
             title = "New Slime Rolled!",
             description = string.format("**||%s||** rolled **%s**!\n\n🎲 **Total Rolls:** %s", playerName, displayName, ordinal(totalRolls)),
-            thumbnail = finalImageUrl and {url = finalImageUrl} or nil,
+            thumbnail = finalImageUrl and {url = finalImageUrl, width = (mutations and mutations.huge and 128 or 64), height = (mutations and mutations.huge and 128 or 64)} or nil,
             fields = {
                 {name = "Rarity", value = rarity, inline = true},
                 {name = "Chance", value = chanceText, inline = true},
@@ -135,7 +124,7 @@ local function sendWebhook(playerName, displayName, rarity, chanceText, statsTex
                 {name = "🪙 Coins", value = formatNumber(coins), inline = true},
                 {name = "⚔️ Kills", value = formatNumber(kills), inline = true}
             },
-            color = mutations and (mutations.inverted and 0x9b59b6 or mutations.huge and 0xf1c40f or mutations.big and 0xe67e22 or mutations.shiny and 0xf39c12) or 0x3498db
+            color = mutations and (mutations.inverted and 0x9b59b6 or mutations.huge and 0xf1c40f or mutations.big and 0xe67e22 or mutations.shiny and 0xf39c12) or nil
         }}
     }
 
@@ -175,24 +164,25 @@ while true do
                     local sok, slime = pcall(SlimeData.getSlime, tostring(item.id))
                     if sok and slime then
                         local mutations = type(item.mutations) == "table" and next(item.mutations) ~= nil and item.mutations or nil
-                        local oddsMultiplier = getMutationMultiplier(mutations)
+                        local oddsMultiplier = mutations and Mutations.getVisualOddsMultiplier(mutations) or 1
                         local finalOdds = slime.odds / oddsMultiplier
                         local rawChance = math.floor(1 / finalOdds + 0.5)
 
                         if rawChance >= MIN_CHANCE_VALUE then
-                            local image = (mutations and mutations.inverted) and (slime.invertedIcon or "N/A") or (slime.image or "N/A")
+                            local image = (mutations and item.mutations.inverted) and (slime.invertedIcon or "N/A") or (slime.image or "N/A")
                             local statBonus = mutations and Mutations.getStatBonus(mutations, "damage") or 1
                             local finalDmg, finalHp = (slime.damage or 0) * statBonus, (slime.health or 0) * statBonus
                             
                             local chanceText = "1 in " .. formatNumber(rawChance)
                             local displayName = mutations and Mutations.getDisplayName(slime.name, mutations) or slime.name
+                            local mutList = mutations and Mutations.getIds(mutations) or {}
                             local statsText = (finalDmg > 0 or finalHp > 0) and string.format("⚔️ %s  ❤️ %s", formatNumber(finalDmg), formatNumber(finalHp)) or ""
 
                             local duplicateKey = myPlayer.Name .. "_" .. displayName .. "_" .. os.time()
                             if not sentMessages[duplicateKey] then
                                 sentMessages[duplicateKey] = os.time()
                                 task.spawn(function()
-                                    sendWebhook(myPlayer.Name, displayName, getRarityName(slime.odds), chanceText, statsText, mutations, mutations and Mutations.getIds(mutations) or {}, image, totalRolls, coins, kills)
+                                    sendWebhook(myPlayer.Name, displayName, getRarityName(slime.odds), chanceText, statsText, mutations, mutList, image, totalRolls, coins, kills)
                                 end)
                             end
                         end
