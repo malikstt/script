@@ -224,14 +224,22 @@ local function sendWebhook(webhookUrl, playerName, displayName, rarity, chanceTe
 			color = getEmbedColor(mutations),
 		}}
 	}
-	pcall(function()
-		request({
+	local success, response = pcall(function()
+		return request({
 			Url = webhookUrl,
 			Method = "POST",
 			Headers = {["Content-Type"] = "application/json"},
 			Body = HttpService:JSONEncode(payload),
 		})
 	end)
+	if success then
+		print(string.format("[Slime RNG] Webhook sent: %s (Status: %s)", displayName, response and response.StatusCode or "unknown"))
+		if response and response.StatusCode ~= 204 then
+			warn(string.format("[Slime RNG] Webhook non-204 status: %s, Body: %s", response.StatusCode, response.Body or "none"))
+		end
+	else
+		warn(string.format("[Slime RNG] Webhook request failed: %s", response))
+	end
 end
 
 if cfg.OPTIMIZATION then
@@ -425,91 +433,119 @@ if cfg.AUTO_CLAIM_INDEX_REWARDS then
 	end)
 end
 
-local webhooks = cfg.WEBHOOK_URL
-local hasWebhooks = type(webhooks) == "table" and #webhooks > 0
-
-if hasWebhooks and RollSlice then
-    print("[Slime RNG] Watching for roll results...")
-    
-    local sentMessages = {}
-    local lastFingerprint = nil
-    local myPlayer = LocalPlayer
-    local webhookUrl = webhooks[1]
-    
-    while true do
-        task.wait(0.1)
-        
-        local ok, results = pcall(RollSlice.rollResults)
-        if not ok then continue end
-        
-        local fingerprint = getResultsFingerprint(results)
-        
-        if fingerprint ~= lastFingerprint then
-            lastFingerprint = fingerprint
-            
-            if type(results) == "table" and #results > 0 then
-                local stats = DataClient:get("stats") or {}
-                local totalRolls = stats.rolls or 0
-                local kills = stats.kills or 0
-                local coins = DataClient:get("coins") or 0
-                
-                for _, result in ipairs(results) do
-                    local item = getActualItem(result)
-                    if not item then continue end
-                    
-                    local id = tostring(item.id or "unknown")
-                    local sok, slime = pcall(SlimeData.getSlime, id)
-                    slime = sok and slime or nil
-                    
-                    local mutations = type(item.mutations) == "table" and next(item.mutations) ~= nil and item.mutations or nil
-                    local isInverted = mutations and mutations.inverted == true
-                    local image = isInverted and (slime and slime.invertedIcon or "N/A") or (slime and slime.image or "N/A")
-                    
-                    local name = slime and slime.name or id
-                    local baseOdds = slime and slime.odds or nil
-                    local baseDmg = slime and slime.damage or 0
-                    local baseHp = slime and slime.health or 0
-                    local rarity = baseOdds and getRarityName(baseOdds) or "Unknown"
-                    
-                    local oddsMultiplier = getMutationMultiplier(mutations)
-                    local statBonus = mutations and Mutations.getStatBonus(mutations, "damage") or 1
-                    local finalOdds = baseOdds and (baseOdds / oddsMultiplier) or nil
-                    local finalDmg = baseDmg * statBonus
-                    local finalHp = baseHp * statBonus
-                    
-                    local chanceText = finalOdds and string.format("1 in %s", fmt(math.floor(1 / finalOdds + 0.5))) or "N/A"
-                    local displayName = mutations and Mutations.getDisplayName(name, mutations) or name
-                    local mutList = mutations and Mutations.getIds(mutations) or {}
-                    
-                    local statsText = ""
-                    if finalDmg > 0 and finalHp > 0 then
-                        statsText = string.format("⚔️ %s  ❤️ %s", fmt(finalDmg), fmt(finalHp))
-                    elseif finalDmg > 0 then
-                        statsText = string.format("⚔️ %s", fmt(finalDmg))
-                    elseif finalHp > 0 then
-                        statsText = string.format("❤️ %s", fmt(finalHp))
-                    end
-                    
-                    local playerName = myPlayer and myPlayer.Name or "Someone"
-                    local dupKey = playerName .. "_" .. displayName .. "_" .. tostring(os.time())
-                    
-                    if not sentMessages[dupKey] then
-                        sentMessages[dupKey] = true
-                        
-                        print(string.format("[Slime RNG] %s rolled: %s (%s)", ordinal(totalRolls), displayName, rarity))
-                        
-                        task.spawn(function()
-                            sendWebhook(webhookUrl, playerName, displayName, rarity, chanceText, statsText, mutations, mutList, image, totalRolls, coins, kills)
-                        end)
-                    end
-                end
-            end
-        end
-    end
-elseif hasWebhooks then
-    warn("[Slime RNG] Cannot start - RollSlice not available")
+if not RollSlice then
+	warn("[Slime RNG] RollSlice not available - webhook monitoring disabled")
 else
-    print("[Slime RNG] No webhook URL configured, skipping webhook monitoring")
+	local webhooks = cfg.WEBHOOK_URL
+	local hasWebhooks = type(webhooks) == "table" and #webhooks > 0
+	
+	if hasWebhooks then
+		print(string.format("[Slime RNG] Webhook watcher starting - watching for rolls (minLuck: %s)", cfg.MINIMUM_LUCK_SENT or "0"))
+		
+		local minLuck = parseLuck(cfg.MINIMUM_LUCK_SENT or "0")
+		local sentMessages = {}
+		local lastFingerprint = nil
+		local myPlayer = LocalPlayer
+		local webhookUrl = webhooks[1]
+		
+		task.spawn(function()
+			while true do
+				local success, results = pcall(function()
+					return RollSlice.rollResults
+				end)
+				
+				if not success then
+					warn("[Slime RNG] Failed to get rollResults: " .. tostring(results))
+					task.wait(1)
+					continue
+				end
+				
+				local rollResults = results
+				local ok, resultData = pcall(function()
+					return rollResults()
+				end)
+				
+				if not ok then
+					task.wait(0.1)
+					continue
+				end
+				
+				local results = resultData
+				
+				local fingerprint = getResultsFingerprint(results)
+				
+				if fingerprint ~= lastFingerprint then
+					lastFingerprint = fingerprint
+					
+					if type(results) == "table" and #results > 0 then
+						local stats = DataClient:get("stats") or {}
+						local totalRolls = stats.rolls or 0
+						local kills = stats.kills or 0
+						local coins = DataClient:get("coins") or 0
+						
+						for _, result in ipairs(results) do
+							local item = getActualItem(result)
+							if not item then continue end
+							
+							local id = tostring(item.id or "unknown")
+							local sok, slime = pcall(SlimeData.getSlime, id)
+							slime = sok and slime or nil
+							
+							local mutations = type(item.mutations) == "table" and next(item.mutations) ~= nil and item.mutations or nil
+							local isInverted = mutations and mutations.inverted == true
+							local image = isInverted and (slime and slime.invertedIcon or "N/A") or (slime and slime.image or "N/A")
+							
+							local name = slime and slime.name or id
+							local baseOdds = slime and slime.odds or nil
+							local baseDmg = slime and slime.damage or 0
+							local baseHp = slime and slime.health or 0
+							local rarity = baseOdds and getRarityName(baseOdds) or "Unknown"
+							
+							local oddsMultiplier = getMutationMultiplier(mutations)
+							local statBonus = mutations and Mutations.getStatBonus(mutations, "damage") or 1
+							local finalOdds = baseOdds and (baseOdds / oddsMultiplier) or nil
+							local finalDmg = baseDmg * statBonus
+							local finalHp = baseHp * statBonus
+							
+							local effectiveLuck = finalOdds and (1 / finalOdds) or 0
+							if effectiveLuck < minLuck then 
+								continue 
+							end
+							
+							local chanceText = finalOdds and string.format("1 in %s", fmt(math.floor(1 / finalOdds + 0.5))) or "N/A"
+							local displayName = mutations and Mutations.getDisplayName(name, mutations) or name
+							local mutList = mutations and Mutations.getIds(mutations) or {}
+							
+							local statsText = ""
+							if finalDmg > 0 and finalHp > 0 then
+								statsText = string.format("⚔️ %s  ❤️ %s", fmt(finalDmg), fmt(finalHp))
+							elseif finalDmg > 0 then
+								statsText = string.format("⚔️ %s", fmt(finalDmg))
+							elseif finalHp > 0 then
+								statsText = string.format("❤️ %s", fmt(finalHp))
+							end
+							
+							local playerName = myPlayer and myPlayer.Name or "Someone"
+							local dupKey = playerName .. "_" .. displayName .. "_" .. tostring(os.time())
+							
+							if not sentMessages[dupKey] then
+								sentMessages[dupKey] = true
+								
+								print(string.format("[Slime RNG] Roll detected: %s rolled %s (Luck: 1 in %s)", playerName, displayName, effectiveLuck > 0 and fmt(math.floor(effectiveLuck)) or "N/A"))
+								
+								task.spawn(function()
+									sendWebhook(webhookUrl, playerName, displayName, rarity, chanceText, statsText, mutations, mutList, image, totalRolls, coins, kills)
+								end)
+							end
+						end
+					end
+				end
+				task.wait(0.1)
+			end
+		end)
+	else
+		print("[Slime RNG] No webhook URL configured, skipping webhook monitoring")
+	end
 end
 
 if cfg.FAST_ROLL then
