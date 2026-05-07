@@ -280,15 +280,18 @@ end
 
 if cfg.UNLOCK_AFFORDABLE_ZONES or cfg.AUTOFARM_BEST_ZONE then
 	task.spawn(function()
+		local MAX_ZONE = 25
+
 		while true do
-			local furthestZone = DataClient:get("furthestZone") or 1
-			local currentZone = DataClient:get("zone") or 1
+			local furthestZone = math.clamp(DataClient:get("furthestZone") or 1, 1, MAX_ZONE)
+			local currentZone = math.clamp(DataClient:get("zone") or 1, 1, MAX_ZONE)
 			local coins = DataClient:get("coins") or 0
 
-			if cfg.UNLOCK_AFFORDABLE_ZONES then
-				local nextZone = Zones.getZone(furthestZone + 1)
+			if cfg.UNLOCK_AFFORDABLE_ZONES and furthestZone < MAX_ZONE then
+				local nextZoneIndex = furthestZone + 1
+				local nextZone = Zones.getZone(nextZoneIndex)
 				local nextZoneCost = nextZone and nextZone.price or 0
-				if coins >= nextZoneCost and nextZone then
+				if nextZone and coins >= nextZoneCost then
 					pcall(ZonesRemote.InvokeServer, ZonesRemote, "requestPurchaseZone")
 				end
 			end
