@@ -1,429 +1,473 @@
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
-local HttpService = game:GetService("HttpService")
+local cfg = getgenv().slime_rng_cfg or {}
+
+local RS = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local webhookUrl = "https://discord.com/api/webhooks/1497999446028587128/nTY1lOe95jZXpEMXJu0oxqG3RXkp75gqy70qswx44o9ummGlLNEe_RyYpszPo_YxwlI0"
+local HttpService = game:GetService("HttpService")
+local LocalPlayer = Players.LocalPlayer
 
-local targetPlayer = "68exp"
-local discordUserId = "921793487509278730"
+local Packages = RS:WaitForChild("Packages")
+local Index = Packages:WaitForChild("_Index")
+local Networker = Index:WaitForChild("leifstout_networker@0.3.1"):WaitForChild("networker")
+local Remotes = Networker:WaitForChild("_remotes")
 
-print("[DEBUG] Script sucess v7 i think, fetching Roblox ID for: " .. targetPlayer)
+local DataClient = require(Packages.DataService).client
+DataClient:waitForData()
 
-local robloxUserId = nil
+local RollRemote = Remotes:WaitForChild("RollService"):WaitForChild("RemoteFunction")
+local CodeRemote = Remotes:WaitForChild("CodeService"):WaitForChild("RemoteFunction")
+local InventoryRemote = Remotes:WaitForChild("InventoryService"):WaitForChild("RemoteFunction")
+local RebirthRemote = Remotes:WaitForChild("RebirthService"):WaitForChild("RemoteFunction")
+local ZonesRemote = Remotes:WaitForChild("ZonesService"):WaitForChild("RemoteFunction")
+local UpgradeRemote = Remotes:WaitForChild("UpgradeService"):WaitForChild("RemoteFunction")
+local BoostRemote = Remotes:WaitForChild("BoostService"):WaitForChild("RemoteFunction")
+local OfflineRemote = Remotes:WaitForChild("OfflineEarningsService"):WaitForChild("RemoteFunction")
+local IndexRemote = Remotes:WaitForChild("IndexService"):WaitForChild("RemoteFunction")
 
-local function getRobloxUserId(username)
-    print("[DEBUG] Fetching Roblox User ID for: " .. username)
-    local url = "https://users.roblox.com/v1/usernames/users"
-    local body = HttpService:JSONEncode({usernames = {username}})
-    
-    local success, response = pcall(function()
-        return request({
-            Url = url,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = body
-        })
-    end)
-    
-    if success and response then
-        print("[DEBUG] Roblox API response status: " .. tostring(response.StatusCode))
-        if response.StatusCode == 200 then
-            local decodeSuccess, data = pcall(function()
-                return HttpService:JSONDecode(response.Body)
-            end)
-            if decodeSuccess and data and data.data and data.data[1] then
-                local id = tostring(data.data[1].id)
-                print("[DEBUG] Found Roblox User ID: " .. id)
-                return id
-            else
-                print("[ERROR] Failed to decode Roblox API response")
-            end
-        else
-            print("[ERROR] Roblox API returned status: " .. tostring(response.StatusCode))
-        end
-    else
-        print("[ERROR] Failed to fetch Roblox User ID: " .. tostring(response))
-    end
-    return nil
+local Source = RS:WaitForChild("Source", 30)
+local Items = Source and Source:WaitForChild("Game"):WaitForChild("Items")
+local Roll = Source and Source:WaitForChild("Features"):WaitForChild("Roll")
+local MutationsFolder = Source and Source:WaitForChild("Features"):WaitForChild("Mutations")
+
+local RollSlice = Roll and require(Roll:WaitForChild("RollSlice"))
+local SlimeData = Items and require(Items:WaitForChild("Slimes"))
+local RarityTiers = Items and require(Items:WaitForChild("RarityTiers"))
+local Mutations = MutationsFolder and require(MutationsFolder:WaitForChild("Mutations"))
+local Zones = require(RS.Source.Game.Items.Zones)
+local UpgradeTree = require(RS.Source.Features.Upgrades.UpgradeTree)
+local IndexRewards = require(RS.Source.Features.Index.IndexRewards)
+
+local function fmt(num)
+	if type(num) ~= "number" then return tostring(num) end
+	local abs = math.abs(num)
+	local function clean(val, suffix)
+		local s = string.format("%.2f", val)
+		s = s:gsub("%.?0+$", "")
+		return s .. suffix
+	end
+	if abs >= 1e18 then return clean(num / 1e18, "Qn")
+	elseif abs >= 1e15 then return clean(num / 1e15, "Qd")
+	elseif abs >= 1e12 then return clean(num / 1e12, "T")
+	elseif abs >= 1e9 then return clean(num / 1e9, "B")
+	elseif abs >= 1e6 then return clean(num / 1e6, "M")
+	elseif abs >= 1e3 then return clean(num / 1e3, "K")
+	end
+	return tostring(math.floor(num))
 end
 
-robloxUserId = getRobloxUserId(targetPlayer)
-if not robloxUserId then
-    print("[WARNING] Could not fetch Roblox User ID - avatar thumbnails will be disabled")
+local function parseLuck(str)
+	if type(str) ~= "string" then return 0 end
+	local num, suffix = str:match("^([%d%.]+)(%a*)$")
+	if not num then return 0 end
+	num = tonumber(num) or 0
+	suffix = suffix:upper()
+	if suffix == "QN" then return num * 1e18
+	elseif suffix == "QD" then return num * 1e15
+	elseif suffix == "T" then return num * 1e12
+	elseif suffix == "B" then return num * 1e9
+	elseif suffix == "M" then return num * 1e6
+	elseif suffix == "K" then return num * 1e3
+	end
+	return num
 end
 
-pcall(function()
-    HttpService.HttpEnabled = true
-end)
-
-local stats = ReplicatedStorage:FindFirstChild("Stats")
-local leaderboard = Workspace:FindFirstChild("Leaderboards")
-
-print("[DEBUG] Stats found: " .. tostring(stats ~= nil))
-print("[DEBUG] Leaderboard found: " .. tostring(leaderboard ~= nil))
-
-local lastData = {}
-local last30MinData = nil
-local lastSendTime = 0
-local isRunning = true
-local lastThrowsTime = os.time()
-local lastRubiesTime = os.time()
-local lastInactivitySend = 0
-local hasSentLeaveMessage = false
-local playerIsGone = false
-
-local function formatNumber(num)
-    if num >= 1e12 then
-        return string.format("%.1fT", num / 1e12)
-    elseif num >= 1e9 then
-        return string.format("%.1fB", num / 1e9)
-    elseif num >= 1e6 then
-        return string.format("%.1fM", num / 1e6)
-    elseif num >= 1e3 then
-        return string.format("%.1fK", num / 1e3)
-    else
-        return tostring(math.floor(num))
-    end
+local function getMutationMultiplier(mutations)
+	if not mutations then return 1 end
+	local huge = mutations.huge == true
+	local shiny = mutations.shiny == true
+	local inverted = mutations.inverted == true
+	local big = mutations.big == true
+	if huge and shiny and inverted then return 625000000
+	elseif big and shiny and inverted then return 62500000
+	elseif huge and inverted then return 2500000
+	elseif shiny and inverted then return 625000
+	elseif huge and shiny then return 250000
+	elseif big and inverted then return 250000
+	elseif shiny and big then return 25000
+	elseif inverted then return 2500
+	elseif huge then return 1000
+	elseif shiny then return 250
+	elseif big then return 100
+	end
+	return 1
 end
 
-local function getAvatarThumbnail()
-    if not robloxUserId then
-        return nil
-    end
-    
-    local url = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=" .. robloxUserId .. "&size=150x150&format=Png&isCircular=true"
-    
-    local success, response = pcall(function()
-        return request({
-            Url = url, 
-            Method = "GET"
-        })
-    end)
-    
-    if success and response and response.StatusCode == 200 then
-        local decodeSuccess, data = pcall(function()
-            return HttpService:JSONDecode(response.Body)
-        end)
-        if decodeSuccess and data and data.data and data.data[1] and data.data[1].imageUrl then
-            return data.data[1].imageUrl
-        end
-    end
-    return nil
+local function getRarityName(odds)
+	if not odds or odds <= 0 then return "Unknown" end
+	local ok, tier = pcall(RarityTiers.getTier, odds)
+	return (ok and tier and tier.name) or "Unknown"
 end
 
-local function getCurrentData()
-    if not stats then
-        stats = ReplicatedStorage:FindFirstChild("Stats")
-        if not stats then
-            return nil
-        end
-    end
-    
-    local targetStats = stats:FindFirstChild(targetPlayer)
-    if not targetStats then 
-        return nil 
-    end
-    
-    local compLeaderboard = leaderboard and leaderboard:FindFirstChild("CompLeaderboardScore")
-    local main = compLeaderboard and compLeaderboard:FindFirstChild("Main")
-    
-    local enchantGems = targetStats:FindFirstChild("EnchantGems")
-    local compScore = targetStats:FindFirstChild("CompLeaderboardScore")
-    local sessionTime = targetStats:FindFirstChild("Analytics") and targetStats.Analytics:FindFirstChild("SessionTime")
-    local rubies = targetStats:FindFirstChild("Twenty Event") and targetStats["Twenty Event"]:FindFirstChild("Rubies")
-    local autoThrow = targetStats:FindFirstChild("Settings") and targetStats.Settings:FindFirstChild("AutoThrow")
-    local throws = targetStats:FindFirstChild("Analytics") and targetStats.Analytics:FindFirstChild("Throws")
-    
-    local sessionValue = sessionTime and sessionTime.Value or 0
-    local hours = math.floor(sessionValue / 3600)
-    local minutes = math.floor((sessionValue % 3600) / 60)
-    
-    local playerRank = nil
-    if main then
-        local ui = main:FindFirstChild("UI")
-        local normal = ui and ui:FindFirstChild("Normal")
-        if normal then
-            for _, frame in ipairs(normal:GetChildren()) do
-                if frame:IsA("Frame") then
-                    local nameLabel = frame:FindFirstChild("PlayerName")
-                    local placeLabel = frame:FindFirstChild("Place")
-                    if nameLabel and nameLabel.Text == "@" .. targetPlayer then
-                        playerRank = placeLabel and placeLabel.Text or "?"
-                        break
-                    end
-                end
-            end
-        end
-    end
-    
-    return {
-        enchantGems = enchantGems and enchantGems.Value or 0,
-        compScore = compScore and compScore.Value or 0,
-        rubies = rubies and rubies.Value or 0,
-        throws = throws and throws.Value or 0,
-        autoThrow = autoThrow and autoThrow.Value or false,
-        hours = hours,
-        minutes = minutes,
-        rank = playerRank or "N/A",
-        timestamp = os.time()
-    }
+local function getActualItem(result)
+	if type(result) ~= "table" then return nil end
+	for _, entry in ipairs(result) do
+		if type(entry) == "table" and entry.id then return entry end
+	end
+	return nil
 end
 
-local function sendLeaveMessage()
-    local jobId = game.JobId or "Unknown"
-    local payload = {
-        content = string.format("<@%s> left server\nJob ID: `%s`\n<t:%d:R>", discordUserId, jobId, os.time())
-    }
-    pcall(function()
-        request({
-            Url = webhookUrl,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = HttpService:JSONEncode(payload)
-        })
-        print("[CASE 2] Leave message sent")
-    end)
+local function getResultsFingerprint(results)
+	if type(results) ~= "table" then return "nil" end
+	local count = #results
+	if count == 0 then return "empty" end
+	local parts = {}
+	for i, result in ipairs(results) do
+		local item = getActualItem(result)
+		parts[i] = item and tostring(item.id) or tostring(i)
+	end
+	return count .. "|" .. table.concat(parts, ",")
 end
 
-local function sendInactivityMessage(reason, data)
-    local avatarUrl = getAvatarThumbnail()
-    local payload = {
-        content = string.format("<@%s> - %s", discordUserId, reason),
-        embeds = {{
-            color = 0x9b59b6,
-            thumbnail = avatarUrl and {url = avatarUrl} or nil,
-            fields = {
-                {name = "Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
-                {name = "🔴 Rubies", value = formatNumber(data.rubies), inline = true},
-                {name = "🏆 Comp Score", value = formatNumber(data.compScore), inline = true},
-                {name = "⏱️ Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
-                {name = "🪨 Throws", value = formatNumber(data.throws), inline = true},
-                {name = "😨 AutoThrow", value = data.autoThrow and "Enabled" or "Disabled", inline = true},
-                {name = "📊 Rank", value = data.rank, inline = true},
-            }
-        }}
-    }
-    pcall(function()
-        request({
-            Url = webhookUrl,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = HttpService:JSONEncode(payload)
-        })
-        print("[CASE 3] Inactivity message sent | " .. reason)
-    end)
+local function ordinal(n)
+	local s = tostring(n)
+	local last = n % 10
+	local tens = n % 100
+	if tens >= 11 and tens <= 13 then return s .. "th" end
+	if last == 1 then return s .. "st" end
+	if last == 2 then return s .. "nd" end
+	if last == 3 then return s .. "rd" end
+	return s .. "th"
 end
 
-local function sendRejoinMessage(data)
-    local avatarUrl = getAvatarThumbnail()
-    local embed = {
-        title = "Stats Update",
-        color = 0x3498db,
-        thumbnail = avatarUrl and {url = avatarUrl} or nil,
-        fields = {
-            {name = "🟪 Enchant Gems", value = formatNumber(data.enchantGems), inline = true},
-            {name = "🔴 Rubies", value = formatNumber(data.rubies), inline = true},
-            {name = "🏆 Comp Score", value = formatNumber(data.compScore), inline = true},
-            {name = "⏱️ Session Time", value = data.hours .. "h " .. data.minutes .. "m", inline = true},
-            {name = "🪨 Throws", value = formatNumber(data.throws), inline = true},
-            {name = "😂 AutoThrow", value = data.autoThrow and "Enabled" or "Disabled", inline = true},
-            {name = "📊 Rank", value = data.rank, inline = true},
-        },
-        footer = {text = "Player Rejoined | Next update in 30 minutes"}
-    }
-    if avatarUrl then embed.description = "**68exp**" end
-    pcall(function()
-        request({
-            Url = webhookUrl,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = HttpService:JSONEncode({embeds = {embed}})
-        })
-        print("[REJOIN] Rejoin message sent")
-    end)
+local function getAssetImageUrl(assetId)
+	if not assetId then return nil end
+	local url = "https://thumbnails.roblox.com/v1/assets?assetIds=" .. assetId .. "&size=420x420&format=Png&isCircular=false"
+	local ok, response = pcall(function()
+		return request({Url = url, Method = "GET"})
+	end)
+	if ok and response and response.Success then
+		local data = HttpService:JSONDecode(response.Body)
+		if data and data.data and data.data[1] then
+			return data.data[1].imageUrl
+		end
+	end
+	return nil
 end
 
-local function sendToDiscordWithCompare(currentData, compareData, reason)
-    local avatarUrl = getAvatarThumbnail()
-    
-    local compGain = ""
-    local rubiesGain = ""
-    local throwsGain = ""
-    
-    if compareData and compareData.compScore and currentData.compScore > compareData.compScore then
-        local gain = currentData.compScore - compareData.compScore
-        compGain = string.format(" (+%s)", formatNumber(gain))
-    end
-    
-    if compareData and compareData.rubies and currentData.rubies > compareData.rubies then
-        local gain = currentData.rubies - compareData.rubies
-        rubiesGain = string.format(" (+%s)", formatNumber(gain))
-    end
-    
-    if compareData and compareData.throws and currentData.throws > compareData.throws then
-        local gain = currentData.throws - compareData.throws
-        throwsGain = string.format(" (+%s)", formatNumber(gain))
-    end
-    
-    local embed = {
-        title = "Stats Update",
-        color = 0x3498db,
-        thumbnail = avatarUrl and {url = avatarUrl} or nil,
-        fields = {
-            {name = " Enchant Gems", value = formatNumber(currentData.enchantGems), inline = true},
-            {name = "🔴 Rubies", value = formatNumber(currentData.rubies) .. rubiesGain, inline = true},
-            {name = "🏆 Comp Score", value = formatNumber(currentData.compScore) .. compGain, inline = true},
-            {name = "⏱️ Session Time", value = currentData.hours .. "h " .. currentData.minutes .. "m", inline = true},
-            {name = "🪨 Throws", value = formatNumber(currentData.throws) .. throwsGain, inline = true},
-            {name = "🥶 AutoThrow", value = currentData.autoThrow and "Enabled" or "Disabled", inline = true},
-            {name = "📊 Rank", value = currentData.rank, inline = true},
-        },
-        footer = {text = reason .. " | Next update in 30 minutes"}
-    }
-    
-    if avatarUrl then
-        embed.description = "**68exp**"
-    end
-    
-    local success, response = pcall(function()
-        return request({
-            Url = webhookUrl,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = HttpService:JSONEncode({embeds = {embed}})
-        })
-    end)
-    
-    if success and (response.StatusCode == 200 or response.StatusCode == 204) then
-        print("Sent to Discord | Reason: " .. reason)
-        return true
-    else
-        print("Failed to send | Status: " .. tostring(response and response.StatusCode or "nil"))
-        return false
-    end
+local function getThumbnailSize(mutations)
+	if not mutations then return 64 end
+	if mutations.huge then return 128 elseif mutations.big then return 96 end
+	return 64
 end
 
-local function mainLoop()
-    print("[DEBUG] Waiting 5 seconds for game to load...")
-    task.wait(5)
-    
-    local initialData = getCurrentData()
-    if initialData then
-        print("[DEBUG] Got initial data, sending immediately...")
-        lastData = initialData
-        last30MinData = initialData
-        lastThrowsTime = os.time()
-        lastRubiesTime = os.time()
-        sendToDiscordWithCompare(initialData, nil, "Initial Load")
-        lastSendTime = os.time()
-    else
-        print("[ERROR] Could not find player stats! Make sure '" .. targetPlayer .. "' is in the game")
-        if stats then
-            for _, child in pairs(stats:GetChildren()) do
-                print("   - " .. child.Name)
-            end
-        end
-    end
-    
-    while isRunning do
-        task.wait(10)
-        
-        local player = Players:FindFirstChild(targetPlayer)
-        
-        if not player then
-            if not playerIsGone then
-                print("[PLAYER LEFT] Detected player left")
-                playerIsGone = true
-                hasSentLeaveMessage = false
-            end
-            
-            if not hasSentLeaveMessage then
-                sendLeaveMessage()
-                hasSentLeaveMessage = true
-            end
-            
-            lastData = {}
-            task.wait(10)
-            continue
-        else
-            if playerIsGone then
-                print("[PLAYER REJOINED] Player is back!")
-                playerIsGone = false
-                hasSentLeaveMessage = false
-                
-                local currentData = getCurrentData()
-                if currentData then
-                    sendRejoinMessage(currentData)
-                    lastData = currentData
-                    last30MinData = currentData
-                    lastSendTime = os.time()
-                    lastThrowsTime = os.time()
-                    lastRubiesTime = os.time()
-                    lastInactivitySend = 0
-                end
-                task.wait(10)
-                continue
-            end
-        end
-        
-        local currentData = getCurrentData()
-        if currentData then
-            if os.time() - lastSendTime >= 1800 then
-                if last30MinData then
-                    sendToDiscordWithCompare(currentData, last30MinData, "30 Minute Update")
-                else
-                    sendToDiscordWithCompare(currentData, nil, "30 Minute Update")
-                end
-                last30MinData = currentData
-                lastSendTime = os.time()
-                lastThrowsTime = os.time()
-                lastRubiesTime = os.time()
-                lastData = currentData
-            else
-                local sendInactivity = false
-                local inactivityReason = nil
-                
-                if lastData.throws and currentData.throws == lastData.throws then
-                    if os.time() - lastThrowsTime >= 60 and os.time() - lastInactivitySend >= 300 then
-                        sendInactivity = true
-                        inactivityReason = "No throws for 60 seconds"
-                        lastThrowsTime = os.time()
-                        lastInactivitySend = os.time()
-                    end
-                else
-                    if currentData.throws ~= lastData.throws then
-                        lastThrowsTime = os.time()
-                        lastInactivitySend = 0
-                    end
-                end
-                
-                if lastData.rubies and currentData.rubies == lastData.rubies then
-                    if os.time() - lastRubiesTime >= 300 and os.time() - lastInactivitySend >= 300 and not sendInactivity then
-                        sendInactivity = true
-                        inactivityReason = "No rubies for 5 minutes"
-                        lastRubiesTime = os.time()
-                        lastInactivitySend = os.time()
-                    end
-                else
-                    if currentData.rubies ~= lastData.rubies then
-                        lastRubiesTime = os.time()
-                        lastInactivitySend = 0
-                    end
-                end
-                
-                if sendInactivity and inactivityReason then
-                    sendInactivityMessage(inactivityReason, currentData)
-                end
-                
-                lastData = currentData
-            end
-        else
-            print("[DEBUG] Player data not found, retrying...")
-        end
-    end
+local function getEmbedColor(mutations)
+	if not mutations then return nil end
+	if mutations.inverted then return 0x9b59b6
+	elseif mutations.huge then return 0xf1c40f
+	elseif mutations.big then return 0xe67e22
+	elseif mutations.shiny then return 0xf39c12 end
+	return nil
 end
 
-local success, err = pcall(mainLoop)
-if not success then
-    print("[FATAL] Script error: " .. tostring(err))
+local function sendWebhook(webhookUrl, playerName, displayName, rarity, chanceText, statsText, mutations, mutList, imageUrl, totalRolls, coins, kills)
+	local finalImageUrl = nil
+	local thumbnailSize = getThumbnailSize(mutations)
+	if imageUrl and imageUrl ~= "N/A" then
+		local assetId = string.match(imageUrl, "rbxassetid://(%d+)")
+		if assetId then finalImageUrl = getAssetImageUrl(assetId) end
+	end
+	local hiddenName = "||" .. playerName .. "||"
+	local description = string.format("**%s** rolled **%s**!\n\nðŸŽ² **Total Rolls:** %s", hiddenName, displayName, ordinal(totalRolls))
+	local fields = {
+		{name = "Rarity", value = rarity, inline = true},
+		{name = "Chance", value = chanceText, inline = true},
+	}
+	if statsText and statsText ~= "" then
+		table.insert(fields, {name = "Stats", value = statsText, inline = true})
+	end
+	if mutList and #mutList > 0 then
+		table.insert(fields, {name = "Mutations", value = table.concat(mutList, ", "), inline = true})
+	end
+	table.insert(fields, {name = "ðŸª™ Coins", value = fmt(coins), inline = true})
+	table.insert(fields, {name = "âš”ï¸ Kills", value = fmt(kills), inline = true})
+	local payload = {
+		username = "makik",
+		embeds = {{
+			title = "New Slime Rolled!",
+			description = description,
+			thumbnail = finalImageUrl and {url = finalImageUrl, width = thumbnailSize, height = thumbnailSize} or nil,
+			fields = fields,
+			color = getEmbedColor(mutations),
+		}}
+	}
+	pcall(function()
+		request({
+			Url = webhookUrl,
+			Method = "POST",
+			Headers = {["Content-Type"] = "application/json"},
+			Body = HttpService:JSONEncode(payload),
+		})
+	end)
+end
+
+if cfg.OPTIMIZATION then
+	pcall(function()
+		loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/Optimization.lua"))()
+	end)
+end
+
+if cfg.OFFLINE_EARNINGS then
+	pcall(OfflineRemote.InvokeServer, OfflineRemote, "requestClaim")
+end
+
+if cfg.EQUIP_BEST_SLIMES then
+	task.spawn(function()
+		local delay = 30
+		while true do
+			pcall(InventoryRemote.InvokeServer, InventoryRemote, "requestEquipBest")
+			task.wait(delay)
+			delay = math.min(delay * 2, 600)
+		end
+	end)
+end
+
+if cfg.REDEEM_CODES then
+	task.spawn(function()
+		local codes = DataClient._data._data._codes or {}
+		for _, code in ipairs(cfg.CODES) do
+			if not codes[code] then
+				pcall(CodeRemote.InvokeServer, CodeRemote, "redeem", code)
+				task.wait(0.5)
+			end
+		end
+	end)
+end
+
+if cfg.AUTO_REBIRTH then
+	task.spawn(function()
+		while true do
+			local rebirths = DataClient:get("rebirths") or 0
+			local goop = DataClient:get("goop") or 0
+			local furthestZone = DataClient:get("furthestZone") or 0
+			local nextCost = (2 ^ rebirths) * 500
+			if furthestZone >= cfg.REQUIRED_ZONE_TO_REBIRTH and goop >= nextCost then
+				pcall(RebirthRemote.InvokeServer, RebirthRemote, "requestRebirth")
+			end
+			task.wait(10)
+		end
+	end)
+end
+
+if cfg.UNLOCK_AFFORDABLE_ZONES or cfg.AUTOFARM_BEST_ZONE then
+	task.spawn(function()
+		while true do
+			local furthestZone = DataClient:get("furthestZone") or 1
+			local currentZone = DataClient:get("zone") or 1
+			local coins = DataClient:get("coins") or 0
+
+			if cfg.UNLOCK_AFFORDABLE_ZONES then
+				local nextZone = Zones.getZone(furthestZone + 1)
+				local nextZoneCost = nextZone and nextZone.price or 0
+				if coins >= nextZoneCost and nextZone then
+					pcall(ZonesRemote.InvokeServer, ZonesRemote, "requestPurchaseZone")
+				end
+			end
+
+			if cfg.AUTOFARM_BEST_ZONE and currentZone ~= furthestZone then
+				pcall(ZonesRemote.InvokeServer, ZonesRemote, "requestTeleportZone", furthestZone)
+			end
+
+			task.wait(60)
+		end
+	end)
+end
+
+if cfg.AUTO_BUY_UPGRADES then
+	task.spawn(function()
+		local function collectUpgrades(tbl, ids)
+			if type(tbl) ~= "table" then return end
+			for id, data in pairs(tbl) do
+				if type(data) == "table" and data.cost then
+					table.insert(ids, id)
+				end
+			end
+		end
+
+		local allUpgrades = {}
+		collectUpgrades(UpgradeTree.main, allUpgrades)
+		if UpgradeTree.main.lootTree and UpgradeTree.main.lootTree.subTree then
+			collectUpgrades(UpgradeTree.main.lootTree.subTree, allUpgrades)
+		end
+		if UpgradeTree.main.playerTree and UpgradeTree.main.playerTree.subTree then
+			collectUpgrades(UpgradeTree.main.playerTree.subTree, allUpgrades)
+		end
+
+		local function getCost(id)
+			local function findIn(tbl)
+				if type(tbl) ~= "table" then return nil end
+				for k, data in pairs(tbl) do
+					if k == id and type(data) == "table" then return data.cost end
+				end
+			end
+			return findIn(UpgradeTree.main)
+				or findIn(UpgradeTree.main.lootTree and UpgradeTree.main.lootTree.subTree)
+				or findIn(UpgradeTree.main.playerTree and UpgradeTree.main.playerTree.subTree)
+		end
+
+		repeat task.wait() until LocalPlayer:FindFirstChild("leaderstats")
+
+		while task.wait(0.5) do
+			local owned = DataClient:get("upgrades") or {}
+			local coins = DataClient:get("coins") or 0
+			local goop = DataClient:get("goop") or 0
+			local rollCurrency = DataClient:get("rollCurrency") or 0
+
+			for _, id in ipairs(allUpgrades) do
+				if not owned[id] then
+					local cost = getCost(id)
+					if cost then
+						local amount = cost.amount or 0
+						local currency = cost.currency
+						local canAfford = (currency == "coins" and coins >= amount)
+							or (currency == "goop" and goop >= amount)
+							or (currency == "rollCurrency" and rollCurrency >= amount)
+						if canAfford then
+							local ok = pcall(UpgradeRemote.InvokeServer, UpgradeRemote, "requestUnlock", id)
+							if ok then task.wait(0.2) end
+						end
+					end
+				end
+			end
+		end
+	end)
+end
+
+if cfg.USE_POTIONS or cfg.USE_DICES then
+	task.spawn(function()
+		while task.wait(1) do
+			local boosts = DataClient:get("boosts") or {}
+			local items = DataClient:get("items") or {}
+
+			if cfg.USE_POTIONS then
+				for _, potion in ipairs(cfg.POTIONS_TO_USE) do
+					local data = boosts[potion]
+					if data and (data.amount or 0) > 0 then
+						pcall(BoostRemote.InvokeServer, BoostRemote, "requestUseBoost", potion)
+					end
+				end
+			end
+
+			if cfg.USE_DICES then
+				for _, dice in ipairs(cfg.DICES_TO_USE) do
+					if (items[dice] or 0) > 0 then
+						pcall(InventoryRemote.InvokeServer, InventoryRemote, "requestUseItem", dice)
+					end
+				end
+			end
+		end
+	end)
+end
+
+if cfg.AUTO_CLAIM_INDEX_REWARDS then
+	task.spawn(function()
+		local function checkRewards()
+			local data = DataService and DataClient:get("index")
+			if not data or not data.categories then return end
+			for category, rewards in pairs(IndexRewards) do
+				local catData = data.categories[category]
+				if catData then
+					local unlocked = catData.unlocked or {}
+					local count = 0
+					for _, v in pairs(unlocked) do
+						if v == true then count += 1 end
+					end
+					local claimed = catData.claimedRewards or {}
+					for _, reward in ipairs(rewards) do
+						if count >= reward.req and not claimed[reward.key] then
+							pcall(IndexRemote.InvokeServer, IndexRemote, "requestClaimReward", category)
+							task.wait(0.5)
+						end
+					end
+				end
+			end
+		end
+		while true do
+			checkRewards()
+			task.wait(60)
+		end
+	end)
+end
+
+if cfg.FAST_ROLL then
+	task.spawn(function()
+		local minLuck = parseLuck(cfg.MINIMUM_LUCK_SENT)
+		local webhooks = cfg.WEBHOOK_URL
+		local hasWebhooks = type(webhooks) == "table" and #webhooks > 0
+		local sentMessages = {}
+		local lastFingerprint = nil
+		local myPlayer = LocalPlayer
+
+		while true do
+			pcall(RollRemote.InvokeServer, RollRemote, "requestRoll")
+			task.wait()
+
+			if hasWebhooks and RollSlice then
+				local ok, results = pcall(RollSlice.rollResults)
+				if ok then
+					local fingerprint = getResultsFingerprint(results)
+					if fingerprint ~= lastFingerprint then
+						lastFingerprint = fingerprint
+						if type(results) == "table" and #results > 0 then
+							local stats = DataClient:get("stats") or {}
+							local totalRolls = stats.rolls or 0
+							local kills = stats.kills or 0
+							local coins = DataClient:get("coins") or 0
+
+							for _, result in ipairs(results) do
+								local item = getActualItem(result)
+								if not item then continue end
+
+								local id = tostring(item.id or "unknown")
+								local sok, slime = pcall(SlimeData.getSlime, id)
+								slime = sok and slime or nil
+
+								local mutations = type(item.mutations) == "table" and next(item.mutations) ~= nil and item.mutations or nil
+								local isInverted = mutations and mutations.inverted == true
+								local image = isInverted and (slime and slime.invertedIcon or "N/A") or (slime and slime.image or "N/A")
+
+								local name = slime and slime.name or id
+								local baseOdds = slime and slime.odds or nil
+								local baseDmg = slime and slime.damage or 0
+								local baseHp = slime and slime.health or 0
+								local rarity = baseOdds and getRarityName(baseOdds) or "Unknown"
+
+								local oddsMultiplier = getMutationMultiplier(mutations)
+								local statBonus = mutations and Mutations.getStatBonus(mutations, "damage") or 1
+								local finalOdds = baseOdds and (baseOdds / oddsMultiplier) or nil
+								local finalDmg = baseDmg * statBonus
+								local finalHp = baseHp * statBonus
+
+								local effectiveLuck = finalOdds and (1 / finalOdds) or 0
+								if effectiveLuck < minLuck then continue end
+
+								local chanceText = finalOdds and string.format("1 in %s", fmt(math.floor(1 / finalOdds + 0.5))) or "N/A"
+								local displayName = mutations and Mutations.getDisplayName(name, mutations) or name
+								local mutList = mutations and Mutations.getIds(mutations) or {}
+
+								local statsText = ""
+								if finalDmg > 0 and finalHp > 0 then
+									statsText = string.format("âš”ï¸ %s  â¤ï¸ %s", fmt(finalDmg), fmt(finalHp))
+								elseif finalDmg > 0 then
+									statsText = string.format("âš”ï¸ %s", fmt(finalDmg))
+								elseif finalHp > 0 then
+									statsText = string.format("â¤ï¸ %s", fmt(finalHp))
+								end
+
+								local playerName = myPlayer and myPlayer.Name or "Someone"
+								local dupKey = playerName .. "_" .. displayName .. "_" .. tostring(os.time())
+
+								if not sentMessages[dupKey] then
+									sentMessages[dupKey] = true
+									for _, url in ipairs(webhooks) do
+										task.spawn(function()
+											sendWebhook(url, playerName, displayName, rarity, chanceText, statsText, mutations, mutList, image, totalRolls, coins, kills)
+										end)
+									end
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+	end)
 end
