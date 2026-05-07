@@ -2,7 +2,7 @@ pcall(function()
     loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))()
 end)
 
-repeat task.wait() until game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("__MAINHUD__")
+repeat task.wait() until game:GetService("Players").LocalPlayer.PlayerGui:WaitForChild("__MAINHUD__")
 
 repeat task.wait() until game:IsLoaded()
 local cfg = getgenv().slime_rng_cfg or {}
