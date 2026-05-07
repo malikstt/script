@@ -36,6 +36,30 @@ local Zones = require(RS.Source.Game.Items.Zones)
 local UpgradeTree = require(RS.Source.Features.Upgrades.UpgradeTree)
 local IndexRewards = require(RS.Source.Features.Index.IndexRewards)
 
+-- Config validation
+local expectedConfigs = {
+    "OFFLINE_EARNINGS", "FAST_ROLL", "REDEEM_CODES", "CODES",
+    "EQUIP_BEST_SLIMES", "AUTO_REBIRTH", "REQUIRED_ZONE_TO_REBIRTH",
+    "UNLOCK_AFFORDABLE_ZONES", "AUTOFARM_BEST_ZONE", "AUTO_BUY_UPGRADES",
+    "USE_POTIONS", "POTIONS_TO_USE", "USE_DICES", "DICES_TO_USE",
+    "AUTO_CLAIM_INDEX_REWARDS", "OPTIMIZATION", "WEBHOOK_URL", "MINIMUM_LUCK_SENT"
+}
+
+print("[Slime RNG] Script started")
+print("[Slime RNG] Loading config...")
+
+local found = 0
+for _, key in ipairs(expectedConfigs) do
+    if cfg[key] ~= nil then
+        found = found + 1
+    else
+        warn("[Slime RNG] Missing " .. key .. " config, skipping it (runs as false / nil)")
+    end
+end
+
+print(string.format("[Slime RNG] Found %d/%d configs", found, #expectedConfigs))
+print("[Slime RNG] Starting features...")
+
 local function fmt(num)
 	if type(num) ~= "number" then return tostring(num) end
 	local abs = math.abs(num)
@@ -166,7 +190,7 @@ local function sendWebhook(webhookUrl, playerName, displayName, rarity, chanceTe
 		if assetId then finalImageUrl = getAssetImageUrl(assetId) end
 	end
 	local hiddenName = "||" .. playerName .. "||"
-	local description = string.format("**%s** rolled **%s**!\n\nðŸŽ² **Total Rolls:** %s", hiddenName, displayName, ordinal(totalRolls))
+	local description = string.format("**%s** rolled **%s**!\n\n🎲 **Total Rolls:** %s", hiddenName, displayName, ordinal(totalRolls))
 	local fields = {
 		{name = "Rarity", value = rarity, inline = true},
 		{name = "Chance", value = chanceText, inline = true},
@@ -177,8 +201,8 @@ local function sendWebhook(webhookUrl, playerName, displayName, rarity, chanceTe
 	if mutList and #mutList > 0 then
 		table.insert(fields, {name = "Mutations", value = table.concat(mutList, ", "), inline = true})
 	end
-	table.insert(fields, {name = "ðŸª™ Coins", value = fmt(coins), inline = true})
-	table.insert(fields, {name = "âš”ï¸ Kills", value = fmt(kills), inline = true})
+	table.insert(fields, {name = "🪙 Coins", value = fmt(coins), inline = true})
+	table.insert(fields, {name = "⚔️ Kills", value = fmt(kills), inline = true})
 	local payload = {
 		username = "makik",
 		embeds = {{
@@ -445,11 +469,11 @@ if cfg.FAST_ROLL then
 
 								local statsText = ""
 								if finalDmg > 0 and finalHp > 0 then
-									statsText = string.format("âš”ï¸ %s  â¤ï¸ %s", fmt(finalDmg), fmt(finalHp))
+									statsText = string.format("⚔️ %s  ❤️ %s", fmt(finalDmg), fmt(finalHp))
 								elseif finalDmg > 0 then
-									statsText = string.format("âš”ï¸ %s", fmt(finalDmg))
+									statsText = string.format("⚔️ %s", fmt(finalDmg))
 								elseif finalHp > 0 then
-									statsText = string.format("â¤ï¸ %s", fmt(finalHp))
+									statsText = string.format("❤️ %s", fmt(finalHp))
 								end
 
 								local playerName = myPlayer and myPlayer.Name or "Someone"
