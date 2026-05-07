@@ -105,24 +105,63 @@ local function parseLuck(str)
     return num
 end
 
+-- Auto-detect multiplier from Mutations module instead of hardcoding
 local function getMutationMultiplier(mutations)
-    if not mutations then return 1 end
-    local huge = mutations.huge == true
-    local shiny = mutations.shiny == true
-    local inverted = mutations.inverted == true
-    local big = mutations.big == true
-    if huge and shiny and inverted then return 625000000
-    elseif big and shiny and inverted then return 62500000
-    elseif huge and inverted then return 2500000
-    elseif shiny and inverted then return 625000
-    elseif huge and shiny then return 250000
-    elseif big and inverted then return 250000
-    elseif shiny and big then return 25000
-    elseif inverted then return 2500
-    elseif huge then return 1000
-    elseif shiny then return 250
-    elseif big then return 100
+    if not mutations or not Mutations then return 1 end
+
+    -- Try getLuckMultiplier first (most direct)
+    if Mutations.getLuckMultiplier then
+        local ok, result = pcall(Mutations.getLuckMultiplier, mutations)
+        if ok and type(result) == "number" and result >= 1 then
+            print("[Slime RNG] getMutationMultiplier via getLuckMultiplier: " .. tostring(result))
+            return result
+        end
     end
+
+    -- Try getOddsMultiplier
+    if Mutations.getOddsMultiplier then
+        local ok, result = pcall(Mutations.getOddsMultiplier, mutations)
+        if ok and type(result) == "number" and result >= 1 then
+            print("[Slime RNG] getMutationMultiplier via getOddsMultiplier: " .. tostring(result))
+            return result
+        end
+    end
+
+    -- Try getMultiplier
+    if Mutations.getMultiplier then
+        local ok, result = pcall(Mutations.getMultiplier, mutations)
+        if ok and type(result) == "number" and result >= 1 then
+            print("[Slime RNG] getMutationMultiplier via getMultiplier: " .. tostring(result))
+            return result
+        end
+    end
+
+    -- Try getRarityMultiplier
+    if Mutations.getRarityMultiplier then
+        local ok, result = pcall(Mutations.getRarityMultiplier, mutations)
+        if ok and type(result) == "number" and result >= 1 then
+            print("[Slime RNG] getMutationMultiplier via getRarityMultiplier: " .. tostring(result))
+            return result
+        end
+    end
+
+    -- Last resort: scan the Mutations module table for any function that returns a number >= 1 for mutations
+    for key, val in pairs(Mutations) do
+        if type(val) == "function" and key:lower():find("mult") or key:lower():find("luck") or key:lower():find("odds") then
+            local ok, result = pcall(val, mutations)
+            if ok and type(result) == "number" and result >= 1 then
+                print("[Slime RNG] getMutationMultiplier via auto-detected Mutations." .. tostring(key) .. ": " .. tostring(result))
+                return result
+            end
+        end
+    end
+
+    -- Debug: print all available Mutations functions so we can find the right one
+    print("[Slime RNG] Could not auto-detect multiplier. Available Mutations keys:")
+    for key, val in pairs(Mutations) do
+        print("  Mutations." .. tostring(key) .. " = " .. type(val))
+    end
+
     return 1
 end
 
@@ -422,11 +461,19 @@ if cfg.AUTO_CLAIM_INDEX_REWARDS then
     end)
 end
 
--- WEBHOOK MONITORING (fixed)
+-- WEBHOOK MONITORING
 if not RollSlice then
     warn("[Slime RNG] RollSlice not available - webhook monitoring disabled")
 else
     print(string.format("[Slime RNG] RollSlice loaded OK: %s", tostring(RollSlice)))
+
+    -- Debug: print all Mutations module keys once at startup so we know what's available
+    if Mutations then
+        print("[Slime RNG] Mutations module keys:")
+        for k, v in pairs(Mutations) do
+            print("  Mutations." .. tostring(k) .. " = " .. type(v))
+        end
+    end
 
     local webhooks = cfg.WEBHOOK_URL
     local hasWebhooks = type(webhooks) == "table" and #webhooks > 0
@@ -442,7 +489,6 @@ else
 
         task.spawn(function()
             while true do
-                -- FIX: single pcall calling rollResults directly, matching the working script
                 local ok, results = pcall(RollSlice.rollResults)
 
                 if not ok then
@@ -450,8 +496,6 @@ else
                     task.wait(1)
                     continue
                 end
-
-                print(string.format("[Slime RNG] rollResults() type=%s len=%s", type(results), type(results) == "table" and tostring(#results) or "N/A"))
 
                 local fingerprint = getResultsFingerprint(results)
 
@@ -496,7 +540,12 @@ else
                             local finalHp = baseHp * statBonus
 
                             local effectiveLuck = finalOdds and (1 / finalOdds) or 0
-                            print(string.format("[Slime RNG] Roll detected: %s | luck=1in%s | minLuck=%s", name, effectiveLuck > 0 and fmt(math.floor(effectiveLuck)) or "N/A", tostring(minLuck)))
+                            print(string.format("[Slime RNG] Roll detected: %s | luck=1in%s | minLuck=%s | multiplier=%s",
+                                name,
+                                effectiveLuck > 0 and fmt(math.floor(effectiveLuck)) or "N/A",
+                                tostring(minLuck),
+                                tostring(oddsMultiplier)
+                            ))
 
                             if effectiveLuck < minLuck then
                                 print("[Slime RNG] Below minLuck threshold, skipping webhook")
