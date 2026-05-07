@@ -1,3 +1,8 @@
+task.spawn(function()
+    for _, x in pairs(getconnections(game.Players.LocalPlayer.Idled)) do
+        x:Disable()
+    end
+end)
 pcall(function()
     loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))()
 end)
