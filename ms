@@ -290,18 +290,18 @@ if cfg.UNLOCK_AFFORDABLE_ZONES or cfg.AUTOFARM_BEST_ZONE then
             local furthestZone = math.clamp(DataClient:get("furthestZone") or 1, 1, MAX_ZONE)
             local currentZone = math.clamp(DataClient:get("zone") or 1, 1, MAX_ZONE)
             local coins = DataClient:get("coins") or 0
+            
+            -- AUTO UNLOCK: Just fire every 30 seconds until max zone
             if cfg.UNLOCK_AFFORDABLE_ZONES and furthestZone < MAX_ZONE then
-                local nextZoneIndex = furthestZone + 1
-                local nextZone = Zones.getZone(nextZoneIndex)
-                local nextZoneCost = nextZone and nextZone.price or 0
-                if nextZone and coins >= nextZoneCost then
-                    pcall(ZonesRemote.InvokeServer, ZonesRemote, "requestPurchaseZone")
-                end
+                pcall(ZonesRemote.InvokeServer, ZonesRemote, "requestPurchaseZone")
             end
+            
+            -- AUTO TELEPORT: Teleport to best zone
             if cfg.AUTOFARM_BEST_ZONE and currentZone ~= furthestZone then
                 pcall(ZonesRemote.InvokeServer, ZonesRemote, "requestTeleportZone", furthestZone)
             end
-            task.wait(60)
+            
+            task.wait(30) -- Changed from 60 to 30 seconds
         end
     end)
 end
