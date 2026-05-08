@@ -23,7 +23,7 @@ local Networker = Index:WaitForChild("leifstout_networker@0.3.1"):WaitForChild("
 local Remotes = Networker:WaitForChild("_remotes")
 
 local DataClient = require(Packages.DataService).client
-DataClient:waitForData()
+-- FIXED: Removed DataClient:waitForData() - it was freezing the script!
 
 local RollRemote = Remotes:WaitForChild("RollService"):WaitForChild("RemoteFunction")
 local CodeRemote = Remotes:WaitForChild("CodeService"):WaitForChild("RemoteFunction")
@@ -75,6 +75,12 @@ end
 
 print(string.format("[Slime RNG] Found %d/%d configs", found, #expectedConfigs))
 print("[Slime RNG] Starting features...")
+
+-- FIXED: Emojis as actual characters instead of byte sequences
+local EMOJI_DICE = "🎲"
+local EMOJI_COIN = "🪙"
+local EMOJI_SWORD = "⚔️"
+local EMOJI_HEART = "❤️"
 
 local function formatNumber(num)
     if type(num) ~= "number" then return tostring(num) end
@@ -191,6 +197,7 @@ local function getEmbedColor(mutations)
     return nil
 end
 
+-- FIXED: Using actual emoji characters
 local function sendWebhook(url, playerName, displayName, rarity, chanceText, statsText, mutations, mutList, imageUrl, totalRolls, coins, kills)
     local finalImageUrl = nil
     local thumbnailSize = getThumbnailSize(mutations)
@@ -201,7 +208,7 @@ local function sendWebhook(url, playerName, displayName, rarity, chanceText, sta
         end
     end
     local hiddenName = "||" .. playerName .. "||"
-    local description = string.format("**%s** rolled **%s**!\n\n\xF0\x9F\x8E\xB2 **Total Rolls:** %s", hiddenName, displayName, ordinal(totalRolls))
+    local description = string.format("**%s** rolled **%s**!\n\n%s **Total Rolls:** %s", hiddenName, displayName, EMOJI_DICE, ordinal(totalRolls))
     local fields = {
         {name = "Rarity", value = rarity, inline = true},
         {name = "Chance", value = chanceText, inline = true}
@@ -220,8 +227,8 @@ local function sendWebhook(url, playerName, displayName, rarity, chanceText, sta
             table.insert(fields, {name = "Mutations", value = table.concat(hiddenMuts, ", "), inline = true})
         end
     end
-    table.insert(fields, {name = "\xF0\x9F\xAA\x99 Coins", value = formatNumber(coins), inline = true})
-    table.insert(fields, {name = "\xE2\x9A\x94\xEF\xB8\x8F Kills", value = formatNumber(kills), inline = true})
+    table.insert(fields, {name = EMOJI_COIN .. " Coins", value = formatNumber(coins), inline = true})
+    table.insert(fields, {name = EMOJI_SWORD .. " Kills", value = formatNumber(kills), inline = true})
     local payload = {
         username = "makik",
         embeds = {{
@@ -496,6 +503,7 @@ elseif type(cfg.WEBHOOK_URL) == "string" and cfg.WEBHOOK_URL ~= "" then
     webhookUrl = cfg.WEBHOOK_URL
 end
 
+-- FIXED: Using actual emoji characters in stats text
 if webhookUrl and RollSlice then
     task.spawn(function()
         print("[Slime RNG] Watching for roll results...")
@@ -539,13 +547,14 @@ if webhookUrl and RollSlice then
                         local displayName = mutations and Mutations.getDisplayName(name, mutations) or name
                         local mutList = mutations and Mutations.getIds(mutations) or {}
                         if minLuck > 0 and chanceNumber and chanceNumber < minLuck then continue end
+                        -- FIXED: Using actual emoji characters
                         local statsText = ""
                         if finalDmg > 0 and finalHp > 0 then
-                            statsText = string.format("\xE2\x9A\x94\xEF\xB8\x8F %s  \xE2\x9D\xA4\xEF\xB8\x8F %s", formatNumber(finalDmg), formatNumber(finalHp))
+                            statsText = string.format("%s %s  %s %s", EMOJI_SWORD, formatNumber(finalDmg), EMOJI_HEART, formatNumber(finalHp))
                         elseif finalDmg > 0 then
-                            statsText = string.format("\xE2\x9A\x94\xEF\xB8\x8F %s", formatNumber(finalDmg))
+                            statsText = string.format("%s %s", EMOJI_SWORD, formatNumber(finalDmg))
                         elseif finalHp > 0 then
-                            statsText = string.format("\xE2\x9D\xA4\xEF\xB8\x8F %s", formatNumber(finalHp))
+                            statsText = string.format("%s %s", EMOJI_HEART, formatNumber(finalHp))
                         end
                         local playerName = myPlayer and myPlayer.Name or "Someone"
                         local duplicateKey = playerName .. "_" .. displayName .. "_" .. tostring(os.time())
