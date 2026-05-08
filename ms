@@ -500,24 +500,25 @@ if webhookUrl and RollSlice then
         print("[Slime RNG] Watching for roll results...")
         local myPlayer = LocalPlayer
         local minLuck = parseLuck(cfg.MINIMUM_LUCK_SENT or "0")
-        local lastTotalRolls = 0
-        
+        local lastTotalRolls = 0  -- Track roll count instead of fingerprint
+
         while true do
             task.wait(0.1)
             local ok, results = pcall(RollSlice.rollResults)
             if not ok then continue end
+
+            -- Get current total rolls
+            local stats = DataClient:get("stats") or {}
+            local totalRolls = stats.rolls or 0
             
-            if type(results) == "table" and #results > 0 then
-                local stats = DataClient:get("stats") or {}
-                local totalRolls = stats.rolls or 0
+            -- Only process if total rolls increased (new roll happened)
+            if totalRolls > lastTotalRolls then
+                lastTotalRolls = totalRolls
                 
-                -- Only process if totalRolls increased
-                if totalRolls > lastTotalRolls then
-                    lastTotalRolls = totalRolls
-                    
+                if type(results) == "table" and #results > 0 then
                     local kills = stats.kills or 0
                     local coins = DataClient:get("coins") or 0
-                    
+
                     for i, result in ipairs(results) do
                         local item = getActualItem(result)
                         if not item then continue end
@@ -541,7 +542,11 @@ if webhookUrl and RollSlice then
                         local chanceNumber = finalOdds and (1 / finalOdds) or nil
                         local displayName = mutations and Mutations.getDisplayName(name, mutations) or name
                         local mutList = mutations and Mutations.getIds(mutations) or {}
-                        if minLuck > 0 and chanceNumber and chanceNumber < minLuck then continue end
+                        
+                        if minLuck > 0 and chanceNumber and chanceNumber < minLuck then 
+                            continue 
+                        end
+                        
                         local statsText = ""
                         if finalDmg > 0 and finalHp > 0 then
                             statsText = string.format("%s %s  %s %s", EMOJI_SWORD, formatNumber(finalDmg), EMOJI_HEART, formatNumber(finalHp))
@@ -550,6 +555,7 @@ if webhookUrl and RollSlice then
                         elseif finalHp > 0 then
                             statsText = string.format("%s %s", EMOJI_HEART, formatNumber(finalHp))
                         end
+                        
                         local playerName = myPlayer and myPlayer.Name or "Someone"
                         
                         print(string.format("%s roll : %s (%s)", ordinal(totalRolls), displayName, id))
