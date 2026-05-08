@@ -1,4 +1,3 @@
---re's my code 
 task.spawn(function()
     for _, x in pairs(getconnections(game.Players.LocalPlayer.Idled)) do
         x:Disable()
