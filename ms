@@ -498,57 +498,60 @@ end
 if webhookUrl and RollSlice then
     task.spawn(function()
         print("[Slime RNG] Watching for roll results...")
-        local sentMessages = {}
         local myPlayer = LocalPlayer
         local minLuck = parseLuck(cfg.MINIMUM_LUCK_SENT or "0")
+        local lastTotalRolls = 0
+        
         while true do
             task.wait(0.1)
             local ok, results = pcall(RollSlice.rollResults)
             if not ok then continue end
             
-            -- FIXED: Removed fingerprint check - now processes every roll
             if type(results) == "table" and #results > 0 then
                 local stats = DataClient:get("stats") or {}
                 local totalRolls = stats.rolls or 0
-                local kills = stats.kills or 0
-                local coins = DataClient:get("coins") or 0
-                for i, result in ipairs(results) do
-                    local item = getActualItem(result)
-                    if not item then continue end
-                    local id = tostring(item.id or "unknown")
-                    local sok, slime = pcall(SlimeData.getSlime, id)
-                    slime = sok and slime or nil
-                    local mutations = type(item.mutations) == "table" and next(item.mutations) ~= nil and item.mutations or nil
-                    local isInverted = mutations and mutations.inverted == true
-                    local image = isInverted and (slime and slime.invertedIcon or "N/A") or (slime and slime.image or "N/A")
-                    local name = slime and slime.name or id
-                    local baseOdds = slime and slime.odds or nil
-                    local baseDmg = slime and slime.damage or 0
-                    local baseHp = slime and slime.health or 0
-                    local rarity = baseOdds and getRarityName(baseOdds) or "Unknown"
-                    local oddsMultiplier = mutations and Mutations.getVisualOddsMultiplier(mutations) or 1
-                    local statBonus = mutations and Mutations.getStatBonus(mutations, "damage") or 1
-                    local finalOdds = baseOdds and (baseOdds / oddsMultiplier) or nil
-                    local finalDmg = baseDmg * statBonus
-                    local finalHp = baseHp * statBonus
-                    local chanceText = finalOdds and string.format("1 in %s", formatNumber(math.floor(1 / finalOdds + 0.5))) or "N/A"
-                    local chanceNumber = finalOdds and (1 / finalOdds) or nil
-                    local displayName = mutations and Mutations.getDisplayName(name, mutations) or name
-                    local mutList = mutations and Mutations.getIds(mutations) or {}
-                    if minLuck > 0 and chanceNumber and chanceNumber < minLuck then continue end
-                    local statsText = ""
-                    if finalDmg > 0 and finalHp > 0 then
-                        statsText = string.format("%s %s  %s %s", EMOJI_SWORD, formatNumber(finalDmg), EMOJI_HEART, formatNumber(finalHp))
-                    elseif finalDmg > 0 then
-                        statsText = string.format("%s %s", EMOJI_SWORD, formatNumber(finalDmg))
-                    elseif finalHp > 0 then
-                        statsText = string.format("%s %s", EMOJI_HEART, formatNumber(finalHp))
-                    end
-                    local playerName = myPlayer and myPlayer.Name or "Someone"
-                    -- FIXED: Using totalRolls instead of os.time() for duplicate key
-                    local duplicateKey = playerName .. "_" .. displayName .. "_" .. totalRolls
-                    if not sentMessages[duplicateKey] then
-                        sentMessages[duplicateKey] = os.time()
+                
+                -- Only process if totalRolls increased
+                if totalRolls > lastTotalRolls then
+                    lastTotalRolls = totalRolls
+                    
+                    local kills = stats.kills or 0
+                    local coins = DataClient:get("coins") or 0
+                    
+                    for i, result in ipairs(results) do
+                        local item = getActualItem(result)
+                        if not item then continue end
+                        local id = tostring(item.id or "unknown")
+                        local sok, slime = pcall(SlimeData.getSlime, id)
+                        slime = sok and slime or nil
+                        local mutations = type(item.mutations) == "table" and next(item.mutations) ~= nil and item.mutations or nil
+                        local isInverted = mutations and mutations.inverted == true
+                        local image = isInverted and (slime and slime.invertedIcon or "N/A") or (slime and slime.image or "N/A")
+                        local name = slime and slime.name or id
+                        local baseOdds = slime and slime.odds or nil
+                        local baseDmg = slime and slime.damage or 0
+                        local baseHp = slime and slime.health or 0
+                        local rarity = baseOdds and getRarityName(baseOdds) or "Unknown"
+                        local oddsMultiplier = mutations and Mutations.getVisualOddsMultiplier(mutations) or 1
+                        local statBonus = mutations and Mutations.getStatBonus(mutations, "damage") or 1
+                        local finalOdds = baseOdds and (baseOdds / oddsMultiplier) or nil
+                        local finalDmg = baseDmg * statBonus
+                        local finalHp = baseHp * statBonus
+                        local chanceText = finalOdds and string.format("1 in %s", formatNumber(math.floor(1 / finalOdds + 0.5))) or "N/A"
+                        local chanceNumber = finalOdds and (1 / finalOdds) or nil
+                        local displayName = mutations and Mutations.getDisplayName(name, mutations) or name
+                        local mutList = mutations and Mutations.getIds(mutations) or {}
+                        if minLuck > 0 and chanceNumber and chanceNumber < minLuck then continue end
+                        local statsText = ""
+                        if finalDmg > 0 and finalHp > 0 then
+                            statsText = string.format("%s %s  %s %s", EMOJI_SWORD, formatNumber(finalDmg), EMOJI_HEART, formatNumber(finalHp))
+                        elseif finalDmg > 0 then
+                            statsText = string.format("%s %s", EMOJI_SWORD, formatNumber(finalDmg))
+                        elseif finalHp > 0 then
+                            statsText = string.format("%s %s", EMOJI_HEART, formatNumber(finalHp))
+                        end
+                        local playerName = myPlayer and myPlayer.Name or "Someone"
+                        
                         print(string.format("%s roll : %s (%s)", ordinal(totalRolls), displayName, id))
                         print(string.format("  Rarity    : %s", rarity))
                         print(string.format("  Chance    : %s", chanceText))
@@ -556,6 +559,7 @@ if webhookUrl and RollSlice then
                         if finalDmg > 0 then print(string.format("  Damage    : %s", formatNumber(finalDmg))) end
                         if finalHp > 0 then print(string.format("  Health    : %s", formatNumber(finalHp))) end
                         if #mutList > 0 then print(string.format("  Mutations : %s", table.concat(mutList, ", "))) end
+                        
                         task.spawn(function()
                             sendWebhook(webhookUrl, playerName, displayName, rarity, chanceText, statsText, mutations, mutList, image, totalRolls, coins, kills)
                         end)
