@@ -132,16 +132,6 @@ local function getRarityName(odds)
     return (ok and tier and tier.name) or "Unknown"
 end
 
-local function getActualItem(result)
-    if type(result) ~= "table" then return nil end
-    for _, entry in ipairs(result) do
-        if type(entry) == "table" and entry.id then
-            return entry
-        end
-    end
-    return nil
-end
-
 local function ordinal(n)
     local s = tostring(n)
     local last = n % 10
@@ -166,80 +156,6 @@ local function getAssetImageUrl(assetId)
         end
     end
     return nil
-end
-
-local function getThumbnailSize(mutations)
-    if not mutations then return 64 end
-    if mutations.huge then return 128
-    elseif mutations.big then return 96 end
-    return 64
-end
-
-local function getEmbedColor(mutations)
-    if not mutations then return nil end
-    if mutations.inverted then return 0x9b59b6
-    elseif mutations.huge then return 0xf1c40f
-    elseif mutations.big then return 0xe67e22
-    elseif mutations.shiny then return 0xf39c12 end
-    return nil
-end
-
-local function sendWebhook(url, playerName, displayName, rarity, chanceText, statsText, mutations, mutList, imageUrl, totalRolls, coins, kills)
-    local finalImageUrl = nil
-    local thumbnailSize = getThumbnailSize(mutations)
-
-    if imageUrl and imageUrl ~= "N/A" then
-        local assetId = string.match(imageUrl, "rbxassetid://(%d+)")
-        if assetId then
-            finalImageUrl = getAssetImageUrl(assetId)
-        end
-    end
-
-    local hiddenName = "||" .. playerName .. "||"
-    local description = string.format("**%s** rolled **%s**!\n\n%s **Total Rolls:** %s", hiddenName, displayName, EMOJI_DICE, ordinal(totalRolls))
-
-    local fields = {
-        {name = "Rarity", value = rarity, inline = true},
-        {name = "Chance", value = chanceText, inline = true}
-    }
-
-    if statsText and statsText ~= "" then
-        table.insert(fields, {name = "Stats", value = statsText, inline = true})
-    end
-
-    local mutationInName = false
-    local upperName = string.upper(displayName)
-    if string.find(upperName, "BIG") or string.find(upperName, "HUGE") or string.find(upperName, "SHINY") or string.find(upperName, "INVERTED") then
-        mutationInName = true
-    end
-
-    if mutList and #mutList > 0 and not mutationInName then
-        table.insert(fields, {name = "Mutations", value = table.concat(mutList, ", "), inline = true})
-    end
-
-    table.insert(fields, {name = EMOJI_COIN .. " Coins", value = formatNumber(coins), inline = true})
-    table.insert(fields, {name = EMOJI_SWORD .. " Kills", value = formatNumber(kills), inline = true})
-
-    local payload = {
-        username = "makik",
-        embeds = {{
-            title = "New Slime Rolled!",
-            description = description,
-            thumbnail = finalImageUrl and {url = finalImageUrl, width = thumbnailSize, height = thumbnailSize} or nil,
-            fields = fields,
-            color = getEmbedColor(mutations)
-        }}
-    }
-
-    pcall(function()
-        request({
-            Url = url,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = HttpService:JSONEncode(payload)
-        })
-        print("[WEBHOOK] Sent: " .. displayName)
-    end)
 end
 
 if cfg.OPTIMIZATION then
@@ -495,87 +411,91 @@ elseif type(cfg.WEBHOOK_URL) == "string" and cfg.WEBHOOK_URL ~= "" then
     webhookUrl = cfg.WEBHOOK_URL
 end
 
-if webhookUrl and RollSlice then
+if webhookUrl then
     task.spawn(function()
-        print("[Slime RNG] Watching for roll results...")
+        print("[Slime RNG] Watching for global roll messages...")
+        
+        local TextChatService = game:GetService("TextChatService")
+        local chatChannels = TextChatService.ChatChannels
         local myPlayer = LocalPlayer
-        local minLuck = parseLuck(cfg.MINIMUM_LUCK_SENT or "0")
-        local lastTotalRolls = 0  -- Track roll count instead of fingerprint
-
-        while true do
-            task.wait(0.1)
-            local ok, results = pcall(RollSlice.rollResults)
-            if not ok then continue end
-
-            -- Get current total rolls
-            local stats = DataClient:get("stats") or {}
-            local totalRolls = stats.rolls or 0
+        
+        local function parseRollMessage(message)
+            local pattern = "(.+) rolled a (.+) %((.-)%) at (.+) rolls!"
+            local playerName, slimeName, chanceText, rolls = string.match(message, pattern)
             
-            -- Only process if total rolls increased (new roll happened)
-            if totalRolls > lastTotalRolls then
-                lastTotalRolls = totalRolls
+            if playerName and slimeName and chanceText and rolls then
+                playerName = playerName:gsub("%[VIP%] ", "")
                 
-                if type(results) == "table" and #results > 0 then
-                    local kills = stats.kills or 0
+                if playerName == myPlayer.Name then
+                    rolls = rolls:gsub(",", "")
+                    
+                    local kills = DataClient:get("kills") or 0
                     local coins = DataClient:get("coins") or 0
-
-                    for i, result in ipairs(results) do
-                        local item = getActualItem(result)
-                        if not item then continue end
-                        local id = tostring(item.id or "unknown")
-                        local sok, slime = pcall(SlimeData.getSlime, id)
-                        slime = sok and slime or nil
-                        local mutations = type(item.mutations) == "table" and next(item.mutations) ~= nil and item.mutations or nil
-                        local isInverted = mutations and mutations.inverted == true
-                        local image = isInverted and (slime and slime.invertedIcon or "N/A") or (slime and slime.image or "N/A")
-                        local name = slime and slime.name or id
-                        local baseOdds = slime and slime.odds or nil
-                        local baseDmg = slime and slime.damage or 0
-                        local baseHp = slime and slime.health or 0
-                        local rarity = baseOdds and getRarityName(baseOdds) or "Unknown"
-                        local oddsMultiplier = mutations and Mutations.getVisualOddsMultiplier(mutations) or 1
-                        local statBonus = mutations and Mutations.getStatBonus(mutations, "damage") or 1
-                        local finalOdds = baseOdds and (baseOdds / oddsMultiplier) or nil
-                        local finalDmg = baseDmg * statBonus
-                        local finalHp = baseHp * statBonus
-                        local chanceText = finalOdds and string.format("1 in %s", formatNumber(math.floor(1 / finalOdds + 0.5))) or "N/A"
-                        local chanceNumber = finalOdds and (1 / finalOdds) or nil
-                        local displayName = mutations and Mutations.getDisplayName(name, mutations) or name
-                        local mutList = mutations and Mutations.getIds(mutations) or {}
-                        
-                        if minLuck > 0 and chanceNumber and chanceNumber < minLuck then 
-                            continue 
-                        end
-                        
-                        local statsText = ""
-                        if finalDmg > 0 and finalHp > 0 then
-                            statsText = string.format("%s %s  %s %s", EMOJI_SWORD, formatNumber(finalDmg), EMOJI_HEART, formatNumber(finalHp))
-                        elseif finalDmg > 0 then
-                            statsText = string.format("%s %s", EMOJI_SWORD, formatNumber(finalDmg))
-                        elseif finalHp > 0 then
-                            statsText = string.format("%s %s", EMOJI_HEART, formatNumber(finalHp))
-                        end
-                        
-                        local playerName = myPlayer and myPlayer.Name or "Someone"
-                        
-                        print(string.format("%s roll : %s (%s)", ordinal(totalRolls), displayName, id))
-                        print(string.format("  Rarity    : %s", rarity))
-                        print(string.format("  Chance    : %s", chanceText))
-                        print(string.format("  Image     : %s", image))
-                        if finalDmg > 0 then print(string.format("  Damage    : %s", formatNumber(finalDmg))) end
-                        if finalHp > 0 then print(string.format("  Health    : %s", formatNumber(finalHp))) end
-                        if #mutList > 0 then print(string.format("  Mutations : %s", table.concat(mutList, ", "))) end
-                        
-                        task.spawn(function()
-                            sendWebhook(webhookUrl, playerName, displayName, rarity, chanceText, statsText, mutations, mutList, image, totalRolls, coins, kills)
-                        end)
+                    local totalRolls = DataClient:get("stats") and DataClient:get("stats").rolls or tonumber(rolls) or 0
+                    
+                    local hiddenName = "||" .. playerName .. "||"
+                    local description = string.format("**%s** rolled **%s**!\n\n%s **Total Rolls:** %s", hiddenName, slimeName, EMOJI_DICE, ordinal(tonumber(rolls) or totalRolls))
+                    
+                    local fields = {
+                        {name = "Rarity", value = chanceText, inline = true},
+                        {name = EMOJI_COIN .. " Coins", value = formatNumber(coins), inline = true},
+                        {name = EMOJI_SWORD .. " Kills", value = formatNumber(kills), inline = true}
+                    }
+                    
+                    local embedColor = nil
+                    if string.find(slimeName, "BIG") then
+                        embedColor = 0xe67e22
+                    elseif string.find(slimeName, "HUGE") then
+                        embedColor = 0xf1c40f
+                    elseif string.find(slimeName, "SHINY") then
+                        embedColor = 0xf39c12
+                    elseif string.find(slimeName, "INVERTED") then
+                        embedColor = 0x9b59b6
                     end
+                    
+                    local payload = {
+                        username = "makik",
+                        embeds = {{
+                            title = "New Slime Rolled!",
+                            description = description,
+                            fields = fields,
+                            color = embedColor
+                        }}
+                    }
+                    
+                    pcall(function()
+                        request({
+                            Url = webhookUrl,
+                            Method = "POST",
+                            Headers = {["Content-Type"] = "application/json"},
+                            Body = HttpService:JSONEncode(payload)
+                        })
+                        print("[WEBHOOK] Sent: " .. slimeName .. " by " .. playerName)
+                    end)
                 end
             end
         end
+        
+        local function onMessage(message)
+            if message.Text then
+                parseRollMessage(message.Text)
+            end
+        end
+        
+        for _, channel in pairs(chatChannels:GetChildren()) do
+            if channel.Name == "RBXGeneral" or channel.Name == "General" then
+                channel.MessageReceived:Connect(onMessage)
+                print("[Slime RNG] Listening to channel: " .. channel.Name)
+            end
+        end
+        
+        chatChannels.ChildAdded:Connect(function(channel)
+            if channel.Name == "RBXGeneral" or channel.Name == "General" then
+                channel.MessageReceived:Connect(onMessage)
+                print("[Slime RNG] Listening to channel: " .. channel.Name)
+            end
+        end)
     end)
-elseif webhookUrl then
-    warn("[Slime RNG] Cannot start - RollSlice not available")
 else
     print("[Slime RNG] No webhook URL configured, skipping webhook monitoring")
 end
