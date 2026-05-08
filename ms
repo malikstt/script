@@ -58,7 +58,7 @@ local expectedConfigs = {
     "EQUIP_BEST_SLIMES", "AUTO_REBIRTH", "REQUIRED_ZONE_TO_REBIRTH",
     "UNLOCK_AFFORDABLE_ZONES", "AUTOFARM_BEST_ZONE", "AUTO_BUY_UPGRADES",
     "USE_POTIONS", "POTIONS_TO_USE", "USE_DICES", "DICES_TO_USE",
-    "AUTO_CLAIM_INDEX_REWARDS", "OPTIMIZATION", "WEBHOOK_URL", "MINIMUM_LUCK_SENT"
+    "AUTO_CLAIM_INDEX_REWARDS", "AUTO_COLLECT_LOOT", "OPTIMIZATION", "WEBHOOK_URL", "MINIMUM_LUCK_SENT"
 }
 
 print("[Slime RNG] Script started")
@@ -201,7 +201,7 @@ local function sendWebhook(url, playerName, displayName, rarity, chanceText, sta
         end
     end
     local hiddenName = "||" .. playerName .. "||"
-    local description = string.format("**%s** rolled **%s**!\n\n🎲 **Total Rolls:** %s", hiddenName, displayName, ordinal(totalRolls))
+    local description = string.format("**%s** rolled **%s**!\n\nðŸŽ² **Total Rolls:** %s", hiddenName, displayName, ordinal(totalRolls))
     local fields = {
         {name = "Rarity", value = rarity, inline = true},
         {name = "Chance", value = chanceText, inline = true}
@@ -209,11 +209,20 @@ local function sendWebhook(url, playerName, displayName, rarity, chanceText, sta
     if statsText and statsText ~= "" then
         table.insert(fields, {name = "Stats", value = statsText, inline = true})
     end
+    -- PATCH 1: Only show mutations that are NOT already visible in the displayName
     if mutList and #mutList > 0 then
-        table.insert(fields, {name = "Mutations", value = table.concat(mutList, ", "), inline = true})
+        local hiddenMuts = {}
+        for _, mut in ipairs(mutList) do
+            if not displayName:lower():find(mut:lower()) then
+                table.insert(hiddenMuts, mut)
+            end
+        end
+        if #hiddenMuts > 0 then
+            table.insert(fields, {name = "Mutations", value = table.concat(hiddenMuts, ", "), inline = true})
+        end
     end
-    table.insert(fields, {name = "🪙 Coins", value = formatNumber(coins), inline = true})
-    table.insert(fields, {name = "⚔️ Kills", value = formatNumber(kills), inline = true})
+    table.insert(fields, {name = "ðŸª™ Coins", value = formatNumber(coins), inline = true})
+    table.insert(fields, {name = "âš”ï¸ Kills", value = formatNumber(kills), inline = true})
     local payload = {
         username = "makik",
         embeds = {{
@@ -283,25 +292,44 @@ if cfg.AUTO_REBIRTH then
     end)
 end
 
-if cfg.UNLOCK_AFFORDABLE_ZONES or cfg.AUTOFARM_BEST_ZONE then
+-- PATCH 2: Replaced old zone unlock + teleport system
+local currentZone = DataClient:get("zone") or 1
+
+if cfg.UNLOCK_AFFORDABLE_ZONES then
+    task.spawn(function()
+        while true do
+            pcall(ZonesRemote.InvokeServer, ZonesRemote, "requestPurchaseZone")
+            task.wait(5)
+        end
+    end)
+end
+
+if cfg.AUTOFARM_BEST_ZONE then
     task.spawn(function()
         local MAX_ZONE = 25
         while true do
-            local furthestZone = math.clamp(DataClient:get("furthestZone") or 1, 1, MAX_ZONE)
-            local currentZone = math.clamp(DataClient:get("zone") or 1, 1, MAX_ZONE)
-            local coins = DataClient:get("coins") or 0
-            
-            -- AUTO UNLOCK: Just fire every 30 seconds until max zone
-            if cfg.UNLOCK_AFFORDABLE_ZONES and furthestZone < MAX_ZONE then
-                pcall(ZonesRemote.InvokeServer, ZonesRemote, "requestPurchaseZone")
+            for zone = MAX_ZONE, 1, -1 do
+                local success = pcall(
+                    ZonesRemote.InvokeServer,
+                    ZonesRemote,
+                    "requestTeleportZone",
+                    zone
+                )
+
+                if success then
+                    task.wait(1)
+
+                    local newZone = DataClient:get("zone") or 1
+
+                    if newZone == zone then
+                        print("Successfully teleported to zone", zone)
+                        currentZone = zone
+                        break
+                    end
+                end
             end
-            
-            -- AUTO TELEPORT: Teleport to best zone
-            if cfg.AUTOFARM_BEST_ZONE and currentZone ~= furthestZone then
-                pcall(ZonesRemote.InvokeServer, ZonesRemote, "requestTeleportZone", furthestZone)
-            end
-            
-            task.wait(30) -- Changed from 60 to 30 seconds
+
+            task.wait(10)
         end
     end)
 end
@@ -414,6 +442,55 @@ if cfg.AUTO_CLAIM_INDEX_REWARDS then
     end)
 end
 
+-- PATCH 3: Loot auto collector
+if cfg.AUTO_COLLECT_LOOT then
+    task.spawn(function()
+        print("Loot auto-collector started")
+
+        local LootRemote = RS:WaitForChild("Packages")
+            :WaitForChild("_Index")
+            :WaitForChild("leifstout_networker@0.3.1")
+            :WaitForChild("networker")
+            :WaitForChild("_remotes")
+            :WaitForChild("LootService")
+            :WaitForChild("RemoteFunction")
+
+        while true do
+            task.wait(30)
+
+            local LootFolder = workspace:FindFirstChild("Loot")
+
+            if not LootFolder then
+                print("No Loot folder found")
+                continue
+            end
+
+            local lootItems = LootFolder:GetChildren()
+
+            print("Loot found:", #lootItems)
+
+            if #lootItems == 0 then
+                print("No loot to collect")
+                continue
+            end
+
+            for _, loot in ipairs(lootItems) do
+                print("Collecting:", loot.Name)
+
+                local success, result = pcall(function()
+                    return LootRemote:InvokeServer("requestCollect", loot.Name)
+                end)
+
+                if not success then
+                    warn("Failed to collect:", loot.Name, result)
+                else
+                    print("Collected:", loot.Name, result)
+                end
+            end
+        end
+    end)
+end
+
 local webhookUrl = nil
 if type(cfg.WEBHOOK_URL) == "table" then
     for _, v in ipairs(cfg.WEBHOOK_URL) do
@@ -471,11 +548,11 @@ if webhookUrl and RollSlice then
                         if minLuck > 0 and chanceNumber and chanceNumber < minLuck then continue end
                         local statsText = ""
                         if finalDmg > 0 and finalHp > 0 then
-                            statsText = string.format("⚔️ %s  ❤️ %s", formatNumber(finalDmg), formatNumber(finalHp))
+                            statsText = string.format("âš”ï¸ %s  â¤ï¸ %s", formatNumber(finalDmg), formatNumber(finalHp))
                         elseif finalDmg > 0 then
-                            statsText = string.format("⚔️ %s", formatNumber(finalDmg))
+                            statsText = string.format("âš”ï¸ %s", formatNumber(finalDmg))
                         elseif finalHp > 0 then
-                            statsText = string.format("❤️ %s", formatNumber(finalHp))
+                            statsText = string.format("â¤ï¸ %s", formatNumber(finalHp))
                         end
                         local playerName = myPlayer and myPlayer.Name or "Someone"
                         local duplicateKey = playerName .. "_" .. displayName .. "_" .. tostring(os.time())
