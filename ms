@@ -416,9 +416,17 @@ if cfg.WEBHOOK_URL and #cfg.WEBHOOK_URL > 0 then
             local parts = {}
             for i, result in ipairs(results) do
                 local item = getActualItem(result)
-                parts[i] = item and tostring(item.id) or tostring(i)
+                if item then
+                    local part = tostring(i) .. ":" .. tostring(item.id)
+                    if item.mutations and next(item.mutations) then
+                        part = part .. ":mut:" .. HttpService:JSONEncode(item.mutations)
+                    end
+                    table.insert(parts, part)
+                else
+                    table.insert(parts, tostring(i) .. ":nil")
+                end
             end
-            return count .. "|" .. table.concat(parts, ",")
+            return table.concat(parts, "|")
         end
         
         local function ordinal(n)
@@ -522,15 +530,20 @@ if cfg.WEBHOOK_URL and #cfg.WEBHOOK_URL > 0 then
         while true do
             task.wait(0.1)
             
-            local ok, results = pcall(RollSlice.rollResults)
-            if not ok then continue end
+            local ok, results = pcall(function()
+                return RollSlice.rollResults()
+            end)
+            
+            if not ok or type(results) ~= "table" then
+                continue
+            end
             
             local fingerprint = getResultsFingerprint(results)
             
-            if fingerprint ~= lastFingerprint then
+            if fingerprint and fingerprint ~= lastFingerprint then
                 lastFingerprint = fingerprint
                 
-                if type(results) == "table" and #results > 0 then
+                if #results > 0 then
                     local stats = DataClient:get("stats") or {}
                     local totalRolls = stats.rolls or 0
                     local kills = stats.kills or 0
