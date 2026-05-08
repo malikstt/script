@@ -500,33 +500,22 @@ if webhookUrl and RollSlice then
         print("[Slime RNG] Watching for roll results...")
         local myPlayer = LocalPlayer
         local minLuck = parseLuck(cfg.MINIMUM_LUCK_SENT or "0")
-        local sentMessages = {}
-        local lastFingerprint = nil
-
-        local function getResultsFingerprint(results)
-            if type(results) ~= "table" then return "nil" end
-            local count = #results
-            if count == 0 then return "empty" end
-            local parts = {}
-            for i, result in ipairs(results) do
-                local item = getActualItem(result)
-                parts[i] = item and tostring(item.id) or tostring(i)
-            end
-            return count .. "|" .. table.concat(parts, ",")
-        end
+        local lastRollCount = 0
 
         while true do
             task.wait(0.1)
             local ok, results = pcall(RollSlice.rollResults)
             if not ok then continue end
 
-            local fingerprint = getResultsFingerprint(results)
-            if fingerprint == lastFingerprint then continue end
-            lastFingerprint = fingerprint
+            local stats = DataClient:get("stats") or {}
+            local totalRolls = stats.rolls or 0
+
+            if totalRolls == lastRollCount then
+                continue
+            end
+            lastRollCount = totalRolls
 
             if type(results) == "table" and #results > 0 then
-                local stats = DataClient:get("stats") or {}
-                local totalRolls = stats.rolls or 0
                 local kills = stats.kills or 0
                 local coins = DataClient:get("coins") or 0
 
@@ -566,28 +555,18 @@ if webhookUrl and RollSlice then
                     end
 
                     local playerName = myPlayer and myPlayer.Name or "Someone"
-                    local duplicateKey = table.concat({
-                        tostring(id),
-                        tostring(displayName),
-                        tostring(totalRolls),
-                        tostring(i)
-                    }, "_")
 
-                    if not sentMessages[duplicateKey] then
-                        sentMessages[duplicateKey] = true
+                    print(string.format("%s roll : %s (%s)", ordinal(totalRolls), displayName, id))
+                    print(string.format("  Rarity    : %s", rarity))
+                    print(string.format("  Chance    : %s", chanceText))
+                    print(string.format("  Image     : %s", image))
+                    if finalDmg > 0 then print(string.format("  Damage    : %s", formatNumber(finalDmg))) end
+                    if finalHp > 0 then print(string.format("  Health    : %s", formatNumber(finalHp))) end
+                    if #mutList > 0 then print(string.format("  Mutations : %s", table.concat(mutList, ", "))) end
 
-                        print(string.format("%s roll : %s (%s)", ordinal(totalRolls), displayName, id))
-                        print(string.format("  Rarity    : %s", rarity))
-                        print(string.format("  Chance    : %s", chanceText))
-                        print(string.format("  Image     : %s", image))
-                        if finalDmg > 0 then print(string.format("  Damage    : %s", formatNumber(finalDmg))) end
-                        if finalHp > 0 then print(string.format("  Health    : %s", formatNumber(finalHp))) end
-                        if #mutList > 0 then print(string.format("  Mutations : %s", table.concat(mutList, ", "))) end
-
-                        task.spawn(function()
-                            sendWebhook(webhookUrl, playerName, displayName, rarity, chanceText, statsText, mutations, mutList, image, totalRolls, coins, kills)
-                        end)
-                    end
+                    task.spawn(function()
+                        sendWebhook(webhookUrl, playerName, displayName, rarity, chanceText, statsText, mutations, mutList, image, totalRolls, coins, kills)
+                    end)
                 end
             end
         end
