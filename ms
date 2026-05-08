@@ -23,7 +23,6 @@ local Networker = Index:WaitForChild("leifstout_networker@0.3.1"):WaitForChild("
 local Remotes = Networker:WaitForChild("_remotes")
 
 local DataClient = require(Packages.DataService).client
--- FIXED: Removed DataClient:waitForData() - it was freezing the script!
 
 local RollRemote = Remotes:WaitForChild("RollService"):WaitForChild("RemoteFunction")
 local CodeRemote = Remotes:WaitForChild("CodeService"):WaitForChild("RemoteFunction")
@@ -76,7 +75,6 @@ end
 print(string.format("[Slime RNG] Found %d/%d configs", found, #expectedConfigs))
 print("[Slime RNG] Starting features...")
 
--- FIXED: Emojis as actual characters instead of byte sequences
 local EMOJI_DICE = "🎲"
 local EMOJI_COIN = "🪙"
 local EMOJI_SWORD = "⚔️"
@@ -87,25 +85,46 @@ local function formatNumber(num)
     local absNum = math.abs(num)
     local suffix = ""
     local divisor = 1
-    if absNum >= 1e18 then
-        suffix = "Qn"; divisor = 1e18
-    elseif absNum >= 1e15 then
-        suffix = "Qd"; divisor = 1e15
+
+    if absNum >= 1e15 then
+        suffix = "Qd"
+        divisor = 1e15
     elseif absNum >= 1e12 then
-        suffix = "T"; divisor = 1e12
+        suffix = "Tn"
+        divisor = 1e12
     elseif absNum >= 1e9 then
-        suffix = "B"; divisor = 1e9
+        suffix = "B"
+        divisor = 1e9
     elseif absNum >= 1e6 then
-        suffix = "M"; divisor = 1e6
+        suffix = "M"
+        divisor = 1e6
     elseif absNum >= 1e3 then
-        suffix = "K"; divisor = 1e3
+        suffix = "K"
+        divisor = 1e3
     end
+
     if suffix ~= "" then
         local formatted = num / divisor
+        if formatted >= 1000 then
+            formatted = formatted / 1000
+            if suffix == "K" then
+                suffix = "M"
+            elseif suffix == "M" then
+                suffix = "B"
+            elseif suffix == "B" then
+                suffix = "Tn"
+            elseif suffix == "Tn" then
+                suffix = "Qd"
+            end
+        end
         if math.abs(formatted - math.floor(formatted)) < 0.01 then
             return string.format("%d%s", math.floor(formatted), suffix)
         else
-            return string.format("%.1f%s", formatted, suffix):gsub("%.0f", "")
+            local rounded = string.format("%.1f", formatted)
+            if rounded:sub(-2) == ".0" then
+                rounded = rounded:sub(1, -3)
+            end
+            return rounded .. suffix
         end
     end
     return tostring(math.floor(num))
@@ -197,38 +216,42 @@ local function getEmbedColor(mutations)
     return nil
 end
 
--- FIXED: Using actual emoji characters
 local function sendWebhook(url, playerName, displayName, rarity, chanceText, statsText, mutations, mutList, imageUrl, totalRolls, coins, kills)
     local finalImageUrl = nil
     local thumbnailSize = getThumbnailSize(mutations)
+
     if imageUrl and imageUrl ~= "N/A" then
         local assetId = string.match(imageUrl, "rbxassetid://(%d+)")
         if assetId then
             finalImageUrl = getAssetImageUrl(assetId)
         end
     end
+
     local hiddenName = "||" .. playerName .. "||"
     local description = string.format("**%s** rolled **%s**!\n\n%s **Total Rolls:** %s", hiddenName, displayName, EMOJI_DICE, ordinal(totalRolls))
+
     local fields = {
         {name = "Rarity", value = rarity, inline = true},
         {name = "Chance", value = chanceText, inline = true}
     }
+
     if statsText and statsText ~= "" then
         table.insert(fields, {name = "Stats", value = statsText, inline = true})
     end
-    if mutList and #mutList > 0 then
-        local hiddenMuts = {}
-        for _, mut in ipairs(mutList) do
-            if not displayName:lower():find(mut:lower()) then
-                table.insert(hiddenMuts, mut)
-            end
-        end
-        if #hiddenMuts > 0 then
-            table.insert(fields, {name = "Mutations", value = table.concat(hiddenMuts, ", "), inline = true})
-        end
+
+    local mutationInName = false
+    local upperName = string.upper(displayName)
+    if string.find(upperName, "BIG") or string.find(upperName, "HUGE") or string.find(upperName, "SHINY") or string.find(upperName, "INVERTED") then
+        mutationInName = true
     end
+
+    if mutList and #mutList > 0 and not mutationInName then
+        table.insert(fields, {name = "Mutations", value = table.concat(mutList, ", "), inline = true})
+    end
+
     table.insert(fields, {name = EMOJI_COIN .. " Coins", value = formatNumber(coins), inline = true})
     table.insert(fields, {name = EMOJI_SWORD .. " Kills", value = formatNumber(kills), inline = true})
+
     local payload = {
         username = "makik",
         embeds = {{
@@ -239,6 +262,7 @@ local function sendWebhook(url, playerName, displayName, rarity, chanceText, sta
             color = getEmbedColor(mutations)
         }}
     }
+
     pcall(function()
         request({
             Url = url,
@@ -503,7 +527,6 @@ elseif type(cfg.WEBHOOK_URL) == "string" and cfg.WEBHOOK_URL ~= "" then
     webhookUrl = cfg.WEBHOOK_URL
 end
 
--- FIXED: Using actual emoji characters in stats text
 if webhookUrl and RollSlice then
     task.spawn(function()
         print("[Slime RNG] Watching for roll results...")
@@ -547,7 +570,6 @@ if webhookUrl and RollSlice then
                         local displayName = mutations and Mutations.getDisplayName(name, mutations) or name
                         local mutList = mutations and Mutations.getIds(mutations) or {}
                         if minLuck > 0 and chanceNumber and chanceNumber < minLuck then continue end
-                        -- FIXED: Using actual emoji characters
                         local statsText = ""
                         if finalDmg > 0 and finalHp > 0 then
                             statsText = string.format("%s %s  %s %s", EMOJI_SWORD, formatNumber(finalDmg), EMOJI_HEART, formatNumber(finalHp))
