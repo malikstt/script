@@ -201,7 +201,7 @@ local function sendWebhook(url, playerName, displayName, rarity, chanceText, sta
         end
     end
     local hiddenName = "||" .. playerName .. "||"
-    local description = string.format("**%s** rolled **%s**!\n\nðŸŽ² **Total Rolls:** %s", hiddenName, displayName, ordinal(totalRolls))
+    local description = string.format("**%s** rolled **%s**!\n\n\xF0\x9F\x8E\xB2 **Total Rolls:** %s", hiddenName, displayName, ordinal(totalRolls))
     local fields = {
         {name = "Rarity", value = rarity, inline = true},
         {name = "Chance", value = chanceText, inline = true}
@@ -209,7 +209,6 @@ local function sendWebhook(url, playerName, displayName, rarity, chanceText, sta
     if statsText and statsText ~= "" then
         table.insert(fields, {name = "Stats", value = statsText, inline = true})
     end
-    -- PATCH 1: Only show mutations that are NOT already visible in the displayName
     if mutList and #mutList > 0 then
         local hiddenMuts = {}
         for _, mut in ipairs(mutList) do
@@ -221,8 +220,8 @@ local function sendWebhook(url, playerName, displayName, rarity, chanceText, sta
             table.insert(fields, {name = "Mutations", value = table.concat(hiddenMuts, ", "), inline = true})
         end
     end
-    table.insert(fields, {name = "ðŸª™ Coins", value = formatNumber(coins), inline = true})
-    table.insert(fields, {name = "âš”ï¸ Kills", value = formatNumber(kills), inline = true})
+    table.insert(fields, {name = "\xF0\x9F\xAA\x99 Coins", value = formatNumber(coins), inline = true})
+    table.insert(fields, {name = "\xE2\x9A\x94\xEF\xB8\x8F Kills", value = formatNumber(kills), inline = true})
     local payload = {
         username = "makik",
         embeds = {{
@@ -292,7 +291,6 @@ if cfg.AUTO_REBIRTH then
     end)
 end
 
--- PATCH 2: Replaced old zone unlock + teleport system
 local currentZone = DataClient:get("zone") or 1
 
 if cfg.UNLOCK_AFFORDABLE_ZONES then
@@ -315,12 +313,9 @@ if cfg.AUTOFARM_BEST_ZONE then
                     "requestTeleportZone",
                     zone
                 )
-
                 if success then
                     task.wait(1)
-
                     local newZone = DataClient:get("zone") or 1
-
                     if newZone == zone then
                         print("Successfully teleported to zone", zone)
                         currentZone = zone
@@ -328,7 +323,6 @@ if cfg.AUTOFARM_BEST_ZONE then
                     end
                 end
             end
-
             task.wait(10)
         end
     end)
@@ -442,7 +436,6 @@ if cfg.AUTO_CLAIM_INDEX_REWARDS then
     end)
 end
 
--- PATCH 3: Loot auto collector
 if cfg.AUTO_COLLECT_LOOT then
     task.spawn(function()
         print("Loot auto-collector started")
@@ -548,11 +541,11 @@ if webhookUrl and RollSlice then
                         if minLuck > 0 and chanceNumber and chanceNumber < minLuck then continue end
                         local statsText = ""
                         if finalDmg > 0 and finalHp > 0 then
-                            statsText = string.format("âš”ï¸ %s  â¤ï¸ %s", formatNumber(finalDmg), formatNumber(finalHp))
+                            statsText = string.format("\xE2\x9A\x94\xEF\xB8\x8F %s  \xE2\x9D\xA4\xEF\xB8\x8F %s", formatNumber(finalDmg), formatNumber(finalHp))
                         elseif finalDmg > 0 then
-                            statsText = string.format("âš”ï¸ %s", formatNumber(finalDmg))
+                            statsText = string.format("\xE2\x9A\x94\xEF\xB8\x8F %s", formatNumber(finalDmg))
                         elseif finalHp > 0 then
-                            statsText = string.format("â¤ï¸ %s", formatNumber(finalHp))
+                            statsText = string.format("\xE2\x9D\xA4\xEF\xB8\x8F %s", formatNumber(finalHp))
                         end
                         local playerName = myPlayer and myPlayer.Name or "Someone"
                         local duplicateKey = playerName .. "_" .. displayName .. "_" .. tostring(os.time())
