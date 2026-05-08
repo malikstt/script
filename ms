@@ -392,6 +392,9 @@ if cfg.WEBHOOK_URL and #cfg.WEBHOOK_URL > 0 then
         end
         
         local sentMessages = {}
+        local lastFingerprint = nil
+        local consecutiveErrors = 0
+        local lastValidDataTime = os.time()
         
         local function getRarityName(odds)
             if not odds or odds <= 0 then return "Unknown" end
@@ -525,22 +528,53 @@ if cfg.WEBHOOK_URL and #cfg.WEBHOOK_URL > 0 then
         
         print("[RollWatcher] Watching for roll results...")
         
-        local lastFingerprint = nil
-        
         while true do
             task.wait(0.1)
             
-            local ok, results = pcall(function()
-                return RollSlice.rollResults()
-            end)
+            -- CRITICAL: Match working script exactly - NO parentheses
+            local ok, results = pcall(RollSlice.rollResults)
             
-            if not ok or type(results) ~= "table" then
+            -- Error handling with recovery
+            if not ok then
+                consecutiveErrors = consecutiveErrors + 1
+                if consecutiveErrors >= 50 then -- 5 seconds of errors (50 * 0.1)
+                    warn("[RollWatcher] Persistent errors detected, resetting state...")
+                    lastFingerprint = nil
+                    consecutiveErrors = 0
+                end
                 continue
+            end
+            
+            -- Reset error counter on success
+            consecutiveErrors = 0
+            
+            -- Validate results structure
+            if type(results) ~= "table" then
+                continue
+            end
+            
+            -- Force fingerprint reset if no valid data for 10 seconds
+            if os.time() - lastValidDataTime > 10 and #results == 0 then
+                if lastFingerprint ~= nil then
+                    print("[RollWatcher] No data for 10 seconds, resetting fingerprint")
+                    lastFingerprint = nil
+                end
+                continue
+            end
+            
+            -- Update last valid data time if we have results
+            if #results > 0 then
+                lastValidDataTime = os.time()
             end
             
             local fingerprint = getResultsFingerprint(results)
             
-            if fingerprint and fingerprint ~= lastFingerprint then
+            -- Skip if fingerprint is invalid
+            if not fingerprint or fingerprint == "nil" or fingerprint == "empty" then
+                continue
+            end
+            
+            if fingerprint ~= lastFingerprint then
                 lastFingerprint = fingerprint
                 
                 if #results > 0 then
