@@ -1,3 +1,4 @@
+--re's my code 
 task.spawn(function()
     for _, x in pairs(getconnections(game.Players.LocalPlayer.Idled)) do
         x:Disable()
@@ -23,6 +24,7 @@ local Networker = Index:WaitForChild("leifstout_networker@0.3.1"):WaitForChild("
 local Remotes = Networker:WaitForChild("_remotes")
 
 local DataClient = require(Packages.DataService).client
+DataClient:waitForData()
 
 local RollRemote = Remotes:WaitForChild("RollService"):WaitForChild("RemoteFunction")
 local CodeRemote = Remotes:WaitForChild("CodeService"):WaitForChild("RemoteFunction")
@@ -57,7 +59,7 @@ local expectedConfigs = {
     "EQUIP_BEST_SLIMES", "AUTO_REBIRTH", "REQUIRED_ZONE_TO_REBIRTH",
     "UNLOCK_AFFORDABLE_ZONES", "AUTOFARM_BEST_ZONE", "AUTO_BUY_UPGRADES",
     "USE_POTIONS", "POTIONS_TO_USE", "USE_DICES", "DICES_TO_USE",
-    "AUTO_CLAIM_INDEX_REWARDS", "AUTO_COLLECT_LOOT", "OPTIMIZATION", "WEBHOOK_URL", "MINIMUM_LUCK_SENT"
+    "AUTO_CLAIM_INDEX_REWARDS", "OPTIMIZATION", "WEBHOOK_URL", "MINIMUM_LUCK_SENT"
 }
 
 print("[Slime RNG] Script started")
@@ -75,56 +77,30 @@ end
 print(string.format("[Slime RNG] Found %d/%d configs", found, #expectedConfigs))
 print("[Slime RNG] Starting features...")
 
-local EMOJI_DICE = "🎲"
-local EMOJI_COIN = "🪙"
-local EMOJI_SWORD = "⚔️"
-local EMOJI_HEART = "❤️"
-
 local function formatNumber(num)
     if type(num) ~= "number" then return tostring(num) end
     local absNum = math.abs(num)
     local suffix = ""
     local divisor = 1
-
-    if absNum >= 1e15 then
-        suffix = "Qd"
-        divisor = 1e15
+    if absNum >= 1e18 then
+        suffix = "Qn"; divisor = 1e18
+    elseif absNum >= 1e15 then
+        suffix = "Qd"; divisor = 1e15
     elseif absNum >= 1e12 then
-        suffix = "Tn"
-        divisor = 1e12
+        suffix = "T"; divisor = 1e12
     elseif absNum >= 1e9 then
-        suffix = "B"
-        divisor = 1e9
+        suffix = "B"; divisor = 1e9
     elseif absNum >= 1e6 then
-        suffix = "M"
-        divisor = 1e6
+        suffix = "M"; divisor = 1e6
     elseif absNum >= 1e3 then
-        suffix = "K"
-        divisor = 1e3
+        suffix = "K"; divisor = 1e3
     end
-
     if suffix ~= "" then
         local formatted = num / divisor
-        if formatted >= 1000 then
-            formatted = formatted / 1000
-            if suffix == "K" then
-                suffix = "M"
-            elseif suffix == "M" then
-                suffix = "B"
-            elseif suffix == "B" then
-                suffix = "Tn"
-            elseif suffix == "Tn" then
-                suffix = "Qd"
-            end
-        end
         if math.abs(formatted - math.floor(formatted)) < 0.01 then
             return string.format("%d%s", math.floor(formatted), suffix)
         else
-            local rounded = string.format("%.1f", formatted)
-            if rounded:sub(-2) == ".0" then
-                rounded = rounded:sub(1, -3)
-            end
-            return rounded .. suffix
+            return string.format("%.1f%s", formatted, suffix):gsub("%.0f", "")
         end
     end
     return tostring(math.floor(num))
@@ -219,39 +195,26 @@ end
 local function sendWebhook(url, playerName, displayName, rarity, chanceText, statsText, mutations, mutList, imageUrl, totalRolls, coins, kills)
     local finalImageUrl = nil
     local thumbnailSize = getThumbnailSize(mutations)
-
     if imageUrl and imageUrl ~= "N/A" then
         local assetId = string.match(imageUrl, "rbxassetid://(%d+)")
         if assetId then
             finalImageUrl = getAssetImageUrl(assetId)
         end
     end
-
     local hiddenName = "||" .. playerName .. "||"
-    local description = string.format("**%s** rolled **%s**!\n\n%s **Total Rolls:** %s", hiddenName, displayName, EMOJI_DICE, ordinal(totalRolls))
-
+    local description = string.format("**%s** rolled **%s**!\n\n🎲 **Total Rolls:** %s", hiddenName, displayName, ordinal(totalRolls))
     local fields = {
         {name = "Rarity", value = rarity, inline = true},
         {name = "Chance", value = chanceText, inline = true}
     }
-
     if statsText and statsText ~= "" then
         table.insert(fields, {name = "Stats", value = statsText, inline = true})
     end
-
-    local mutationInName = false
-    local upperName = string.upper(displayName)
-    if string.find(upperName, "BIG") or string.find(upperName, "HUGE") or string.find(upperName, "SHINY") or string.find(upperName, "INVERTED") then
-        mutationInName = true
-    end
-
-    if mutList and #mutList > 0 and not mutationInName then
+    if mutList and #mutList > 0 then
         table.insert(fields, {name = "Mutations", value = table.concat(mutList, ", "), inline = true})
     end
-
-    table.insert(fields, {name = EMOJI_COIN .. " Coins", value = formatNumber(coins), inline = true})
-    table.insert(fields, {name = EMOJI_SWORD .. " Kills", value = formatNumber(kills), inline = true})
-
+    table.insert(fields, {name = "🪙 Coins", value = formatNumber(coins), inline = true})
+    table.insert(fields, {name = "⚔️ Kills", value = formatNumber(kills), inline = true})
     local payload = {
         username = "makik",
         embeds = {{
@@ -262,7 +225,6 @@ local function sendWebhook(url, playerName, displayName, rarity, chanceText, sta
             color = getEmbedColor(mutations)
         }}
     }
-
     pcall(function()
         request({
             Url = url,
@@ -322,39 +284,25 @@ if cfg.AUTO_REBIRTH then
     end)
 end
 
-local currentZone = DataClient:get("zone") or 1
-
-if cfg.UNLOCK_AFFORDABLE_ZONES then
-    task.spawn(function()
-        while true do
-            pcall(ZonesRemote.InvokeServer, ZonesRemote, "requestPurchaseZone")
-            task.wait(5)
-        end
-    end)
-end
-
-if cfg.AUTOFARM_BEST_ZONE then
+if cfg.UNLOCK_AFFORDABLE_ZONES or cfg.AUTOFARM_BEST_ZONE then
     task.spawn(function()
         local MAX_ZONE = 25
         while true do
-            for zone = MAX_ZONE, 1, -1 do
-                local success = pcall(
-                    ZonesRemote.InvokeServer,
-                    ZonesRemote,
-                    "requestTeleportZone",
-                    zone
-                )
-                if success then
-                    task.wait(1)
-                    local newZone = DataClient:get("zone") or 1
-                    if newZone == zone then
-                        print("Successfully teleported to zone", zone)
-                        currentZone = zone
-                        break
-                    end
+            local furthestZone = math.clamp(DataClient:get("furthestZone") or 1, 1, MAX_ZONE)
+            local currentZone = math.clamp(DataClient:get("zone") or 1, 1, MAX_ZONE)
+            local coins = DataClient:get("coins") or 0
+            if cfg.UNLOCK_AFFORDABLE_ZONES and furthestZone < MAX_ZONE then
+                local nextZoneIndex = furthestZone + 1
+                local nextZone = Zones.getZone(nextZoneIndex)
+                local nextZoneCost = nextZone and nextZone.price or 0
+                if nextZone and coins >= nextZoneCost then
+                    pcall(ZonesRemote.InvokeServer, ZonesRemote, "requestPurchaseZone")
                 end
             end
-            task.wait(10)
+            if cfg.AUTOFARM_BEST_ZONE and currentZone ~= furthestZone then
+                pcall(ZonesRemote.InvokeServer, ZonesRemote, "requestTeleportZone", furthestZone)
+            end
+            task.wait(60)
         end
     end)
 end
@@ -467,54 +415,6 @@ if cfg.AUTO_CLAIM_INDEX_REWARDS then
     end)
 end
 
-if cfg.AUTO_COLLECT_LOOT then
-    task.spawn(function()
-        print("Loot auto-collector started")
-
-        local LootRemote = RS:WaitForChild("Packages")
-            :WaitForChild("_Index")
-            :WaitForChild("leifstout_networker@0.3.1")
-            :WaitForChild("networker")
-            :WaitForChild("_remotes")
-            :WaitForChild("LootService")
-            :WaitForChild("RemoteFunction")
-
-        while true do
-            task.wait(30)
-
-            local LootFolder = workspace:FindFirstChild("Loot")
-
-            if not LootFolder then
-                print("No Loot folder found")
-                continue
-            end
-
-            local lootItems = LootFolder:GetChildren()
-
-            print("Loot found:", #lootItems)
-
-            if #lootItems == 0 then
-                print("No loot to collect")
-                continue
-            end
-
-            for _, loot in ipairs(lootItems) do
-                print("Collecting:", loot.Name)
-
-                local success, result = pcall(function()
-                    return LootRemote:InvokeServer("requestCollect", loot.Name)
-                end)
-
-                if not success then
-                    warn("Failed to collect:", loot.Name, result)
-                else
-                    print("Collected:", loot.Name, result)
-                end
-            end
-        end
-    end)
-end
-
 local webhookUrl = nil
 if type(cfg.WEBHOOK_URL) == "table" then
     for _, v in ipairs(cfg.WEBHOOK_URL) do
@@ -572,11 +472,11 @@ if webhookUrl and RollSlice then
                         if minLuck > 0 and chanceNumber and chanceNumber < minLuck then continue end
                         local statsText = ""
                         if finalDmg > 0 and finalHp > 0 then
-                            statsText = string.format("%s %s  %s %s", EMOJI_SWORD, formatNumber(finalDmg), EMOJI_HEART, formatNumber(finalHp))
+                            statsText = string.format("⚔️ %s  ❤️ %s", formatNumber(finalDmg), formatNumber(finalHp))
                         elseif finalDmg > 0 then
-                            statsText = string.format("%s %s", EMOJI_SWORD, formatNumber(finalDmg))
+                            statsText = string.format("⚔️ %s", formatNumber(finalDmg))
                         elseif finalHp > 0 then
-                            statsText = string.format("%s %s", EMOJI_HEART, formatNumber(finalHp))
+                            statsText = string.format("❤️ %s", formatNumber(finalHp))
                         end
                         local playerName = myPlayer and myPlayer.Name or "Someone"
                         local duplicateKey = playerName .. "_" .. displayName .. "_" .. tostring(os.time())
