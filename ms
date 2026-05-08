@@ -76,10 +76,10 @@ end
 print(string.format("[Slime RNG] Found %d/%d configs", found, #expectedConfigs))
 print("[Slime RNG] Starting features...")
 
-local EMOJI_DICE = "ðŸŽ²"
-local EMOJI_COIN = "ðŸª™"
-local EMOJI_SWORD = "âš”ï¸"
-local EMOJI_HEART = "â¤ï¸"
+local EMOJI_DICE = "🎲"
+local EMOJI_COIN = "🪙"
+local EMOJI_SWORD = "⚔️"
+local EMOJI_HEART = "❤️"
 
 local function formatNumber(num)
     if type(num) ~= "number" then return tostring(num) end
@@ -500,29 +500,12 @@ if webhookUrl and RollSlice then
         print("[Slime RNG] Watching for roll results...")
         local myPlayer = LocalPlayer
         local minLuck = parseLuck(cfg.MINIMUM_LUCK_SENT or "0")
-        local sentMessages = {}
-        local lastFingerprint = nil
-
-        local function getResultsFingerprint(results)
-            if type(results) ~= "table" then return "nil" end
-            local count = #results
-            if count == 0 then return "empty" end
-            local parts = {}
-            for i, result in ipairs(results) do
-                local item = getActualItem(result)
-                parts[i] = item and tostring(item.id) or tostring(i)
-            end
-            return count .. "|" .. table.concat(parts, ",")
-        end
+        local processedResults = {}
 
         while true do
             task.wait(0.1)
             local ok, results = pcall(RollSlice.rollResults)
             if not ok then continue end
-
-            local fingerprint = getResultsFingerprint(results)
-            if fingerprint == lastFingerprint then continue end
-            lastFingerprint = fingerprint
 
             if type(results) == "table" and #results > 0 then
                 local stats = DataClient:get("stats") or {}
@@ -566,10 +549,9 @@ if webhookUrl and RollSlice then
                     end
 
                     local playerName = myPlayer and myPlayer.Name or "Someone"
-                    local duplicateKey = playerName .. "_" .. displayName .. "_" .. tostring(os.time())
 
-                    if not sentMessages[duplicateKey] then
-                        sentMessages[duplicateKey] = true
+                    if not processedResults[result] then
+                        processedResults[result] = true
 
                         print(string.format("%s roll : %s (%s)", ordinal(totalRolls), displayName, id))
                         print(string.format("  Rarity    : %s", rarity))
