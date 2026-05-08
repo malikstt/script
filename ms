@@ -359,15 +359,12 @@ end
 
 print("[Slime RNG] All features initialized")
 
--- RollWatcher with Webhook (reusing main script's variables)
+-- RollWatcher with Webhook (clean simple version that works)
 if cfg.WEBHOOK_URL and #cfg.WEBHOOK_URL > 0 then
     task.spawn(function()
         local webhookUrl = cfg.WEBHOOK_URL[1]
         
-        local watchConfig = {
-            minimumChance = 0
-        }
-        
+        local minimumChance = 0
         if cfg.MINIMUM_LUCK_SENT then
             local minLuck = cfg.MINIMUM_LUCK_SENT
             if type(minLuck) == "string" then
@@ -384,17 +381,14 @@ if cfg.WEBHOOK_URL and #cfg.WEBHOOK_URL > 0 then
                 end
                 local num = tonumber(minLuck)
                 if num then
-                    watchConfig.minimumChance = num * multiplier
+                    minimumChance = num * multiplier
                 end
             elseif type(minLuck) == "number" then
-                watchConfig.minimumChance = minLuck
+                minimumChance = minLuck
             end
         end
         
         local sentMessages = {}
-        local lastFingerprint = nil
-        local consecutiveErrors = 0
-        local lastValidDataTime = os.time()
         
         local function getRarityName(odds)
             if not odds or odds <= 0 then return "Unknown" end
@@ -419,17 +413,9 @@ if cfg.WEBHOOK_URL and #cfg.WEBHOOK_URL > 0 then
             local parts = {}
             for i, result in ipairs(results) do
                 local item = getActualItem(result)
-                if item then
-                    local part = tostring(i) .. ":" .. tostring(item.id)
-                    if item.mutations and next(item.mutations) then
-                        part = part .. ":mut:" .. HttpService:JSONEncode(item.mutations)
-                    end
-                    table.insert(parts, part)
-                else
-                    table.insert(parts, tostring(i) .. ":nil")
-                end
+                parts[i] = item and tostring(item.id) or tostring(i)
             end
-            return table.concat(parts, "|")
+            return count .. "|" .. table.concat(parts, ",")
         end
         
         local function ordinal(n)
@@ -528,56 +514,20 @@ if cfg.WEBHOOK_URL and #cfg.WEBHOOK_URL > 0 then
         
         print("[RollWatcher] Watching for roll results...")
         
+        local lastFingerprint = nil
+        
         while true do
             task.wait(0.1)
             
-            -- CRITICAL: Match working script exactly - NO parentheses
             local ok, results = pcall(RollSlice.rollResults)
-            
-            -- Error handling with recovery
-            if not ok then
-                consecutiveErrors = consecutiveErrors + 1
-                if consecutiveErrors >= 50 then -- 5 seconds of errors (50 * 0.1)
-                    warn("[RollWatcher] Persistent errors detected, resetting state...")
-                    lastFingerprint = nil
-                    consecutiveErrors = 0
-                end
-                continue
-            end
-            
-            -- Reset error counter on success
-            consecutiveErrors = 0
-            
-            -- Validate results structure
-            if type(results) ~= "table" then
-                continue
-            end
-            
-            -- Force fingerprint reset if no valid data for 10 seconds
-            if os.time() - lastValidDataTime > 10 and #results == 0 then
-                if lastFingerprint ~= nil then
-                    print("[RollWatcher] No data for 10 seconds, resetting fingerprint")
-                    lastFingerprint = nil
-                end
-                continue
-            end
-            
-            -- Update last valid data time if we have results
-            if #results > 0 then
-                lastValidDataTime = os.time()
-            end
+            if not ok then continue end
             
             local fingerprint = getResultsFingerprint(results)
-            
-            -- Skip if fingerprint is invalid
-            if not fingerprint or fingerprint == "nil" or fingerprint == "empty" then
-                continue
-            end
             
             if fingerprint ~= lastFingerprint then
                 lastFingerprint = fingerprint
                 
-                if #results > 0 then
+                if type(results) == "table" and #results > 0 then
                     local stats = DataClient:get("stats") or {}
                     local totalRolls = stats.rolls or 0
                     local kills = stats.kills or 0
@@ -612,7 +562,7 @@ if cfg.WEBHOOK_URL and #cfg.WEBHOOK_URL > 0 then
                         local displayName = mutations and Mutations.getDisplayName(name, mutations) or name
                         local mutList = mutations and Mutations.getIds(mutations) or {}
                         
-                        if watchConfig.minimumChance > 0 and chanceNumber and chanceNumber < watchConfig.minimumChance then
+                        if minimumChance > 0 and chanceNumber and chanceNumber < minimumChance then
                             continue
                         end
                         
