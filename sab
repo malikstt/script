@@ -20,14 +20,38 @@ local requestCounter = 0
 local lastUploadTimestamp = 0
 local lastContentHash = nil
 local isUploading = false
+local startupTime = os.time()
+
+local function printSuccess(message)
+    print("[✓] " .. message)
+end
+
+local function printError(message)
+    warn("[✗] ERROR: " .. message)
+end
+
+local function printInfo(message)
+    print("[i] " .. message)
+end
 
 local function sendRequest(options)
     requestCounter = requestCounter + 1
     local requestFunc = syn and syn.request or http_request or request
     if not requestFunc then
-        error("No HTTP request function available")
+        printError("No HTTP request function available in this executor")
+        return nil
     end
-    return requestFunc(options)
+    
+    local success, result = pcall(function()
+        return requestFunc(options)
+    end)
+    
+    if not success then
+        printError("Request failed: " .. tostring(result))
+        return nil
+    end
+    
+    return result
 end
 
 local function formatNumber(num)
@@ -95,380 +119,492 @@ local function base64Encode(data)
 end
 
 local function updateBoothFromPacket(playerId, packet)
-    local player = Players:GetPlayerByUserId(playerId)
-    local ownerName = player and player.Name or tostring(playerId)
-    local now = os.time()
-    
-    local booth = booths[playerId]
-    if not booth then
-        booth = {
-            ownerId = playerId,
-            ownerName = ownerName,
-            listings = {},
-            lastSeen = now
-        }
-        booths[playerId] = booth
-    end
-    
-    booth.ownerName = ownerName
-    booth.lastSeen = now
-    
-    local newListings = {}
-    for listingId, listing in pairs(packet.Listings) do
-        local success, item = pcall(Items.From, listing.ItemData.class, listing.ItemData.data)
-        if success and item then
-            item:SetUID(listing.ItemData.uid)
-            local itemName = item:GetName()
-            local rap = item:GetRAP() or 0
-            local price = listing.DiamondCost or 0
-            local rarity = getItemRarity(itemName)
-            local rarityEmoji = getRarityEmoji(itemName)
-            
-            newListings[listingId] = {
-                id = listingId,
-                itemName = itemName,
-                rap = rap,
-                price = price,
-                profit = rap - price,
-                profitPercent = (rap > 0 and ((rap - price) / rap * 100) or 0),
-                rarity = rarity,
-                rarityEmoji = rarityEmoji,
-                uid = listing.ItemData.uid
+    local success, result = pcall(function()
+        local player = Players:GetPlayerByUserId(playerId)
+        local ownerName = player and player.Name or tostring(playerId)
+        local now = os.time()
+        
+        local booth = booths[playerId]
+        if not booth then
+            booth = {
+                ownerId = playerId,
+                ownerName = ownerName,
+                listings = {},
+                lastSeen = now
             }
-        else
-            newListings[listingId] = {
-                id = listingId,
-                itemName = "Unknown Item",
-                rap = 0,
-                price = listing.DiamondCost or 0,
-                profit = 0,
-                profitPercent = 0,
-                rarity = "📦 Unknown",
-                rarityEmoji = "❓",
-                uid = listing.ItemData.uid
-            }
+            booths[playerId] = booth
+            printInfo("New booth registered: " .. ownerName)
         end
+        
+        booth.ownerName = ownerName
+        booth.lastSeen = now
+        
+        local newListings = {}
+        local listingCount = 0
+        
+        for listingId, listing in pairs(packet.Listings) do
+            listingCount = listingCount + 1
+            local itemSuccess, item = pcall(Items.From, listing.ItemData.class, listing.ItemData.data)
+            if itemSuccess and item then
+                item:SetUID(listing.ItemData.uid)
+                local itemName = item:GetName()
+                local rap = item:GetRAP() or 0
+                local price = listing.DiamondCost or 0
+                local rarity = getItemRarity(itemName)
+                local rarityEmoji = getRarityEmoji(itemName)
+                
+                newListings[listingId] = {
+                    id = listingId,
+                    itemName = itemName,
+                    rap = rap,
+                    price = price,
+                    profit = rap - price,
+                    profitPercent = (rap > 0 and ((rap - price) / rap * 100) or 0),
+                    rarity = rarity,
+                    rarityEmoji = rarityEmoji,
+                    uid = listing.ItemData.uid
+                }
+            else
+                newListings[listingId] = {
+                    id = listingId,
+                    itemName = "Unknown Item",
+                    rap = 0,
+                    price = listing.DiamondCost or 0,
+                    profit = 0,
+                    profitPercent = 0,
+                    rarity = "📦 Unknown",
+                    rarityEmoji = "❓",
+                    uid = listing.ItemData.uid
+                }
+            end
+        end
+        
+        booth.listings = newListings
+        printInfo("Updated " .. ownerName .. " - " .. listingCount .. " listings")
+    end)
+    
+    if not success then
+        printError("Failed to update booth from packet: " .. tostring(result))
     end
-    booth.listings = newListings
 end
 
 local function cleanupStaleBooths()
-    local now = os.time()
-    for id, booth in pairs(booths) do
-        if now - booth.lastSeen > CLEANUP_STALE_AFTER then
-            booths[id] = nil
+    local success, result = pcall(function()
+        local now = os.time()
+        local removed = 0
+        for id, booth in pairs(booths) do
+            if now - booth.lastSeen > CLEANUP_STALE_AFTER then
+                booths[id] = nil
+                removed = removed + 1
+            end
         end
+        if removed > 0 then
+            printInfo("Cleaned up " .. removed .. " stale booths")
+        end
+    end)
+    
+    if not success then
+        printError("Failed to cleanup stale booths: " .. tostring(result))
     end
 end
 
 local function generateMarkdown()
-    cleanupStaleBooths()
-    local now = os.time()
-    local playersOnline = Players.NumPlayers
-    local claimedBooths = 0
-    local totalListings = 0
-    local totalRAP = 0
-    local totalHuges = 0
-    local totalTitanics = 0
-    
-    local allListings = {}
-    local boothStats = {}
-    
-    for playerId, booth in pairs(booths) do
-        claimedBooths = claimedBooths + 1
-        local boothRAP = 0
-        local boothHuges = 0
-        local boothTitanics = 0
-        local bestItem = { name = "", rap = 0 }
+    local success, result = pcall(function()
+        cleanupStaleBooths()
+        local now = os.time()
+        local playersOnline = Players.NumPlayers
+        local claimedBooths = 0
+        local totalListings = 0
+        local totalRAP = 0
+        local totalHuges = 0
+        local totalTitanics = 0
         
-        for _, listing in pairs(booth.listings) do
-            boothRAP = boothRAP + listing.rap
-            totalRAP = totalRAP + listing.rap
-            totalListings = totalListings + 1
+        local allListings = {}
+        local boothStats = {}
+        
+        for playerId, booth in pairs(booths) do
+            claimedBooths = claimedBooths + 1
+            local boothRAP = 0
+            local boothHuges = 0
+            local boothTitanics = 0
+            local bestItem = { name = "", rap = 0 }
             
-            if listing.rarity:find("Huge") then
-                totalHuges = totalHuges + 1
-                boothHuges = boothHuges + 1
-            elseif listing.rarity:find("Titanic") then
-                totalTitanics = totalTitanics + 1
-                boothTitanics = boothTitanics + 1
+            for _, listing in pairs(booth.listings) do
+                boothRAP = boothRAP + listing.rap
+                totalRAP = totalRAP + listing.rap
+                totalListings = totalListings + 1
+                
+                if listing.rarity:find("Huge") then
+                    totalHuges = totalHuges + 1
+                    boothHuges = boothHuges + 1
+                elseif listing.rarity:find("Titanic") then
+                    totalTitanics = totalTitanics + 1
+                    boothTitanics = boothTitanics + 1
+                end
+                
+                if listing.rap > bestItem.rap then
+                    bestItem = { name = listing.itemName, rap = listing.rap }
+                end
+                
+                table.insert(allListings, {
+                    ownerName = booth.ownerName,
+                    ownerId = playerId,
+                    itemName = listing.itemName,
+                    rap = listing.rap,
+                    price = listing.price,
+                    profit = listing.profit,
+                    profitPercent = listing.profitPercent,
+                    rarity = listing.rarity,
+                    rarityEmoji = listing.rarityEmoji
+                })
             end
             
-            if listing.rap > bestItem.rap then
-                bestItem = { name = listing.itemName, rap = listing.rap }
-            end
-            
-            table.insert(allListings, {
+            table.insert(boothStats, {
                 ownerName = booth.ownerName,
                 ownerId = playerId,
-                itemName = listing.itemName,
-                rap = listing.rap,
-                price = listing.price,
-                profit = listing.profit,
-                profitPercent = listing.profitPercent,
-                rarity = listing.rarity,
-                rarityEmoji = listing.rarityEmoji
+                totalRAP = boothRAP,
+                listingCount = 0,
+                hugeCount = boothHuges,
+                titanicCount = boothTitanics,
+                bestItem = bestItem.name ~= "" and bestItem.name or "No items"
             })
+            
+            for _ in pairs(booth.listings) do
+                boothStats[#boothStats].listingCount = boothStats[#boothStats].listingCount + 1
+            end
         end
         
-        table.insert(boothStats, {
-            ownerName = booth.ownerName,
-            ownerId = playerId,
-            totalRAP = boothRAP,
-            listingCount = 0,
-            hugeCount = boothHuges,
-            titanicCount = boothTitanics,
-            bestItem = bestItem.name ~= "" and bestItem.name or "No items"
-        })
+        table.sort(boothStats, function(a,b) return a.totalRAP > b.totalRAP end)
         
-        for _ in pairs(booth.listings) do
-            boothStats[#boothStats].listingCount = boothStats[#boothStats].listingCount + 1
+        local bestDeals = {}
+        for _, listing in ipairs(allListings) do
+            if listing.profit > 0 then
+                table.insert(bestDeals, listing)
+            end
         end
-    end
-    
-    table.sort(boothStats, function(a,b) return a.totalRAP > b.totalRAP end)
-    
-    local bestDeals = {}
-    for _, listing in ipairs(allListings) do
-        if listing.profit > 0 then
-            table.insert(bestDeals, listing)
+        table.sort(bestDeals, function(a,b) return a.profit > b.profit end)
+        
+        local topListings = {}
+        for _, listing in ipairs(allListings) do
+            table.insert(topListings, listing)
         end
-    end
-    table.sort(bestDeals, function(a,b) return a.profit > b.profit end)
-    
-    local topListings = {}
-    for _, listing in ipairs(allListings) do
-        table.insert(topListings, listing)
-    end
-    table.sort(topListings, function(a,b) return a.profit > b.profit end)
-    
-    local richestBooth = boothStats[1] and boothStats[1].ownerName or "None"
-    local cheapestHuge = math.huge
-    local cheapestTitanic = math.huge
-    local mostExpensiveListing = { price = 0, name = "", owner = "" }
-    local totalPriceSum = 0
-    
-    for _, listing in ipairs(allListings) do
-        totalPriceSum = totalPriceSum + listing.price
-        if listing.price > mostExpensiveListing.price then
-            mostExpensiveListing = { price = listing.price, name = listing.itemName, owner = listing.ownerName }
+        table.sort(topListings, function(a,b) return a.profit > b.profit end)
+        
+        local richestBooth = boothStats[1] and boothStats[1].ownerName or "None"
+        local cheapestHuge = math.huge
+        local cheapestTitanic = math.huge
+        local mostExpensiveListing = { price = 0, name = "", owner = "" }
+        local totalPriceSum = 0
+        
+        for _, listing in ipairs(allListings) do
+            totalPriceSum = totalPriceSum + listing.price
+            if listing.price > mostExpensiveListing.price then
+                mostExpensiveListing = { price = listing.price, name = listing.itemName, owner = listing.ownerName }
+            end
+            if listing.rarity:find("Huge") and listing.price < cheapestHuge then
+                cheapestHuge = listing.price
+            end
+            if listing.rarity:find("Titanic") and listing.price < cheapestTitanic then
+                cheapestTitanic = listing.price
+            end
         end
-        if listing.rarity:find("Huge") and listing.price < cheapestHuge then
-            cheapestHuge = listing.price
+        
+        local avgListingPrice = (totalListings > 0 and totalPriceSum / totalListings) or 0
+        
+        local rapDistribution = { low = 0, medium = 0, high = 0, ultra = 0 }
+        for _, listing in ipairs(allListings) do
+            if listing.rap < 10000 then
+                rapDistribution.low = rapDistribution.low + 1
+            elseif listing.rap < 100000 then
+                rapDistribution.medium = rapDistribution.medium + 1
+            elseif listing.rap < 1000000 then
+                rapDistribution.high = rapDistribution.high + 1
+            else
+                rapDistribution.ultra = rapDistribution.ultra + 1
+            end
         end
-        if listing.rarity:find("Titanic") and listing.price < cheapestTitanic then
-            cheapestTitanic = listing.price
-        end
-    end
-    
-    local avgListingPrice = (totalListings > 0 and totalPriceSum / totalListings) or 0
-    
-    local rapDistribution = { low = 0, medium = 0, high = 0, ultra = 0 }
-    for _, listing in ipairs(allListings) do
-        if listing.rap < 10000 then
-            rapDistribution.low = rapDistribution.low + 1
-        elseif listing.rap < 100000 then
-            rapDistribution.medium = rapDistribution.medium + 1
-        elseif listing.rap < 1000000 then
-            rapDistribution.high = rapDistribution.high + 1
+        
+        local lines = {}
+        table.insert(lines, "# 🏪 Pet Simulator 99 Live Booth Dashboard")
+        table.insert(lines, "")
+        table.insert(lines, "> **Real-time market intelligence** · Auto-sync every " .. UPDATE_INTERVAL .. "s · GitHub hosted")
+        table.insert(lines, "")
+        table.insert(lines, "[![Live Dashboard](https://img.shields.io/badge/Live-Dashboard-brightgreen)]() [![Updated](https://img.shields.io/badge/Updated-Live-blue)]()")
+        table.insert(lines, "")
+        table.insert(lines, "## 🌐 Server Snapshot")
+        table.insert(lines, "")
+        table.insert(lines, "| Metric | Value |")
+        table.insert(lines, "|:-------|------:|")
+        table.insert(lines, "| 👥 **Players Online** | `" .. playersOnline .. "` |")
+        table.insert(lines, "| 🏪 **Claimed Booths** | `" .. claimedBooths .. "` |")
+        table.insert(lines, "| 🚪 **Unclaimed Booths** | `" .. math.max(0, TOTAL_BOOTH_SLOTS - claimedBooths) .. "` |")
+        table.insert(lines, "| 📦 **Total Listings** | `" .. totalListings .. "` |")
+        table.insert(lines, "| 💎 **Total RAP Value** | `" .. formatNumber(totalRAP) .. "` |")
+        table.insert(lines, "| 🦍 **Huge Pets** | `" .. totalHuges .. "` |")
+        table.insert(lines, "| 🐉 **Titanic Pets** | `" .. totalTitanics .. "` |")
+        table.insert(lines, "| ⏱️ **Uptime** | `" .. formatTime(startupTime) .. "` |")
+        table.insert(lines, "| 🕐 **Last Scan** | `" .. os.date("%H:%M:%S", now) .. "` |")
+        table.insert(lines, "")
+        table.insert(lines, "---")
+        table.insert(lines, "")
+        table.insert(lines, "## 💰 Top 10 Best Profits")
+        table.insert(lines, "")
+        
+        if #bestDeals == 0 then
+            table.insert(lines, "> ⚠️ No profitable listings detected currently")
         else
-            rapDistribution.ultra = rapDistribution.ultra + 1
+            table.insert(lines, "| # | Item | 💎 RAP | 💰 Price | 📈 Profit | 📊 % | 👤 Owner |")
+            table.insert(lines, "|---|------|-------:|--------:|----------:|-----:|---------|")
+            for i = 1, math.min(10, #bestDeals) do
+                local d = bestDeals[i]
+                table.insert(lines, string.format("| %d | %s `%s` | %s | %s | %s | **%.1f%%** | `%s` |",
+                    i, d.rarityEmoji, d.itemName, formatNumber(d.rap), formatNumber(d.price),
+                    formatNumber(d.profit), d.profitPercent, d.ownerName))
+            end
         end
-    end
-    
-    local lines = {}
-    table.insert(lines, "# 🏪 Pet Simulator 99 Live Booth Dashboard")
-    table.insert(lines, "")
-    table.insert(lines, "> **Real-time market intelligence** · Auto-sync every " .. UPDATE_INTERVAL .. "s · GitHub hosted")
-    table.insert(lines, "")
-    table.insert(lines, "[![Live Dashboard](https://img.shields.io/badge/Live-Dashboard-brightgreen)]() [![Updated](https://img.shields.io/badge/Updated-Live-blue)]()")
-    table.insert(lines, "")
-    table.insert(lines, "## 🌐 Server Snapshot")
-    table.insert(lines, "")
-    table.insert(lines, "| Metric | Value |")
-    table.insert(lines, "|:-------|------:|")
-    table.insert(lines, "| 👥 **Players Online** | `" .. playersOnline .. "` |")
-    table.insert(lines, "| 🏪 **Claimed Booths** | `" .. claimedBooths .. "` |")
-    table.insert(lines, "| 🚪 **Unclaimed Booths** | `" .. math.max(0, TOTAL_BOOTH_SLOTS - claimedBooths) .. "` |")
-    table.insert(lines, "| 📦 **Total Listings** | `" .. totalListings .. "` |")
-    table.insert(lines, "| 💎 **Total RAP Value** | `" .. formatNumber(totalRAP) .. "` |")
-    table.insert(lines, "| 🦍 **Huge Pets** | `" .. totalHuges .. "` |")
-    table.insert(lines, "| 🐉 **Titanic Pets** | `" .. totalTitanics .. "` |")
-    table.insert(lines, "| ⏱️ **Uptime** | `" .. formatTime(lastUploadTimestamp) .. "` |")
-    table.insert(lines, "| 🕐 **Last Scan** | `" .. os.date("%H:%M:%S", now) .. "` |")
-    table.insert(lines, "")
-    table.insert(lines, "---")
-    table.insert(lines, "")
-    table.insert(lines, "## 💰 Top 10 Best Profits")
-    table.insert(lines, "")
-    
-    if #bestDeals == 0 then
-        table.insert(lines, "> ⚠️ No profitable listings detected currently")
-    else
-        table.insert(lines, "| # | Item | 💎 RAP | 💰 Price | 📈 Profit | 📊 % | 👤 Owner |")
-        table.insert(lines, "|---|------|-------:|--------:|----------:|-----:|---------|")
-        for i = 1, math.min(10, #bestDeals) do
-            local d = bestDeals[i]
-            table.insert(lines, string.format("| %d | `%s` %s | %s | %s | %s | **%.1f%%** | `%s` |",
-                i, d.rarityEmoji, d.itemName, formatNumber(d.rap), formatNumber(d.price),
-                formatNumber(d.profit), d.profitPercent, d.ownerName))
+        
+        table.insert(lines, "")
+        table.insert(lines, "---")
+        table.insert(lines, "")
+        table.insert(lines, "## 🏆 Top Booths by Wealth")
+        table.insert(lines, "")
+        table.insert(lines, "| # | Owner | 💎 Total RAP | 📦 Items | 🦍 Huges | 🐉 Titanics | 🏆 Best Item |")
+        table.insert(lines, "|---|-------|------------:|---------:|---------:|------------:|--------------|")
+        for i = 1, math.min(10, #boothStats) do
+            local b = boothStats[i]
+            table.insert(lines, string.format("| %d | `%s` | %s | %d | %d | %d | `%s` |",
+                i, b.ownerName, formatNumber(b.totalRAP), b.listingCount,
+                b.hugeCount, b.titanicCount, b.bestItem))
         end
+        
+        table.insert(lines, "")
+        table.insert(lines, "---")
+        table.insert(lines, "")
+        table.insert(lines, "## 📋 Complete Listings (" .. totalListings .. " items)")
+        table.insert(lines, "")
+        table.insert(lines, "| Item | 💎 RAP | 💰 Price | 📈 Profit | 📊 % | 👤 Owner |")
+        table.insert(lines, "|------|-------:|--------:|----------:|-----:|---------|")
+        for i = 1, math.min(100, #topListings) do
+            local l = topListings[i]
+            table.insert(lines, string.format("| %s `%s` | %s | %s | %s | **%.1f%%** | `%s` |",
+                l.rarityEmoji, l.itemName, formatNumber(l.rap), formatNumber(l.price),
+                formatNumber(l.profit), l.profitPercent, l.ownerName))
+        end
+        if #topListings > 100 then
+            table.insert(lines, string.format("| ... | *%d more items* | ... | ... | ... | ... | ... |", #topListings - 100))
+        end
+        
+        table.insert(lines, "")
+        table.insert(lines, "---")
+        table.insert(lines, "")
+        table.insert(lines, "## 📊 Market Analytics")
+        table.insert(lines, "")
+        table.insert(lines, "| Metric | Value |")
+        table.insert(lines, "|:-------|------:|")
+        table.insert(lines, "| 👑 **Richest Booth** | `" .. richestBooth .. "` |")
+        table.insert(lines, "| 🦍 **Cheapest Huge** | `" .. (cheapestHuge ~= math.huge and formatNumber(cheapestHuge) or "None") .. "` |")
+        table.insert(lines, "| 🐉 **Cheapest Titanic** | `" .. (cheapestTitanic ~= math.huge and formatNumber(cheapestTitanic) or "None") .. "` |")
+        table.insert(lines, "| 💰 **Most Expensive** | `" .. formatNumber(mostExpensiveListing.price) .. "` (" .. mostExpensiveListing.name .. ") by `" .. mostExpensiveListing.owner .. "` |")
+        table.insert(lines, "| 📊 **Average Price** | `" .. formatNumber(avgListingPrice) .. "` |")
+        table.insert(lines, "")
+        table.insert(lines, "### RAP Distribution")
+        table.insert(lines, "")
+        table.insert(lines, "```")
+        local totalItems = math.max(1, #allListings)
+        table.insert(lines, string.format("🟢 Low (<10k):     %4d items %s", rapDistribution.low, string.rep("█", math.floor(rapDistribution.low / totalItems * 50))))
+        table.insert(lines, string.format("🟡 Medium (10k-100k): %4d items %s", rapDistribution.medium, string.rep("█", math.floor(rapDistribution.medium / totalItems * 50))))
+        table.insert(lines, string.format("🟠 High (100k-1M): %4d items %s", rapDistribution.high, string.rep("█", math.floor(rapDistribution.high / totalItems * 50))))
+        table.insert(lines, string.format("🔴 Ultra (>1M):   %4d items %s", rapDistribution.ultra, string.rep("█", math.floor(rapDistribution.ultra / totalItems * 50))))
+        table.insert(lines, "```")
+        table.insert(lines, "")
+        table.insert(lines, "---")
+        table.insert(lines, "")
+        table.insert(lines, "## ⚙️ System Status")
+        table.insert(lines, "")
+        table.insert(lines, "| Metric | Status |")
+        table.insert(lines, "|:-------|-------:|")
+        table.insert(lines, "| ✅ **Active Booths** | `" .. claimedBooths .. "` |")
+        table.insert(lines, "| 📋 **Processed Listings** | `" .. totalListings .. "` |")
+        table.insert(lines, "| 🔄 **Update Cycle** | `" .. UPDATE_INTERVAL .. "s` |")
+        table.insert(lines, "| ☁️ **GitHub Sync** | `" .. (lastUploadTimestamp > 0 and "✅ Active" or "⏳ Pending") .. "` |")
+        table.insert(lines, "| 📡 **API Calls** | `" .. requestCounter .. "` |")
+        table.insert(lines, "| ⏲️ **Next Update** | `" .. math.max(0, UPDATE_INTERVAL - (os.time() - lastUploadTimestamp)) .. "s` |")
+        table.insert(lines, "")
+        table.insert(lines, "---")
+        table.insert(lines, "")
+        table.insert(lines, "*📡 Data refreshes automatically · Last full sync: " .. os.date("%Y-%m-%d %H:%M:%S", now) .. "*")
+        
+        return table.concat(lines, "\n")
+    end)
+    
+    if not success then
+        printError("Failed to generate markdown: " .. tostring(result))
+        return nil
     end
     
-    table.insert(lines, "")
-    table.insert(lines, "---")
-    table.insert(lines, "")
-    table.insert(lines, "## 🏆 Top Booths by Wealth")
-    table.insert(lines, "")
-    table.insert(lines, "| # | Owner | 💎 Total RAP | 📦 Items | 🦍 Huges | 🐉 Titanics | 🏆 Best Item |")
-    table.insert(lines, "|---|-------|------------:|---------:|---------:|------------:|--------------|")
-    for i = 1, math.min(10, #boothStats) do
-        local b = boothStats[i]
-        table.insert(lines, string.format("| %d | `%s` | %s | %d | %d | %d | `%s` |",
-            i, b.ownerName, formatNumber(b.totalRAP), b.listingCount,
-            b.hugeCount, b.titanicCount, b.bestItem))
-    end
-    
-    table.insert(lines, "")
-    table.insert(lines, "---")
-    table.insert(lines, "")
-    table.insert(lines, "## 📋 Complete Listings (" .. totalListings .. " items)")
-    table.insert(lines, "")
-    table.insert(lines, "| Item | 💎 RAP | 💰 Price | 📈 Profit | 📊 % | 👤 Owner |")
-    table.insert(lines, "|------|-------:|--------:|----------:|-----:|---------|")
-    for i = 1, math.min(100, #topListings) do
-        local l = topListings[i]
-        table.insert(lines, string.format("| %s `%s` | %s | %s | %s | **%.1f%%** | `%s` |",
-            l.rarityEmoji, l.itemName, formatNumber(l.rap), formatNumber(l.price),
-            formatNumber(l.profit), l.profitPercent, l.ownerName))
-    end
-    if #topListings > 100 then
-        table.insert(lines, string.format("| ... | *%d more items* | ... | ... | ... | ... | ... |", #topListings - 100))
-    end
-    
-    table.insert(lines, "")
-    table.insert(lines, "---")
-    table.insert(lines, "")
-    table.insert(lines, "## 📊 Market Analytics")
-    table.insert(lines, "")
-    table.insert(lines, "| Metric | Value |")
-    table.insert(lines, "|:-------|------:|")
-    table.insert(lines, "| 👑 **Richest Booth** | `" .. richestBooth .. "` |")
-    table.insert(lines, "| 🦍 **Cheapest Huge** | `" .. (cheapestHuge ~= math.huge and formatNumber(cheapestHuge) or "None") .. "` |")
-    table.insert(lines, "| 🐉 **Cheapest Titanic** | `" .. (cheapestTitanic ~= math.huge and formatNumber(cheapestTitanic) or "None") .. "` |")
-    table.insert(lines, "| 💰 **Most Expensive** | `" .. formatNumber(mostExpensiveListing.price) .. "` (%s)" .. mostExpensiveListing.name .. " by `" .. mostExpensiveListing.owner .. "`` |")
-    table.insert(lines, "| 📊 **Average Price** | `" .. formatNumber(avgListingPrice) .. "` |")
-    table.insert(lines, "")
-    table.insert(lines, "### RAP Distribution")
-    table.insert(lines, "")
-    table.insert(lines, "```")
-    table.insert(lines, string.format("🟢 Low (<10k):     %4d items %s", rapDistribution.low, string.rep("█", math.floor(rapDistribution.low / math.max(1, #allListings) * 50))))
-    table.insert(lines, string.format("🟡 Medium (10k-100k): %4d items %s", rapDistribution.medium, string.rep("█", math.floor(rapDistribution.medium / math.max(1, #allListings) * 50))))
-    table.insert(lines, string.format("🟠 High (100k-1M): %4d items %s", rapDistribution.high, string.rep("█", math.floor(rapDistribution.high / math.max(1, #allListings) * 50))))
-    table.insert(lines, string.format("🔴 Ultra (>1M):   %4d items %s", rapDistribution.ultra, string.rep("█", math.floor(rapDistribution.ultra / math.max(1, #allListings) * 50))))
-    table.insert(lines, "```")
-    table.insert(lines, "")
-    table.insert(lines, "---")
-    table.insert(lines, "")
-    table.insert(lines, "## ⚙️ System Status")
-    table.insert(lines, "")
-    table.insert(lines, "| Metric | Status |")
-    table.insert(lines, "|:-------|-------:|")
-    table.insert(lines, "| ✅ **Active Booths** | `" .. claimedBooths .. "` |")
-    table.insert(lines, "| 📋 **Processed Listings** | `" .. totalListings .. "` |")
-    table.insert(lines, "| 🔄 **Update Cycle** | `" .. UPDATE_INTERVAL .. "s` |")
-    table.insert(lines, "| ☁️ **GitHub Sync** | `" .. (lastUploadTimestamp > 0 and "✅ Active" or "⏳ Pending") .. "` |")
-    table.insert(lines, "| 📡 **API Calls** | `" .. requestCounter .. "` |")
-    table.insert(lines, "| ⏲️ **Next Update** | `" .. math.max(0, UPDATE_INTERVAL - (os.time() - lastUploadTimestamp)) .. "s` |")
-    table.insert(lines, "")
-    table.insert(lines, "---")
-    table.insert(lines, "")
-    table.insert(lines, "*📡 Data refreshes automatically · Last full sync: " .. os.date("%Y-%m-%d %H:%M:%S", now) .. "*")
-    
-    return table.concat(lines, "\n")
+    return result
 end
 
 local function uploadToGitHub(content)
-    if isUploading then return false end
-    isUploading = true
-    
-    local getUrl = string.format("https://api.github.com/repos/%s/%s/contents/%s?ref=%s",
-        GITHUB_OWNER, GITHUB_REPO, GITHUB_PATH, GITHUB_BRANCH)
-    
-    local getRes = sendRequest({
-        Url = getUrl,
-        Method = "GET",
-        Headers = {
-            ["Authorization"] = "token " .. GITHUB_TOKEN,
-            ["User-Agent"] = "Roblox PS99 Booth Analytics"
-        }
-    })
-    
-    if getRes.StatusCode ~= 200 then
-        isUploading = false
+    if isUploading then
+        printInfo("Upload already in progress, skipping...")
         return false
     end
     
-    local fileData = HttpService:JSONDecode(getRes.Body)
-    local currentSha = fileData.sha
-    local encoded = base64Encode(content)
+    isUploading = true
+    printInfo("Starting GitHub upload...")
     
-    local putBody = {
-        message = "Auto-update booth analytics dashboard",
-        content = encoded,
-        sha = currentSha,
-        branch = GITHUB_BRANCH
-    }
-    
-    local putRes = sendRequest({
-        Url = string.format("https://api.github.com/repos/%s/%s/contents/%s",
-            GITHUB_OWNER, GITHUB_REPO, GITHUB_PATH),
-        Method = "PUT",
-        Headers = {
-            ["Authorization"] = "token " .. GITHUB_TOKEN,
-            ["Content-Type"] = "application/json",
-            ["User-Agent"] = "Roblox PS99 Booth Analytics"
-        },
-        Body = HttpService:JSONEncode(putBody)
-    })
-    
-    local success = (putRes.StatusCode == 200 or putRes.StatusCode == 201)
-    if success then
-        lastUploadTimestamp = os.time()
-    end
+    local success, result = pcall(function()
+        local getUrl = string.format("https://api.github.com/repos/%s/%s/contents/%s?ref=%s",
+            GITHUB_OWNER, GITHUB_REPO, GITHUB_PATH, GITHUB_BRANCH)
+        
+        printInfo("Fetching current file SHA...")
+        local getRes = sendRequest({
+            Url = getUrl,
+            Method = "GET",
+            Headers = {
+                ["Authorization"] = "token " .. GITHUB_TOKEN,
+                ["User-Agent"] = "Roblox PS99 Booth Analytics"
+            }
+        })
+        
+        if not getRes then
+            error("Failed to get response from GitHub API")
+        end
+        
+        if getRes.StatusCode ~= 200 then
+            error(string.format("GitHub GET failed (Status %d): %s", getRes.StatusCode, tostring(getRes.Body)))
+        end
+        
+        local fileData = HttpService:JSONDecode(getRes.Body)
+        local currentSha = fileData.sha
+        printInfo("Got SHA: " .. currentSha)
+        
+        local encoded = base64Encode(content)
+        printInfo("Encoded content length: " .. #encoded .. " chars")
+        
+        local putBody = {
+            message = "Auto-update booth analytics dashboard",
+            content = encoded,
+            sha = currentSha,
+            branch = GITHUB_BRANCH
+        }
+        
+        printInfo("Uploading new content...")
+        local putRes = sendRequest({
+            Url = string.format("https://api.github.com/repos/%s/%s/contents/%s",
+                GITHUB_OWNER, GITHUB_REPO, GITHUB_PATH),
+            Method = "PUT",
+            Headers = {
+                ["Authorization"] = "token " .. GITHUB_TOKEN,
+                ["Content-Type"] = "application/json",
+                ["User-Agent"] = "Roblox PS99 Booth Analytics"
+            },
+            Body = HttpService:JSONEncode(putBody)
+        })
+        
+        if not putRes then
+            error("Failed to get response from GitHub PUT")
+        end
+        
+        if putRes.StatusCode == 200 or putRes.StatusCode == 201 then
+            printSuccess("Dashboard uploaded successfully! Status: " .. putRes.StatusCode)
+            return true
+        else
+            error(string.format("GitHub PUT failed (Status %d): %s", putRes.StatusCode, tostring(putRes.Body)))
+        end
+    end)
     
     isUploading = false
-    return success
+    
+    if not success then
+        printError("Upload failed: " .. tostring(result))
+        return false
+    end
+    
+    return result
 end
 
 local function refreshDashboard()
+    printInfo("Checking for dashboard updates...")
+    
     local newMarkdown = generateMarkdown()
-    if newMarkdown == lastContentHash then
+    if not newMarkdown then
+        printError("Skipping upload - failed to generate markdown")
         return
     end
     
+    if newMarkdown == lastContentHash then
+        printInfo("No changes detected, skipping upload")
+        return
+    end
+    
+    printInfo("Changes detected! Preparing upload...")
     local ok = uploadToGitHub(newMarkdown)
+    
     if ok then
         lastContentHash = newMarkdown
+        lastUploadTimestamp = os.time()
+        printSuccess("Dashboard fully updated at " .. os.date("%H:%M:%S"))
+        printInfo("View at: https://raw.githubusercontent.com/" .. GITHUB_OWNER .. "/" .. GITHUB_REPO .. "/refs/heads/main/" .. GITHUB_PATH)
+    else
+        printError("Dashboard update failed, will retry next cycle")
     end
 end
 
 local function onBoothBroadcast(player, packet)
-    if not packet or not packet.PlayerID then return end
+    if not packet or not packet.PlayerID then
+        printError("Received invalid broadcast packet")
+        return
+    end
     updateBoothFromPacket(packet.PlayerID, packet)
 end
 
-pcall(function()
-    Network.Fired("Booths_Broadcast"):Connect(onBoothBroadcast)
-end)
-
-local function startLoop()
-    while true do
-        wait(UPDATE_INTERVAL)
-        pcall(refreshDashboard)
+local function setupNetworkListener()
+    printInfo("Connecting to Booths_Broadcast...")
+    local success, err = pcall(function()
+        Network.Fired("Booths_Broadcast"):Connect(onBoothBroadcast)
+    end)
+    
+    if success then
+        printSuccess("Connected to Booths_Broadcast successfully")
+    else
+        printError("Failed to connect to Booths_Broadcast: " .. tostring(err))
+        printError("Make sure you're in Pet Simulator 99 and Network module is accessible")
     end
 end
 
+local function startLoop()
+    printInfo("Starting main update loop (interval: " .. UPDATE_INTERVAL .. "s)")
+    local cycleCount = 0
+    
+    while true do
+        wait(UPDATE_INTERVAL)
+        cycleCount = cycleCount + 1
+        printInfo("--- Update cycle #" .. cycleCount .. " ---")
+        
+        local success, err = pcall(refreshDashboard)
+        if not success then
+            printError("Main loop error: " .. tostring(err))
+        end
+    end
+end
+
+printSuccess("=== Pet Simulator 99 Booth Analytics Dashboard ===")
+printInfo("GitHub Repository: " .. GITHUB_OWNER .. "/" .. GITHUB_REPO)
+printInfo("File: " .. GITHUB_PATH)
+printInfo("Update Interval: " .. UPDATE_INTERVAL .. " seconds")
+printInfo("Starting up...")
+
+setupNetworkListener()
+wait(2)
+
+local initialSuccess, initialErr = pcall(refreshDashboard)
+if initialSuccess then
+    printSuccess("Initial dashboard generation complete")
+else
+    printError("Initial dashboard generation failed: " .. tostring(initialErr))
+end
+
 spawn(startLoop)
-wait(5)
-pcall(refreshDashboard)
+printSuccess("Script fully initialized and running")
