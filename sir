@@ -1,265 +1,298 @@
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
-local Players = game:GetService("Players")
 
-local webhookUrl = "https://discord.com/api/webhooks/1495059756371546345/L3e0gHM3cdJAhq80YGviVwkvNOcJKOKYjerPBRPp2I5mli4FZ7r8vD7-8LPrBqWODKNw"
+local LocalPlayer = Players.LocalPlayer
 
-local config = {
-    minimumChance = 0  -- 0 = send all, 1b = only send 1 in 1b or rarer
+local Network = require(ReplicatedStorage.Library.Client.Network)
+local Items = require(ReplicatedStorage.Library.Items)
+local Save = require(ReplicatedStorage.Library.Client.Save)
+
+local MAX_RETRIES = 3
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1495059756371546345/L3e0gHM3cdJAhq80YGviVwkvNOcJKOKYjerPBRPp2I5mli4FZ7r8vD7-8LPrBqWODKNw"
+
+local CALLER = {
+    Caller = {
+        LineNumber = 527,
+        ScriptClass = "ModuleScript",
+        Variadic = false,
+        Traceback = "ReplicatedStorage.Library.Client.BoothCmds:527 function PromptPurchase2\nReplicatedStorage.Library.Client.BoothCmds:654 function promptOtherPlayerBooth2\nReplicatedStorage.Library.Client.BoothCmds:996",
+        ScriptPath = "ReplicatedStorage.Library.Client.BoothCmds",
+        FunctionName = "PromptPurchase2",
+        Handle = "function: 0x192a00f6dcd86076",
+        ScriptType = "Instance",
+        ParameterCount = 2,
+        SourceIdentifier = "ReplicatedStorage.Library.Client.BoothCmds"
+    }
 }
 
-local Source = ReplicatedStorage:WaitForChild("Source", 30)
-if not Source then
-    warn("[RollWatcher] ReplicatedStorage.Source not found.")
-    return
+local function commas(n)
+    local s = tostring(math.floor(n))
+    local result = ""
+    local count = 0
+    for i = #s, 1, -1 do
+        if count > 0 and count % 3 == 0 then
+            result = "," .. result
+        end
+        result = s:sub(i, i) .. result
+        count = count + 1
+    end
+    return result
 end
 
-local Items = Source:WaitForChild("Game"):WaitForChild("Items")
-local Roll = Source:WaitForChild("Features"):WaitForChild("Roll")
-local MutationsFolder = Source:WaitForChild("Features"):WaitForChild("Mutations")
+local function redactUsername(name)
+    if not name or #name == 0 then return "***" end
+    local visible = math.max(1, math.floor(#name / 3))
+    return name:sub(1, visible) .. string.rep("*", #name - visible)
+end
 
-local RollSlice   = require(Roll:WaitForChild("RollSlice"))
-local SlimeData   = require(Items:WaitForChild("Slimes"))
-local RarityTiers = require(Items:WaitForChild("RarityTiers"))
-local Mutations   = require(MutationsFolder:WaitForChild("Mutations"))
-local DataClient  = require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("DataService")).client
-
-local sentMessages = {}
-local myPlayer = Players.LocalPlayer
-
-local function formatNumber(num)
-    if type(num) ~= "number" then return tostring(num) end
-    local absNum = math.abs(num)
-    local suffix = ""
-    local divisor = 1
-
-    if absNum >= 1e15 then
-        suffix = "Qn"; divisor = 1e15
-    elseif absNum >= 1e12 then
-        suffix = "Qd"; divisor = 1e12
-    elseif absNum >= 1e9 then
-        suffix = "B"; divisor = 1e9
-    elseif absNum >= 1e6 then
-        suffix = "M"; divisor = 1e6
-    elseif absNum >= 1e3 then
-        suffix = "K"; divisor = 1e3
-    end
-
-    if suffix ~= "" then
-        local formatted = num / divisor
-        if math.abs(formatted - math.floor(formatted)) < 0.01 then
-            return string.format("%d%s", math.floor(formatted), suffix)
-        else
-            return string.format("%.1f%s", formatted, suffix):gsub("%.0f", "")
+local function getGems()
+    local success, data = pcall(function()
+        return Save.Get()
+    end)
+    if not success or not data then return 0 end
+    local currency = data.Inventory and data.Inventory.Currency
+    if not currency then return 0 end
+    for _, v in pairs(currency) do
+        if v.id == "Diamonds" then
+            return v._am or 0
         end
     end
-    return tostring(math.floor(num))
+    return 0
 end
 
-local function getRarityName(odds)
-    if not odds or odds <= 0 then return "Unknown" end
-    local ok, tier = pcall(RarityTiers.getTier, odds)
-    return (ok and tier and tier.name) or "Unknown"
-end
+local function getIconFromDirectory(item, class)
+    local ok, result = pcall(function()
+        if class == "Pet" then
+            local petDir = item:Directory and item:Directory()
+            if not petDir then return nil end
+            local isGolden = item:IsGolden and item:IsGolden()
+            -- Golden -> goldenThumbnail, Rainbow/Shiny/Normal -> thumbnail
+            local icon = isGolden and (petDir.goldenThumbnail or petDir.thumbnail) or petDir.thumbnail
+            if icon then
+                return icon:gsub("rbxassetid://", "")
+            end
 
-local function getActualItem(result)
-    if type(result) ~= "table" then return nil end
-    for _, entry in ipairs(result) do
-        if type(entry) == "table" and entry.id then
-            return entry
+        elseif class == "Enchant" then
+            local enchantDir = item:Directory and item:Directory()
+            if not enchantDir then return nil end
+            local icon = enchantDir.Icon
+            if type(icon) == "function" then
+                icon = enchantDir.Icon(1)
+            end
+            if icon then
+                return icon:gsub("rbxassetid://", "")
+            end
+
+        elseif class == "Egg" then
+            local eggDir = item:Directory and item:Directory()
+            local icon = eggDir and eggDir.icon
+            if icon then
+                return icon:gsub("rbxassetid://", "")
+            end
+
+        elseif class == "Charm" then
+            local charmDir = item:Directory and item:Directory()
+            local icon = charmDir and charmDir.Icon
+            if icon then
+                return icon:gsub("rbxassetid://", "")
+            end
+
+        elseif class == "Hoverboard" then
+            local hoverDir = item:Directory and item:Directory()
+            local icon = hoverDir and hoverDir.Icon
+            if icon then
+                return icon:gsub("rbxassetid://", "")
+            end
+
+        elseif class == "Ultimate" then
+            local ultDir = item:Directory and item:Directory()
+            local icon = ultDir and ultDir.Icon
+            if icon then
+                return icon:gsub("rbxassetid://", "")
+            end
         end
-    end
-    return nil
+
+        return nil
+    end)
+
+    return ok and result or nil
 end
 
-local function getResultsFingerprint(results)
-    if type(results) ~= "table" then return "nil" end
-    local count = #results
-    if count == 0 then return "empty" end
-    local parts = {}
-    for i, result in ipairs(results) do
-        local item = getActualItem(result)
-        parts[i] = item and tostring(item.id) or tostring(i)
-    end
-    return count .. "|" .. table.concat(parts, ",")
-end
-
-local function ordinal(n)
-    local s = tostring(n)
-    local last = n % 10
-    local tens = n % 100
-    if tens >= 11 and tens <= 13 then return s .. "th" end
-    if last == 1 then return s .. "st" end
-    if last == 2 then return s .. "nd" end
-    if last == 3 then return s .. "rd" end
-    return s .. "th"
-end
-
-local function getAssetImageUrl(assetId)
+local function resolveRobloxThumbnail(assetId)
     if not assetId then return nil end
     local url = "https://thumbnails.roblox.com/v1/assets?assetIds=" .. assetId .. "&size=420x420&format=Png&isCircular=false"
-    local success, response = pcall(function()
+    local ok, res = pcall(function()
         return request({ Url = url, Method = "GET" })
     end)
-    if success and response and response.Success then
-        local data = HttpService:JSONDecode(response.Body)
-        if data and data.data and data.data[1] and data.data[1].imageUrl then
+    if ok and res and res.Success then
+        local data = HttpService:JSONDecode(res.Body)
+        if data and data.data and data.data[1] then
             return data.data[1].imageUrl
         end
     end
     return nil
 end
 
-local function getThumbnailSize(mutations)
-    if not mutations then return 64 end
-    if mutations.huge then return 128
-    elseif mutations.big then return 96 end
-    return 64
-end
+local function sendWebhook(name, quantity, price, rap, gemsLeft, assetId)
+    local totalPaid = price * quantity
+    local profit = rap - price
+    local profitPct = math.floor(((rap - price) / rap) * 10000) / 100
+    local thumbnailUrl = resolveRobloxThumbnail(assetId)
+    local username = LocalPlayer and LocalPlayer.Name or "Unknown"
+    local redacted = redactUsername(username)
 
-local function getEmbedColor(mutations)
-    if not mutations then return nil end
-    if mutations.inverted then return 0x9b59b6
-    elseif mutations.huge then return 0xf1c40f
-    elseif mutations.big then return 0xe67e22
-    elseif mutations.shiny then return 0xf39c12 end
-    return nil
-end
-
-local function sendWebhook(playerName, displayName, rarity, chanceText, statsText, mutations, mutList, imageUrl, totalRolls, coins, kills)
-    local finalImageUrl = nil
-    local thumbnailSize = getThumbnailSize(mutations)
-
-    if imageUrl and imageUrl ~= "N/A" then
-        local assetId = string.match(imageUrl, "rbxassetid://(%d+)")
-        if assetId then
-            finalImageUrl = getAssetImageUrl(assetId)
-        end
-    end
-
-    local hiddenName = "||" .. playerName .. "||"
-    local description = string.format("**%s** rolled **%s**!\n\n🎲 **Total Rolls:** %s", hiddenName, displayName, ordinal(totalRolls))
-
-    local fields = {
-        {name = "Rarity", value = rarity, inline = true},
-        {name = "Chance", value = chanceText, inline = true}
+    local embed = {
+        title = "🎉 Booth Sniper has sniped a new Item!",
+        color = 0x9B59B6,
+        fields = {
+            {
+                name = "🛠️ Sniped Item Info:",
+                value = table.concat({
+                    "**Item:** " .. name .. " (x" .. quantity .. ")",
+                    "**Paid:** " .. commas(totalPaid),
+                    "**RAP:** " .. commas(rap),
+                    "**Profit:** " .. commas(profit) .. " (" .. profitPct .. "%)",
+                }, "\n"),
+                inline = false
+            },
+            {
+                name = "🧔 User Info:",
+                value = table.concat({
+                    "**Diamonds Left:** " .. commas(gemsLeft),
+                    "**In Account:** " .. redacted,
+                }, "\n"),
+                inline = false
+            }
+        }
     }
 
-    if statsText and statsText ~= "" then
-        table.insert(fields, {name = "Stats", value = statsText, inline = true})
+    if thumbnailUrl then
+        embed.thumbnail = { url = thumbnailUrl, width = 128, height = 128 }
     end
-
-    if mutList and #mutList > 0 then
-        table.insert(fields, {name = "Mutations", value = table.concat(mutList, ", "), inline = true})
-    end
-
-    table.insert(fields, {name = "🪙 Coins", value = formatNumber(coins), inline = true})
-    table.insert(fields, {name = "⚔️ Kills", value = formatNumber(kills), inline = true})
 
     local payload = {
-        username = "makik",
-        embeds = {{
-            title = "New Slime Rolled!",
-            description = description,
-            thumbnail = finalImageUrl and {url = finalImageUrl, width = thumbnailSize, height = thumbnailSize} or nil,
-            fields = fields,
-            color = getEmbedColor(mutations)
-        }}
+        username = "Booth Sniper",
+        embeds = { embed }
     }
 
     pcall(function()
         request({
-            Url = webhookUrl,
+            Url = WEBHOOK_URL,
             Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
+            Headers = { ["Content-Type"] = "application/json" },
             Body = HttpService:JSONEncode(payload)
         })
-        print("[WEBHOOK] Sent: " .. displayName)
+        print("Webhook sent for:", name)
     end)
 end
 
-print("[RollWatcher] Watching for roll results...")
+local function getProfitThreshold(item)
+    local class = item._data and item._data.class or ""
 
-local lastFingerprint = nil
+    if class == "Pet" then
+        local dir = item:Directory and item:Directory()
+        if dir and (dir.huge or dir.titanic or dir.gargantuan) then
+            return 0.50
+        end
+        return nil
+    elseif class == "Egg" then
+        local rarity = item:GetRarity and item:GetRarity()
+        if rarity and rarity.Name == "Exclusive" then
+            return 0.50
+        end
+        return nil
+    elseif class == "Enchant" then
+        return 0.70
+    elseif class == "Hoverboard" or class == "Charm" or class == "Ultimate" then
+        return 0.90
+    end
 
-while true do
-    task.wait(0.1)
+    return nil
+end
 
-    local ok, results = pcall(RollSlice.rollResults)
-    if not ok then continue end
+local function shouldBuy(item, price, rap)
+    local threshold = getProfitThreshold(item)
+    if not threshold then return false end
+    if not rap or rap <= 0 then return false end
+    return (rap - price) / rap >= threshold
+end
 
-    local fingerprint = getResultsFingerprint(results)
+local function attemptPurchase(playerID, listingId, name, quantity)
+    for attempt = 1, MAX_RETRIES do
+        local ok, err = pcall(function()
+            ReplicatedStorage:WaitForChild("Network")
+                :WaitForChild("Booths_RequestPurchase")
+                :InvokeServer(playerID, {
+                    [listingId] = quantity
+                }, CALLER)
+        end)
 
-    if fingerprint ~= lastFingerprint then
-        lastFingerprint = fingerprint
+        if ok then
+            print("Bought:", name, "x" .. quantity, "(attempt " .. attempt .. ")")
+            return true
+        else
+            warn("Attempt", attempt, "failed for:", name, "|", err)
+            task.wait(0.5)
+        end
+    end
+    warn("All retries failed for:", name)
+    return false
+end
 
-        if type(results) == "table" and #results > 0 then
-            local stats      = DataClient:get("stats") or {}
-            local totalRolls = stats.rolls or 0
-            local kills      = stats.kills or 0
-            local coins      = DataClient:get("coins") or 0
+print("My Gems:", getGems())
 
-            for i, result in ipairs(results) do
-                local item = getActualItem(result)
-                if not item then continue end
+Network.Fired("Booths_Broadcast"):Connect(function(player, packet)
+    local success, err = pcall(function()
+        if not packet then return end
 
-                local id = tostring(item.id or "unknown")
-                local sok, slime = pcall(SlimeData.getSlime, id)
-                slime = sok and slime or nil
+        local boothOwner = Players:GetPlayerByUserId(packet.PlayerID)
+        print("\n==========")
+        print("Owner:", boothOwner and boothOwner.Name or packet.PlayerID)
 
-                local mutations      = type(item.mutations) == "table" and next(item.mutations) ~= nil and item.mutations or nil
-                local isInverted     = mutations and item.mutations.inverted == true
-                local image          = isInverted and (slime and slime.invertedIcon or "N/A") or (slime and slime.image or "N/A")
+        for listingId, listing in pairs(packet.Listings) do
+            local class = listing.ItemData.class
 
-                local name           = slime and slime.name or id
-                local baseOdds       = slime and slime.odds or nil
-                local baseDmg        = slime and slime.damage or 0
-                local baseHp         = slime and slime.health or 0
-                local rarity         = baseOdds and getRarityName(baseOdds) or "Unknown"
+            local item = Items.From(
+                class,
+                listing.ItemData.data
+            ):SetUID(listing.ItemData.uid)
 
-                local oddsMultiplier = mutations and Mutations.getVisualOddsMultiplier(mutations) or 1
-                local statBonus      = mutations and Mutations.getStatBonus(mutations, "damage") or 1
-                local finalOdds      = baseOdds and (baseOdds / oddsMultiplier) or nil
-                local finalDmg       = baseDmg * statBonus
-                local finalHp        = baseHp * statBonus
+            local name = item:GetName()
+            local rap = item:GetRAP and item:GetRAP()
+            local price = listing.DiamondCost
+            local totalAvailable = listing.ItemData.amount or 1
 
-                local chanceText     = finalOdds and string.format("1 in %s", formatNumber(math.floor(1 / finalOdds + 0.5))) or "N/A"
-                local chanceNumber   = finalOdds and (1 / finalOdds) or nil
-                local displayName    = mutations and Mutations.getDisplayName(name, mutations) or name
-                local mutList        = mutations and Mutations.getIds(mutations) or {}
+            print(name, "| RAP:", rap, "| Price:", price, "| Amount:", totalAvailable, "| Class:", class)
 
-                if config.minimumChance > 0 and chanceNumber and chanceNumber < config.minimumChance then
-                    continue
-                end
+            if price and price > 0 and shouldBuy(item, price, rap) then
+                local gems = getGems()
+                local canAfford = math.floor(gems / price)
+                local quantity = math.min(totalAvailable, canAfford)
 
-                local statsText = ""
-                if finalDmg > 0 and finalHp > 0 then
-                    statsText = string.format("⚔️ %s  ❤️ %s", formatNumber(finalDmg), formatNumber(finalHp))
-                elseif finalDmg > 0 then
-                    statsText = string.format("⚔️ %s", formatNumber(finalDmg))
-                elseif finalHp > 0 then
-                    statsText = string.format("❤️ %s", formatNumber(finalHp))
-                end
+                if quantity <= 0 then
+                    warn("Can't afford any of:", name, "| Need:", price, "| Have:", gems)
+                else
+                    local profit = math.floor(((rap - price) / rap) * 100)
+                    print("Buying:", name, "x" .. quantity, "| Profit:", profit .. "%", "| Total cost:", price * quantity)
 
-                local playerName = myPlayer and myPlayer.Name or "Someone"
-                local duplicateKey = playerName .. "_" .. displayName .. "_" .. tostring(os.time())
+                    local bought = attemptPurchase(packet.PlayerID, listingId, name, quantity)
 
-                if not sentMessages[duplicateKey] then
-                    sentMessages[duplicateKey] = os.time()
-
-                    print(string.format("%s roll : %s (%s)", ordinal(totalRolls), displayName, id))
-                    print(string.format("  Rarity    : %s", rarity))
-                    print(string.format("  Chance    : %s", chanceText))
-                    print(string.format("  Image     : %s", image))
-                    if finalDmg > 0 then print(string.format("  Damage    : %s", formatNumber(finalDmg))) end
-                    if finalHp > 0 then print(string.format("  Health    : %s", formatNumber(finalHp))) end
-                    if #mutList > 0 then print(string.format("  Mutations : %s", table.concat(mutList, ", "))) end
-
-                    task.spawn(function()
-                        sendWebhook(playerName, displayName, rarity, chanceText, statsText, mutations, mutList, image, totalRolls, coins, kills)
-                    end)
+                    if bought then
+                        local gemsAfter = getGems()
+                        local assetId = getIconFromDirectory(item, class)
+                        task.spawn(function()
+                            sendWebhook(name, quantity, price, rap, gemsAfter, assetId)
+                        end)
+                    end
                 end
             end
         end
+    end)
+
+    if not success then
+        warn("Error in Booths_Broadcast handler:", err)
     end
-end
+end)
+
+print("Script loaded, waiting for booths...")
