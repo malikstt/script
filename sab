@@ -212,6 +212,49 @@ local function requestInitialData()
     return result
 end
 
+local function waitForTradingPlaza()
+    printInfo("Waiting for Trading Plaza...")
+    local maxAttempts = 60
+    local attempts = 0
+    
+    while attempts < maxAttempts do
+        local plaza = workspace:FindFirstChild("TradingPlaza")
+        if plaza then
+            local boothSpawns = plaza:FindFirstChild("BoothSpawns")
+            if boothSpawns then
+                printSuccess("Trading Plaza loaded")
+                return true
+            end
+        end
+        wait(1)
+        attempts = attempts + 1
+    end
+    
+    printError("Trading Plaza timeout, continuing anyway")
+    return false
+end
+
+local function waitForNetworkReady()
+    printInfo("Waiting for Network module...")
+    local maxAttempts = 30
+    local attempts = 0
+    
+    while attempts < maxAttempts do
+        local success, result = pcall(function()
+            return Network.Invoke("Booths_GetInitialState")
+        end)
+        if success then
+            printSuccess("Network module ready")
+            return true
+        end
+        wait(1)
+        attempts = attempts + 1
+    end
+    
+    printError("Network module timeout")
+    return false
+end
+
 local function cleanupStaleBooths()
     local success, result = pcall(function()
         local now = os.time()
@@ -338,7 +381,7 @@ local function generateMarkdown()
         local lines = {}
         table.insert(lines, "# Pet Simulator 99 Booth Analytics")
         table.insert(lines, "")
-        table.insert(lines, "> Real-time market data · Auto-sync every " .. UPDATE_INTERVAL .. "s · GitHub hosted")
+        table.insert(lines, "> Real-time market data · Sync every " .. UPDATE_INTERVAL .. "s")
         table.insert(lines, "")
         table.insert(lines, "## Server Overview")
         table.insert(lines, "")
@@ -374,7 +417,7 @@ local function generateMarkdown()
         end
         
         if #boothStats > 0 then
-            table.insert(lines, "## Top Booths by RAP")
+            table.insert(lines, "## Top Booths")
             table.insert(lines, "")
             table.insert(lines, "| Owner | Total RAP | Items | Huges | Titanics | Best Item |")
             table.insert(lines, "|-------|-----------|-------|-------|----------|-----------|")
@@ -408,22 +451,22 @@ local function generateMarkdown()
             table.insert(lines, "")
         end
         
-        table.insert(lines, "## Market Analytics")
+        table.insert(lines, "## Analytics")
         table.insert(lines, "")
         table.insert(lines, "| Metric | Value |")
         table.insert(lines, "|--------|-------|")
         table.insert(lines, "| Richest Booth | " .. richestBooth .. " |")
         table.insert(lines, "| Cheapest Huge | " .. (cheapestHuge ~= math.huge and formatNumber(cheapestHuge) or "None") .. " |")
         table.insert(lines, "| Cheapest Titanic | " .. (cheapestTitanic ~= math.huge and formatNumber(cheapestTitanic) or "None") .. " |")
-        table.insert(lines, "| Most Expensive | " .. formatNumber(mostExpensiveListing.price) .. " (" .. mostExpensiveListing.name .. ") by " .. mostExpensiveListing.owner .. " |")
+        table.insert(lines, "| Most Expensive | " .. formatNumber(mostExpensiveListing.price) .. " (" .. mostExpensiveListing.name .. ") |")
         table.insert(lines, "| Average Price | " .. formatNumber(avgListingPrice) .. " |")
         table.insert(lines, "")
         table.insert(lines, "---")
         table.insert(lines, "")
-        table.insert(lines, "## System Status")
+        table.insert(lines, "## Status")
         table.insert(lines, "")
-        table.insert(lines, "| Metric | Status |")
-        table.insert(lines, "|--------|--------|")
+        table.insert(lines, "| Metric | Value |")
+        table.insert(lines, "|--------|-------|")
         table.insert(lines, "| Active Booths | " .. claimedBooths .. " |")
         table.insert(lines, "| Processed Listings | " .. totalListings .. " |")
         table.insert(lines, "| Update Cycle | " .. UPDATE_INTERVAL .. "s |")
@@ -433,7 +476,7 @@ local function generateMarkdown()
         table.insert(lines, "")
         table.insert(lines, "---")
         table.insert(lines, "")
-        table.insert(lines, "Last full sync: " .. os.date("%Y-%m-%d %H:%M:%S", now))
+        table.insert(lines, "Last sync: " .. os.date("%Y-%m-%d %H:%M:%S", now))
         
         return table.concat(lines, "\n")
     end)
@@ -570,6 +613,7 @@ local function onBoothBroadcast(player, packet)
         return
     end
     updateBoothFromPacket(packet.PlayerID, packet)
+    refreshDashboard()
 end
 
 local function setupNetworkListener()
@@ -606,17 +650,25 @@ printInfo("Repository: " .. GITHUB_OWNER .. "/" .. GITHUB_REPO)
 printInfo("File: " .. GITHUB_PATH)
 printInfo("Interval: " .. UPDATE_INTERVAL .. "s")
 
+waitForTradingPlaza()
+waitForNetworkReady()
+
 setupNetworkListener()
 wait(2)
 
 local dataLoaded = requestInitialData()
 if dataLoaded then
     printSuccess("Initial data loaded")
+    local boothCount = 0
+    for _ in pairs(booths) do
+        boothCount = boothCount + 1
+    end
+    printInfo("Found " .. boothCount .. " booths")
 else
     printError("No initial data, waiting for broadcasts")
 end
 
-wait(2)
+wait(3)
 refreshDashboard()
 spawn(startLoop)
 printSuccess("Script running")
