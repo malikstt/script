@@ -1,186 +1,513 @@
+-- Pet Simulator 99 Booth Analytics - Live GitHub Dashboard
+-- Continuously monitors booths, generates markdown report, uploads to GitHub
+
+local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local CollectionService = game:GetService("CollectionService")
 
-local player = Players.LocalPlayer
-local Events = ReplicatedStorage:WaitForChild("Events")
-local Data = Events:WaitForChild("Data")
+-- Load required game modules (assumed available in PS99)
+local Network = require(ReplicatedStorage.Library.Client.Network)
+local Items = require(ReplicatedStorage.Library.Items)
 
-local GetAchievementsData = Data:WaitForChild("GetAchievementsData")
-local ClaimAchievement = Data:WaitForChild("ClaimAchievement")
-local AchievementsModule = require(ReplicatedStorage.Modules:WaitForChild("Achievements"))
-local Upgrades = require(ReplicatedStorage.Modules.Upgrades)
+-- ----------------------------------------------------------------------
+-- CONFIGURATION
+-- ----------------------------------------------------------------------
+local GITHUB_OWNER = "malikstt"
+local GITHUB_REPO = "script"
+local GITHUB_PATH = "dashboard"          -- file path (markdown, no extension)
+local GITHUB_BRANCH = "main"
+local GITHUB_TOKEN = "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"
 
-local CHECK_INTERVAL = 3600
-local MAX_PRICE = 500
+local UPDATE_INTERVAL = 30               -- seconds between refresh checks
+local TOTAL_BOOTH_SLOTS_ESTIMATE = 30    -- for "unclaimed booths" display
+local CLEANUP_STALE_AFTER = 300          -- seconds, remove old booths (5 min)
 
-local upgradeKeys = {
-    "ShopLevel",
-    "InventoryLevel",
-    "CarryLevel",
-    "PaycheckAmount"
-}
+-- ----------------------------------------------------------------------
+-- GLOBALS & STATE
+-- ----------------------------------------------------------------------
+local booths = {}                -- playerId -> booth data
+local requestCounter = 0
+local lastUploadTimestamp = 0
+local lastContentHash = nil      -- cached markdown string for change detection
+local nextUpdateETA = 0
+local isUploading = false
+local lastSha = nil              -- last known SHA (used for optimistic update, but we'll re-fetch)
 
-local achievementLoopRunning = true
-local upgradeLoopRunning = true
-local settingsLoopRunning = true
-
-local function getData()
-    return Events.Data.GetAll:InvokeServer()
+-- Helper: safe request (supports multiple executor environments)
+local function sendRequest(options)
+    requestCounter = requestCounter + 1
+    local requestFunc = syn and syn.request or http_request or request
+    if not requestFunc then
+        error("No HTTP request function available")
+    end
+    return requestFunc(options)
 end
 
-local function buyCheapUpgrades()
-    local data = getData()
-    if not data then return end
+-- ----------------------------------------------------------------------
+-- BASE64 ENCODING (Luau compatible)
+-- ----------------------------------------------------------------------
+local function base64Encode(data)
+    local b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    local result = {}
+    for i = 1, #data, 3 do
+        local byte1 = string.byte(data, i)
+        local byte2 = string.byte(data, i + 1) or 0
+        local byte3 = string.byte(data, i + 2) or 0
+        
+        local enc1 = math.floor(byte1 / 4)
+        local enc2 = (byte1 % 4) * 16 + math.floor(byte2 / 16)
+        local enc3 = (byte2 % 16) * 4 + math.floor(byte3 / 64)
+        local enc4 = byte3 % 64
+        
+        table.insert(result, b64chars:sub(enc1 + 1, enc1 + 1))
+        table.insert(result, b64chars:sub(enc2 + 1, enc2 + 1))
+        table.insert(result, b64chars:sub(enc3 + 1, enc3 + 1))
+        table.insert(result, b64chars:sub(enc4 + 1, enc4 + 1))
+    end
+    
+    local padding = (3 - (#data % 3)) % 3
+    if padding > 0 then
+        for i = 1, padding do
+            result[#result - i + 1] = '='
+        end
+    end
+    return table.concat(result)
+end
 
-    for _, key in ipairs(upgradeKeys) do
-        local levels = Upgrades[key]
-        local current = data[key]
+-- ----------------------------------------------------------------------
+-- UTILITY FUNCTIONS
+-- ----------------------------------------------------------------------
+local function formatNumber(num)
+    if num >= 1e6 then
+        return string.format("%.1fM", num / 1e6)
+    elseif num >= 1e3 then
+        return string.format("%.1fK", num / 1e3)
+    else
+        return tostring(math.floor(num))
+    end
+end
 
-        if levels and current and levels[current + 1] then
-            local nextLevel = levels[current + 1]
+local function formatTimeAgo(timestamp)
+    local diff = os.time() - timestamp
+    if diff < 60 then return string.format("%ds", diff) end
+    if diff < 3600 then return string.format("%dm", math.floor(diff/60)) end
+    return string.format("%dh", math.floor(diff/3600))
+end
 
-            if nextLevel.Price and nextLevel.Price <= MAX_PRICE then
-                local success = false
-                pcall(function()
-                    success = Events.UI.UpgradeClicked:InvokeServer(key)
-                end)
+-- Detect if item is huge or titanic by name pattern
+local function getItemRarity(name)
+    if name:find("Titanic") then return "titanic" end
+    if name:find("Huge") then return "huge" end
+    return "normal"
+end
 
-                if success then
-                    print("Bought:", key, "for", nextLevel.Price)
-                end
-            end
+-- Update or replace a booth's listings from a broadcast packet
+local function updateBoothFromPacket(playerId, packet)
+    local player = Players:GetPlayerByUserId(playerId)
+    local ownerName = player and player.Name or tostring(playerId)
+    
+    local now = os.time()
+    local booth = booths[playerId]
+    if not booth then
+        booth = {
+            ownerId = playerId,
+            ownerName = ownerName,
+            listings = {},
+            lastSeen = now
+        }
+        booths[playerId] = booth
+    end
+    
+    -- Refresh name in case it changed
+    booth.ownerName = ownerName
+    booth.lastSeen = now
+    
+    -- Replace all listings with fresh data from packet
+    local newListings = {}
+    for listingId, listing in pairs(packet.Listings) do
+        local success, item = pcall(Items.From, listing.ItemData.class, listing.ItemData.data)
+        if success and item then
+            item:SetUID(listing.ItemData.uid)
+            local itemName = item:GetName()
+            local rap = item:GetRAP() or 0
+            local price = listing.DiamondCost or 0
+            local rarity = getItemRarity(itemName)
+            
+            newListings[listingId] = {
+                id = listingId,
+                itemName = itemName,
+                rap = rap,
+                price = price,
+                profit = rap - price,
+                profitPercent = (rap > 0 and ((rap - price) / rap * 100) or 0),
+                rarity = rarity,
+                uid = listing.ItemData.uid
+            }
+        else
+            -- Fallback: minimal info
+            newListings[listingId] = {
+                id = listingId,
+                itemName = "Unknown",
+                rap = 0,
+                price = listing.DiamondCost or 0,
+                profit = 0,
+                profitPercent = 0,
+                rarity = "unknown"
+            }
+        end
+    end
+    booth.listings = newListings
+end
+
+-- Clean up booths that haven't been seen for a while
+local function cleanupStaleBooths()
+    local now = os.time()
+    for id, booth in pairs(booths) do
+        if now - booth.lastSeen > CLEANUP_STALE_AFTER then
+            booths[id] = nil
         end
     end
 end
 
-local function checkAchievements()
-    print("Checking achievements...")
+-- ----------------------------------------------------------------------
+-- MARKDOWN DASHBOARD GENERATION
+-- ----------------------------------------------------------------------
+local function generateMarkdown()
+    cleanupStaleBooths()
+    local now = os.time()
+    local playersOnline = Players.NumPlayers
+    local claimedBooths = 0
+    local totalListings = 0
+    local totalRAP = 0
+    local totalHuges = 0
+    local totalTitanics = 0
+    
+    -- Flatten all listings, collect per-booth stats
+    local allListings = {}
+    local boothStats = {}
+    
+    for playerId, booth in pairs(booths) do
+        claimedBooths = claimedBooths + 1
+        local boothRAP = 0
+        local boothHuges = 0
+        local boothTitanics = 0
+        local bestItem = { name = "", rap = 0 }
+        
+        for _, listing in pairs(booth.listings) do
+            boothRAP = boothRAP + listing.rap
+            totalRAP = totalRAP + listing.rap
+            totalListings = totalListings + 1
+            
+            if listing.rarity == "huge" then
+                totalHuges = totalHuges + 1
+                boothHuges = boothHuges + 1
+            elseif listing.rarity == "titanic" then
+                totalTitanics = totalTitanics + 1
+                boothTitanics = boothTitanics + 1
+            end
+            
+            if listing.rap > bestItem.rap then
+                bestItem = { name = listing.itemName, rap = listing.rap }
+            end
+            
+            table.insert(allListings, {
+                ownerName = booth.ownerName,
+                ownerId = playerId,
+                itemName = listing.itemName,
+                rap = listing.rap,
+                price = listing.price,
+                profit = listing.profit,
+                profitPercent = listing.profitPercent,
+                rarity = listing.rarity
+            })
+        end
+        
+        table.insert(boothStats, {
+            ownerName = booth.ownerName,
+            ownerId = playerId,
+            totalRAP = boothRAP,
+            listingCount = tableCount(booth.listings),
+            hugeCount = boothHuges,
+            titanicCount = boothTitanics,
+            bestItem = bestItem.name
+        })
+    end
+    
+    -- Sort booths by total RAP (top first)
+    table.sort(boothStats, function(a,b) return a.totalRAP > b.totalRAP end)
+    
+    -- Sort all listings for best deals (positive profit, descending profit)
+    local bestDeals = {}
+    for _, listing in ipairs(allListings) do
+        if listing.profit > 0 then
+            table.insert(bestDeals, listing)
+        end
+    end
+    table.sort(bestDeals, function(a,b) return a.profit > b.profit end)
+    
+    -- Also sort for main listings table (top by profit)
+    local topListings = {}
+    for _, listing in ipairs(allListings) do
+        table.insert(topListings, listing)
+    end
+    table.sort(topListings, function(a,b) return a.profit > b.profit end)
+    
+    -- Analytics: richest booth, cheapest huge/titanic, most expensive listing, average price
+    local richestBooth = boothStats[1] and boothStats[1].ownerName or "None"
+    local cheapestHuge = math.huge
+    local cheapestTitanic = math.huge
+    local mostExpensiveListing = { price = 0, name = "" }
+    local totalPriceSum = 0
+    
+    for _, listing in ipairs(allListings) do
+        totalPriceSum = totalPriceSum + listing.price
+        if listing.price > mostExpensiveListing.price then
+            mostExpensiveListing = { price = listing.price, name = listing.itemName, owner = listing.ownerName }
+        end
+        if listing.rarity == "huge" and listing.price < cheapestHuge then
+            cheapestHuge = listing.price
+        end
+        if listing.rarity == "titanic" and listing.price < cheapestTitanic then
+            cheapestTitanic = listing.price
+        end
+    end
+    local avgListingPrice = (totalListings > 0 and totalPriceSum / totalListings) or 0
+    
+    -- RAP distribution: simple ranges
+    local rapDistribution = { low = 0, medium = 0, high = 0 }
+    for _, listing in ipairs(allListings) do
+        if listing.rap < 10000 then rapDistribution.low = rapDistribution.low + 1
+        elseif listing.rap < 100000 then rapDistribution.medium = rapDistribution.medium + 1
+        else rapDistribution.high = rapDistribution.high + 1 end
+    end
+    
+    -- Build markdown
+    local lines = {}
+    table.insert(lines, "# 📊 Pet Simulator 99 Booth Intelligence")
+    table.insert(lines, "")
+    table.insert(lines, "> **Live market dashboard** · Auto-updates every " .. UPDATE_INTERVAL .. " seconds · Powered by GitHub")
+    table.insert(lines, "")
+    table.insert(lines, "---")
+    table.insert(lines, "")
+    table.insert(lines, "## 🌐 Server Overview")
+    table.insert(lines, "")
+    table.insert(lines, "| Metric | Value |")
+    table.insert(lines, "|--------|-------|")
+    table.insert(lines, string.format("| 👥 Players online | `%d` |", playersOnline))
+    table.insert(lines, string.format("| 🏪 Claimed booths | `%d` |", claimedBooths))
+    table.insert(lines, string.format("| 🚪 Unclaimed booths | `%d` |", math.max(0, TOTAL_BOOTH_SLOTS_ESTIMATE - claimedBooths)))
+    table.insert(lines, string.format("| 📦 Total listings | `%d` |", totalListings))
+    table.insert(lines, string.format("| 💎 Total RAP value | `%s` |", formatNumber(totalRAP)))
+    table.insert(lines, string.format("| 🦍 Huges detected | `%d` |", totalHuges))
+    table.insert(lines, string.format("| 🐉 Titanics detected | `%d` |", totalTitanics))
+    table.insert(lines, string.format("| ⏱️ Server uptime (script) | `%s` |", formatTimeAgo(os.time() - (lastUploadTimestamp or os.time()))))
+    table.insert(lines, string.format("| 🕒 Last scan | `%s` |", os.date("%Y-%m-%d %H:%M:%S", now)))
+    table.insert(lines, "")
+    table.insert(lines, "---")
+    table.insert(lines, "")
+    table.insert(lines, "## 💰 Best Deals (Undervalued Listings)")
+    table.insert(lines, "")
+    if #bestDeals == 0 then
+        table.insert(lines, "_No positive profit listings found at the moment._")
+    else
+        table.insert(lines, "| Item | RAP | Price | Profit | Profit % | Owner |")
+        table.insert(lines, "|------|-----|-------|--------|----------|-------|")
+        for i = 1, math.min(10, #bestDeals) do
+            local d = bestDeals[i]
+            table.insert(lines, string.format("| `%s` | %s | %s | %s | %.1f%% | %s |",
+                d.itemName, formatNumber(d.rap), formatNumber(d.price),
+                formatNumber(d.profit), d.profitPercent, d.ownerName))
+        end
+    end
+    table.insert(lines, "")
+    table.insert(lines, "---")
+    table.insert(lines, "")
+    table.insert(lines, "## 🏆 Top Booths by RAP")
+    table.insert(lines, "")
+    table.insert(lines, "| Owner | Booth RAP | Listings | Huges | Titanics | Best Item |")
+    table.insert(lines, "|-------|-----------|----------|-------|----------|-----------|")
+    for i = 1, math.min(10, #boothStats) do
+        local b = boothStats[i]
+        table.insert(lines, string.format("| `%s` | %s | %d | %d | %d | `%s` |",
+            b.ownerName, formatNumber(b.totalRAP), b.listingCount,
+            b.hugeCount, b.titanicCount, b.bestItem))
+    end
+    table.insert(lines, "")
+    table.insert(lines, "---")
+    table.insert(lines, "")
+    table.insert(lines, "## 📋 Listings (Top by Profit)")
+    table.insert(lines, "")
+    table.insert(lines, "| Item | RAP | Price | Profit | Profit % | Owner | Type |")
+    table.insert(lines, "|------|-----|-------|--------|----------|-------|------|")
+    for i = 1, math.min(50, #topListings) do
+        local l = topListings[i]
+        local typeIcon = l.rarity == "huge" and "🦍" or (l.rarity == "titanic" and "🐉" or "📦")
+        table.insert(lines, string.format("| `%s` | %s | %s | %s | %.1f%% | %s | %s |",
+            l.itemName, formatNumber(l.rap), formatNumber(l.price),
+            formatNumber(l.profit), l.profitPercent, l.ownerName, typeIcon))
+    end
+    if #topListings > 50 then
+        table.insert(lines, string.format("_... and %d more listings not shown_", #topListings - 50))
+    end
+    table.insert(lines, "")
+    table.insert(lines, "---")
+    table.insert(lines, "")
+    table.insert(lines, "## 📈 Analytics")
+    table.insert(lines, "")
+    table.insert(lines, string.format("- 👑 **Richest booth:** `%s`", richestBooth))
+    table.insert(lines, string.format("- 💎 **Cheapest Huge:** `%s`", cheapestHuge ~= math.huge and formatNumber(cheapestHuge) or "None"))
+    table.insert(lines, string.format("- 🐉 **Cheapest Titanic:** `%s`", cheapestTitanic ~= math.huge and formatNumber(cheapestTitanic) or "None"))
+    table.insert(lines, string.format("- 💰 **Most expensive listing:** `%s` (%s) by `%s`", formatNumber(mostExpensiveListing.price), mostExpensiveListing.name, mostExpensiveListing.owner))
+    table.insert(lines, string.format("- 📊 **Average listing price:** `%s`", formatNumber(avgListingPrice)))
+    table.insert(lines, "")
+    table.insert(lines, "**RAP Distribution:**")
+    table.insert(lines, string.format("- Low (<10k): %d items", rapDistribution.low))
+    table.insert(lines, string.format("- Medium (10k-100k): %d items", rapDistribution.medium))
+    table.insert(lines, string.format("- High (>100k): %d items", rapDistribution.high))
+    table.insert(lines, "")
+    table.insert(lines, "---")
+    table.insert(lines, "")
+    table.insert(lines, "## 🔧 System")
+    table.insert(lines, "")
+    table.insert(lines, string.format("- ✅ Processed booths: `%d`", claimedBooths))
+    table.insert(lines, string.format("- 📋 Processed listings: `%d`", totalListings))
+    table.insert(lines, string.format("- ⚡ Execution cycle: `%ds`", UPDATE_INTERVAL))
+    table.insert(lines, string.format("- 🌐 GitHub uploads: `%s`", lastUploadTimestamp > 0 and "Active" or "Pending"))
+    table.insert(lines, string.format("- 🔢 API requests used: `%d`", requestCounter))
+    if lastUploadTimestamp > 0 then
+        table.insert(lines, string.format("- ⏲️ Next update ETA: `%ds`", math.max(0, UPDATE_INTERVAL - (os.time() - lastUploadTimestamp))))
+    else
+        table.insert(lines, "- ⏲️ Next update ETA: `initializing...`")
+    end
+    table.insert(lines, "")
+    table.insert(lines, "---")
+    table.insert(lines, string.format("_🔄 Last full refresh: %s_", os.date("%Y-%m-%d %H:%M:%S", now)))
+    
+    return table.concat(lines, "\n")
+end
 
-    local success, data = pcall(function()
-        return GetAchievementsData:InvokeServer()
-    end)
+function tableCount(t)
+    local c = 0
+    for _ in pairs(t) do c = c + 1 end
+    return c
+end
 
-    if not success or not data then
-        warn("Failed to get achievement data")
+-- ----------------------------------------------------------------------
+-- GITHUB UPLOAD (GET sha + PUT content)
+-- ----------------------------------------------------------------------
+local function uploadToGitHub(content)
+    if isUploading then return false, "Upload already in progress" end
+    isUploading = true
+    local success = false
+    local errorMsg = ""
+    
+    -- First, get current file SHA
+    local getUrl = string.format("https://api.github.com/repos/%s/%s/contents/%s?ref=%s",
+        GITHUB_OWNER, GITHUB_REPO, GITHUB_PATH, GITHUB_BRANCH)
+    
+    local getRes = sendRequest({
+        Url = getUrl,
+        Method = "GET",
+        Headers = {
+            ["Authorization"] = "token " .. GITHUB_TOKEN,
+            ["User-Agent"] = "Roblox PS99 Analytics"
+        }
+    })
+    
+    if getRes.StatusCode ~= 200 then
+        isUploading = false
+        return false, "GET failed: " .. tostring(getRes.StatusCode) .. " " .. tostring(getRes.Body)
+    end
+    
+    local fileData = HttpService:JSONDecode(getRes.Body)
+    local currentSha = fileData.sha
+    local encoded = base64Encode(content)
+    
+    local putBody = {
+        message = "Auto update booth dashboard",
+        content = encoded,
+        sha = currentSha,
+        branch = GITHUB_BRANCH
+    }
+    
+    local putRes = sendRequest({
+        Url = string.format("https://api.github.com/repos/%s/%s/contents/%s",
+            GITHUB_OWNER, GITHUB_REPO, GITHUB_PATH),
+        Method = "PUT",
+        Headers = {
+            ["Authorization"] = "token " .. GITHUB_TOKEN,
+            ["Content-Type"] = "application/json",
+            ["User-Agent"] = "Roblox PS99 Analytics"
+        },
+        Body = HttpService:JSONEncode(putBody)
+    })
+    
+    if putRes.StatusCode == 200 or putRes.StatusCode == 201 then
+        success = true
+        lastUploadTimestamp = os.time()
+        lastSha = currentSha
+    else
+        errorMsg = "PUT failed: " .. tostring(putRes.StatusCode) .. " " .. tostring(putRes.Body)
+    end
+    
+    isUploading = false
+    return success, errorMsg
+end
+
+-- ----------------------------------------------------------------------
+-- PERIODIC UPDATE LOGIC (with change detection)
+-- ----------------------------------------------------------------------
+local function refreshDashboard()
+    local newMarkdown = generateMarkdown()
+    if newMarkdown == lastContentHash then
+        -- No change, skip upload
         return
     end
-
-    local claimedSomething = false
-
-    for achievementName, achievementInfo in pairs(AchievementsModule) do
-        local currentLevel = data[achievementName] or 0
-        local nextLevel = currentLevel + 1
-
-        if achievementInfo.Levels[nextLevel] then
-            local success2, result = pcall(function()
-                return ClaimAchievement:InvokeServer(achievementName, nextLevel)
-            end)
-
-            if success2 and result then
-                print("Claimed:", achievementName, "Level:", nextLevel)
-                claimedSomething = true
-                task.wait(0.25)
-            end
-        end
-    end
-
-    if not claimedSomething then
-        print("All claimable achievements are already claimed.")
+    
+    local ok, err = uploadToGitHub(newMarkdown)
+    if ok then
+        lastContentHash = newMarkdown
+        print("[Dashboard] Upload successful at", os.date())
     else
-        print("Finished claiming achievements.")
+        warn("[Dashboard] Upload failed:", err)
     end
 end
 
-task.spawn(function()
-    while achievementLoopRunning do
-        checkAchievements()
-        print("Next achievement check in 1 hour.")
-        task.wait(CHECK_INTERVAL)
-    end
-end)
-
-task.spawn(function()
-    while upgradeLoopRunning do
-        buyCheapUpgrades()
-        task.wait(0.5)
-    end
-end)
-
-task.spawn(function()
-    while settingsLoopRunning do
-        local done = true
-
-        if player:FindFirstChild("SaveVars") then
-            if player.SaveVars.MusicVolume.Value ~= 0 then
-                player.SaveVars.MusicVolume.Value = 0
-                done = false
-            end
-            if player.SaveVars.SoundVolume.Value ~= 0 then
-                player.SaveVars.SoundVolume.Value = 0
-                done = false
-            end
-            if player.SaveVars.ShowStoreOutline.Value ~= false then
-                pcall(function()
-                    Events.Data.SetStoreOutline:FireServer(false)
-                end)
-                player.SaveVars.ShowStoreOutline.Value = false
-                done = false
-            end
-            if player.SaveVars.PaycheckNotify.Value ~= false then
-                pcall(function()
-                    Events.Data.TogglePaycheckNotify:FireServer(false)
-                end)
-                player.SaveVars.PaycheckNotify.Value = false
-                done = false
-            end
-            if player.SaveVars.StoreAccess.Value ~= "Me" then
-                pcall(function()
-                    Events.Data.SetStoreAccess:FireServer("Me")
-                end)
-                player.SaveVars.StoreAccess.Value = "Me"
-                done = false
-            end
-        else
-            done = false
-        end
-
-        if player:GetAttribute("BoomboxVolume") ~= 0 then
-            player:SetAttribute("BoomboxVolume",0)
-            done = false
-        end
-
-        if player:GetAttribute("ChatTagsVisibility") ~= false then
-            pcall(function()
-                Events.Data.SetChatTagsVisibility:FireServer(false)
-            end)
-            done = false
-        end
-
-        for _,v in pairs(CollectionService:GetTagged(player.Name.."Boombox")) do
-            local parts = v:FindFirstChild("ItemParts")
-            if parts then
-                local handle = parts:FindFirstChild("Handle")
-                if handle then
-                    local sound = handle:FindFirstChild("Sound")
-                    if sound and sound.Volume ~= 0 then
-                        sound.Volume = 0
-                        done = false
-                    end
-                end
-            end
-        end
-
-        if done then
-            break
-        end
-
-        task.wait(1)
-    end
-end)
-
-local function cleanup()
-    achievementLoopRunning = false
-    upgradeLoopRunning = false
-    settingsLoopRunning = false
+-- ----------------------------------------------------------------------
+-- EVENT HANDLER (Booths_Broadcast)
+-- ----------------------------------------------------------------------
+local function onBoothBroadcast(player, packet)
+    if not packet or not packet.PlayerID then return end
+    local playerId = packet.PlayerID
+    updateBoothFromPacket(playerId, packet)
+    -- Mark that data changed (next periodic refresh will detect and possibly upload)
 end
+
+-- Connect to remote
+local success, err = pcall(function()
+    Network.Fired("Booths_Broadcast"):Connect(onBoothBroadcast)
+end)
+if not success then
+    warn("Failed to connect to Booths_Broadcast:", err)
+end
+
+-- ----------------------------------------------------------------------
+-- MAIN LOOP (periodic upload)
+-- ----------------------------------------------------------------------
+local function startLoop()
+    while true do
+        wait(UPDATE_INTERVAL)
+        local status, err = pcall(refreshDashboard)
+        if not status then
+            warn("Dashboard refresh error:", err)
+        end
+    end
+end
+
+-- Initialize
+print("Booth Analytics Dashboard started. Using GitHub: " .. GITHUB_OWNER .. "/" .. GITHUB_REPO)
+spawn(startLoop)
+
+-- Optional: Force initial dashboard generation after 5 seconds
+wait(5)
+refreshDashboard()
