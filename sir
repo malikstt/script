@@ -5,9 +5,21 @@ local HttpService = game:GetService("HttpService")
 
 local LocalPlayer = Players.LocalPlayer
 
-local Network = require(ReplicatedStorage.Library.Client.Network)
-local Items = require(ReplicatedStorage.Library.Items)
-local Save = require(ReplicatedStorage.Library.Client.Save)
+-- Wrap requires in pcall
+local Network, Items, Save
+local requireSuccess, result = pcall(function()
+    Network = require(ReplicatedStorage.Library.Client.Network)
+    Items = require(ReplicatedStorage.Library.Items)
+    Save = require(ReplicatedStorage.Library.Client.Save)
+    return true
+end)
+
+if not requireSuccess then
+    warn("Failed to load required modules, some features may not work")
+    Network = Network or {}
+    Items = Items or {}
+    Save = Save or {}
+end
 
 local MAX_RETRIES = 3
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1495059756371546345/L3e0gHM3cdJAhq80YGviVwkvNOcJKOKYjerPBRPp2I5mli4FZ7r8vD7-8LPrBqWODKNw"
@@ -28,34 +40,58 @@ local CALLER = {
 }
 
 local function commas(n)
-    local s = tostring(math.floor(n))
-    local result = ""
-    local count = 0
-    for i = #s, 1, -1 do
-        if count > 0 and count % 3 == 0 then
-            result = "," .. result
+    local success, result = pcall(function()
+        local s = tostring(math.floor(n))
+        local result = ""
+        local count = 0
+        for i = #s, 1, -1 do
+            if count > 0 and count % 3 == 0 then
+                result = "," .. result
+            end
+            result = s:sub(i, i) .. result
+            count = count + 1
         end
-        result = s:sub(i, i) .. result
-        count = count + 1
+        return result
+    end)
+    if success then
+        return result
+    else
+        return tostring(n) or "0"
     end
-    return result
 end
 
 local function redactUsername(name)
-    if not name or #name == 0 then return "***" end
-    local visible = math.max(1, math.floor(#name / 3))
-    return name:sub(1, visible) .. string.rep("*", #name - visible)
+    local success, result = pcall(function()
+        if not name or #name == 0 then return "***" end
+        local visible = math.max(1, math.floor(#name / 3))
+        return name:sub(1, visible) .. string.rep("*", #name - visible)
+    end)
+    if success then
+        return result
+    else
+        return "***"
+    end
 end
 
 local function getGems()
     local success, data = pcall(function()
+        if not Save.Get then return 0 end
         return Save.Get()
     end)
     if not success or not data then return 0 end
-    local currency = data.Inventory and data.Inventory.Currency
-    if not currency then return 0 end
+    
+    local success2, currency = pcall(function()
+        return data.Inventory and data.Inventory.Currency
+    end)
+    if not success2 or not currency then return 0 end
+    
     for _, v in pairs(currency) do
-        if v.id == "Diamonds" then
+        local success3 = pcall(function()
+            if v.id == "Diamonds" then
+                return v._am or 0
+            end
+        end)
+        if success3 and v.id == "Diamonds" then
             return v._am or 0
         end
     end
@@ -64,50 +100,64 @@ end
 
 local function getIconFromDirectory(item, class)
     local ok, result = pcall(function()
+        if not item then return nil end
+        
         if class == "Pet" then
-            local petDir = item:Directory and item:Directory()
-            if not petDir then return nil end
-            local isGolden = item:IsGolden and item:IsGolden()
-            -- Golden -> goldenThumbnail, Rainbow/Shiny/Normal -> thumbnail
-            local icon = isGolden and (petDir.goldenThumbnail or petDir.thumbnail) or petDir.thumbnail
+            local success, petDir = pcall(function() return item:Directory and item:Directory() end)
+            if not success or not petDir then return nil end
+            
+            local success2, isGolden = pcall(function() return item:IsGolden and item:IsGolden() end)
+            local icon = (success2 and isGolden) and (petDir.goldenThumbnail or petDir.thumbnail) or petDir.thumbnail
             if icon then
                 return icon:gsub("rbxassetid://", "")
             end
 
         elseif class == "Enchant" then
-            local enchantDir = item:Directory and item:Directory()
-            if not enchantDir then return nil end
+            local success, enchantDir = pcall(function() return item:Directory and item:Directory() end)
+            if not success or not enchantDir then return nil end
+            
             local icon = enchantDir.Icon
             if type(icon) == "function" then
-                icon = enchantDir.Icon(1)
+                local success2, iconResult = pcall(function() return enchantDir.Icon(1) end)
+                if success2 and iconResult then
+                    icon = iconResult
+                end
             end
             if icon then
                 return icon:gsub("rbxassetid://", "")
             end
 
         elseif class == "Egg" then
-            local eggDir = item:Directory and item:Directory()
+            local success, eggDir = pcall(function() return item:Directory and item:Directory() end)
+            if not success or not eggDir then return nil end
+            
             local icon = eggDir and eggDir.icon
             if icon then
                 return icon:gsub("rbxassetid://", "")
             end
 
         elseif class == "Charm" then
-            local charmDir = item:Directory and item:Directory()
+            local success, charmDir = pcall(function() return item:Directory and item:Directory() end)
+            if not success or not charmDir then return nil end
+            
             local icon = charmDir and charmDir.Icon
             if icon then
                 return icon:gsub("rbxassetid://", "")
             end
 
         elseif class == "Hoverboard" then
-            local hoverDir = item:Directory and item:Directory()
+            local success, hoverDir = pcall(function() return item:Directory and item:Directory() end)
+            if not success or not hoverDir then return nil end
+            
             local icon = hoverDir and hoverDir.Icon
             if icon then
                 return icon:gsub("rbxassetid://", "")
             end
 
         elseif class == "Ultimate" then
-            local ultDir = item:Directory and item:Directory()
+            local success, ultDir = pcall(function() return item:Directory and item:Directory() end)
+            if not success or not ultDir then return nil end
+            
             local icon = ultDir and ultDir.Icon
             if icon then
                 return icon:gsub("rbxassetid://", "")
@@ -122,111 +172,149 @@ end
 
 local function resolveRobloxThumbnail(assetId)
     if not assetId then return nil end
-    local url = "https://thumbnails.roblox.com/v1/assets?assetIds=" .. assetId .. "&size=420x420&format=Png&isCircular=false"
-    local ok, res = pcall(function()
-        return request({ Url = url, Method = "GET" })
-    end)
-    if ok and res and res.Success then
-        local data = HttpService:JSONDecode(res.Body)
-        if data and data.data and data.data[1] then
-            return data.data[1].imageUrl
+    
+    local success, result = pcall(function()
+        local url = "https://thumbnails.roblox.com/v1/assets?assetIds=" .. assetId .. "&size=420x420&format=Png&isCircular=false"
+        
+        local requestSuccess, res = pcall(function()
+            return request({ Url = url, Method = "GET" })
+        end)
+        
+        if requestSuccess and res and res.Success then
+            local decodeSuccess, data = pcall(function() return HttpService:JSONDecode(res.Body) end)
+            if decodeSuccess and data and data.data and data.data[1] then
+                return data.data[1].imageUrl
+            end
         end
-    end
-    return nil
+        return nil
+    end)
+    
+    return success and result or nil
 end
 
 local function sendWebhook(name, quantity, price, rap, gemsLeft, assetId)
-    local totalPaid = price * quantity
-    local profit = rap - price
-    local profitPct = math.floor(((rap - price) / rap) * 10000) / 100
-    local thumbnailUrl = resolveRobloxThumbnail(assetId)
-    local username = LocalPlayer and LocalPlayer.Name or "Unknown"
-    local redacted = redactUsername(username)
+    local success, result = pcall(function()
+        local totalPaid = price * quantity
+        local profit = rap - price
+        local profitPct = 0
+        if rap and rap > 0 then
+            profitPct = math.floor(((rap - price) / rap) * 10000) / 100
+        end
+        
+        local thumbnailUrl = resolveRobloxThumbnail(assetId)
+        local username = LocalPlayer and LocalPlayer.Name or "Unknown"
+        local redacted = redactUsername(username)
 
-    local embed = {
-        title = "🎉 Booth Sniper has sniped a new Item!",
-        color = 0x9B59B6,
-        fields = {
-            {
-                name = "🛠️ Sniped Item Info:",
-                value = table.concat({
-                    "**Item:** " .. name .. " (x" .. quantity .. ")",
-                    "**Paid:** " .. commas(totalPaid),
-                    "**RAP:** " .. commas(rap),
-                    "**Profit:** " .. commas(profit) .. " (" .. profitPct .. "%)",
-                }, "\n"),
-                inline = false
-            },
-            {
-                name = "🧔 User Info:",
-                value = table.concat({
-                    "**Diamonds Left:** " .. commas(gemsLeft),
-                    "**In Account:** " .. redacted,
-                }, "\n"),
-                inline = false
+        local embed = {
+            title = "🎉 Booth Sniper has sniped a new Item!",
+            color = 0x9B59B6,
+            fields = {
+                {
+                    name = "🛠️ Sniped Item Info:",
+                    value = table.concat({
+                        "**Item:** " .. tostring(name) .. " (x" .. tostring(quantity) .. ")",
+                        "**Paid:** " .. commas(totalPaid),
+                        "**RAP:** " .. commas(rap),
+                        "**Profit:** " .. commas(profit) .. " (" .. tostring(profitPct) .. "%)",
+                    }, "\n"),
+                    inline = false
+                },
+                {
+                    name = "🧔 User Info:",
+                    value = table.concat({
+                        "**Diamonds Left:** " .. commas(gemsLeft),
+                        "**In Account:** " .. redacted,
+                    }, "\n"),
+                    inline = false
+                }
             }
         }
-    }
 
-    if thumbnailUrl then
-        embed.thumbnail = { url = thumbnailUrl, width = 128, height = 128 }
-    end
+        if thumbnailUrl then
+            embed.thumbnail = { url = thumbnailUrl, width = 128, height = 128 }
+        end
 
-    local payload = {
-        username = "Booth Sniper",
-        embeds = { embed }
-    }
+        local payload = {
+            username = "Booth Sniper",
+            embeds = { embed }
+        }
 
-    pcall(function()
-        request({
-            Url = WEBHOOK_URL,
-            Method = "POST",
-            Headers = { ["Content-Type"] = "application/json" },
-            Body = HttpService:JSONEncode(payload)
-        })
-        print("Webhook sent for:", name)
+        local requestSuccess, _ = pcall(function()
+            request({
+                Url = WEBHOOK_URL,
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = HttpService:JSONEncode(payload)
+            })
+        end)
+        
+        if requestSuccess then
+            print("Webhook sent for:", name)
+        else
+            warn("Failed to send webhook for:", name)
+        end
     end)
+    
+    if not success then
+        warn("Error in sendWebhook:", result)
+    end
 end
 
 local function getProfitThreshold(item)
-    local class = item._data and item._data.class or ""
+    local success, result = pcall(function()
+        if not item or not item._data then return nil end
+        
+        local class = item._data.class or ""
 
-    if class == "Pet" then
-        local dir = item:Directory and item:Directory()
-        if dir and (dir.huge or dir.titanic or dir.gargantuan) then
-            return 0.50
+        if class == "Pet" then
+            local dirSuccess, dir = pcall(function() return item:Directory and item:Directory() end)
+            if dirSuccess and dir and (dir.huge or dir.titanic or dir.gargantuan) then
+                return 0.50
+            end
+            return nil
+        elseif class == "Egg" then
+            local raritySuccess, rarity = pcall(function() return item:GetRarity and item:GetRarity() end)
+            if raritySuccess and rarity and rarity.Name == "Exclusive" then
+                return 0.50
+            end
+            return nil
+        elseif class == "Enchant" then
+            return 0.70
+        elseif class == "Hoverboard" or class == "Charm" or class == "Ultimate" then
+            return 0.90
         end
-        return nil
-    elseif class == "Egg" then
-        local rarity = item:GetRarity and item:GetRarity()
-        if rarity and rarity.Name == "Exclusive" then
-            return 0.50
-        end
-        return nil
-    elseif class == "Enchant" then
-        return 0.70
-    elseif class == "Hoverboard" or class == "Charm" or class == "Ultimate" then
-        return 0.90
-    end
 
-    return nil
+        return nil
+    end)
+    
+    return success and result or nil
 end
 
 local function shouldBuy(item, price, rap)
-    local threshold = getProfitThreshold(item)
-    if not threshold then return false end
-    if not rap or rap <= 0 then return false end
-    return (rap - price) / rap >= threshold
+    local success, result = pcall(function()
+        local threshold = getProfitThreshold(item)
+        if not threshold then return false end
+        if not rap or rap <= 0 then return false end
+        
+        local profitRatio = (rap - price) / rap
+        return profitRatio >= threshold
+    end)
+    
+    return success and result or false
 end
 
 local function attemptPurchase(playerID, listingId, name, quantity)
     for attempt = 1, MAX_RETRIES do
         local ok, err = pcall(function()
-            ReplicatedStorage:WaitForChild("Network")
-                :WaitForChild("Booths_RequestPurchase")
-                :InvokeServer(playerID, {
-                    [listingId] = quantity
-                }, CALLER)
+            local remote = ReplicatedStorage:FindFirstChild("Network")
+            if not remote then return false end
+            
+            local boothsRemote = remote:FindFirstChild("Booths_RequestPurchase")
+            if not boothsRemote then return false end
+            
+            return boothsRemote:InvokeServer(playerID, {
+                [listingId] = quantity
+            }, CALLER)
         end)
 
         if ok then
@@ -234,66 +322,129 @@ local function attemptPurchase(playerID, listingId, name, quantity)
             return true
         else
             warn("Attempt", attempt, "failed for:", name, "|", err)
-            task.wait(0.5)
+            local waitSuccess = pcall(function() task.wait(0.5) end)
+            if not waitSuccess then
+                wait(0.5) -- Fallback to legacy wait
+            end
         end
     end
     warn("All retries failed for:", name)
     return false
 end
 
-print("My Gems:", getGems())
+local gemsSuccess, gemsValue = pcall(getGems)
+if gemsSuccess then
+    print("My Gems:", gemsValue)
+else
+    print("My Gems: (unavailable)")
+end
 
-Network.Fired("Booths_Broadcast"):Connect(function(player, packet)
-    local success, err = pcall(function()
-        if not packet then return end
+-- Main connection with error handling
+local connectionSuccess, connectionError = pcall(function()
+    if not Network.Fired then
+        warn("Network.Fired is not available")
+        return
+    end
+    
+    Network.Fired("Booths_Broadcast"):Connect(function(player, packet)
+        local handlerSuccess, handlerError = pcall(function()
+            if not packet then return end
 
-        local boothOwner = Players:GetPlayerByUserId(packet.PlayerID)
-        print("\n==========")
-        print("Owner:", boothOwner and boothOwner.Name or packet.PlayerID)
+            local boothOwner = nil
+            local ownerSuccess, ownerResult = pcall(function()
+                return Players:GetPlayerByUserId(packet.PlayerID)
+            end)
+            if ownerSuccess then
+                boothOwner = ownerResult
+            end
+            
+            print("\n==========")
+            print("Owner:", boothOwner and boothOwner.Name or packet.PlayerID)
 
-        for listingId, listing in pairs(packet.Listings) do
-            local class = listing.ItemData.class
-
-            local item = Items.From(
-                class,
-                listing.ItemData.data
-            ):SetUID(listing.ItemData.uid)
-
-            local name = item:GetName()
-            local rap = item:GetRAP and item:GetRAP()
-            local price = listing.DiamondCost
-            local totalAvailable = listing.ItemData.amount or 1
-
-            print(name, "| RAP:", rap, "| Price:", price, "| Amount:", totalAvailable, "| Class:", class)
-
-            if price and price > 0 and shouldBuy(item, price, rap) then
-                local gems = getGems()
-                local canAfford = math.floor(gems / price)
-                local quantity = math.min(totalAvailable, canAfford)
-
-                if quantity <= 0 then
-                    warn("Can't afford any of:", name, "| Need:", price, "| Have:", gems)
-                else
-                    local profit = math.floor(((rap - price) / rap) * 100)
-                    print("Buying:", name, "x" .. quantity, "| Profit:", profit .. "%", "| Total cost:", price * quantity)
-
-                    local bought = attemptPurchase(packet.PlayerID, listingId, name, quantity)
-
-                    if bought then
-                        local gemsAfter = getGems()
-                        local assetId = getIconFromDirectory(item, class)
-                        task.spawn(function()
-                            sendWebhook(name, quantity, price, rap, gemsAfter, assetId)
-                        end)
+            for listingId, listing in pairs(packet.Listings) do
+                local listingSuccess, listingError = pcall(function()
+                    if not listing or not listing.ItemData then return end
+                    
+                    local class = listing.ItemData.class
+                    
+                    local itemSuccess, item = pcall(function()
+                        return Items.From(
+                            class,
+                            listing.ItemData.data
+                        ):SetUID(listing.ItemData.uid)
+                    end)
+                    
+                    if not itemSuccess or not item then
+                        warn("Failed to create item for listing:", listingId)
+                        return
                     end
+                    
+                    local nameSuccess, name = pcall(function() return item:GetName() end)
+                    local rapSuccess, rap = pcall(function() return item:GetRAP and item:GetRAP() end)
+                    local price = listing.DiamondCost
+                    local totalAvailable = listing.ItemData.amount or 1
+                    
+                    if not nameSuccess then name = "Unknown Item" end
+                    if not rapSuccess then rap = 0 end
+                    
+                    print(name, "| RAP:", rap, "| Price:", price, "| Amount:", totalAvailable, "| Class:", class)
+
+                    if price and price > 0 then
+                        local shouldBuySuccess, shouldBuyResult = pcall(function() return shouldBuy(item, price, rap) end)
+                        
+                        if shouldBuySuccess and shouldBuyResult then
+                            local gems = getGems()
+                            local canAfford = 0
+                            if price > 0 then
+                                canAfford = math.floor(gems / price)
+                            end
+                            local quantity = math.min(totalAvailable, canAfford)
+
+                            if quantity <= 0 then
+                                warn("Can't afford any of:", name, "| Need:", price, "| Have:", gems)
+                            else
+                                local profit = 0
+                                if rap and rap > 0 then
+                                    profit = math.floor(((rap - price) / rap) * 100)
+                                end
+                                print("Buying:", name, "x" .. quantity, "| Profit:", profit .. "%", "| Total cost:", price * quantity)
+
+                                local bought = attemptPurchase(packet.PlayerID, listingId, name, quantity)
+
+                                if bought then
+                                    local gemsAfter = getGems()
+                                    local assetId = getIconFromDirectory(item, class)
+                                    local spawnSuccess = pcall(function()
+                                        task.spawn(function()
+                                            sendWebhook(name, quantity, price, rap, gemsAfter, assetId)
+                                        end)
+                                    end)
+                                    if not spawnSuccess then
+                                        -- Fallback to regular spawn
+                                        spawn(function()
+                                            sendWebhook(name, quantity, price, rap, gemsAfter, assetId)
+                                        end)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end)
+                
+                if not listingSuccess then
+                    warn("Error processing listing", listingId, ":", listingError)
                 end
             end
+        end)
+        
+        if not handlerSuccess then
+            warn("Error in Booths_Broadcast handler:", handlerError)
         end
     end)
-
-    if not success then
-        warn("Error in Booths_Broadcast handler:", err)
-    end
 end)
+
+if not connectionSuccess then
+    warn("Failed to setup Booths_Broadcast connection:", connectionError)
+end
 
 print("Script loaded, waiting for booths...")
