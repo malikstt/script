@@ -9,7 +9,8 @@ local GITHUB_OWNER = "malikstt"
 local GITHUB_REPO = "script"
 local GITHUB_PATH = "dashboard"
 local GITHUB_BRANCH = "main"
-local GITHUB_TOKEN = "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"
+
+local GITHUB_TOKEN = getgenv().GITHUB_TOKEN
 
 local UPDATE_INTERVAL = 30
 local TOTAL_BOOTH_SLOTS = 30
@@ -472,13 +473,20 @@ local function uploadToGitHub(content)
             error("Failed to get response from GitHub API")
         end
         
-        if getRes.StatusCode ~= 200 then
+        if getRes.StatusCode == 401 then
+            error("GitHub authentication failed - invalid token")
+        elseif getRes.StatusCode == 404 then
+            printInfo("File doesn't exist yet, will create new file")
+        elseif getRes.StatusCode ~= 200 then
             error(string.format("GitHub GET failed (Status %d): %s", getRes.StatusCode, tostring(getRes.Body)))
         end
         
-        local fileData = HttpService:JSONDecode(getRes.Body)
-        local currentSha = fileData.sha
-        printInfo("Got SHA: " .. currentSha)
+        local currentSha = nil
+        if getRes.StatusCode == 200 then
+            local fileData = HttpService:JSONDecode(getRes.Body)
+            currentSha = fileData.sha
+            printInfo("Got SHA: " .. currentSha)
+        end
         
         local encoded = base64Encode(content)
         printInfo("Encoded content length: " .. #encoded .. " chars")
@@ -486,9 +494,12 @@ local function uploadToGitHub(content)
         local putBody = {
             message = "Auto-update booth analytics dashboard",
             content = encoded,
-            sha = currentSha,
             branch = GITHUB_BRANCH
         }
+        
+        if currentSha then
+            putBody.sha = currentSha
+        end
         
         printInfo("Uploading new content...")
         local putRes = sendRequest({
@@ -510,6 +521,8 @@ local function uploadToGitHub(content)
         if putRes.StatusCode == 200 or putRes.StatusCode == 201 then
             printSuccess("Dashboard uploaded successfully! Status: " .. putRes.StatusCode)
             return true
+        elseif putRes.StatusCode == 401 then
+            error("GitHub authentication failed - invalid token")
         else
             error(string.format("GitHub PUT failed (Status %d): %s", putRes.StatusCode, tostring(putRes.Body)))
         end
