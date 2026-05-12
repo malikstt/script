@@ -1,6 +1,6 @@
 task.spawn(function()
-    for _, x in pairs(getconnections(game.Players.LocalPlayer.Idled)) do
-        x:Disable()
+    for _, v in pairs(getconnections(game.Players.LocalPlayer.Idled)) do
+        v:Disable()
     end
 end)
 pcall(function()
@@ -8,52 +8,52 @@ pcall(function()
 end)
 
 repeat task.wait() until game:GetService("Players").LocalPlayer.PlayerGui:WaitForChild("__MAINHUD__")
-
 repeat task.wait() until game:IsLoaded()
+
 local cfg = getgenv().slime_rng_cfg or {}
 
 local RS = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
-local HttpService = game:GetService("HttpService")
+local plrs = game:GetService("Players")
+local localPlr = plrs.LocalPlayer
+local http = game:GetService("HttpService")
 
-local Packages = RS:WaitForChild("Packages")
-local Index = Packages:WaitForChild("_Index")
-local Networker = Index:WaitForChild("leifstout_networker@0.3.1"):WaitForChild("networker")
-local Remotes = Networker:WaitForChild("_remotes")
+local pkgs = RS:WaitForChild("Packages")
+local idx = pkgs:WaitForChild("_Index")
+local net = idx:WaitForChild("leifstout_networker@0.3.1"):WaitForChild("networker")
+local rmt = net:WaitForChild("_remotes")
 
-local DataClient = require(Packages.DataService).client
-DataClient:waitForData()
+local dataCli = require(pkgs.DataService).client
+dataCli:waitForData()
 
-local RollRemote = Remotes:WaitForChild("RollService"):WaitForChild("RemoteFunction")
-local CodeRemote = Remotes:WaitForChild("CodeService"):WaitForChild("RemoteFunction")
-local InventoryRemote = Remotes:WaitForChild("InventoryService"):WaitForChild("RemoteFunction")
-local RebirthRemote = Remotes:WaitForChild("RebirthService"):WaitForChild("RemoteFunction")
-local ZonesRemote = Remotes:WaitForChild("ZonesService"):WaitForChild("RemoteFunction")
-local UpgradeRemote = Remotes:WaitForChild("UpgradeService"):WaitForChild("RemoteFunction")
-local BoostRemote = Remotes:WaitForChild("BoostService"):WaitForChild("RemoteFunction")
-local OfflineRemote = Remotes:WaitForChild("OfflineEarningsService"):WaitForChild("RemoteFunction")
-local IndexRemote = Remotes:WaitForChild("IndexService"):WaitForChild("RemoteFunction")
+local rollRmt = rmt:WaitForChild("RollService"):WaitForChild("RemoteFunction")
+local codeRmt = rmt:WaitForChild("CodeService"):WaitForChild("RemoteFunction")
+local invRmt = rmt:WaitForChild("InventoryService"):WaitForChild("RemoteFunction")
+local rebRmt = rmt:WaitForChild("RebirthService"):WaitForChild("RemoteFunction")
+local zoneRmt = rmt:WaitForChild("ZonesService"):WaitForChild("RemoteFunction")
+local upgRmt = rmt:WaitForChild("UpgradeService"):WaitForChild("RemoteFunction")
+local boostRmt = rmt:WaitForChild("BoostService"):WaitForChild("RemoteFunction")
+local offRmt = rmt:WaitForChild("OfflineEarningsService"):WaitForChild("RemoteFunction")
+local idxRmt = rmt:WaitForChild("IndexService"):WaitForChild("RemoteFunction")
 
-local Source = RS:WaitForChild("Source", 30)
-if not Source then
-    warn("[Slime RNG] ReplicatedStorage.Source not found.")
+local src = RS:WaitForChild("Source", 30)
+if not src then
+    warn("Main module missing")
     return
 end
 
-local Items = Source:WaitForChild("Game"):WaitForChild("Items")
-local Roll = Source:WaitForChild("Features"):WaitForChild("Roll")
-local MutationsFolder = Source:WaitForChild("Features"):WaitForChild("Mutations")
+local itms = src:WaitForChild("Game"):WaitForChild("Items")
+local rollFeat = src:WaitForChild("Features"):WaitForChild("Roll")
+local mutFolder = src:WaitForChild("Features"):WaitForChild("Mutations")
 
-local RollSlice = require(Roll:WaitForChild("RollSlice"))
-local SlimeData = require(Items:WaitForChild("Slimes"))
-local RarityTiers = require(Items:WaitForChild("RarityTiers"))
-local Mutations = require(MutationsFolder:WaitForChild("Mutations"))
-local Zones = require(RS.Source.Game.Items.Zones)
-local UpgradeTree = require(RS.Source.Features.Upgrades.UpgradeTree)
-local IndexRewards = require(RS.Source.Features.Index.IndexRewards)
+local rollSlice = require(rollFeat:WaitForChild("RollSlice"))
+local slimeData = require(itms:WaitForChild("Slimes"))
+local rarityTiers = require(itms:WaitForChild("RarityTiers"))
+local mutations = require(mutFolder:WaitForChild("Mutations"))
+local zones = require(RS.Source.Game.Items.Zones)
+local upgTree = require(RS.Source.Features.Upgrades.UpgradeTree)
+local idxRewards = require(RS.Source.Features.Index.IndexRewards)
 
-local expectedConfigs = {
+local expected = {
     "OFFLINE_EARNINGS", "FAST_ROLL", "REDEEM_CODES", "CODES",
     "EQUIP_BEST_SLIMES", "AUTO_REBIRTH", "REQUIRED_ZONE_TO_REBIRTH",
     "UNLOCK_AFFORDABLE_ZONES", "AUTOFARM_BEST_ZONE", "AUTO_BUY_UPGRADES",
@@ -62,48 +62,62 @@ local expectedConfigs = {
     "WEBHOOK_URL", "MINIMUM_LUCK_SENT"
 }
 
-print("[Slime RNG] Script started")
-print("[Slime RNG] Loading config...")
-
-local found = 0
-for _, key in ipairs(expectedConfigs) do
-    if cfg[key] ~= nil then
-        found = found + 1
+local fnd = 0
+for _, k in ipairs(expected) do
+    if cfg[k] ~= nil then
+        fnd = fnd + 1
     else
-        warn("[Slime RNG] Missing " .. key .. " config, skipping it (runs as false / nil)")
+        warn("Cfg missing: "..k)
     end
 end
 
-print(string.format("[Slime RNG] Found %d/%d configs", found, #expectedConfigs))
-print("[Slime RNG] Starting features...")
+print("Configs: "..fnd.."/"..#expected)
 
-local function formatNumber(num)
-    if type(num) ~= "number" then return tostring(num) end
-    local absNum = math.abs(num)
-    local suffix = ""
-    local divisor = 1
-    if absNum >= 1e18 then
-        suffix = "Qn"; divisor = 1e18
-    elseif absNum >= 1e15 then
-        suffix = "Qd"; divisor = 1e15
-    elseif absNum >= 1e12 then
-        suffix = "T"; divisor = 1e12
-    elseif absNum >= 1e9 then
-        suffix = "B"; divisor = 1e9
-    elseif absNum >= 1e6 then
-        suffix = "M"; divisor = 1e6
-    elseif absNum >= 1e3 then
-        suffix = "K"; divisor = 1e3
+local function f1(n)
+    if type(n) ~= "number" then return tostring(n) end
+    local a = math.abs(n)
+    local s = ""
+    local d = 1
+    if a >= 1e18 then
+        s = "Qn"; d = 1e18
+    elseif a >= 1e15 then
+        s = "Qd"; d = 1e15
+    elseif a >= 1e12 then
+        s = "T"; d = 1e12
+    elseif a >= 1e9 then
+        s = "B"; d = 1e9
+    elseif a >= 1e6 then
+        s = "M"; d = 1e6
+    elseif a >= 1e3 then
+        s = "K"; d = 1e3
     end
-    if suffix ~= "" then
-        local formatted = num / divisor
-        if math.abs(formatted - math.floor(formatted)) < 0.01 then
-            return string.format("%d%s", math.floor(formatted), suffix)
+    if s ~= "" then
+        local fm = n / d
+        if math.abs(fm - math.floor(fm)) < 0.01 then
+            return string.format("%d%s", math.floor(fm), s)
         else
-            return string.format("%.1f%s", formatted, suffix):gsub("%.0f", "")
+            return string.format("%.1f%s", fm, s):gsub("%.0f", "")
         end
     end
-    return tostring(math.floor(num))
+    return tostring(math.floor(n))
+end
+
+local function f2(rmt, ...)
+    local ok, res = pcall(rmt.InvokeServer, rmt, ...)
+    return ok, res
+end
+
+local function f3(id)
+    if not id then return nil end
+    local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..id.."&size=420x420&format=Png&isCircular=false"
+    local suc, res = pcall(request, {Url = url, Method = "GET"})
+    if suc and res and res.Success then
+        local data = http:JSONDecode(res.Body)
+        if data and data.data and data.data[1] and data.data[1].imageUrl then
+            return data.data[1].imageUrl
+        end
+    end
+    return nil
 end
 
 if cfg.OPTIMIZATION then
@@ -113,26 +127,26 @@ if cfg.OPTIMIZATION then
 end
 
 if cfg.OFFLINE_EARNINGS then
-    pcall(OfflineRemote.InvokeServer, OfflineRemote, "requestClaim")
+    pcall(offRmt.InvokeServer, offRmt, "requestClaim")
 end
 
 if cfg.EQUIP_BEST_SLIMES then
     task.spawn(function()
-        local delay = 30
+        local d = 30
         while true do
-            pcall(InventoryRemote.InvokeServer, InventoryRemote, "requestEquipBest")
-            task.wait(delay)
-            delay = math.min(delay * 2, 600)
+            pcall(invRmt.InvokeServer, invRmt, "requestEquipBest")
+            task.wait(d)
+            d = math.min(d * 2, 600)
         end
     end)
 end
 
 if cfg.REDEEM_CODES then
     task.spawn(function()
-        local codes = DataClient._data._data._codes or {}
-        for _, code in ipairs(cfg.CODES) do
-            if not codes[code] then
-                pcall(CodeRemote.InvokeServer, CodeRemote, "redeem", code)
+        local codes = dataCli._data._data._codes or {}
+        for _, cd in ipairs(cfg.CODES) do
+            if not codes[cd] then
+                pcall(codeRmt.InvokeServer, codeRmt, "redeem", cd)
                 task.wait(0.5)
             end
         end
@@ -142,24 +156,24 @@ end
 if cfg.AUTO_REBIRTH then
     task.spawn(function()
         while true do
-            local rebirths = DataClient:get("rebirths") or 0
-            local goop = DataClient:get("goop") or 0
-            local furthestZone = DataClient:get("furthestZone") or 0
-            local nextCost = (2 ^ rebirths) * 500
-            if furthestZone >= cfg.REQUIRED_ZONE_TO_REBIRTH and goop >= nextCost then
-                pcall(RebirthRemote.InvokeServer, RebirthRemote, "requestRebirth")
+            local rbs = dataCli:get("rebirths") or 0
+            local gp = dataCli:get("goop") or 0
+            local fz = dataCli:get("furthestZone") or 0
+            local cost = (2 ^ rbs) * 500
+            if fz >= cfg.REQUIRED_ZONE_TO_REBIRTH and gp >= cost then
+                pcall(rebRmt.InvokeServer, rebRmt, "requestRebirth")
             end
             task.wait(10)
         end
     end)
 end
 
-local currentZone = DataClient:get("zone") or 1
+local curZone = dataCli:get("zone") or 1
 
 if cfg.UNLOCK_AFFORDABLE_ZONES then
     task.spawn(function()
         while true do
-            pcall(ZonesRemote.InvokeServer, ZonesRemote, "requestPurchaseZone")
+            pcall(zoneRmt.InvokeServer, zoneRmt, "requestPurchaseZone")
             task.wait(5)
         end
     end)
@@ -167,21 +181,15 @@ end
 
 if cfg.AUTOFARM_BEST_ZONE then
     task.spawn(function()
-        local MAX_ZONE = 25
+        local MAX = 25
         while true do
-            for zone = MAX_ZONE, 1, -1 do
-                local success = pcall(
-                    ZonesRemote.InvokeServer,
-                    ZonesRemote,
-                    "requestTeleportZone",
-                    zone
-                )
-                if success then
+            for z = MAX, 1, -1 do
+                local suc = pcall(zoneRmt.InvokeServer, zoneRmt, "requestTeleportZone", z)
+                if suc then
                     task.wait(1)
-                    local newZone = DataClient:get("zone") or 1
-                    if newZone == zone then
-                        print("Successfully teleported to zone", zone)
-                        currentZone = zone
+                    local nz = dataCli:get("zone") or 1
+                    if nz == z then
+                        curZone = z
                         break
                     end
                 end
@@ -193,49 +201,49 @@ end
 
 if cfg.AUTO_BUY_UPGRADES then
     task.spawn(function()
-        local function collectUpgrades(tbl, ids)
-            if type(tbl) ~= "table" then return end
-            for id, data in pairs(tbl) do
-                if type(data) == "table" and data.cost then
+        local function f4(t, ids)
+            if type(t) ~= "table" then return end
+            for id, d in pairs(t) do
+                if type(d) == "table" and d.cost then
                     table.insert(ids, id)
                 end
             end
         end
-        local allUpgrades = {}
-        collectUpgrades(UpgradeTree.main, allUpgrades)
-        if UpgradeTree.main.lootTree and UpgradeTree.main.lootTree.subTree then
-            collectUpgrades(UpgradeTree.main.lootTree.subTree, allUpgrades)
+        local upgs = {}
+        f4(upgTree.main, upgs)
+        if upgTree.main.lootTree and upgTree.main.lootTree.subTree then
+            f4(upgTree.main.lootTree.subTree, upgs)
         end
-        if UpgradeTree.main.playerTree and UpgradeTree.main.playerTree.subTree then
-            collectUpgrades(UpgradeTree.main.playerTree.subTree, allUpgrades)
+        if upgTree.main.playerTree and upgTree.main.playerTree.subTree then
+            f4(upgTree.main.playerTree.subTree, upgs)
         end
-        local function getCost(id)
-            local function findIn(tbl)
-                if type(tbl) ~= "table" then return nil end
-                for k, data in pairs(tbl) do
-                    if k == id and type(data) == "table" then return data.cost end
+        local function f5(id)
+            local function f6(t)
+                if type(t) ~= "table" then return nil end
+                for k, d in pairs(t) do
+                    if k == id and type(d) == "table" then return d.cost end
                 end
             end
-            return findIn(UpgradeTree.main)
-                or findIn(UpgradeTree.main.lootTree and UpgradeTree.main.lootTree.subTree)
-                or findIn(UpgradeTree.main.playerTree and UpgradeTree.main.playerTree.subTree)
+            return f6(upgTree.main)
+                or f6(upgTree.main.lootTree and upgTree.main.lootTree.subTree)
+                or f6(upgTree.main.playerTree and upgTree.main.playerTree.subTree)
         end
         while task.wait(0.5) do
-            local owned = DataClient:get("upgrades") or {}
-            local coins = DataClient:get("coins") or 0
-            local goop = DataClient:get("goop") or 0
-            local rollCurrency = DataClient:get("rollCurrency") or 0
-            for _, id in ipairs(allUpgrades) do
+            local owned = dataCli:get("upgrades") or {}
+            local coins = dataCli:get("coins") or 0
+            local goop = dataCli:get("goop") or 0
+            local rc = dataCli:get("rollCurrency") or 0
+            for _, id in ipairs(upgs) do
                 if not owned[id] then
-                    local cost = getCost(id)
+                    local cost = f5(id)
                     if cost then
-                        local amount = cost.amount or 0
-                        local currency = cost.currency
-                        local canAfford = (currency == "coins" and coins >= amount)
-                            or (currency == "goop" and goop >= amount)
-                            or (currency == "rollCurrency" and rollCurrency >= amount)
-                        if canAfford then
-                            local ok = pcall(UpgradeRemote.InvokeServer, UpgradeRemote, "requestUnlock", id)
+                        local amt = cost.amount or 0
+                        local cur = cost.currency
+                        local aff = (cur == "coins" and coins >= amt)
+                            or (cur == "goop" and goop >= amt)
+                            or (cur == "rollCurrency" and rc >= amt)
+                        if aff then
+                            local ok = pcall(upgRmt.InvokeServer, upgRmt, "requestUnlock", id)
                             if ok then task.wait(0.2) end
                         end
                     end
@@ -248,20 +256,20 @@ end
 if cfg.USE_POTIONS or cfg.USE_DICES then
     task.spawn(function()
         while task.wait(1) do
-            local boosts = DataClient:get("boosts") or {}
-            local items = DataClient:get("items") or {}
+            local boosts = dataCli:get("boosts") or {}
+            local items = dataCli:get("items") or {}
             if cfg.USE_POTIONS then
-                for _, potion in ipairs(cfg.POTIONS_TO_USE) do
-                    local data = boosts[potion]
-                    if data and (data.amount or 0) > 0 then
-                        pcall(BoostRemote.InvokeServer, BoostRemote, "requestUseBoost", potion)
+                for _, p in ipairs(cfg.POTIONS_TO_USE) do
+                    local d = boosts[p]
+                    if d and (d.amount or 0) > 0 then
+                        pcall(boostRmt.InvokeServer, boostRmt, "requestUseBoost", p)
                     end
                 end
             end
             if cfg.USE_DICES then
-                for _, dice in ipairs(cfg.DICES_TO_USE) do
-                    if (items[dice] or 0) > 0 then
-                        pcall(InventoryRemote.InvokeServer, InventoryRemote, "requestUseItem", dice)
+                for _, d in ipairs(cfg.DICES_TO_USE) do
+                    if (items[d] or 0) > 0 then
+                        pcall(invRmt.InvokeServer, invRmt, "requestUseItem", d)
                     end
                 end
             end
@@ -271,21 +279,21 @@ end
 
 if cfg.AUTO_CLAIM_INDEX_REWARDS then
     task.spawn(function()
-        local function checkRewards()
-            local data = DataClient:get("index")
-            if not data or not data.categories then return end
-            for category, rewards in pairs(IndexRewards) do
-                local catData = data.categories[category]
-                if catData then
-                    local unlocked = catData.unlocked or {}
-                    local count = 0
+        local function f7()
+            local d = dataCli:get("index")
+            if not d or not d.categories then return end
+            for cat, rw in pairs(idxRewards) do
+                local cd = d.categories[cat]
+                if cd then
+                    local unlocked = cd.unlocked or {}
+                    local cnt = 0
                     for _, v in pairs(unlocked) do
-                        if v == true then count = count + 1 end
+                        if v == true then cnt = cnt + 1 end
                     end
-                    local claimed = catData.claimedRewards or {}
-                    for _, reward in ipairs(rewards) do
-                        if count >= reward.req and not claimed[reward.key] then
-                            pcall(IndexRemote.InvokeServer, IndexRemote, "requestClaimReward", category)
+                    local claimed = cd.claimedRewards or {}
+                    for _, r in ipairs(rw) do
+                        if cnt >= r.req and not claimed[r.key] then
+                            pcall(idxRmt.InvokeServer, idxRmt, "requestClaimReward", cat)
                             task.wait(0.5)
                         end
                     end
@@ -293,7 +301,7 @@ if cfg.AUTO_CLAIM_INDEX_REWARDS then
             end
         end
         while true do
-            checkRewards()
+            f7()
             task.wait(60)
         end
     end)
@@ -301,47 +309,20 @@ end
 
 if cfg.AUTO_COLLECT_LOOT then
     task.spawn(function()
-        print("Loot auto-collector started")
-
-        local LootRemote = RS:WaitForChild("Packages")
+        local lootRmt = RS:WaitForChild("Packages")
             :WaitForChild("_Index")
             :WaitForChild("leifstout_networker@0.3.1")
             :WaitForChild("networker")
             :WaitForChild("_remotes")
             :WaitForChild("LootService")
             :WaitForChild("RemoteFunction")
-
         while true do
             task.wait(30)
-
-            local LootFolder = workspace:FindFirstChild("Loot")
-
-            if not LootFolder then
-                print("No Loot folder found")
-                continue
-            end
-
-            local lootItems = LootFolder:GetChildren()
-
-            print("Loot found:", #lootItems)
-
-            if #lootItems == 0 then
-                print("No loot to collect")
-                continue
-            end
-
-            for _, loot in ipairs(lootItems) do
-                print("Collecting:", loot.Name)
-
-                local success, result = pcall(function()
-                    return LootRemote:InvokeServer("requestCollect", loot.Name)
-                end)
-
-                if not success then
-                    warn("Failed to collect:", loot.Name, result)
-                else
-                    print("Collected:", loot.Name, result)
-                end
+            local lootFolder = workspace:FindFirstChild("Loot")
+            if not lootFolder then continue end
+            local loots = lootFolder:GetChildren()
+            for _, l in ipairs(loots) do
+                pcall(lootRmt.InvokeServer, lootRmt, "requestCollect", l.Name)
             end
         end
     end)
@@ -349,248 +330,185 @@ end
 
 if cfg.FAST_ROLL then
     task.spawn(function()
-        print("[Slime RNG] Fast roll enabled")
         while true do
-            pcall(RollRemote.InvokeServer, RollRemote, "requestRoll")
+            pcall(rollRmt.InvokeServer, rollRmt, "requestRoll")
             task.wait()
         end
     end)
 end
 
-print("[Slime RNG] All features initialized")
-
--- RollWatcher with Webhook (clean simple version that works)
 if cfg.WEBHOOK_URL and #cfg.WEBHOOK_URL > 0 then
     task.spawn(function()
-        local webhookUrl = cfg.WEBHOOK_URL[1]
-        
-        local minimumChance = 0
+        local web = cfg.WEBHOOK_URL[1]
+        local minLuck = 0
         if cfg.MINIMUM_LUCK_SENT then
-            local minLuck = cfg.MINIMUM_LUCK_SENT
-            if type(minLuck) == "string" then
-                local multiplier = 1
-                if string.sub(minLuck, -1) == "B" then
-                    multiplier = 1e9
-                    minLuck = string.sub(minLuck, 1, -2)
-                elseif string.sub(minLuck, -1) == "M" then
-                    multiplier = 1e6
-                    minLuck = string.sub(minLuck, 1, -2)
-                elseif string.sub(minLuck, -1) == "K" then
-                    multiplier = 1e3
-                    minLuck = string.sub(minLuck, 1, -2)
+            local ml = cfg.MINIMUM_LUCK_SENT
+            if type(ml) == "string" then
+                local mult = 1
+                if string.sub(ml, -1) == "B" then
+                    mult = 1e9
+                    ml = string.sub(ml, 1, -2)
+                elseif string.sub(ml, -1) == "M" then
+                    mult = 1e6
+                    ml = string.sub(ml, 1, -2)
+                elseif string.sub(ml, -1) == "K" then
+                    mult = 1e3
+                    ml = string.sub(ml, 1, -2)
                 end
-                local num = tonumber(minLuck)
+                local num = tonumber(ml)
                 if num then
-                    minimumChance = num * multiplier
+                    minLuck = num * mult
                 end
-            elseif type(minLuck) == "number" then
-                minimumChance = minLuck
+            elseif type(ml) == "number" then
+                minLuck = ml
             end
         end
-        
-        local sentMessages = {}
-        
-        local function getRarityName(odds)
+        local sent = {}
+        local function f8(odds)
             if not odds or odds <= 0 then return "Unknown" end
-            local ok, tier = pcall(RarityTiers.getTier, odds)
+            local ok, tier = pcall(rarityTiers.getTier, odds)
             return (ok and tier and tier.name) or "Unknown"
         end
-        
-        local function getActualItem(result)
-            if type(result) ~= "table" then return nil end
-            for _, entry in ipairs(result) do
-                if type(entry) == "table" and entry.id then
-                    return entry
+        local function f9(res)
+            if type(res) ~= "table" then return nil end
+            for _, e in ipairs(res) do
+                if type(e) == "table" and e.id then
+                    return e
                 end
             end
             return nil
         end
-        
-        local function getResultsFingerprint(results)
-            if type(results) ~= "table" then return "nil" end
-            local count = #results
-            if count == 0 then return "empty" end
+        local function f10(res)
+            if type(res) ~= "table" then return "nil" end
+            local cnt = #res
+            if cnt == 0 then return "empty" end
             local parts = {}
-            for i, result in ipairs(results) do
-                local item = getActualItem(result)
-                parts[i] = item and tostring(item.id) or tostring(i)
+            for i, r in ipairs(res) do
+                local it = f9(r)
+                parts[i] = it and tostring(it.id) or tostring(i)
             end
-            return count .. "|" .. table.concat(parts, ",")
+            return cnt.."|"..table.concat(parts, ",")
         end
-        
-        local function ordinal(n)
+        local function f11(n)
             local s = tostring(n)
             local last = n % 10
             local tens = n % 100
-            if tens >= 11 and tens <= 13 then return s .. "th" end
-            if last == 1 then return s .. "st" end
-            if last == 2 then return s .. "nd" end
-            if last == 3 then return s .. "rd" end
-            return s .. "th"
+            if tens >= 11 and tens <= 13 then return s.."th" end
+            if last == 1 then return s.."st" end
+            if last == 2 then return s.."nd" end
+            if last == 3 then return s.."rd" end
+            return s.."th"
         end
-        
-        local function getAssetImageUrl(assetId)
-            if not assetId then return nil end
-            local url = "https://thumbnails.roblox.com/v1/assets?assetIds=" .. assetId .. "&size=420x420&format=Png&isCircular=false"
-            local success, response = pcall(function()
-                return request({ Url = url, Method = "GET" })
-            end)
-            if success and response and response.Success then
-                local data = HttpService:JSONDecode(response.Body)
-                if data and data.data and data.data[1] and data.data[1].imageUrl then
-                    return data.data[1].imageUrl
-                end
-            end
-            return nil
-        end
-        
-        local function getThumbnailSize(mutations)
-            if not mutations then return 64 end
-            if mutations.huge then return 128
-            elseif mutations.big then return 96 end
+        local function f12(m)
+            if not m then return 64 end
+            if m.huge then return 128
+            elseif m.big then return 96 end
             return 64
         end
-        
-        local function getEmbedColor(mutations)
-            if not mutations then return nil end
-            if mutations.inverted then return 0x9b59b6
-            elseif mutations.huge then return 0xf1c40f
-            elseif mutations.big then return 0xe67e22
-            elseif mutations.shiny then return 0xf39c12 end
+        local function f13(m)
+            if not m then return nil end
+            if m.inverted then return 0x9b59b6
+            elseif m.huge then return 0xf1c40f
+            elseif m.big then return 0xe67e22
+            elseif m.shiny then return 0xf39c12 end
             return nil
         end
-        
-        local function sendWebhook(playerName, displayName, rarity, chanceText, statsText, mutations, mutList, imageUrl, totalRolls, coins, kills)
-            local finalImageUrl = nil
-            local thumbnailSize = getThumbnailSize(mutations)
-            
-            if imageUrl and imageUrl ~= "N/A" then
-                local assetId = string.match(imageUrl, "rbxassetid://(%d+)")
-                if assetId then
-                    finalImageUrl = getAssetImageUrl(assetId)
+        local function f14(pName, dName, rarity, chance, stats, muts, mutList, img, rolls, coins, kills)
+            local finalImg = nil
+            local sz = f12(muts)
+            if img and img ~= "N/A" then
+                local aid = string.match(img, "rbxassetid://(%d+)")
+                if aid then
+                    finalImg = f3(aid)
                 end
             end
-            
-            local hiddenName = "||" .. playerName .. "||"
-            local description = string.format("**%s** rolled **%s**!\n\n🎲 **Total Rolls:** %s", hiddenName, displayName, ordinal(totalRolls))
-            
+            local hidden = "||"..pName.."||"
+            local desc = string.format("**%s** rolled **%s**!\n\n🎲 **Total Rolls:** %s", hidden, dName, f11(rolls))
             local fields = {
                 {name = "Rarity", value = rarity, inline = true},
-                {name = "Chance", value = chanceText, inline = true}
+                {name = "Chance", value = chance, inline = true}
             }
-            
-            if statsText and statsText ~= "" then
-                table.insert(fields, {name = "Stats", value = statsText, inline = true})
+            if stats and stats ~= "" then
+                table.insert(fields, {name = "Stats", value = stats, inline = true})
             end
-            
             if mutList and #mutList > 0 then
                 table.insert(fields, {name = "Mutations", value = table.concat(mutList, ", "), inline = true})
             end
-            
-            table.insert(fields, {name = "🪙 Coins", value = formatNumber(coins), inline = true})
-            table.insert(fields, {name = "⚔️ Kills", value = formatNumber(kills), inline = true})
-            
+            table.insert(fields, {name = "🪙 Coins", value = f1(coins), inline = true})
+            table.insert(fields, {name = "⚔️ Kills", value = f1(kills), inline = true})
             local payload = {
                 username = "makik",
                 embeds = {{
                     title = "New Slime Rolled!",
-                    description = description,
-                    thumbnail = finalImageUrl and {url = finalImageUrl, width = thumbnailSize, height = thumbnailSize} or nil,
+                    description = desc,
+                    thumbnail = finalImg and {url = finalImg, width = sz, height = sz} or nil,
                     fields = fields,
-                    color = getEmbedColor(mutations)
+                    color = f13(muts)
                 }}
             }
-            
             pcall(function()
                 request({
-                    Url = webhookUrl,
+                    Url = web,
                     Method = "POST",
                     Headers = {["Content-Type"] = "application/json"},
-                    Body = HttpService:JSONEncode(payload)
+                    Body = http:JSONEncode(payload)
                 })
-                print("[WEBHOOK] Sent: " .. displayName)
+                print("Webhook sent: "..dName)
             end)
         end
-        
-        print("[RollWatcher] Watching for roll results...")
-        
-        local lastFingerprint = nil
-        
+        local lastFp = nil
         while true do
             task.wait(0.1)
-            
-            local ok, results = pcall(RollSlice.rollResults)
+            local ok, res = pcall(rollSlice.rollResults)
             if not ok then continue end
-            
-            local fingerprint = getResultsFingerprint(results)
-            
-            if fingerprint ~= lastFingerprint then
-                lastFingerprint = fingerprint
-                
-                if type(results) == "table" and #results > 0 then
-                    local stats = DataClient:get("stats") or {}
-                    local totalRolls = stats.rolls or 0
+            local fp = f10(res)
+            if fp ~= lastFp then
+                lastFp = fp
+                if type(res) == "table" and #res > 0 then
+                    local stats = dataCli:get("stats") or {}
+                    local rolls = stats.rolls or 0
                     local kills = stats.kills or 0
-                    local coins = DataClient:get("coins") or 0
-                    
-                    for i, result in ipairs(results) do
-                        local item = getActualItem(result)
-                        if not item then continue end
-                        
-                        local id = tostring(item.id or "unknown")
-                        local sok, slime = pcall(SlimeData.getSlime, id)
-                        slime = sok and slime or nil
-                        
-                        local mutations = type(item.mutations) == "table" and next(item.mutations) ~= nil and item.mutations or nil
-                        local isInverted = mutations and item.mutations.inverted == true
-                        local image = isInverted and (slime and slime.invertedIcon or "N/A") or (slime and slime.image or "N/A")
-                        
+                    local coins = dataCli:get("coins") or 0
+                    for _, r in ipairs(res) do
+                        local it = f9(r)
+                        if not it then continue end
+                        local id = tostring(it.id or "unknown")
+                        local okSlime, slime = pcall(slimeData.getSlime, id)
+                        slime = okSlime and slime or nil
+                        local muts = type(it.mutations) == "table" and next(it.mutations) ~= nil and it.mutations or nil
+                        local inv = muts and it.mutations.inverted == true
+                        local img = inv and (slime and slime.invertedIcon or "N/A") or (slime and slime.image or "N/A")
                         local name = slime and slime.name or id
                         local baseOdds = slime and slime.odds or nil
                         local baseDmg = slime and slime.damage or 0
                         local baseHp = slime and slime.health or 0
-                        local rarity = baseOdds and getRarityName(baseOdds) or "Unknown"
-                        
-                        local oddsMultiplier = mutations and Mutations.getVisualOddsMultiplier(mutations) or 1
-                        local statBonus = mutations and Mutations.getStatBonus(mutations, "damage") or 1
-                        local finalOdds = baseOdds and (baseOdds / oddsMultiplier) or nil
+                        local rarity = baseOdds and f8(baseOdds) or "Unknown"
+                        local mult = muts and mutations.getVisualOddsMultiplier(muts) or 1
+                        local statBonus = muts and mutations.getStatBonus(muts, "damage") or 1
+                        local finalOdds = baseOdds and (baseOdds / mult) or nil
                         local finalDmg = baseDmg * statBonus
                         local finalHp = baseHp * statBonus
-                        
-                        local chanceText = finalOdds and string.format("1 in %s", formatNumber(math.floor(1 / finalOdds + 0.5))) or "N/A"
-                        local chanceNumber = finalOdds and (1 / finalOdds) or nil
-                        local displayName = mutations and Mutations.getDisplayName(name, mutations) or name
-                        local mutList = mutations and Mutations.getIds(mutations) or {}
-                        
-                        if minimumChance > 0 and chanceNumber and chanceNumber < minimumChance then
+                        local chanceText = finalOdds and string.format("1 in %s", f1(math.floor(1 / finalOdds + 0.5))) or "N/A"
+                        local chanceNum = finalOdds and (1 / finalOdds) or nil
+                        local dName = muts and mutations.getDisplayName(name, muts) or name
+                        local mutList = muts and mutations.getIds(muts) or {}
+                        if minLuck > 0 and chanceNum and chanceNum < minLuck then
                             continue
                         end
-                        
                         local statsText = ""
                         if finalDmg > 0 and finalHp > 0 then
-                            statsText = string.format("⚔️ %s  ❤️ %s", formatNumber(finalDmg), formatNumber(finalHp))
+                            statsText = string.format("⚔️ %s  ❤️ %s", f1(finalDmg), f1(finalHp))
                         elseif finalDmg > 0 then
-                            statsText = string.format("⚔️ %s", formatNumber(finalDmg))
+                            statsText = string.format("⚔️ %s", f1(finalDmg))
                         elseif finalHp > 0 then
-                            statsText = string.format("❤️ %s", formatNumber(finalHp))
+                            statsText = string.format("❤️ %s", f1(finalHp))
                         end
-                        
-                        local playerName = LocalPlayer and LocalPlayer.Name or "Someone"
-                        local duplicateKey = playerName .. "_" .. displayName .. "_" .. tostring(os.time())
-                        
-                        if not sentMessages[duplicateKey] then
-                            sentMessages[duplicateKey] = os.time()
-                            
-                            print(string.format("%s roll : %s (%s)", ordinal(totalRolls), displayName, id))
-                            print(string.format("  Rarity    : %s", rarity))
-                            print(string.format("  Chance    : %s", chanceText))
-                            print(string.format("  Image     : %s", image))
-                            if finalDmg > 0 then print(string.format("  Damage    : %s", formatNumber(finalDmg))) end
-                            if finalHp > 0 then print(string.format("  Health    : %s", formatNumber(finalHp))) end
-                            if #mutList > 0 then print(string.format("  Mutations : %s", table.concat(mutList, ", "))) end
-                            
+                        local pName = localPlr and localPlr.Name or "Someone"
+                        local key = pName.."_"..dName.."_"..tostring(os.time())
+                        if not sent[key] then
+                            sent[key] = os.time()
                             task.spawn(function()
-                                sendWebhook(playerName, displayName, rarity, chanceText, statsText, mutations, mutList, image, totalRolls, coins, kills)
+                                f14(pName, dName, rarity, chanceText, statsText, muts, mutList, img, rolls, coins, kills)
                             end)
                         end
                     end
