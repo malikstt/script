@@ -503,13 +503,13 @@ end
 -- Full report (unfiltered) with format "jobid : playing/maxPlayers"
 local function getFullReportContent()
     local lines = {
-        "=== SERVER STATUS REPORT (UNFILTERED) ===",
+        "the whole server fetcher dump",
         string.format("Total Fetched: %d", #STATE.jobIdList),
         string.format("Active: %d", STATE.activeCount),
         string.format("Empty: %d", STATE.emptyCount),
         string.format("Duplicates Skipped: %d", STATE.duplicateCount),
         "",
-        "=== DETAILED LIST ===",
+        "heres the full list bbg",
         "",
     }
     for _, server in ipairs(STATE.jobIdList) do
