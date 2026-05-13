@@ -2,6 +2,7 @@ local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 
 local webhookUrl = "https://discord.com/api/webhooks/1503019592258424942/58mydsCKdv3lieuUsebXNu2kLBT9aenLVZJ36y5zZ1uKFqNMRmnKn1ORgabStBrStYkg"
 
@@ -12,7 +13,7 @@ end
 
 local CONFIG = {
     PLACE_ID       = game.PlaceId,
-    LIMIT          = 100,
+    LIMIT          = 5,
     MAX_RETRIES    = 5,
     BASE_WAIT      = 0.5,
     BACKOFF_BASE   = 2.0,
@@ -92,7 +93,7 @@ titleBar.BorderSizePixel = 0
 titleBar.Parent = mainFrame
 
 local titleLabel = Instance.new("TextLabel")
-titleLabel.Size = UDim2.new(1, -12, 1, 0)
+titleLabel.Size = UDim2.new(0.5, -12, 1, 0)
 titleLabel.Position = UDim2.new(0, 12, 0, 0)
 titleLabel.BackgroundTransparency = 1
 titleLabel.Text = "Server Fetcher"
@@ -101,6 +102,17 @@ titleLabel.TextSize = 13
 titleLabel.Font = Enum.Font.GothamBold
 titleLabel.TextXAlignment = Enum.TextXAlignment.Left
 titleLabel.Parent = titleBar
+
+local titleStatus = Instance.new("TextLabel")
+titleStatus.Size = UDim2.new(0.5, -12, 1, 0)
+titleStatus.Position = UDim2.new(0.5, 0, 0, 0)
+titleStatus.BackgroundTransparency = 1
+titleStatus.Text = "STATUS: Idle"
+titleStatus.TextColor3 = Color3.fromRGB(200, 200, 200)
+titleStatus.TextSize = 11
+titleStatus.Font = Enum.Font.Gotham
+titleStatus.TextXAlignment = Enum.TextXAlignment.Right
+titleStatus.Parent = titleBar
 
 local contentFrame = Instance.new("Frame")
 contentFrame.Size = UDim2.new(1, 0, 1, -30)
@@ -139,6 +151,71 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
+-- Helper: Create numeric input with clear-on-focus and default revert
+local function makeNumericInput(parent, yOffset, labelText, defaultValue, minVal, maxVal)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, -24, 0, 28)
+    row.Position = UDim2.new(0, 12, 0, yOffset)
+    row.BackgroundTransparency = 1
+    row.Parent = parent
+
+    local lbl = Instance.new("TextLabel")  
+    lbl.Size = UDim2.new(0.55, 0, 1, 0)  
+    lbl.Position = UDim2.new(0, 0, 0, 0)  
+    lbl.BackgroundTransparency = 1  
+    lbl.Text = labelText  
+    lbl.TextColor3 = Color3.fromRGB(255, 255, 255)  
+    lbl.TextSize = 12  
+    lbl.Font = Enum.Font.Gotham  
+    lbl.TextXAlignment = Enum.TextXAlignment.Left  
+    lbl.Parent = row  
+
+    local box = Instance.new("TextBox")  
+    box.Size = UDim2.new(0, 110, 0, 22)  
+    box.Position = UDim2.new(1, -110, 0.5, -11)  
+    box.BackgroundColor3 = Color3.fromRGB(10, 10, 10)  
+    box.BorderSizePixel = 0  
+    box.Text = tostring(defaultValue)  
+    box.TextColor3 = Color3.fromRGB(80, 140, 255)  
+    box.TextSize = 12  
+    box.Font = Enum.Font.Gotham  
+    box.ClearTextOnFocus = false  
+    box.PlaceholderText = tostring(defaultValue)  
+    box.PlaceholderColor3 = Color3.fromRGB(80, 80, 80)  
+    box.Parent = row  
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)  
+
+    local function setValue(val)
+        local num = tonumber(val)
+        if num then
+            num = math.clamp(num, minVal, maxVal)
+            box.Text = tostring(num)
+            return num
+        else
+            box.Text = tostring(defaultValue)
+            return defaultValue
+        end
+    end
+
+    box.Focused:Connect(function()
+        if box.Text == tostring(defaultValue) then
+            box.Text = ""
+        end
+    end)
+
+    box.FocusLost:Connect(function(enterPressed)
+        local num = tonumber(box.Text)
+        if not num then
+            box.Text = tostring(defaultValue)
+        else
+            num = math.clamp(num, minVal, maxVal)
+            box.Text = tostring(num)
+        end
+    end)
+
+    return box, setValue
+end
+
 local function makeToggleRow(parent, yOffset, labelText)
     local row = Instance.new("Frame")
     row.Size = UDim2.new(1, -24, 0, 28)
@@ -146,80 +223,45 @@ local function makeToggleRow(parent, yOffset, labelText)
     row.BackgroundTransparency = 1
     row.Parent = parent
 
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(0.65, 0, 1, 0)
-    lbl.Position = UDim2.new(0, 0, 0, 0)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = labelText
-    lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
-    lbl.TextSize = 12
-    lbl.Font = Enum.Font.Gotham
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.Parent = row
+    local lbl = Instance.new("TextLabel")  
+    lbl.Size = UDim2.new(0.65, 0, 1, 0)  
+    lbl.Position = UDim2.new(0, 0, 0, 0)  
+    lbl.BackgroundTransparency = 1  
+    lbl.Text = labelText  
+    lbl.TextColor3 = Color3.fromRGB(255, 255, 255)  
+    lbl.TextSize = 12  
+    lbl.Font = Enum.Font.Gotham  
+    lbl.TextXAlignment = Enum.TextXAlignment.Left  
+    lbl.Parent = row  
 
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 48, 0, 22)
-    btn.Position = UDim2.new(1, -48, 0.5, -11)
-    btn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    btn.BorderSizePixel = 0
-    btn.Text = "OFF"
-    btn.TextColor3 = Color3.fromRGB(180, 180, 180)
-    btn.TextSize = 11
-    btn.Font = Enum.Font.GothamBold
-    btn.Parent = row
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+    local btn = Instance.new("TextButton")  
+    btn.Size = UDim2.new(0, 48, 0, 22)  
+    btn.Position = UDim2.new(1, -48, 0.5, -11)  
+    btn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)  
+    btn.BorderSizePixel = 0  
+    btn.Text = "OFF"  
+    btn.TextColor3 = Color3.fromRGB(180, 180, 180)  
+    btn.TextSize = 11  
+    btn.Font = Enum.Font.GothamBold  
+    btn.Parent = row  
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)  
 
-    local enabled = false
-    local function setState(val)
-        enabled = val
-        if enabled then
-            btn.BackgroundColor3 = Color3.fromRGB(180, 0, 0)
-            btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-            btn.Text = "ON"
-        else
-            btn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-            btn.TextColor3 = Color3.fromRGB(180, 180, 180)
-            btn.Text = "OFF"
-        end
-    end
+    local enabled = false  
+    local function setState(val)  
+        enabled = val  
+        if enabled then  
+            btn.BackgroundColor3 = Color3.fromRGB(180, 0, 0)  
+            btn.TextColor3 = Color3.fromRGB(255, 255, 255)  
+            btn.Text = "ON"  
+        else  
+            btn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)  
+            btn.TextColor3 = Color3.fromRGB(180, 180, 180)  
+            btn.Text = "OFF"  
+        end  
+    end  
+    setState(false)
 
     return btn, setState, function() return enabled end
-end
-
-local function makeInputRow(parent, yOffset, labelText, defaultValue)
-    local row = Instance.new("Frame")
-    row.Size = UDim2.new(1, -24, 0, 28)
-    row.Position = UDim2.new(0, 12, 0, yOffset)
-    row.BackgroundTransparency = 1
-    row.Parent = parent
-
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(0.55, 0, 1, 0)
-    lbl.Position = UDim2.new(0, 0, 0, 0)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = labelText
-    lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
-    lbl.TextSize = 12
-    lbl.Font = Enum.Font.Gotham
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.Parent = row
-
-    local box = Instance.new("TextBox")
-    box.Size = UDim2.new(0, 110, 0, 22)
-    box.Position = UDim2.new(1, -110, 0.5, -11)
-    box.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
-    box.BorderSizePixel = 0
-    box.Text = defaultValue
-    box.TextColor3 = Color3.fromRGB(80, 140, 255)
-    box.TextSize = 12
-    box.Font = Enum.Font.Gotham
-    box.ClearTextOnFocus = false
-    box.PlaceholderText = "min - max"
-    box.PlaceholderColor3 = Color3.fromRGB(80, 80, 80)
-    box.Parent = row
-    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
-
-    return box
 end
 
 local function makeDivider(parent, yOffset)
@@ -231,14 +273,79 @@ local function makeDivider(parent, yOffset)
     d.Parent = parent
 end
 
-local function parsePair(text, min1, max1, min2, max2)
-    local a, b = string.match(text, "^%s*(%d+)%s*%-%s*(%d+)%s*$")
-    a, b = tonumber(a), tonumber(b)
-    if not a or not b then return nil, nil end
-    if min1 then a = math.clamp(a, min1, max1 or math.huge) end
-    if min2 then b = math.clamp(b, min2, max2 or math.huge) end
-    if a > b then a, b = b, a end
-    return a, b
+-- Popup System
+local function createPopup(title, message, buttons)
+    local overlay = Instance.new("Frame")
+    overlay.Size = UDim2.new(1, 0, 1, 0)
+    overlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    overlay.BackgroundTransparency = 0.6
+    overlay.Parent = screenGui
+    overlay.ZIndex = 20
+
+    local popup = Instance.new("Frame")
+    popup.Size = UDim2.new(0, 280, 0, 140)
+    popup.Position = UDim2.new(0.5, -140, 0.5, -70)
+    popup.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+    popup.BorderSizePixel = 0
+    popup.Parent = overlay
+    popup.ZIndex = 21
+    Instance.new("UICorner", popup).CornerRadius = UDim.new(0, 8)
+
+    local titleLabel = Instance.new("TextLabel")
+    titleLabel.Size = UDim2.new(1, 0, 0, 32)
+    titleLabel.Position = UDim2.new(0, 0, 0, 0)
+    titleLabel.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    titleLabel.Text = title
+    titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    titleLabel.TextSize = 14
+    titleLabel.Font = Enum.Font.GothamBold
+    titleLabel.Parent = popup
+    titleLabel.ZIndex = 21
+    Instance.new("UICorner", titleLabel).CornerRadius = UDim.new(0, 8)
+
+    local msgLabel = Instance.new("TextLabel")
+    msgLabel.Size = UDim2.new(1, -20, 0, 50)
+    msgLabel.Position = UDim2.new(0, 10, 0, 40)
+    msgLabel.BackgroundTransparency = 1
+    msgLabel.Text = message
+    msgLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
+    msgLabel.TextSize = 12
+    msgLabel.Font = Enum.Font.Gotham
+    msgLabel.TextWrapped = true
+    msgLabel.Parent = popup
+    msgLabel.ZIndex = 21
+
+    local btnContainer = Instance.new("Frame")
+    btnContainer.Size = UDim2.new(1, -20, 0, 30)
+    btnContainer.Position = UDim2.new(0, 10, 1, -40)
+    btnContainer.BackgroundTransparency = 1
+    btnContainer.Parent = popup
+    btnContainer.ZIndex = 21
+
+    local function close()
+        overlay:Destroy()
+    end
+
+    local btnWidth = (#buttons == 2 and 0.48) or 0.9
+    local startX = (#buttons == 2 and 0) or 0.05
+    for i, btnData in ipairs(buttons) do
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(btnWidth, 0, 1, 0)
+        btn.Position = UDim2.new(startX + (i-1) * (btnWidth + 0.04), 0, 0, 0)
+        btn.BackgroundColor3 = btnData.color or Color3.fromRGB(60, 60, 60)
+        btn.BorderSizePixel = 0
+        btn.Text = btnData.text
+        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        btn.TextSize = 12
+        btn.Font = Enum.Font.GothamBold
+        btn.Parent = btnContainer
+        btn.ZIndex = 21
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+        btn.MouseButton1Click:Connect(function()
+            close()
+            if btnData.callback then btnData.callback() end
+        end)
+    end
 end
 
 local col1 = Instance.new("Frame")
@@ -269,22 +376,35 @@ local toggleEmptyBtn, setEmptyState, getEmptyState   = makeToggleRow(col1, 60, "
 local toggleHideFullBtn, setHideFullState, getHideFullState = makeToggleRow(col1, 92, "Hide Full Servers")
 local toggleAntiAfkBtn, setAntiAfkState, getAntiAfkState    = makeToggleRow(col1, 124, "Anti AFK")
 
-makeDivider(col1, 157)
+-- Total servers label under toggles
+local totalLabel = Instance.new("TextLabel")
+totalLabel.Size = UDim2.new(1, -24, 0, 18)
+totalLabel.Position = UDim2.new(0, 12, 0, 156)
+totalLabel.BackgroundTransparency = 1
+totalLabel.Text = "Total Servers: 0"
+totalLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+totalLabel.TextSize = 11
+totalLabel.Font = Enum.Font.Gotham
+totalLabel.TextXAlignment = Enum.TextXAlignment.Left
+totalLabel.Parent = col1
+
+makeDivider(col1, 178)
 
 local statusLabel = Instance.new("TextLabel")
 statusLabel.Size = UDim2.new(1, -24, 0, 18)
-statusLabel.Position = UDim2.new(0, 12, 0, 162)
+statusLabel.Position = UDim2.new(0, 12, 0, 183)
 statusLabel.BackgroundTransparency = 1
-statusLabel.Text = "Status: Idle"
+statusLabel.Text = ""
 statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
 statusLabel.TextSize = 11
 statusLabel.Font = Enum.Font.Gotham
 statusLabel.TextXAlignment = Enum.TextXAlignment.Left
 statusLabel.Parent = col1
+statusLabel.Visible = false  -- Hide old status, now using title bar
 
 local bottomStatus = Instance.new("TextLabel")
 bottomStatus.Size = UDim2.new(1, -24, 0, 34)
-bottomStatus.Position = UDim2.new(0, 12, 0, 182)
+bottomStatus.Position = UDim2.new(0, 12, 0, 203)
 bottomStatus.BackgroundTransparency = 1
 bottomStatus.Text = "Ready."
 bottomStatus.TextColor3 = Color3.fromRGB(140, 140, 140)
@@ -305,10 +425,11 @@ sectionLabel2.Font = Enum.Font.GothamBold
 sectionLabel2.TextXAlignment = Enum.TextXAlignment.Left
 sectionLabel2.Parent = col2
 
-local limitBox    = makeInputRow(col2, 28,  "Server Limit",       "1 - 100")
-local retriesBox  = makeInputRow(col2, 60,  "Max Retries",        "1 - 5")
-local baseWaitBox = makeInputRow(col2, 92,  "Base Wait (s)",      "0 - 2")
-local maxPagesBox = makeInputRow(col2, 124, "Max Pages",          "1 - 500")
+-- Numeric inputs with clear-on-focus
+local limitBox, setLimit = makeNumericInput(col2, 28, "Server Limit (per page)", 5, 1, 100)
+local retriesBox, setRetries = makeNumericInput(col2, 60, "Max Retries", 5, 1, 20)
+local baseWaitBox, setBaseWait = makeNumericInput(col2, 92, "Base Wait (s)", 0.5, 0, 10)
+local maxPagesBox, setMaxPages = makeNumericInput(col2, 124, "Max Pages", 500, 1, 2000)
 
 makeDivider(col2, 157)
 
@@ -319,7 +440,7 @@ btnRow.BackgroundTransparency = 1
 btnRow.Parent = col2
 
 local startBtn = Instance.new("TextButton")
-startBtn.Size = UDim2.new(0.48, 0, 1, 0)
+startBtn.Size = UDim2.new(0.31, 0, 1, 0)
 startBtn.Position = UDim2.new(0, 0, 0, 0)
 startBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 startBtn.BorderSizePixel = 0
@@ -331,8 +452,8 @@ startBtn.Parent = btnRow
 Instance.new("UICorner", startBtn).CornerRadius = UDim.new(0, 4)
 
 local stopBtn = Instance.new("TextButton")
-stopBtn.Size = UDim2.new(0.48, 0, 1, 0)
-stopBtn.Position = UDim2.new(0.52, 0, 0, 0)
+stopBtn.Size = UDim2.new(0.31, 0, 1, 0)
+stopBtn.Position = UDim2.new(0.345, 0, 0, 0)
 stopBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 stopBtn.BorderSizePixel = 0
 stopBtn.Text = "STOP"
@@ -342,12 +463,28 @@ stopBtn.Font = Enum.Font.GothamBold
 stopBtn.Parent = btnRow
 Instance.new("UICorner", stopBtn).CornerRadius = UDim.new(0, 4)
 
+local sendNowBtn = Instance.new("TextButton")
+sendNowBtn.Size = UDim2.new(0.31, 0, 1, 0)
+sendNowBtn.Position = UDim2.new(0.69, 0, 0, 0)
+sendNowBtn.BackgroundColor3 = Color3.fromRGB(40, 60, 100)
+sendNowBtn.BorderSizePixel = 0
+sendNowBtn.Text = "SEND NOW"
+sendNowBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+sendNowBtn.TextSize = 11
+sendNowBtn.Font = Enum.Font.GothamBold
+sendNowBtn.Parent = btnRow
+Instance.new("UICorner", sendNowBtn).CornerRadius = UDim.new(0, 4)
+
 local function setStatus(text)
-    statusLabel.Text = "Status: " .. text
+    titleStatus.Text = "STATUS: " .. text
 end
 
 local function setBottom(text)
     bottomStatus.Text = text
+end
+
+local function updateTotalLabel()
+    totalLabel.Text = "Total Servers: " .. #STATE.jobIdList
 end
 
 local function log(tag, msg)
@@ -363,9 +500,10 @@ local function backoffWait(attempt, isRateLimit)
     task.wait(final)
 end
 
-local function getReportContent()
+-- Full report (unfiltered) with format "jobid : playing/maxPlayers"
+local function getFullReportContent()
     local lines = {
-        "=== SERVER STATUS REPORT ===",
+        "=== SERVER STATUS REPORT (UNFILTERED) ===",
         string.format("Total Fetched: %d", #STATE.jobIdList),
         string.format("Active: %d", STATE.activeCount),
         string.format("Empty: %d", STATE.emptyCount),
@@ -375,17 +513,16 @@ local function getReportContent()
         "",
     }
     for _, server in ipairs(STATE.jobIdList) do
-        local skip = false
-        if STATE.filterActive and not server.active then skip = true end
-        if STATE.filterEmpty and server.active then skip = true end
-        if STATE.filterHideFull and server.playing >= server.maxPlayers and server.maxPlayers > 0 then skip = true end
-        if not skip then
-            table.insert(lines, string.format("%s | %s | %d/%d players",
-                server.active and "ACTIVE" or "EMPTY",
-                server.id, server.playing, server.maxPlayers))
-        end
+        table.insert(lines, string.format("%s : %d/%d",
+            server.id, server.playing, server.maxPlayers))
     end
     return table.concat(lines, "\n")
+end
+
+-- Mask webhook for display
+local function getMaskedWebhook()
+    if #webhookUrl <= 10 then return webhookUrl end
+    return string.sub(webhookUrl, 1, 10) .. "..."
 end
 
 local function sendReport(summaryText, fileContent, filename)
@@ -417,6 +554,37 @@ local function sendReport(summaryText, fileContent, filename)
         log("ERROR", "Webhook failed: " .. tostring(err))
         setBottom("Webhook failed.")
     end
+    return success
+end
+
+local function sendNow()
+    if #STATE.jobIdList == 0 then
+        createPopup("No Data", "No servers have been fetched yet. Run START first.", {
+            {text = "OK", color = Color3.fromRGB(80, 80, 80), callback = function() end}
+        })
+        return
+    end
+    
+    createPopup("Confirm Send", string.format("Are you sure you want to send %d server(s) to Discord?", #STATE.jobIdList), {
+        {text = "NO", color = Color3.fromRGB(120, 40, 40), callback = function() end},
+        {text = "YES", color = Color3.fromRGB(40, 100, 40), callback = function()
+            local content = getFullReportContent()
+            local summary = string.format(
+                "**Server Fetcher Manual Send**\nTotal: **%d** | Active: **%d** | Empty: **%d** | Dupes skipped: **%d**",
+                #STATE.jobIdList, STATE.activeCount, STATE.emptyCount, STATE.duplicateCount)
+            local timestamp = tostring(os.time())
+            local success = sendReport(summary, content, "servers_" .. timestamp .. ".txt")
+            if success then
+                createPopup("Success", string.format("Successfully sent to webhook %s", getMaskedWebhook()), {
+                    {text = "OK", color = Color3.fromRGB(80, 80, 80), callback = function() end}
+                })
+            else
+                createPopup("Error", "Failed to send report. Check console.", {
+                    {text = "OK", color = Color3.fromRGB(80, 80, 80), callback = function() end}
+                })
+            end
+        end}
+    })
 end
 
 local function fetchPage(cursor)
@@ -454,136 +622,135 @@ local function fetchPage(cursor)
 end
 
 local function applyConfigFromUI()
-    local lMin, lMax = parsePair(limitBox.Text, 1, 100, 1, 100)
-    if lMax then CONFIG.LIMIT = lMax end
-
-    local rMin, rMax = parsePair(retriesBox.Text, 1, 20, 1, 20)
-    if rMax then CONFIG.MAX_RETRIES = rMax end
-
-    local wMin, wMax = parsePair(baseWaitBox.Text, 0, 10, 0, 10)
-    if wMin then CONFIG.BASE_WAIT = wMin end
-
-    local pMin, pMax = parsePair(maxPagesBox.Text, 1, 2000, 1, 2000)
-    if pMax then CONFIG.MAX_PAGES = pMax end
+    CONFIG.LIMIT = tonumber(limitBox.Text) or 5
+    CONFIG.LIMIT = math.clamp(CONFIG.LIMIT, 1, 100)
+    CONFIG.MAX_RETRIES = tonumber(retriesBox.Text) or 5
+    CONFIG.MAX_RETRIES = math.clamp(CONFIG.MAX_RETRIES, 1, 20)
+    CONFIG.BASE_WAIT = tonumber(baseWaitBox.Text) or 0.5
+    CONFIG.BASE_WAIT = math.clamp(CONFIG.BASE_WAIT, 0, 10)
+    CONFIG.MAX_PAGES = tonumber(maxPagesBox.Text) or 500
+    CONFIG.MAX_PAGES = math.clamp(CONFIG.MAX_PAGES, 1, 2000)
 end
 
 local function startFetch()
     if STATE.running then return end
 
-    STATE.running       = true
-    STATE.stopped       = false
-    STATE.jobIdSet      = {}
-    STATE.jobIdList     = {}
-    STATE.pageCount     = 0
-    STATE.activeCount   = 0
-    STATE.emptyCount    = 0
-    STATE.duplicateCount= 0
-    STATE.startTime     = os.clock()
+    STATE.running       = true  
+    STATE.stopped       = false  
+    STATE.jobIdSet      = {}  
+    STATE.jobIdList     = {}  
+    STATE.pageCount     = 0  
+    STATE.activeCount   = 0  
+    STATE.emptyCount    = 0  
+    STATE.duplicateCount= 0  
+    STATE.startTime     = os.clock()  
 
-    STATE.filterActive   = getActiveState()
-    STATE.filterEmpty    = getEmptyState()
-    STATE.filterHideFull = getHideFullState()
+    STATE.filterActive   = getActiveState()  
+    STATE.filterEmpty    = getEmptyState()  
+    STATE.filterHideFull = getHideFullState()  
 
-    applyConfigFromUI()
+    applyConfigFromUI()  
+    updateTotalLabel()
 
-    setStatus("Fetching...")
-    log("START", string.format("PlaceId %d | Limit %d | MaxPages %d", CONFIG.PLACE_ID, CONFIG.LIMIT, CONFIG.MAX_PAGES))
+    setStatus("Fetching...")  
+    log("START", string.format("PlaceId %d | Limit %d | MaxPages %d", CONFIG.PLACE_ID, CONFIG.LIMIT, CONFIG.MAX_PAGES))  
 
-    task.spawn(function()
-        local cursor = nil
-        local cursorStallCount = 0
+    task.spawn(function()  
+        local cursor = nil  
+        local cursorStallCount = 0  
 
-        repeat
-            if STATE.stopped then
-                log("STOP", "Stopped by user.")
-                break
-            end
+        repeat  
+            if STATE.stopped then  
+                log("STOP", "Stopped by user.")  
+                break  
+            end  
 
-            local data = fetchPage(cursor)
+            local data = fetchPage(cursor)  
 
-            if not data then
-                log("ABORT", "fetchPage returned nil. Stopping.")
-                setStatus("Aborted")
-                break
-            end
+            if not data then  
+                log("ABORT", "fetchPage returned nil. Stopping.")  
+                setStatus("Aborted")  
+                break  
+            end  
 
-            local newThisPage = 0
-            for _, server in ipairs(data.data) do
-                local id = server.id
-                if id then
-                    if not STATE.jobIdSet[id] then
-                        STATE.jobIdSet[id] = true
-                        local playing = server.playing or 0
-                        local isActive = playing > 0
-                        table.insert(STATE.jobIdList, {
-                            id         = id,
-                            playing    = playing,
-                            maxPlayers = server.maxPlayers or 0,
-                            active     = isActive,
-                        })
-                        newThisPage = newThisPage + 1
-                        if isActive then
-                            STATE.activeCount = STATE.activeCount + 1
-                        else
-                            STATE.emptyCount = STATE.emptyCount + 1
-                        end
-                    else
-                        STATE.duplicateCount = STATE.duplicateCount + 1
-                    end
-                end
-            end
+            local newThisPage = 0  
+            for _, server in ipairs(data.data) do  
+                local id = server.id  
+                if id then  
+                    if not STATE.jobIdSet[id] then  
+                        STATE.jobIdSet[id] = true  
+                        local playing = server.playing or 0  
+                        local isActive = playing > 0  
+                        table.insert(STATE.jobIdList, {  
+                            id         = id,  
+                            playing    = playing,  
+                            maxPlayers = server.maxPlayers or 0,  
+                            active     = isActive,  
+                        })  
+                        newThisPage = newThisPage + 1  
+                        if isActive then  
+                            STATE.activeCount = STATE.activeCount + 1  
+                        else  
+                            STATE.emptyCount = STATE.emptyCount + 1  
+                        end  
+                    else  
+                        STATE.duplicateCount = STATE.duplicateCount + 1  
+                    end  
+                end  
+            end  
 
-            STATE.pageCount = STATE.pageCount + 1
-            log("PAGE", string.format("#%d | new=%d | total=%d", STATE.pageCount, newThisPage, #STATE.jobIdList))
-            setStatus(string.format("Page %d", STATE.pageCount))
-            setBottom(string.format("Fetched %d servers | Active: %d | Empty: %d | Dupes: %d",
-                #STATE.jobIdList, STATE.activeCount, STATE.emptyCount, STATE.duplicateCount))
+            STATE.pageCount = STATE.pageCount + 1  
+            updateTotalLabel()
+            log("PAGE", string.format("#%d | new=%d | total=%d", STATE.pageCount, newThisPage, #STATE.jobIdList))  
+            setStatus(string.format("Page %d", STATE.pageCount))  
+            setBottom(string.format("Fetched %d servers | Active: %d | Empty: %d | Dupes: %d",  
+                #STATE.jobIdList, STATE.activeCount, STATE.emptyCount, STATE.duplicateCount))  
 
-            local nextCursor = nil
-            if data.nextPageCursor and data.nextPageCursor ~= "" then
-                nextCursor = data.nextPageCursor
-            end
+            local nextCursor = nil  
+            if data.nextPageCursor and data.nextPageCursor ~= "" then  
+                nextCursor = data.nextPageCursor  
+            end  
 
-            if nextCursor == cursor then
-                cursorStallCount = cursorStallCount + 1
-                if cursorStallCount >= CONFIG.CURSOR_RETRIES then
-                    log("ABORT", "Cursor stuck.")
-                    setStatus("Aborted")
-                    break
-                end
-                backoffWait(cursorStallCount, false)
-            else
-                cursorStallCount = 0
-            end
+            if nextCursor == cursor then  
+                cursorStallCount = cursorStallCount + 1  
+                if cursorStallCount >= CONFIG.CURSOR_RETRIES then  
+                    log("ABORT", "Cursor stuck.")  
+                    setStatus("Aborted")  
+                    break  
+                end  
+                backoffWait(cursorStallCount, false)  
+            else  
+                cursorStallCount = 0  
+            end  
 
-            cursor = nextCursor
-            if cursor then
-                task.wait(CONFIG.BASE_WAIT)
-            end
+            cursor = nextCursor  
+            if cursor then  
+                task.wait(CONFIG.BASE_WAIT)  
+            end  
 
-        until not cursor or STATE.pageCount >= CONFIG.MAX_PAGES or STATE.stopped
+        until not cursor or STATE.pageCount >= CONFIG.MAX_PAGES or STATE.stopped  
 
-        if not STATE.stopped then
-            setStatus("Building report...")
-            local content = getReportContent()
-            local summary = string.format(
-                "**Server Fetcher Complete**\nTotal: **%d** | Active: **%d** | Empty: **%d** | Dupes skipped: **%d**",
-                #STATE.jobIdList, STATE.activeCount, STATE.emptyCount, STATE.duplicateCount)
-            local timestamp = tostring(os.time())
-            sendReport(summary, content, "servers_" .. timestamp .. ".txt")
-            setStatus("Done")
-        else
-            local content = getReportContent()
-            local summary = string.format(
-                "**Server Fetcher Stopped**\nTotal: **%d** | Active: **%d** | Empty: **%d** | Dupes skipped: **%d**",
-                #STATE.jobIdList, STATE.activeCount, STATE.emptyCount, STATE.duplicateCount)
-            local timestamp = tostring(os.time())
-            sendReport(summary, content, "stopped_" .. timestamp .. ".txt")
-            setStatus("Stopped")
-        end
+        if not STATE.stopped then  
+            setStatus("Building report...")  
+            local content = getFullReportContent()
+            local summary = string.format(  
+                "**Server Fetcher Complete**\nTotal: **%d** | Active: **%d** | Empty: **%d** | Dupes skipped: **%d**",  
+                #STATE.jobIdList, STATE.activeCount, STATE.emptyCount, STATE.duplicateCount)  
+            local timestamp = tostring(os.time())  
+            sendReport(summary, content, "servers_" .. timestamp .. ".txt")  
+            setStatus("Done")  
+        else  
+            local content = getFullReportContent()
+            local summary = string.format(  
+                "**Server Fetcher Stopped**\nTotal: **%d** | Active: **%d** | Empty: **%d** | Dupes skipped: **%d**",  
+                #STATE.jobIdList, STATE.activeCount, STATE.emptyCount, STATE.duplicateCount)  
+            local timestamp = tostring(os.time())  
+            sendReport(summary, content, "stopped_" .. timestamp .. ".txt")  
+            setStatus("Stopped")  
+        end  
 
-        STATE.running = false
-    end)
+        STATE.running = false  
+    end)  
 end
 
 local function stopFetch()
@@ -620,6 +787,10 @@ end)
 
 stopBtn.MouseButton1Click:Connect(function()
     stopFetch()
+end)
+
+sendNowBtn.MouseButton1Click:Connect(function()
+    sendNow()
 end)
 
 toggleActiveBtn.MouseButton1Click:Connect(function()
