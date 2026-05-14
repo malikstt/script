@@ -1,11 +1,9 @@
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
 local VirtualUser = game:GetService("VirtualUser")
 
-local webhookUrl = "https://discord.com/api/webhooks/1503019592258424942/58mydsCKdv3lieuUsebXNu2kLBT9aenLVZJ36y5zZ1uKFqNMRmnKn1ORgabStBrStYkg"
+local webhookUrl = ""
 
 if not request then
     warn("[ServerFetcher] No request function available. Aborting.")
@@ -23,14 +21,27 @@ local CONFIG = {
     MAX_PAGES      = 100,
 }
 
+-- Adaptive rate limit state tracked separately from UI state
+local RATE = {
+    consecutiveSuccess = 0,
+    consecutiveFail    = 0,
+    currentWait        = 0.15,   -- starts aggressive
+    minWait            = 0.15,
+    maxWait            = 12.0,
+    rateLimitHits      = 0,
+    lastRateLimitTime  = 0,
+    cooldownActive     = false,
+    cooldownUntil      = 0,
+}
+
 local STATE = {
     running         = false,
     stopped         = false,
     filterActive    = false,
     filterEmpty     = false,
     filterHideFull  = false,
-    antiAfkEnabled  = false,
-    antiAfkConn     = nil,
+    antiIdleEnabled = false,
+    antiIdleConn    = nil,
     jobIdSet        = {},
     jobIdList       = {},
     pageCount       = 0,
@@ -152,7 +163,6 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
--- Helper: Create numeric input with clear-on-focus and default revert
 local function makeNumericInput(parent, yOffset, labelText, defaultValue, minVal, maxVal)
     local row = Instance.new("Frame")
     row.Size = UDim2.new(1, -24, 0, 28)
@@ -160,31 +170,31 @@ local function makeNumericInput(parent, yOffset, labelText, defaultValue, minVal
     row.BackgroundTransparency = 1
     row.Parent = parent
 
-    local lbl = Instance.new("TextLabel")  
-    lbl.Size = UDim2.new(0.55, 0, 1, 0)  
-    lbl.Position = UDim2.new(0, 0, 0, 0)  
-    lbl.BackgroundTransparency = 1  
-    lbl.Text = labelText  
-    lbl.TextColor3 = Color3.fromRGB(255, 255, 255)  
-    lbl.TextSize = 12  
-    lbl.Font = Enum.Font.Gotham  
-    lbl.TextXAlignment = Enum.TextXAlignment.Left  
-    lbl.Parent = row  
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(0.55, 0, 1, 0)
+    lbl.Position = UDim2.new(0, 0, 0, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = labelText
+    lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    lbl.TextSize = 12
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = row
 
-    local box = Instance.new("TextBox")  
-    box.Size = UDim2.new(0, 110, 0, 22)  
-    box.Position = UDim2.new(1, -110, 0.5, -11)  
-    box.BackgroundColor3 = Color3.fromRGB(10, 10, 10)  
-    box.BorderSizePixel = 0  
-    box.Text = tostring(defaultValue)  
-    box.TextColor3 = Color3.fromRGB(80, 140, 255)  
-    box.TextSize = 12  
-    box.Font = Enum.Font.Gotham  
-    box.ClearTextOnFocus = false  
-    box.PlaceholderText = tostring(defaultValue)  
-    box.PlaceholderColor3 = Color3.fromRGB(80, 80, 80)  
-    box.Parent = row  
-    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)  
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(0, 110, 0, 22)
+    box.Position = UDim2.new(1, -110, 0.5, -11)
+    box.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+    box.BorderSizePixel = 0
+    box.Text = tostring(defaultValue)
+    box.TextColor3 = Color3.fromRGB(80, 140, 255)
+    box.TextSize = 12
+    box.Font = Enum.Font.Gotham
+    box.ClearTextOnFocus = false
+    box.PlaceholderText = tostring(defaultValue)
+    box.PlaceholderColor3 = Color3.fromRGB(80, 80, 80)
+    box.Parent = row
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
 
     local function setValue(val)
         local num = tonumber(val)
@@ -204,7 +214,7 @@ local function makeNumericInput(parent, yOffset, labelText, defaultValue, minVal
         end
     end)
 
-    box.FocusLost:Connect(function(enterPressed)
+    box.FocusLost:Connect(function()
         local num = tonumber(box.Text)
         if not num then
             box.Text = tostring(defaultValue)
@@ -224,42 +234,42 @@ local function makeToggleRow(parent, yOffset, labelText)
     row.BackgroundTransparency = 1
     row.Parent = parent
 
-    local lbl = Instance.new("TextLabel")  
-    lbl.Size = UDim2.new(0.65, 0, 1, 0)  
-    lbl.Position = UDim2.new(0, 0, 0, 0)  
-    lbl.BackgroundTransparency = 1  
-    lbl.Text = labelText  
-    lbl.TextColor3 = Color3.fromRGB(255, 255, 255)  
-    lbl.TextSize = 12  
-    lbl.Font = Enum.Font.Gotham  
-    lbl.TextXAlignment = Enum.TextXAlignment.Left  
-    lbl.Parent = row  
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(0.65, 0, 1, 0)
+    lbl.Position = UDim2.new(0, 0, 0, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = labelText
+    lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    lbl.TextSize = 12
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = row
 
-    local btn = Instance.new("TextButton")  
-    btn.Size = UDim2.new(0, 48, 0, 22)  
-    btn.Position = UDim2.new(1, -48, 0.5, -11)  
-    btn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)  
-    btn.BorderSizePixel = 0  
-    btn.Text = "OFF"  
-    btn.TextColor3 = Color3.fromRGB(180, 180, 180)  
-    btn.TextSize = 11  
-    btn.Font = Enum.Font.GothamBold  
-    btn.Parent = row  
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)  
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 48, 0, 22)
+    btn.Position = UDim2.new(1, -48, 0.5, -11)
+    btn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    btn.BorderSizePixel = 0
+    btn.Text = "OFF"
+    btn.TextColor3 = Color3.fromRGB(180, 180, 180)
+    btn.TextSize = 11
+    btn.Font = Enum.Font.GothamBold
+    btn.Parent = row
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
 
-    local enabled = false  
-    local function setState(val)  
-        enabled = val  
-        if enabled then  
-            btn.BackgroundColor3 = Color3.fromRGB(180, 0, 0)  
-            btn.TextColor3 = Color3.fromRGB(255, 255, 255)  
-            btn.Text = "ON"  
-        else  
-            btn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)  
-            btn.TextColor3 = Color3.fromRGB(180, 180, 180)  
-            btn.Text = "OFF"  
-        end  
-    end  
+    local enabled = false
+    local function setState(val)
+        enabled = val
+        if enabled then
+            btn.BackgroundColor3 = Color3.fromRGB(180, 0, 0)
+            btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            btn.Text = "ON"
+        else
+            btn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+            btn.TextColor3 = Color3.fromRGB(180, 180, 180)
+            btn.Text = "OFF"
+        end
+    end
     setState(false)
 
     return btn, setState, function() return enabled end
@@ -274,7 +284,6 @@ local function makeDivider(parent, yOffset)
     d.Parent = parent
 end
 
--- Popup System
 local function createPopup(title, message, buttons)
     local overlay = Instance.new("Frame")
     overlay.Size = UDim2.new(1, 0, 1, 0)
@@ -375,9 +384,8 @@ sectionLabel1.Parent = col1
 local toggleActiveBtn, setActiveState, getActiveState = makeToggleRow(col1, 28, "Active Only")
 local toggleEmptyBtn, setEmptyState, getEmptyState   = makeToggleRow(col1, 60, "Empty Only")
 local toggleHideFullBtn, setHideFullState, getHideFullState = makeToggleRow(col1, 92, "Hide Full Servers")
-local toggleAntiAfkBtn, setAntiAfkState, getAntiAfkState    = makeToggleRow(col1, 124, "Anti AFK")
+local toggleAntiIdleBtn, setAntiIdleState, getAntiIdleState = makeToggleRow(col1, 124, "Idle Protection")
 
--- Total servers label under toggles
 local totalLabel = Instance.new("TextLabel")
 totalLabel.Size = UDim2.new(1, -24, 0, 18)
 totalLabel.Position = UDim2.new(0, 12, 0, 156)
@@ -390,18 +398,6 @@ totalLabel.TextXAlignment = Enum.TextXAlignment.Left
 totalLabel.Parent = col1
 
 makeDivider(col1, 178)
-
-local statusLabel = Instance.new("TextLabel")
-statusLabel.Size = UDim2.new(1, -24, 0, 18)
-statusLabel.Position = UDim2.new(0, 12, 0, 183)
-statusLabel.BackgroundTransparency = 1
-statusLabel.Text = ""
-statusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-statusLabel.TextSize = 11
-statusLabel.Font = Enum.Font.Gotham
-statusLabel.TextXAlignment = Enum.TextXAlignment.Left
-statusLabel.Parent = col1
-statusLabel.Visible = false  -- Hide old status, now using title bar
 
 local bottomStatus = Instance.new("TextLabel")
 bottomStatus.Size = UDim2.new(1, -24, 0, 34)
@@ -426,7 +422,6 @@ sectionLabel2.Font = Enum.Font.GothamBold
 sectionLabel2.TextXAlignment = Enum.TextXAlignment.Left
 sectionLabel2.Parent = col2
 
--- Numeric inputs with optimized defaults
 local limitBox, setLimit = makeNumericInput(col2, 28, "Server Limit (per page)", 100, 1, 100)
 local retriesBox, setRetries = makeNumericInput(col2, 60, "Max Retries", 3, 1, 10)
 local baseWaitBox, setBaseWait = makeNumericInput(col2, 92, "Base Wait (s)", 0.3, 0.1, 5)
@@ -476,6 +471,8 @@ sendNowBtn.Font = Enum.Font.GothamBold
 sendNowBtn.Parent = btnRow
 Instance.new("UICorner", sendNowBtn).CornerRadius = UDim.new(0, 4)
 
+-- ─── Helpers ────────────────────────────────────────────────────────────────
+
 local function setStatus(text)
     titleStatus.Text = "STATUS: " .. text
 end
@@ -492,25 +489,82 @@ local function log(tag, msg)
     print(string.format("[ServerFetcher][%s] %s", tag, msg))
 end
 
-local function backoffWait(attempt, isRateLimit)
-    local base = isRateLimit and 8 or 0.8
-    local wait = math.min(base * (CONFIG.BACKOFF_BASE ^ (attempt - 1)), CONFIG.BACKOFF_MAX)
+-- ─── Adaptive rate limiter ───────────────────────────────────────────────────
+--
+-- Strategy: AIMD (Additive Increase / Multiplicative Decrease)
+--   • Every clean success nudges the inter-request wait DOWN by a small step.
+--   • Every 429 multiplies the wait UP and triggers a hard cooldown pause.
+--   • A soft-backoff is used for transient non-429 errors (network blips).
+-- This lets the script naturally find the fastest sustainable pace without
+-- ever fully stopping on rate-limit responses.
+
+local function onRateLimitHit(attempt)
+    RATE.rateLimitHits   = RATE.rateLimitHits + 1
+    RATE.consecutiveFail = RATE.consecutiveFail + 1
+    RATE.consecutiveSuccess = 0
+
+    -- Multiplicative increase on the inter-request wait (AIMD)
+    RATE.currentWait = math.min(
+        RATE.currentWait * (CONFIG.BACKOFF_BASE ^ math.min(RATE.consecutiveFail, 5)),
+        RATE.maxWait
+    )
+
+    -- Cooldown: flat pause on top of the new wait before resuming
+    -- Grows with repeated rate-limits but is bounded
+    local cooldown = math.min(6 * RATE.consecutiveFail, CONFIG.BACKOFF_MAX)
+    -- Add ±20% jitter so parallel scripts don't slam simultaneously
+    local jitter = cooldown * 0.2 * (math.random() * 2 - 1)
+    local pauseFor = math.max(2, cooldown + jitter)
+
+    setStatus(string.format("Rate Limited (%d)", RATE.rateLimitHits))
+    setBottom(string.format(
+        "429 hit #%d | pausing %.1fs | new wait=%.2fs",
+        RATE.rateLimitHits, pauseFor, RATE.currentWait
+    ))
+    log("RATE_LIMIT", string.format(
+        "Hit #%d attempt=%d | cooldown=%.1fs | currentWait=%.3fs",
+        RATE.rateLimitHits, attempt, pauseFor, RATE.currentWait
+    ))
+
+    task.wait(pauseFor)
+end
+
+local function onSoftFail(attempt)
+    -- Non-429 transient error: simple exponential backoff, don't touch currentWait
+    local wait = math.min(
+        0.8 * (CONFIG.BACKOFF_BASE ^ (attempt - 1)),
+        CONFIG.BACKOFF_MAX
+    )
     local jitter = wait * 0.3 * (math.random() * 2 - 1)
-    local final = math.max(0.5, wait + jitter)
-    setBottom(string.format("Waiting %.1fs (attempt %d)", final, attempt))
+    local final  = math.max(0.5, wait + jitter)
+    setBottom(string.format("Soft-fail (attempt %d) — waiting %.1fs", attempt, final))
     task.wait(final)
 end
 
--- Full report (unfiltered) with format "jobid : playing/maxPlayers"
+local function onSuccess()
+    RATE.consecutiveSuccess = RATE.consecutiveSuccess + 1
+    RATE.consecutiveFail    = 0
+    -- Additive decrease: creep the wait down every 3 clean pages
+    if RATE.consecutiveSuccess % 3 == 0 then
+        RATE.currentWait = math.max(
+            RATE.minWait,
+            RATE.currentWait - 0.05
+        )
+    end
+end
+
+-- ─── Core fetch ─────────────────────────────────────────────────────────────
+
 local function getFullReportContent()
     local lines = {
-        "the whole server fetcher dump",
-        string.format("Total Fetched: %d", #STATE.jobIdList),
-        string.format("Active: %d", STATE.activeCount),
-        string.format("Empty: %d", STATE.emptyCount),
-        string.format("Duplicates Skipped: %d", STATE.duplicateCount),
+        "Server Fetcher Complete Report",
+        string.format("Total Fetched: %d",         #STATE.jobIdList),
+        string.format("Active: %d",                STATE.activeCount),
+        string.format("Empty: %d",                 STATE.emptyCount),
+        string.format("Duplicates Skipped: %d",    STATE.duplicateCount),
+        string.format("Pages Fetched: %d",         STATE.pageCount),
         "",
-        "heres the full list bbg",
+        "Server List:",
         "",
     }
     for _, server in ipairs(STATE.jobIdList) do
@@ -520,7 +574,6 @@ local function getFullReportContent()
     return table.concat(lines, "\n")
 end
 
--- Mask webhook for display
 local function getMaskedWebhook()
     if #webhookUrl <= 10 then return webhookUrl end
     return string.sub(webhookUrl, 1, 10) .. "..."
@@ -530,7 +583,7 @@ local function sendReport(summaryText, fileContent, filename)
     setStatus("Sending...")
     setBottom("Sending report to Discord...")
     local boundary = "----Boundary" .. tostring(math.random(100000, 999999))
-    local payload = HttpService:JSONEncode({ username = "Server Fetcher", content = summaryText })
+    local payload  = HttpService:JSONEncode({ username = "Server Fetcher", content = summaryText })
     local body = "--" .. boundary .. "\r\n"
         .. 'Content-Disposition: form-data; name="payload_json"\r\n'
         .. "Content-Type: application/json\r\n\r\n"
@@ -542,18 +595,18 @@ local function sendReport(summaryText, fileContent, filename)
         .. "--" .. boundary .. "--\r\n"
     local success, err = pcall(function()
         request({
-            Url = webhookUrl,
-            Method = "POST",
+            Url     = webhookUrl,
+            Method  = "POST",
             Headers = { ["Content-Type"] = "multipart/form-data; boundary=" .. boundary },
-            Body = body,
+            Body    = body,
         })
     end)
     if success then
         log("WEBHOOK", "Sent: " .. filename)
-        setBottom("Report sent.")
+        setBottom("Report sent successfully!")
     else
         log("ERROR", "Webhook failed: " .. tostring(err))
-        setBottom("Webhook failed.")
+        setBottom("Webhook failed: " .. tostring(err))
     end
     return success
 end
@@ -561,33 +614,34 @@ end
 local function sendNow()
     if #STATE.jobIdList == 0 then
         createPopup("No Data", "No servers have been fetched yet. Run START first.", {
-            {text = "OK", color = Color3.fromRGB(80, 80, 80), callback = function() end}
+            { text = "OK", color = Color3.fromRGB(80, 80, 80), callback = function() end }
         })
         return
     end
-    
-    createPopup("Confirm Send", string.format("Are you sure you want to send %d server(s) to Discord?", #STATE.jobIdList), {
-        {text = "NO", color = Color3.fromRGB(120, 40, 40), callback = function() end},
-        {text = "YES", color = Color3.fromRGB(40, 100, 40), callback = function()
-            local content = getFullReportContent()
-            local summary = string.format(
+    createPopup("Confirm Send", string.format("Send %d server(s) to Discord?", #STATE.jobIdList), {
+        { text = "NO",  color = Color3.fromRGB(120, 40, 40), callback = function() end },
+        { text = "YES", color = Color3.fromRGB(40, 100, 40), callback = function()
+            local content   = getFullReportContent()
+            local summary   = string.format(
                 "**Server Fetcher Manual Send**\nTotal: **%d** | Active: **%d** | Empty: **%d** | Dupes skipped: **%d**",
                 #STATE.jobIdList, STATE.activeCount, STATE.emptyCount, STATE.duplicateCount)
             local timestamp = tostring(os.time())
-            local success = sendReport(summary, content, "servers_" .. timestamp .. ".txt")
+            local success   = sendReport(summary, content, "servers_" .. timestamp .. ".txt")
             if success then
                 createPopup("Success", string.format("Successfully sent to webhook %s", getMaskedWebhook()), {
-                    {text = "OK", color = Color3.fromRGB(80, 80, 80), callback = function() end}
+                    { text = "OK", color = Color3.fromRGB(80, 80, 80), callback = function() end }
                 })
             else
                 createPopup("Error", "Failed to send report. Check console.", {
-                    {text = "OK", color = Color3.fromRGB(80, 80, 80), callback = function() end}
+                    { text = "OK", color = Color3.fromRGB(80, 80, 80), callback = function() end }
                 })
             end
-        end}
+        end }
     })
 end
 
+-- fetchPage: returns parsed data table on success, nil on permanent failure.
+-- Never hard-stops on 429 — always retries after cooldown.
 local function fetchPage(cursor)
     local url = string.format(
         "https://games.roblox.com/v1/games/%d/servers/Public?limit=%d",
@@ -596,186 +650,248 @@ local function fetchPage(cursor)
     if cursor and cursor ~= "" then
         url = url .. "&cursor=" .. HttpService:UrlEncode(cursor)
     end
-    for attempt = 1, CONFIG.MAX_RETRIES do
-        setBottom(string.format("Fetching page %d (attempt %d)...", STATE.pageCount + 1, attempt))
-        local success, response = pcall(function()
+
+    local maxAttempts = CONFIG.MAX_RETRIES + 2  -- a couple of extra attempts for rate limits
+    local attempt = 0
+
+    while attempt < maxAttempts do
+        if STATE.stopped then return nil end
+        attempt = attempt + 1
+
+        local ok, response = pcall(function()
             return request({ Url = url, Method = "GET" })
         end)
-        if not success then
-            log("ERROR", "request threw: " .. tostring(response))
-            backoffWait(attempt, false)
+
+        if not ok then
+            -- pcall-level failure (executor error, no network, etc.)
+            log("ERROR", "request() threw on attempt " .. attempt .. ": " .. tostring(response))
+            if attempt >= maxAttempts then return nil end
+            onSoftFail(attempt)
+
         elseif response.StatusCode == 429 then
-            log("RATE_LIMIT", "429 on attempt " .. attempt)
-            setStatus("Rate Limited")
-            backoffWait(attempt, true)
-        elseif response.StatusCode ~= 200 then
-            log("WARN", "HTTP " .. response.StatusCode)
-            backoffWait(attempt, false)
-        else
+            -- Rate limited — pause then retry without counting against MAX_RETRIES
+            onRateLimitHit(attempt)
+            -- Don't increment attempt for rate-limit hits so retries aren't wasted
+            attempt = attempt - 1
+            maxAttempts = maxAttempts + 1  -- extend budget to compensate for the pause
+
+        elseif response.StatusCode == 200 then
             local decodeOk, data = pcall(HttpService.JSONDecode, HttpService, response.Body)
             if decodeOk and type(data) == "table" and type(data.data) == "table" then
+                onSuccess()
                 return data
+            else
+                log("WARN", "Bad JSON on attempt " .. attempt)
+                if attempt >= maxAttempts then return nil end
+                onSoftFail(attempt)
             end
-            backoffWait(attempt, false)
+
+        else
+            -- 5xx, 4xx (non-429), etc.
+            log("WARN", string.format("HTTP %d on attempt %d", response.StatusCode, attempt))
+            if attempt >= maxAttempts then return nil end
+            onSoftFail(attempt)
         end
     end
+
+    log("ABORT", string.format("fetchPage exhausted %d attempts for page %d", maxAttempts, STATE.pageCount + 1))
     return nil
 end
 
 local function applyConfigFromUI()
-    CONFIG.LIMIT = tonumber(limitBox.Text) or 100
-    CONFIG.LIMIT = math.clamp(CONFIG.LIMIT, 1, 100)
-    CONFIG.MAX_RETRIES = tonumber(retriesBox.Text) or 3
-    CONFIG.MAX_RETRIES = math.clamp(CONFIG.MAX_RETRIES, 1, 10)
-    CONFIG.BASE_WAIT = tonumber(baseWaitBox.Text) or 0.3
-    CONFIG.BASE_WAIT = math.clamp(CONFIG.BASE_WAIT, 0.1, 5)
-    CONFIG.MAX_PAGES = tonumber(maxPagesBox.Text) or 100
-    CONFIG.MAX_PAGES = math.clamp(CONFIG.MAX_PAGES, 1, 500)
+    CONFIG.LIMIT       = math.clamp(tonumber(limitBox.Text)    or 100,  1,   100)
+    CONFIG.MAX_RETRIES = math.clamp(tonumber(retriesBox.Text)  or 3,    1,   10)
+    CONFIG.BASE_WAIT   = math.clamp(tonumber(baseWaitBox.Text) or 0.3,  0.1, 5)
+    CONFIG.MAX_PAGES   = math.clamp(tonumber(maxPagesBox.Text) or 100,  1,   500)
+    -- Sync the adaptive wait floor with user-configured base wait
+    RATE.minWait     = CONFIG.BASE_WAIT
+    RATE.currentWait = math.max(RATE.currentWait, RATE.minWait)
 end
 
--- Apply filter to a server based on current STATE filters
 local function shouldIncludeServer(server)
-    if STATE.filterActive and server.playing == 0 then
-        return false
-    end
-    if STATE.filterEmpty and server.playing > 0 then
-        return false
-    end
-    if STATE.filterHideFull and server.playing >= server.maxPlayers then
-        return false
-    end
+    if STATE.filterActive   and server.playing == 0              then return false end
+    if STATE.filterEmpty    and server.playing > 0               then return false end
+    if STATE.filterHideFull and server.playing >= server.maxPlayers then return false end
     return true
 end
+
+local function enableAntiIdle()
+    local lp = Players.LocalPlayer
+    if STATE.antiIdleConn then
+        STATE.antiIdleConn:Disconnect()
+        STATE.antiIdleConn = nil
+    end
+    STATE.antiIdleConn = lp.Idled:Connect(function()
+        VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+        task.wait()
+        VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+    end)
+end
+
+local function disableAntiIdle()
+    if STATE.antiIdleConn then
+        STATE.antiIdleConn:Disconnect()
+        STATE.antiIdleConn = nil
+    end
+end
+
+local fetchThread = nil
 
 local function startFetch()
     if STATE.running then return end
 
-    -- Reset all STATE counters
-    STATE.running       = true  
-    STATE.stopped       = false  
-    STATE.jobIdSet      = {}  
-    STATE.jobIdList     = {}  
-    STATE.pageCount     = 0  
-    STATE.activeCount   = 0  
-    STATE.emptyCount    = 0  
-    STATE.duplicateCount= 0  
-    STATE.startTime     = os.clock()  
+    STATE.running        = true
+    STATE.stopped        = false
+    STATE.jobIdSet       = {}
+    STATE.jobIdList      = {}
+    STATE.pageCount      = 0
+    STATE.activeCount    = 0
+    STATE.emptyCount     = 0
+    STATE.duplicateCount = 0
+    STATE.startTime      = os.clock()
 
-    -- Apply UI config values to CONFIG
+    -- Reset adaptive rate state for a clean run
+    RATE.consecutiveSuccess = 0
+    RATE.consecutiveFail    = 0
+    RATE.currentWait        = RATE.minWait
+    RATE.rateLimitHits      = 0
+
     applyConfigFromUI()
-    
-    -- Apply toggle states to STATE
-    STATE.filterActive   = getActiveState()  
-    STATE.filterEmpty    = getEmptyState()  
-    STATE.filterHideFull = getHideFullState()  
-    STATE.antiAfkEnabled = getAntiAfkState()
+
+    STATE.filterActive    = getActiveState()
+    STATE.filterEmpty     = getEmptyState()
+    STATE.filterHideFull  = getHideFullState()
+    STATE.antiIdleEnabled = getAntiIdleState()
+
+    if STATE.antiIdleEnabled then enableAntiIdle() else disableAntiIdle() end
 
     updateTotalLabel()
-
-    setStatus("Fetching...")  
-    log("START", string.format("PlaceId %d | Limit %d | MaxPages %d | Filters: Active=%s Empty=%s HideFull=%s", 
+    setStatus("Fetching...")
+    setBottom(string.format("Starting — Limit: %d | Max Pages: %d | Base wait: %.2fs",
+        CONFIG.LIMIT, CONFIG.MAX_PAGES, RATE.currentWait))
+    log("START", string.format(
+        "PlaceId %d | Limit %d | MaxPages %d | Filters: Active=%s Empty=%s HideFull=%s",
         CONFIG.PLACE_ID, CONFIG.LIMIT, CONFIG.MAX_PAGES,
-        tostring(STATE.filterActive), tostring(STATE.filterEmpty), tostring(STATE.filterHideFull)))  
+        tostring(STATE.filterActive), tostring(STATE.filterEmpty), tostring(STATE.filterHideFull)))
 
-    task.spawn(function()  
-        local cursor = nil  
-        local cursorStallCount = 0  
+    if fetchThread then task.cancel(fetchThread) end
 
-        repeat  
-            if STATE.stopped then  
-                log("STOP", "Stopped by user.")  
-                break  
-            end  
+    fetchThread = task.spawn(function()
+        local cursor          = nil
+        local cursorStallCount = 0
+        local prevCursor      = nil  -- tracks last-successful cursor for stall detection
 
-            local data = fetchPage(cursor)  
+        repeat
+            if STATE.stopped then
+                log("STOP", "Stopped by user.")
+                setStatus("Stopped")
+                setBottom("Fetch stopped by user.")
+                break
+            end
 
-            if not data then  
-                log("ABORT", "fetchPage returned nil. Stopping.")  
-                setStatus("Aborted")  
-                break  
-            end  
+            local data = fetchPage(cursor)
 
-            local newThisPage = 0  
-            for _, server in ipairs(data.data) do  
-                local id = server.id  
-                if id then  
-                    if not STATE.jobIdSet[id] then  
-                        -- Apply filters before adding
-                        if shouldIncludeServer(server) then
-                            STATE.jobIdSet[id] = true  
-                            local playing = server.playing or 0  
-                            local isActive = playing > 0  
-                            table.insert(STATE.jobIdList, {  
-                                id         = id,  
-                                playing    = playing,  
-                                maxPlayers = server.maxPlayers or 0,  
-                                active     = isActive,  
-                            })  
-                            newThisPage = newThisPage + 1  
-                            if isActive then  
-                                STATE.activeCount = STATE.activeCount + 1  
-                            else  
-                                STATE.emptyCount = STATE.emptyCount + 1  
-                            end  
+            if not data then
+                log("ABORT", "fetchPage returned nil — stopping.")
+                setStatus("Aborted")
+                setBottom("Fetch aborted: too many consecutive errors.")
+                break
+            end
+
+            -- Process servers from this page
+            local newThisPage = 0
+            for _, server in ipairs(data.data) do
+                local id = server.id
+                if id then
+                    if STATE.jobIdSet[id] then
+                        STATE.duplicateCount = STATE.duplicateCount + 1
+                    elseif shouldIncludeServer(server) then
+                        STATE.jobIdSet[id] = true
+                        local playing  = server.playing or 0
+                        local isActive = playing > 0
+                        table.insert(STATE.jobIdList, {
+                            id         = id,
+                            playing    = playing,
+                            maxPlayers = server.maxPlayers or 0,
+                            active     = isActive,
+                        })
+                        newThisPage = newThisPage + 1
+                        if isActive then
+                            STATE.activeCount = STATE.activeCount + 1
+                        else
+                            STATE.emptyCount = STATE.emptyCount + 1
                         end
-                    else  
-                        STATE.duplicateCount = STATE.duplicateCount + 1  
-                    end  
-                end  
-            end  
+                    end
+                end
+            end
 
-            STATE.pageCount = STATE.pageCount + 1  
+            STATE.pageCount = STATE.pageCount + 1
             updateTotalLabel()
-            log("PAGE", string.format("#%d | new=%d | total=%d", STATE.pageCount, newThisPage, #STATE.jobIdList))  
-            setStatus(string.format("Page %d/%d", STATE.pageCount, CONFIG.MAX_PAGES))  
-            setBottom(string.format("Fetched %d servers | Active: %d | Empty: %d | Dupes: %d",  
-                #STATE.jobIdList, STATE.activeCount, STATE.emptyCount, STATE.duplicateCount))  
 
-            local nextCursor = nil  
-            if data.nextPageCursor and data.nextPageCursor ~= "" then  
-                nextCursor = data.nextPageCursor  
-            end  
+            local elapsed   = os.clock() - STATE.startTime
+            local rate      = (elapsed > 0) and (STATE.pageCount / elapsed * 60) or 0
+            log("PAGE", string.format("#%d new=%d total=%d rate=%.1f/min",
+                STATE.pageCount, newThisPage, #STATE.jobIdList, rate))
+            setStatus(string.format("Page %d/%d", STATE.pageCount, CONFIG.MAX_PAGES))
+            setBottom(string.format(
+                "p%d +%d | total=%d act=%d emp=%d dup=%d | wait=%.2fs rl=%d",
+                STATE.pageCount, newThisPage,
+                #STATE.jobIdList, STATE.activeCount, STATE.emptyCount, STATE.duplicateCount,
+                RATE.currentWait, RATE.rateLimitHits))
 
-            if nextCursor == cursor then  
-                cursorStallCount = cursorStallCount + 1  
-                if cursorStallCount >= CONFIG.CURSOR_RETRIES then  
-                    log("ABORT", "Cursor stuck.")  
-                    setStatus("Aborted")  
-                    break  
-                end  
-                backoffWait(cursorStallCount, false)  
-            else  
-                cursorStallCount = 0  
-            end  
+            -- Cursor stall detection
+            local nextCursor = (data.nextPageCursor ~= "") and data.nextPageCursor or nil
 
-            cursor = nextCursor  
-            if cursor then  
-                task.wait(CONFIG.BASE_WAIT)  
-            end  
+            if nextCursor and nextCursor == prevCursor then
+                cursorStallCount = cursorStallCount + 1
+                log("WARN", string.format("Cursor stall #%d", cursorStallCount))
+                if cursorStallCount >= CONFIG.CURSOR_RETRIES then
+                    log("ABORT", "Cursor permanently stalled — stopping.")
+                    setStatus("Aborted")
+                    setBottom("Cursor stalled. Pagination may be exhausted.")
+                    break
+                end
+                -- Wait slightly longer on stall before retrying same cursor
+                task.wait(RATE.currentWait * 2)
+            else
+                cursorStallCount = 0
+                prevCursor = nextCursor
+            end
 
-        until not cursor or STATE.pageCount >= CONFIG.MAX_PAGES or STATE.stopped  
+            cursor = nextCursor
 
-        if not STATE.stopped and not (STATE.pageCount >= CONFIG.MAX_PAGES) then
-            setStatus("Building report...")  
-            local content = getFullReportContent()
-            local summary = string.format(  
-                "**Server Fetcher Complete**\nTotal: **%d** | Active: **%d** | Empty: **%d** | Dupes skipped: **%d**",  
-                #STATE.jobIdList, STATE.activeCount, STATE.emptyCount, STATE.duplicateCount)  
-            local timestamp = tostring(os.time())  
-            sendReport(summary, content, "servers_" .. timestamp .. ".txt")  
-            setStatus("Done")  
-        elseif STATE.stopped then
-            local content = getFullReportContent()
-            local summary = string.format(  
-                "**Server Fetcher Stopped**\nTotal: **%d** | Active: **%d** | Empty: **%d** | Dupes skipped: **%d**",  
-                #STATE.jobIdList, STATE.activeCount, STATE.emptyCount, STATE.duplicateCount)  
-            local timestamp = tostring(os.time())  
-            sendReport(summary, content, "stopped_" .. timestamp .. ".txt")  
-            setStatus("Stopped")  
+            -- Only wait between pages when there's a next page to fetch
+            if cursor and not STATE.stopped then
+                task.wait(RATE.currentWait)
+            end
+
+        until not cursor or STATE.pageCount >= CONFIG.MAX_PAGES or STATE.stopped
+
+        -- Final report
+        if not STATE.stopped then
+            local elapsed = os.clock() - STATE.startTime
+            setStatus("Building report...")
+            log("DONE", string.format(
+                "Finished %d pages | %d unique servers | %.1fs | %.1f pages/min",
+                STATE.pageCount, #STATE.jobIdList, elapsed,
+                (elapsed > 0) and (STATE.pageCount / elapsed * 60) or 0))
+            local content   = getFullReportContent()
+            local summary   = string.format(
+                "**Server Fetcher Complete**\nTotal: **%d** | Active: **%d** | Empty: **%d** | Pages: **%d**",
+                #STATE.jobIdList, STATE.activeCount, STATE.emptyCount, STATE.pageCount)
+            local timestamp = tostring(os.time())
+            sendReport(summary, content, "servers_" .. timestamp .. ".txt")
+            setStatus("Done")
+        else
+            setStatus("Incomplete")
+            setBottom(string.format(
+                "Stopped at page %d | %d unique servers collected.",
+                STATE.pageCount, #STATE.jobIdList))
         end
 
-        STATE.running = false  
-    end)  
+        STATE.running = false
+        fetchThread   = nil
+    end)
 end
 
 local function stopFetch()
@@ -785,27 +901,8 @@ local function stopFetch()
     setBottom("Stop requested.")
 end
 
-local function enableAntiAfk()
-    local lp = Players.LocalPlayer
-    if STATE.antiAfkConn then
-        STATE.antiAfkConn:Disconnect()
-        STATE.antiAfkConn = nil
-    end
-    STATE.antiAfkConn = lp.Idled:Connect(function()
-        VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
-        task.wait()
-        VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
-    end)
-end
+-- ─── Button wiring (unchanged) ───────────────────────────────────────────────
 
-local function disableAntiAfk()
-    if STATE.antiAfkConn then
-        STATE.antiAfkConn:Disconnect()
-        STATE.antiAfkConn = nil
-    end
-end
-
--- LOCK button functionality
 lockBtn.MouseButton1Click:Connect(function()
     uiLocked = not uiLocked
     if uiLocked then
@@ -817,63 +914,49 @@ lockBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- HIDE UI button functionality
 hideBtn.MouseButton1Click:Connect(function()
     uiVisible = not uiVisible
     mainFrame.Visible = uiVisible
     hideBtn.Text = uiVisible and "HIDE UI" or "SHOW UI"
 end)
 
--- START button
-startBtn.MouseButton1Click:Connect(function()
-    startFetch()
-end)
+startBtn.MouseButton1Click:Connect(startFetch)
+stopBtn.MouseButton1Click:Connect(stopFetch)
+sendNowBtn.MouseButton1Click:Connect(sendNow)
 
--- STOP button
-stopBtn.MouseButton1Click:Connect(function()
-    stopFetch()
-end)
-
--- SEND NOW button
-sendNowBtn.MouseButton1Click:Connect(function()
-    sendNow()
-end)
-
--- Toggle button connections
 toggleActiveBtn.MouseButton1Click:Connect(function()
     local val = not getActiveState()
     setActiveState(val)
     STATE.filterActive = val
-    setBottom(string.format("Active Only: %s", val and "ON" or "OFF"))
+    setBottom("Active Only: " .. (val and "ON" or "OFF"))
 end)
 
 toggleEmptyBtn.MouseButton1Click:Connect(function()
     local val = not getEmptyState()
     setEmptyState(val)
     STATE.filterEmpty = val
-    setBottom(string.format("Empty Only: %s", val and "ON" or "OFF"))
+    setBottom("Empty Only: " .. (val and "ON" or "OFF"))
 end)
 
 toggleHideFullBtn.MouseButton1Click:Connect(function()
     local val = not getHideFullState()
     setHideFullState(val)
     STATE.filterHideFull = val
-    setBottom(string.format("Hide Full Servers: %s", val and "ON" or "OFF"))
+    setBottom("Hide Full Servers: " .. (val and "ON" or "OFF"))
 end)
 
-toggleAntiAfkBtn.MouseButton1Click:Connect(function()
-    local val = not getAntiAfkState()
-    setAntiAfkState(val)
-    STATE.antiAfkEnabled = val
+toggleAntiIdleBtn.MouseButton1Click:Connect(function()
+    local val = not getAntiIdleState()
+    setAntiIdleState(val)
+    STATE.antiIdleEnabled = val
     if val then
-        enableAntiAfk()
-        setBottom("Anti AFK enabled")
+        enableAntiIdle()
+        setBottom("Idle Protection enabled")
     else
-        disableAntiAfk()
-        setBottom("Anti AFK disabled")
+        disableAntiIdle()
+        setBottom("Idle Protection disabled")
     end
 end)
 
--- Initialize
 setStatus("Idle")
 setBottom("Ready. Configure settings and press START.")
