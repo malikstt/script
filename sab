@@ -1,674 +1,846 @@
-local HttpService = game:GetService("HttpService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
+-- Slime RNG Automation | Fluent UI Edition
+-- Services
+local RS = game:GetService("ReplicatedStorage")
+local plrs = game:GetService("Players")
+local http = game:GetService("HttpService")
+local localPlr = plrs.LocalPlayer
 
-local Network = require(ReplicatedStorage.Library.Client.Network)
-local Items = require(ReplicatedStorage.Library.Items)
-
-local GITHUB_OWNER = "malikstt"
-local GITHUB_REPO = "script"
-local GITHUB_PATH = "dashboard"
-local GITHUB_BRANCH = "main"
-
-local GITHUB_TOKEN = getgenv().GITHUB_TOKEN
-
-local UPDATE_INTERVAL = 30
-local TOTAL_BOOTH_SLOTS = 30
-local CLEANUP_STALE_AFTER = 300
-
-local booths = {}
-local requestCounter = 0
-local lastUploadTimestamp = 0
-local lastContentHash = nil
-local isUploading = false
-local startupTime = os.time()
-
-local function printSuccess(message)
-    print("[✓] " .. message)
-end
-
-local function printError(message)
-    warn("[✗] ERROR: " .. message)
-end
-
-local function printInfo(message)
-    print("[i] " .. message)
-end
-
-local function sendRequest(options)
-    requestCounter = requestCounter + 1
-    local requestFunc = syn and syn.request or http_request or request
-    if not requestFunc then
-        printError("No HTTP request function available")
-        return nil
+-- Anti-AFK
+task.spawn(function()
+    for _, v in pairs(getconnections(game.Players.LocalPlayer.Idled)) do
+        v:Disable()
     end
-    
-    local success, result = pcall(function()
-        return requestFunc(options)
-    end)
-    
-    if not success then
-        printError("Request failed: " .. tostring(result))
-        return nil
+end)
+
+-- Wait for game
+repeat task.wait() until game:GetService("Players").LocalPlayer.PlayerGui:WaitForChild("__MAINHUD__")
+repeat task.wait() until game:IsLoaded()
+
+-- Fluent UI Load
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua"))()
+local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
+
+-- ============================================================
+-- REMOTES & MODULES
+-- ============================================================
+local pkgs = RS:WaitForChild("Packages")
+local idx = pkgs:WaitForChild("_Index")
+local net = idx:WaitForChild("leifstout_networker@0.3.1"):WaitForChild("networker")
+local rmt = net:WaitForChild("_remotes")
+
+local dataCli = require(pkgs.DataService).client
+dataCli:waitForData()
+
+local rollRmt   = rmt:WaitForChild("RollService"):WaitForChild("RemoteFunction")
+local codeRmt   = rmt:WaitForChild("CodeService"):WaitForChild("RemoteFunction")
+local invRmt    = rmt:WaitForChild("InventoryService"):WaitForChild("RemoteFunction")
+local rebRmt    = rmt:WaitForChild("RebirthService"):WaitForChild("RemoteFunction")
+local zoneRmt   = rmt:WaitForChild("ZonesService"):WaitForChild("RemoteFunction")
+local upgRmt    = rmt:WaitForChild("UpgradeService"):WaitForChild("RemoteFunction")
+local boostRmt  = rmt:WaitForChild("BoostService"):WaitForChild("RemoteFunction")
+local offRmt    = rmt:WaitForChild("OfflineEarningsService"):WaitForChild("RemoteFunction")
+local idxRmt    = rmt:WaitForChild("IndexService"):WaitForChild("RemoteFunction")
+
+local src = RS:WaitForChild("Source", 30)
+if not src then warn("Main module missing") return end
+
+local itms      = src:WaitForChild("Game"):WaitForChild("Items")
+local rollFeat  = src:WaitForChild("Features"):WaitForChild("Roll")
+local mutFolder = src:WaitForChild("Features"):WaitForChild("Mutations")
+
+local rollSlice   = require(rollFeat:WaitForChild("RollSlice"))
+local slimeData   = require(itms:WaitForChild("Slimes"))
+local rarityTiers = require(itms:WaitForChild("RarityTiers"))
+local mutations   = require(mutFolder:WaitForChild("Mutations"))
+local zones       = require(RS.Source.Game.Items.Zones)
+local upgTree     = require(RS.Source.Features.Upgrades.UpgradeTree)
+local idxRewards  = require(RS.Source.Features.Index.IndexRewards)
+
+-- ============================================================
+-- CONFIG
+-- ============================================================
+local Config = {
+    FastRoll             = false,
+    EquipBestSlimes      = false,
+    AutoCollectLoot      = false,
+    OfflineEarnings      = false,
+    AutoRebirth          = false,
+    RequiredZoneRebirth  = 5,
+    UnlockZones          = false,
+    AutofarmBestZone     = false,
+    AutoBuyUpgrades      = false,
+    UsePotions           = false,
+    PotionsToUse         = {},
+    UseDices             = false,
+    DicesToUse           = {},
+    RedeemCodes          = false,
+    Codes                = {},
+    AutoClaimIndex       = false,
+    WebhookURL           = "",
+    MinimumLuck          = "0",
+    WebhookEnabled       = false,
+    Optimization         = false,
+}
+
+-- Active loop threads
+local Threads = {}
+
+local function stopThread(name)
+    if Threads[name] then
+        task.cancel(Threads[name])
+        Threads[name] = nil
     end
-    
-    return result
 end
 
-local function formatNumber(num)
-    if num >= 1e15 then
-        return string.format("%.2fQ", num / 1e15)
-    elseif num >= 1e12 then
-        return string.format("%.2fT", num / 1e12)
-    elseif num >= 1e9 then
-        return string.format("%.2fB", num / 1e9)
-    elseif num >= 1e6 then
-        return string.format("%.2fM", num / 1e6)
-    elseif num >= 1e3 then
-        return string.format("%.1fK", num / 1e3)
-    else
-        return tostring(math.floor(num))
-    end
+local function startThread(name, fn)
+    stopThread(name)
+    Threads[name] = task.spawn(fn)
 end
 
-local function formatTime(timestamp)
-    local diff = os.time() - timestamp
-    if diff < 60 then return string.format("%ds", diff) end
-    if diff < 3600 then return string.format("%dm", math.floor(diff/60)) end
-    if diff < 86400 then return string.format("%dh", math.floor(diff/3600)) end
-    return string.format("%dd", math.floor(diff/86400))
-end
-
-local function getItemRarity(name)
-    if name:find("Titanic") then return "Titanic" end
-    if name:find("Huge") then return "Huge" end
-    return "Normal"
-end
-
-local function getRarityEmoji(name)
-    if name:find("Titanic") then return "🐉" end
-    if name:find("Huge") then return "🦍" end
-    return "📦"
-end
-
-local function base64Encode(data)
-    local b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-    local result = {}
-    for i = 1, #data, 3 do
-        local byte1 = string.byte(data, i)
-        local byte2 = string.byte(data, i + 1) or 0
-        local byte3 = string.byte(data, i + 2) or 0
-        
-        local enc1 = math.floor(byte1 / 4)
-        local enc2 = (byte1 % 4) * 16 + math.floor(byte2 / 16)
-        local enc3 = (byte2 % 16) * 4 + math.floor(byte3 / 64)
-        local enc4 = byte3 % 64
-        
-        table.insert(result, b64chars:sub(enc1 + 1, enc1 + 1))
-        table.insert(result, b64chars:sub(enc2 + 1, enc2 + 1))
-        table.insert(result, b64chars:sub(enc3 + 1, enc3 + 1))
-        table.insert(result, b64chars:sub(enc4 + 1, enc4 + 1))
-    end
-    
-    local padding = (3 - (#data % 3)) % 3
-    if padding > 0 then
-        for i = 1, padding do
-            result[#result - i + 1] = '='
-        end
-    end
-    return table.concat(result)
-end
-
-local function updateBoothFromPacket(playerId, packet)
-    local success, result = pcall(function()
-        local player = Players:GetPlayerByUserId(playerId)
-        local ownerName = player and player.Name or tostring(playerId)
-        local now = os.time()
-        
-        local booth = booths[playerId]
-        if not booth then
-            booth = {
-                ownerId = playerId,
-                ownerName = ownerName,
-                listings = {},
-                lastSeen = now
-            }
-            booths[playerId] = booth
-            printInfo("New booth: " .. ownerName)
-        end
-        
-        booth.ownerName = ownerName
-        booth.lastSeen = now
-        
-        local newListings = {}
-        local listingCount = 0
-        
-        for listingId, listing in pairs(packet.Listings) do
-            listingCount = listingCount + 1
-            local itemSuccess, item = pcall(Items.From, listing.ItemData.class, listing.ItemData.data)
-            if itemSuccess and item then
-                item:SetUID(listing.ItemData.uid)
-                local itemName = item:GetName()
-                local rap = item:GetRAP() or 0
-                local price = listing.DiamondCost or 0
-                local rarity = getItemRarity(itemName)
-                local rarityEmoji = getRarityEmoji(itemName)
-                
-                newListings[listingId] = {
-                    id = listingId,
-                    itemName = itemName,
-                    rap = rap,
-                    price = price,
-                    profit = rap - price,
-                    profitPercent = (rap > 0 and ((rap - price) / rap * 100) or 0),
-                    rarity = rarity,
-                    rarityEmoji = rarityEmoji,
-                    uid = listing.ItemData.uid
-                }
+-- ============================================================
+-- UTILITIES
+-- ============================================================
+local function fmtNum(n)
+    if type(n) ~= "number" then return tostring(n) end
+    local a = math.abs(n)
+    local suffixes = {
+        {1e18, "Qn"}, {1e15, "Qd"}, {1e12, "T"},
+        {1e9, "B"}, {1e6, "M"}, {1e3, "K"}
+    }
+    for _, s in ipairs(suffixes) do
+        if a >= s[1] then
+            local fm = n / s[1]
+            if math.abs(fm - math.floor(fm)) < 0.01 then
+                return string.format("%d%s", math.floor(fm), s[2])
             else
-                newListings[listingId] = {
-                    id = listingId,
-                    itemName = "Unknown",
-                    rap = 0,
-                    price = listing.DiamondCost or 0,
-                    profit = 0,
-                    profitPercent = 0,
-                    rarity = "Unknown",
-                    rarityEmoji = "❓",
-                    uid = listing.ItemData.uid
-                }
+                return string.format("%.1f%s", fm, s[2]):gsub("%.0", "")
             end
         end
-        
-        booth.listings = newListings
-        printInfo("Updated " .. ownerName .. " - " .. listingCount .. " items")
-    end)
-    
-    if not success then
-        printError("Update failed: " .. tostring(result))
+    end
+    return tostring(math.floor(n))
+end
+
+local function safeInvoke(remote, ...)
+    return pcall(remote.InvokeServer, remote, ...)
+end
+
+local function ordinal(n)
+    local s, last, tens = tostring(n), n % 10, n % 100
+    if tens >= 11 and tens <= 13 then return s.."th" end
+    if last == 1 then return s.."st" end
+    if last == 2 then return s.."nd" end
+    if last == 3 then return s.."rd" end
+    return s.."th"
+end
+
+local function getThumbnail(id)
+    if not id then return nil end
+    local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..id.."&size=420x420&format=Png&isCircular=false"
+    local ok, res = pcall(request, {Url = url, Method = "GET"})
+    if ok and res and res.Success then
+        local data = http:JSONDecode(res.Body)
+        if data and data.data and data.data[1] then
+            return data.data[1].imageUrl
+        end
     end
 end
 
-local function requestInitialData()
-    printInfo("Requesting initial booth data...")
-    local success, result = pcall(function()
-        local initialData = Network.Invoke("Booths_GetInitialState")
-        if initialData and type(initialData) == "table" then
-            for _, packet in ipairs(initialData) do
-                if packet and packet.PlayerID then
-                    updateBoothFromPacket(packet.PlayerID, packet)
+local function parseLuck(ml)
+    if type(ml) == "number" then return ml end
+    if type(ml) ~= "string" then return 0 end
+    local mult = 1
+    local last = string.sub(ml, -1):upper()
+    if last == "B" then mult = 1e9; ml = string.sub(ml, 1, -2)
+    elseif last == "M" then mult = 1e6; ml = string.sub(ml, 1, -2)
+    elseif last == "K" then mult = 1e3; ml = string.sub(ml, 1, -2) end
+    return (tonumber(ml) or 0) * mult
+end
+
+-- ============================================================
+-- AUTOMATION FEATURES
+-- ============================================================
+
+-- Fast Roll
+local function loopFastRoll()
+    while Config.FastRoll do
+        safeInvoke(rollRmt, "requestRoll")
+        task.wait()
+    end
+end
+
+-- Equip Best Slimes
+local function loopEquipBest()
+    local delay = 30
+    while Config.EquipBestSlimes do
+        safeInvoke(invRmt, "requestEquipBest")
+        task.wait(delay)
+        delay = math.min(delay * 2, 600)
+    end
+end
+
+-- Auto Collect Loot
+local function loopCollectLoot()
+    local lootRmt = RS:WaitForChild("Packages")
+        :WaitForChild("_Index")
+        :WaitForChild("leifstout_networker@0.3.1")
+        :WaitForChild("networker")
+        :WaitForChild("_remotes")
+        :WaitForChild("LootService")
+        :WaitForChild("RemoteFunction")
+    while Config.AutoCollectLoot do
+        task.wait(30)
+        local lootFolder = workspace:FindFirstChild("Loot")
+        if lootFolder then
+            for _, l in ipairs(lootFolder:GetChildren()) do
+                safeInvoke(lootRmt, "requestCollect", l.Name)
+            end
+        end
+    end
+end
+
+-- Auto Rebirth
+local function loopAutoRebirth()
+    while Config.AutoRebirth do
+        local rbs = dataCli:get("rebirths") or 0
+        local gp  = dataCli:get("goop") or 0
+        local fz  = dataCli:get("furthestZone") or 0
+        local cost = (2 ^ rbs) * 500
+        if fz >= Config.RequiredZoneRebirth and gp >= cost then
+            safeInvoke(rebRmt, "requestRebirth")
+        end
+        task.wait(10)
+    end
+end
+
+-- Unlock Zones
+local function loopUnlockZones()
+    while Config.UnlockZones do
+        safeInvoke(zoneRmt, "requestPurchaseZone")
+        task.wait(5)
+    end
+end
+
+-- Autofarm Best Zone
+local function loopAutofarmZone()
+    local MAX = 25
+    while Config.AutofarmBestZone do
+        for z = MAX, 1, -1 do
+            local ok = safeInvoke(zoneRmt, "requestTeleportZone", z)
+            if ok then
+                task.wait(1)
+                local nz = dataCli:get("zone") or 1
+                if nz == z then break end
+            end
+        end
+        task.wait(10)
+    end
+end
+
+-- Auto Buy Upgrades
+local function loopAutoBuyUpgrades()
+    local function collectIds(t, ids)
+        if type(t) ~= "table" then return end
+        for id, d in pairs(t) do
+            if type(d) == "table" and d.cost then
+                table.insert(ids, id)
+            end
+        end
+    end
+    local upgs = {}
+    collectIds(upgTree.main, upgs)
+    if upgTree.main.lootTree and upgTree.main.lootTree.subTree then
+        collectIds(upgTree.main.lootTree.subTree, upgs)
+    end
+    if upgTree.main.playerTree and upgTree.main.playerTree.subTree then
+        collectIds(upgTree.main.playerTree.subTree, upgs)
+    end
+    local function getCost(id)
+        local function search(t)
+            if type(t) ~= "table" then return nil end
+            for k, d in pairs(t) do
+                if k == id and type(d) == "table" then return d.cost end
+            end
+        end
+        return search(upgTree.main)
+            or search(upgTree.main.lootTree and upgTree.main.lootTree.subTree)
+            or search(upgTree.main.playerTree and upgTree.main.playerTree.subTree)
+    end
+    while Config.AutoBuyUpgrades do
+        task.wait(0.5)
+        local owned  = dataCli:get("upgrades") or {}
+        local coins  = dataCli:get("coins") or 0
+        local goop   = dataCli:get("goop") or 0
+        local rc     = dataCli:get("rollCurrency") or 0
+        for _, id in ipairs(upgs) do
+            if not owned[id] then
+                local cost = getCost(id)
+                if cost then
+                    local amt = cost.amount or 0
+                    local cur = cost.currency
+                    local afford = (cur == "coins" and coins >= amt)
+                        or (cur == "goop" and goop >= amt)
+                        or (cur == "rollCurrency" and rc >= amt)
+                    if afford then
+                        local ok = pcall(upgRmt.InvokeServer, upgRmt, "requestUnlock", id)
+                        if ok then task.wait(0.2) end
+                    end
                 end
             end
-            printSuccess("Loaded " .. #initialData .. " booths")
-            return true
         end
-        return false
-    end)
-    
-    if not success then
-        printError("Initial data request failed: " .. tostring(result))
-        return false
-    end
-    return result
-end
-
-local function waitForTradingPlaza()
-    printInfo("Waiting for Trading Plaza...")
-    local maxAttempts = 60
-    local attempts = 0
-    
-    while attempts < maxAttempts do
-        local plaza = workspace:FindFirstChild("TradingPlaza")
-        if plaza then
-            local boothSpawns = plaza:FindFirstChild("BoothSpawns")
-            if boothSpawns then
-                printSuccess("Trading Plaza loaded")
-                return true
-            end
-        end
-        wait(1)
-        attempts = attempts + 1
-    end
-    
-    printError("Trading Plaza timeout, continuing anyway")
-    return false
-end
-
-local function waitForNetworkReady()
-    printInfo("Waiting for Network module...")
-    local maxAttempts = 30
-    local attempts = 0
-    
-    while attempts < maxAttempts do
-        local success, result = pcall(function()
-            return Network.Invoke("Booths_GetInitialState")
-        end)
-        if success then
-            printSuccess("Network module ready")
-            return true
-        end
-        wait(1)
-        attempts = attempts + 1
-    end
-    
-    printError("Network module timeout")
-    return false
-end
-
-local function cleanupStaleBooths()
-    local success, result = pcall(function()
-        local now = os.time()
-        local removed = 0
-        for id, booth in pairs(booths) do
-            if now - booth.lastSeen > CLEANUP_STALE_AFTER then
-                booths[id] = nil
-                removed = removed + 1
-            end
-        end
-        if removed > 0 then
-            printInfo("Cleaned " .. removed .. " stale booths")
-        end
-    end)
-    
-    if not success then
-        printError("Cleanup failed: " .. tostring(result))
     end
 end
 
-local function generateMarkdown()
-    local success, result = pcall(function()
-        cleanupStaleBooths()
-        local now = os.time()
-        local playersOnline = Players.NumPlayers
-        local claimedBooths = 0
-        local totalListings = 0
-        local totalRAP = 0
-        local totalHuges = 0
-        local totalTitanics = 0
-        
-        local allListings = {}
-        local boothStats = {}
-        
-        for playerId, booth in pairs(booths) do
-            claimedBooths = claimedBooths + 1
-            local boothRAP = 0
-            local boothHuges = 0
-            local boothTitanics = 0
-            local bestItem = { name = "", rap = 0 }
-            
-            for _, listing in pairs(booth.listings) do
-                boothRAP = boothRAP + listing.rap
-                totalRAP = totalRAP + listing.rap
-                totalListings = totalListings + 1
-                
-                if listing.rarity == "Huge" then
-                    totalHuges = totalHuges + 1
-                    boothHuges = boothHuges + 1
-                elseif listing.rarity == "Titanic" then
-                    totalTitanics = totalTitanics + 1
-                    boothTitanics = boothTitanics + 1
+-- Use Potions / Dices
+local function loopItems()
+    while Config.UsePotions or Config.UseDices do
+        task.wait(1)
+        local boosts = dataCli:get("boosts") or {}
+        local items  = dataCli:get("items") or {}
+        if Config.UsePotions then
+            for _, p in ipairs(Config.PotionsToUse) do
+                local d = boosts[p]
+                if d and (d.amount or 0) > 0 then
+                    safeInvoke(boostRmt, "requestUseBoost", p)
                 end
-                
-                if listing.rap > bestItem.rap then
-                    bestItem = { name = listing.itemName, rap = listing.rap }
+            end
+        end
+        if Config.UseDices then
+            for _, d in ipairs(Config.DicesToUse) do
+                if (items[d] or 0) > 0 then
+                    safeInvoke(invRmt, "requestUseItem", d)
                 end
-                
-                table.insert(allListings, {
-                    ownerName = booth.ownerName,
-                    ownerId = playerId,
-                    itemName = listing.itemName,
-                    rap = listing.rap,
-                    price = listing.price,
-                    profit = listing.profit,
-                    profitPercent = listing.profitPercent,
-                    rarity = listing.rarity,
-                    rarityEmoji = listing.rarityEmoji
-                })
-            end
-            
-            table.insert(boothStats, {
-                ownerName = booth.ownerName,
-                ownerId = playerId,
-                totalRAP = boothRAP,
-                listingCount = 0,
-                hugeCount = boothHuges,
-                titanicCount = boothTitanics,
-                bestItem = bestItem.name ~= "" and bestItem.name or "None"
-            })
-            
-            for _ in pairs(booth.listings) do
-                boothStats[#boothStats].listingCount = boothStats[#boothStats].listingCount + 1
             end
         end
-        
-        table.sort(boothStats, function(a,b) return a.totalRAP > b.totalRAP end)
-        
-        local bestDeals = {}
-        for _, listing in ipairs(allListings) do
-            if listing.profit > 0 then
-                table.insert(bestDeals, listing)
-            end
-        end
-        table.sort(bestDeals, function(a,b) return a.profit > b.profit end)
-        
-        local topListings = {}
-        for _, listing in ipairs(allListings) do
-            table.insert(topListings, listing)
-        end
-        table.sort(topListings, function(a,b) return a.profit > b.profit end)
-        
-        local richestBooth = boothStats[1] and boothStats[1].ownerName or "None"
-        local cheapestHuge = math.huge
-        local cheapestTitanic = math.huge
-        local mostExpensiveListing = { price = 0, name = "", owner = "" }
-        local totalPriceSum = 0
-        
-        for _, listing in ipairs(allListings) do
-            totalPriceSum = totalPriceSum + listing.price
-            if listing.price > mostExpensiveListing.price then
-                mostExpensiveListing = { price = listing.price, name = listing.itemName, owner = listing.ownerName }
-            end
-            if listing.rarity == "Huge" and listing.price < cheapestHuge then
-                cheapestHuge = listing.price
-            end
-            if listing.rarity == "Titanic" and listing.price < cheapestTitanic then
-                cheapestTitanic = listing.price
-            end
-        end
-        
-        local avgListingPrice = (totalListings > 0 and totalPriceSum / totalListings) or 0
-        
-        local lines = {}
-        table.insert(lines, "# Pet Simulator 99 Booth Analytics")
-        table.insert(lines, "")
-        table.insert(lines, "> Real-time market data · Sync every " .. UPDATE_INTERVAL .. "s")
-        table.insert(lines, "")
-        table.insert(lines, "## Server Overview")
-        table.insert(lines, "")
-        table.insert(lines, "| Metric | Value |")
-        table.insert(lines, "|--------|-------|")
-        table.insert(lines, "| Players Online | " .. playersOnline .. " |")
-        table.insert(lines, "| Claimed Booths | " .. claimedBooths .. " |")
-        table.insert(lines, "| Unclaimed Booths | " .. math.max(0, TOTAL_BOOTH_SLOTS - claimedBooths) .. " |")
-        table.insert(lines, "| Total Listings | " .. totalListings .. " |")
-        table.insert(lines, "| Total RAP Value | " .. formatNumber(totalRAP) .. " |")
-        table.insert(lines, "| Huge Pets | " .. totalHuges .. " |")
-        table.insert(lines, "| Titanic Pets | " .. totalTitanics .. " |")
-        table.insert(lines, "| Uptime | " .. formatTime(startupTime) .. " |")
-        table.insert(lines, "| Last Scan | " .. os.date("%H:%M:%S", now) .. " |")
-        table.insert(lines, "")
-        table.insert(lines, "---")
-        table.insert(lines, "")
-        
-        if #bestDeals > 0 then
-            table.insert(lines, "## Best Profits")
-            table.insert(lines, "")
-            table.insert(lines, "| Item | RAP | Price | Profit | Profit % | Owner |")
-            table.insert(lines, "|------|-----|-------|--------|----------|-------|")
-            for i = 1, math.min(10, #bestDeals) do
-                local d = bestDeals[i]
-                table.insert(lines, string.format("| %s %s | %s | %s | %s | %.1f%% | %s |",
-                    d.rarityEmoji, d.itemName, formatNumber(d.rap), formatNumber(d.price),
-                    formatNumber(d.profit), d.profitPercent, d.ownerName))
-            end
-            table.insert(lines, "")
-            table.insert(lines, "---")
-            table.insert(lines, "")
-        end
-        
-        if #boothStats > 0 then
-            table.insert(lines, "## Top Booths")
-            table.insert(lines, "")
-            table.insert(lines, "| Owner | Total RAP | Items | Huges | Titanics | Best Item |")
-            table.insert(lines, "|-------|-----------|-------|-------|----------|-----------|")
-            for i = 1, math.min(10, #boothStats) do
-                local b = boothStats[i]
-                table.insert(lines, string.format("| %s | %s | %d | %d | %d | %s |",
-                    b.ownerName, formatNumber(b.totalRAP), b.listingCount,
-                    b.hugeCount, b.titanicCount, b.bestItem))
-            end
-            table.insert(lines, "")
-            table.insert(lines, "---")
-            table.insert(lines, "")
-        end
-        
-        if #topListings > 0 then
-            table.insert(lines, "## All Listings")
-            table.insert(lines, "")
-            table.insert(lines, "| Item | RAP | Price | Profit | Profit % | Owner |")
-            table.insert(lines, "|------|-----|-------|--------|----------|-------|")
-            for i = 1, math.min(100, #topListings) do
-                local l = topListings[i]
-                table.insert(lines, string.format("| %s %s | %s | %s | %s | %.1f%% | %s |",
-                    l.rarityEmoji, l.itemName, formatNumber(l.rap), formatNumber(l.price),
-                    formatNumber(l.profit), l.profitPercent, l.ownerName))
-            end
-            if #topListings > 100 then
-                table.insert(lines, string.format("| ... | %d more items | ... | ... | ... | ... |", #topListings - 100))
-            end
-            table.insert(lines, "")
-            table.insert(lines, "---")
-            table.insert(lines, "")
-        end
-        
-        table.insert(lines, "## Analytics")
-        table.insert(lines, "")
-        table.insert(lines, "| Metric | Value |")
-        table.insert(lines, "|--------|-------|")
-        table.insert(lines, "| Richest Booth | " .. richestBooth .. " |")
-        table.insert(lines, "| Cheapest Huge | " .. (cheapestHuge ~= math.huge and formatNumber(cheapestHuge) or "None") .. " |")
-        table.insert(lines, "| Cheapest Titanic | " .. (cheapestTitanic ~= math.huge and formatNumber(cheapestTitanic) or "None") .. " |")
-        table.insert(lines, "| Most Expensive | " .. formatNumber(mostExpensiveListing.price) .. " (" .. mostExpensiveListing.name .. ") |")
-        table.insert(lines, "| Average Price | " .. formatNumber(avgListingPrice) .. " |")
-        table.insert(lines, "")
-        table.insert(lines, "---")
-        table.insert(lines, "")
-        table.insert(lines, "## Status")
-        table.insert(lines, "")
-        table.insert(lines, "| Metric | Value |")
-        table.insert(lines, "|--------|-------|")
-        table.insert(lines, "| Active Booths | " .. claimedBooths .. " |")
-        table.insert(lines, "| Processed Listings | " .. totalListings .. " |")
-        table.insert(lines, "| Update Cycle | " .. UPDATE_INTERVAL .. "s |")
-        table.insert(lines, "| GitHub Sync | " .. (lastUploadTimestamp > 0 and "Active" or "Pending") .. " |")
-        table.insert(lines, "| API Calls | " .. requestCounter .. " |")
-        table.insert(lines, "| Next Update | " .. math.max(0, UPDATE_INTERVAL - (os.time() - lastUploadTimestamp)) .. "s |")
-        table.insert(lines, "")
-        table.insert(lines, "---")
-        table.insert(lines, "")
-        table.insert(lines, "Last sync: " .. os.date("%Y-%m-%d %H:%M:%S", now))
-        
-        return table.concat(lines, "\n")
-    end)
-    
-    if not success then
-        printError("Markdown generation failed: " .. tostring(result))
-        return nil
     end
-    
-    return result
 end
 
-local function uploadToGitHub(content)
-    if isUploading then
-        printInfo("Upload in progress, skipping...")
-        return false
+-- Auto Claim Index
+local function loopClaimIndex()
+    local function claimAll()
+        local d = dataCli:get("index")
+        if not d or not d.categories then return end
+        for cat, rw in pairs(idxRewards) do
+            local cd = d.categories[cat]
+            if cd then
+                local cnt = 0
+                for _, v in pairs(cd.unlocked or {}) do
+                    if v == true then cnt += 1 end
+                end
+                local claimed = cd.claimedRewards or {}
+                for _, r in ipairs(rw) do
+                    if cnt >= r.req and not claimed[r.key] then
+                        safeInvoke(idxRmt, "requestClaimReward", cat)
+                        task.wait(0.5)
+                    end
+                end
+            end
+        end
     end
-    
-    isUploading = true
-    printInfo("Starting GitHub upload...")
-    
-    local success, result = pcall(function()
-        local getUrl = string.format("https://api.github.com/repos/%s/%s/contents/%s?ref=%s",
-            GITHUB_OWNER, GITHUB_REPO, GITHUB_PATH, GITHUB_BRANCH)
-        
-        printInfo("Fetching current file...")
-        local getRes = sendRequest({
-            Url = getUrl,
-            Method = "GET",
-            Headers = {
-                ["Authorization"] = "token " .. GITHUB_TOKEN,
-                ["User-Agent"] = "Roblox PS99 Analytics"
-            }
+    while Config.AutoClaimIndex do
+        claimAll()
+        task.wait(60)
+    end
+end
+
+-- ============================================================
+-- WEBHOOK SYSTEM
+-- ============================================================
+local function getRarityName(odds)
+    if not odds or odds <= 0 then return "Unknown" end
+    local ok, tier = pcall(rarityTiers.getTier, odds)
+    return (ok and tier and tier.name) or "Unknown"
+end
+
+local function extractItem(res)
+    if type(res) ~= "table" then return nil end
+    for _, e in ipairs(res) do
+        if type(e) == "table" and e.id then return e end
+    end
+end
+
+local function resultsFingerprint(res)
+    if type(res) ~= "table" then return "nil" end
+    local parts = {}
+    for i, r in ipairs(res) do
+        local it = extractItem(r)
+        parts[i] = it and tostring(it.id) or tostring(i)
+    end
+    return #res.."|"..table.concat(parts, ",")
+end
+
+local function getMutSize(m)
+    if not m then return 64 end
+    if m.huge then return 128 elseif m.big then return 96 end
+    return 64
+end
+
+local function getMutColor(m)
+    if not m then return nil end
+    if m.inverted then return 0x9b59b6
+    elseif m.huge then return 0xf1c40f
+    elseif m.big then return 0xe67e22
+    elseif m.shiny then return 0xf39c12 end
+end
+
+local function sendWebhook(pName, dName, rarity, chance, stats, muts, mutList, img, rolls, coins, kills)
+    local web = Config.WebhookURL
+    if not web or #web == 0 then return end
+    local sz = getMutSize(muts)
+    local finalImg = nil
+    if img and img ~= "N/A" then
+        local aid = string.match(img, "rbxassetid://(%d+)")
+        if aid then finalImg = getThumbnail(aid) end
+    end
+    local hidden = "||"..pName.."||"
+    local desc = string.format("**%s** rolled **%s**!\n\n🎲 **Total Rolls:** %s", hidden, dName, ordinal(rolls))
+    local fields = {
+        {name = "Rarity", value = rarity, inline = true},
+        {name = "Chance", value = chance, inline = true},
+    }
+    if stats and stats ~= "" then
+        table.insert(fields, {name = "Stats", value = stats, inline = true})
+    end
+    if mutList and #mutList > 0 then
+        table.insert(fields, {name = "Mutations", value = table.concat(mutList, ", "), inline = true})
+    end
+    table.insert(fields, {name = "🪙 Coins", value = fmtNum(coins), inline = true})
+    table.insert(fields, {name = "⚔️ Kills",  value = fmtNum(kills), inline = true})
+    local payload = {
+        username = "SlimeRNG",
+        embeds = {{
+            title       = "New Slime Rolled!",
+            description = desc,
+            thumbnail   = finalImg and {url = finalImg, width = sz, height = sz} or nil,
+            fields      = fields,
+            color       = getMutColor(muts)
+        }}
+    }
+    pcall(function()
+        request({
+            Url     = web,
+            Method  = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body    = http:JSONEncode(payload)
         })
-        
-        if not getRes then
-            error("No response from GitHub API")
+    end)
+end
+
+local function loopWebhook()
+    local minLuck = parseLuck(Config.MinimumLuck)
+    local sent = {}
+    local lastFp = nil
+    while Config.WebhookEnabled do
+        task.wait(0.1)
+        minLuck = parseLuck(Config.MinimumLuck)
+        local ok, res = pcall(rollSlice.rollResults)
+        if not ok then continue end
+        local fp = resultsFingerprint(res)
+        if fp == lastFp then continue end
+        lastFp = fp
+        if type(res) ~= "table" or #res == 0 then continue end
+        local stats  = dataCli:get("stats") or {}
+        local rolls  = stats.rolls or 0
+        local kills  = stats.kills or 0
+        local coins  = dataCli:get("coins") or 0
+        for _, r in ipairs(res) do
+            local it = extractItem(r)
+            if not it then continue end
+            local id = tostring(it.id or "unknown")
+            local ok2, slime = pcall(slimeData.getSlime, id)
+            slime = ok2 and slime or nil
+            local muts = type(it.mutations) == "table" and next(it.mutations) ~= nil and it.mutations or nil
+            local inv  = muts and it.mutations.inverted == true
+            local img  = inv and (slime and slime.invertedIcon or "N/A") or (slime and slime.image or "N/A")
+            local name = slime and slime.name or id
+            local baseOdds = slime and slime.odds or nil
+            local baseDmg  = slime and slime.damage or 0
+            local baseHp   = slime and slime.health or 0
+            local rarity   = baseOdds and getRarityName(baseOdds) or "Unknown"
+            local mult     = muts and mutations.getVisualOddsMultiplier(muts) or 1
+            local statBon  = muts and mutations.getStatBonus(muts, "damage") or 1
+            local finalOdds = baseOdds and (baseOdds / mult) or nil
+            local finalDmg  = baseDmg * statBon
+            local finalHp   = baseHp  * statBon
+            local chanceNum = finalOdds and (1 / finalOdds) or nil
+            local chanceText = chanceNum and string.format("1 in %s", fmtNum(math.floor(chanceNum + 0.5))) or "N/A"
+            local dName    = muts and mutations.getDisplayName(name, muts) or name
+            local mutList  = muts and mutations.getIds(muts) or {}
+            if minLuck > 0 and chanceNum and chanceNum < minLuck then continue end
+            local statsText = ""
+            if finalDmg > 0 and finalHp > 0 then
+                statsText = string.format("⚔️ %s  ❤️ %s", fmtNum(finalDmg), fmtNum(finalHp))
+            elseif finalDmg > 0 then
+                statsText = string.format("⚔️ %s", fmtNum(finalDmg))
+            elseif finalHp > 0 then
+                statsText = string.format("❤️ %s", fmtNum(finalHp))
+            end
+            local pName = localPlr and localPlr.Name or "Someone"
+            local key = pName.."_"..dName.."_"..tostring(os.time())
+            if not sent[key] then
+                sent[key] = true
+                task.spawn(sendWebhook, pName, dName, rarity, chanceText, statsText, muts, mutList, img, rolls, coins, kills)
+            end
         end
-        
-        if getRes.StatusCode == 401 then
-            error("Invalid GitHub token")
-        elseif getRes.StatusCode == 404 then
-            printInfo("File does not exist, will create")
-        elseif getRes.StatusCode ~= 200 then
-            error(string.format("GET failed (Status %d)", getRes.StatusCode))
+    end
+end
+
+-- ============================================================
+-- UI CONSTRUCTION
+-- ============================================================
+local Window = Fluent:CreateWindow({
+    Title   = "Slime RNG Automation",
+    SubTitle = "by makik",
+    TabWidth = 160,
+    Size     = UDim2.fromOffset(580, 460),
+    Acrylic  = true,
+    Theme    = "Dark",
+    MinimizeKey = Enum.KeyCode.RightControl,
+})
+
+local Tabs = {
+    Main       = Window:AddTab({ Title = "Main",        Icon = "zap" }),
+    Automation = Window:AddTab({ Title = "Automation",  Icon = "repeat" }),
+    Items      = Window:AddTab({ Title = "Items",       Icon = "package" }),
+    Codes      = Window:AddTab({ Title = "Codes",       Icon = "tag" }),
+    Index      = Window:AddTab({ Title = "Index",       Icon = "list" }),
+    Webhook    = Window:AddTab({ Title = "Webhook",     Icon = "send" }),
+    Stats      = Window:AddTab({ Title = "Stats",       Icon = "bar-chart-2" }),
+    Settings   = Window:AddTab({ Title = "Settings",   Icon = "settings" }),
+}
+
+-- Helper to create toggles that start/stop threads
+local function featureToggle(tab, opts)
+    return tab:AddToggle(opts.id, {
+        Title   = opts.title,
+        Default = opts.default or false,
+        Tooltip = opts.tooltip,
+        Callback = function(val)
+            Config[opts.key] = val
+            if val then
+                startThread(opts.key, opts.loop)
+                Fluent:Notify({ Title = opts.title, Content = "Enabled", Duration = 2 })
+            else
+                stopThread(opts.key)
+                Fluent:Notify({ Title = opts.title, Content = "Disabled", Duration = 2 })
+            end
         end
-        
-        local currentSha = nil
-        if getRes.StatusCode == 200 then
-            local fileData = HttpService:JSONDecode(getRes.Body)
-            currentSha = fileData.sha
-            printInfo("Got SHA: " .. currentSha)
+    })
+end
+
+-- ======================== MAIN TAB ========================
+Tabs.Main:AddSection("Rolling")
+featureToggle(Tabs.Main, {
+    id      = "FastRoll",
+    title   = "Fast Roll",
+    key     = "FastRoll",
+    tooltip = "Rolls as fast as possible every frame.",
+    loop    = loopFastRoll,
+})
+
+Tabs.Main:AddSection("Inventory")
+featureToggle(Tabs.Main, {
+    id      = "EquipBest",
+    title   = "Equip Best Slimes",
+    key     = "EquipBestSlimes",
+    tooltip = "Automatically equips your best slimes on an increasing timer.",
+    loop    = loopEquipBest,
+})
+
+featureToggle(Tabs.Main, {
+    id      = "CollectLoot",
+    title   = "Auto Collect Loot",
+    key     = "AutoCollectLoot",
+    tooltip = "Collects all loot on the ground every 30 seconds.",
+    loop    = loopCollectLoot,
+})
+
+Tabs.Main:AddSection("Earnings")
+Tabs.Main:AddButton({
+    Title   = "Claim Offline Earnings",
+    Content = "Claim now",
+    Tooltip = "Manually triggers offline earnings claim.",
+    Callback = function()
+        safeInvoke(offRmt, "requestClaim")
+        Fluent:Notify({ Title = "Offline Earnings", Content = "Claimed!", Duration = 3 })
+    end
+})
+
+-- ==================== AUTOMATION TAB ====================
+Tabs.Automation:AddSection("Rebirth")
+featureToggle(Tabs.Automation, {
+    id      = "AutoRebirth",
+    title   = "Auto Rebirth",
+    key     = "AutoRebirth",
+    tooltip = "Rebirths automatically when zone and goop requirements are met.",
+    loop    = loopAutoRebirth,
+})
+
+Tabs.Automation:AddSlider("RebirthZone", {
+    Title   = "Required Zone to Rebirth",
+    Default = 5,
+    Min     = 1,
+    Max     = 25,
+    Rounding = 0,
+    Tooltip = "Minimum furthest zone reached before auto-rebirth triggers.",
+    Callback = function(val)
+        Config.RequiredZoneRebirth = val
+    end
+})
+
+Tabs.Automation:AddSection("Zones")
+featureToggle(Tabs.Automation, {
+    id      = "UnlockZones",
+    title   = "Unlock Affordable Zones",
+    key     = "UnlockZones",
+    tooltip = "Keeps purchasing zones you can afford.",
+    loop    = loopUnlockZones,
+})
+
+featureToggle(Tabs.Automation, {
+    id      = "AutofarmZone",
+    title   = "Autofarm Best Zone",
+    key     = "AutofarmBestZone",
+    tooltip = "Teleports to the highest zone you can access.",
+    loop    = loopAutofarmZone,
+})
+
+Tabs.Automation:AddSection("Upgrades")
+featureToggle(Tabs.Automation, {
+    id      = "AutoUpgrades",
+    title   = "Auto Buy Upgrades",
+    key     = "AutoBuyUpgrades",
+    tooltip = "Automatically purchases upgrades when you can afford them.",
+    loop    = loopAutoBuyUpgrades,
+})
+
+-- ====================== ITEMS TAB =======================
+Tabs.Items:AddSection("Potions")
+featureToggle(Tabs.Items, {
+    id      = "UsePotions",
+    title   = "Use Potions",
+    key     = "UsePotions",
+    tooltip = "Automatically uses potions from your list.",
+    loop    = loopItems,
+})
+
+Tabs.Items:AddInput("PotionList", {
+    Title       = "Potions to Use",
+    Default     = "",
+    Placeholder = "Comma-separated potion IDs (e.g. luckPotion,xpPotion)",
+    Tooltip     = "Enter potion IDs separated by commas.",
+    Numeric     = false,
+    Finished    = false,
+    Callback    = function(val)
+        local t = {}
+        for p in val:gmatch("[^,]+") do
+            table.insert(t, p:match("^%s*(.-)%s*$"))
         end
-        
-        local encoded = base64Encode(content)
-        printInfo("Encoded length: " .. #encoded)
-        
-        local putBody = {
-            message = "Update booth analytics",
-            content = encoded,
-            branch = GITHUB_BRANCH
-        }
-        
-        if currentSha then
-            putBody.sha = currentSha
+        Config.PotionsToUse = t
+    end
+})
+
+Tabs.Items:AddSection("Dices")
+featureToggle(Tabs.Items, {
+    id      = "UseDices",
+    title   = "Use Dices",
+    key     = "UseDices",
+    tooltip = "Automatically uses dice items from your list.",
+    loop    = loopItems,
+})
+
+Tabs.Items:AddInput("DiceList", {
+    Title       = "Dices to Use",
+    Default     = "",
+    Placeholder = "Comma-separated dice IDs",
+    Tooltip     = "Enter dice item IDs separated by commas.",
+    Numeric     = false,
+    Finished    = false,
+    Callback    = function(val)
+        local t = {}
+        for p in val:gmatch("[^,]+") do
+            table.insert(t, p:match("^%s*(.-)%s*$"))
         end
-        
-        printInfo("Uploading to GitHub...")
-        local putRes = sendRequest({
-            Url = string.format("https://api.github.com/repos/%s/%s/contents/%s",
-                GITHUB_OWNER, GITHUB_REPO, GITHUB_PATH),
-            Method = "PUT",
-            Headers = {
-                ["Authorization"] = "token " .. GITHUB_TOKEN,
-                ["Content-Type"] = "application/json",
-                ["User-Agent"] = "Roblox PS99 Analytics"
-            },
-            Body = HttpService:JSONEncode(putBody)
-        })
-        
-        if not putRes then
-            error("No response from GitHub PUT")
+        Config.DicesToUse = t
+    end
+})
+
+-- ====================== CODES TAB =======================
+Tabs.Codes:AddSection("Code Redemption")
+Tabs.Codes:AddInput("CodesInput", {
+    Title       = "Codes List",
+    Default     = "",
+    Placeholder = "Comma-separated codes (e.g. SLIME100,FREEGOOP)",
+    Tooltip     = "Enter all codes you want to redeem, separated by commas.",
+    Numeric     = false,
+    Finished    = false,
+    Callback    = function(val)
+        local t = {}
+        for c in val:gmatch("[^,]+") do
+            table.insert(t, c:match("^%s*(.-)%s*$"))
         end
-        
-        if putRes.StatusCode == 200 or putRes.StatusCode == 201 then
-            printSuccess("Upload successful (Status " .. putRes.StatusCode .. ")")
-            return true
-        elseif putRes.StatusCode == 401 then
-            error("Invalid token during upload")
+        Config.Codes = t
+    end
+})
+
+Tabs.Codes:AddButton({
+    Title    = "Redeem All Codes",
+    Content  = "Redeem",
+    Tooltip  = "Redeems all codes in the list that haven't been claimed yet.",
+    Callback = function()
+        local codes = dataCli._data._data._codes or {}
+        local count = 0
+        for _, cd in ipairs(Config.Codes) do
+            if not codes[cd] then
+                safeInvoke(codeRmt, "redeem", cd)
+                count += 1
+                task.wait(0.5)
+            end
+        end
+        Fluent:Notify({ Title = "Codes", Content = "Redeemed "..count.." codes.", Duration = 4 })
+    end
+})
+
+-- ====================== INDEX TAB =======================
+Tabs.Index:AddSection("Index Rewards")
+featureToggle(Tabs.Index, {
+    id      = "AutoIndex",
+    title   = "Auto Claim Index Rewards",
+    key     = "AutoClaimIndex",
+    tooltip = "Automatically claims index rewards when thresholds are reached.",
+    loop    = loopClaimIndex,
+})
+
+-- ===================== WEBHOOK TAB ======================
+Tabs.Webhook:AddSection("Webhook Settings")
+Tabs.Webhook:AddToggle("WebhookEnabled", {
+    Title    = "Enable Webhook Notifications",
+    Default  = false,
+    Tooltip  = "Send Discord webhook alerts for notable slime rolls.",
+    Callback = function(val)
+        Config.WebhookEnabled = val
+        if val then
+            startThread("Webhook", loopWebhook)
+            Fluent:Notify({ Title = "Webhook", Content = "Notifications enabled.", Duration = 3 })
         else
-            error(string.format("PUT failed (Status %d)", putRes.StatusCode))
+            stopThread("Webhook")
+            Fluent:Notify({ Title = "Webhook", Content = "Notifications disabled.", Duration = 3 })
         end
-    end)
-    
-    isUploading = false
-    
-    if not success then
-        printError("Upload failed: " .. tostring(result))
-        return false
     end
-    
-    return result
-end
+})
 
-local function refreshDashboard()
-    printInfo("Checking for updates...")
-    
-    local newMarkdown = generateMarkdown()
-    if not newMarkdown then
-        printError("Cannot generate markdown")
-        return
+Tabs.Webhook:AddInput("WebhookURL", {
+    Title       = "Webhook URL",
+    Default     = "",
+    Placeholder = "https://discord.com/api/webhooks/...",
+    Tooltip     = "Your Discord webhook URL.",
+    Numeric     = false,
+    Finished    = true,
+    Callback    = function(val)
+        Config.WebhookURL = val
     end
-    
-    if newMarkdown == lastContentHash then
-        printInfo("No changes detected")
-        return
-    end
-    
-    printInfo("Changes detected, uploading...")
-    local ok = uploadToGitHub(newMarkdown)
-    
-    if ok then
-        lastContentHash = newMarkdown
-        lastUploadTimestamp = os.time()
-        printSuccess("Dashboard updated at " .. os.date("%H:%M:%S"))
-        printInfo("URL: https://raw.githubusercontent.com/" .. GITHUB_OWNER .. "/" .. GITHUB_REPO .. "/refs/heads/main/" .. GITHUB_PATH)
-    else
-        printError("Upload failed, will retry")
-    end
-end
+})
 
-local function onBoothBroadcast(player, packet)
-    if not packet or not packet.PlayerID then
-        return
+Tabs.Webhook:AddInput("MinLuck", {
+    Title       = "Minimum Luck Filter",
+    Default     = "0",
+    Placeholder = "e.g. 1M, 500K, 1B",
+    Tooltip     = "Only send webhook for rolls rarer than this value (e.g. 1M = 1 in 1,000,000).",
+    Numeric     = false,
+    Finished    = false,
+    Callback    = function(val)
+        Config.MinimumLuck = val
     end
-    updateBoothFromPacket(packet.PlayerID, packet)
-    refreshDashboard()
-end
+})
 
-local function setupNetworkListener()
-    printInfo("Connecting to Booths_Broadcast...")
-    local success, err = pcall(function()
-        Network.Fired("Booths_Broadcast"):Connect(onBoothBroadcast)
-    end)
-    
-    if success then
-        printSuccess("Connected to Booths_Broadcast")
-    else
-        printError("Connection failed: " .. tostring(err))
+Tabs.Webhook:AddButton({
+    Title    = "Test Webhook",
+    Content  = "Send Test",
+    Tooltip  = "Sends a test message to verify your webhook URL works.",
+    Callback = function()
+        local web = Config.WebhookURL
+        if not web or #web == 0 then
+            Fluent:Notify({ Title = "Webhook", Content = "No URL set!", Duration = 3 })
+            return
+        end
+        local payload = {
+            username = "SlimeRNG",
+            embeds = {{
+                title       = "✅ Webhook Test",
+                description = "Your webhook is working correctly!",
+                color       = 0x2ecc71
+            }}
+        }
+        local ok = pcall(request, {
+            Url     = web,
+            Method  = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body    = http:JSONEncode(payload)
+        })
+        Fluent:Notify({
+            Title   = "Webhook",
+            Content = ok and "Test sent successfully!" or "Failed to send test.",
+            Duration = 3
+        })
     end
-end
+})
 
-local function startLoop()
-    printInfo("Starting update loop (" .. UPDATE_INTERVAL .. "s interval)")
-    local cycleCount = 0
-    
+-- ====================== STATS TAB =======================
+Tabs.Stats:AddSection("Live Statistics")
+local statsLabels = {}
+statsLabels.rolls = Tabs.Stats:AddParagraph("Rolls", { Title = "🎲 Rolls", Content = "Loading..." })
+statsLabels.coins = Tabs.Stats:AddParagraph("Coins", { Title = "🪙 Coins", Content = "Loading..." })
+statsLabels.kills = Tabs.Stats:AddParagraph("Kills", { Title = "⚔️ Kills", Content = "Loading..." })
+statsLabels.zone  = Tabs.Stats:AddParagraph("Zone",  { Title = "🗺️ Current Zone", Content = "Loading..." })
+
+task.spawn(function()
     while true do
-        wait(UPDATE_INTERVAL)
-        cycleCount = cycleCount + 1
-        printInfo("Cycle #" .. cycleCount)
-        
-        local success, err = pcall(refreshDashboard)
-        if not success then
-            printError("Loop error: " .. tostring(err))
+        task.wait(1)
+        local s = dataCli:get("stats") or {}
+        local z = dataCli:get("zone") or 1
+        local c = dataCli:get("coins") or 0
+        statsLabels.rolls:SetContent(fmtNum(s.rolls or 0))
+        statsLabels.coins:SetContent(fmtNum(c))
+        statsLabels.kills:SetContent(fmtNum(s.kills or 0))
+        statsLabels.zone:SetContent(tostring(z))
+    end
+end)
+
+-- ==================== SETTINGS TAB ====================
+Tabs.Settings:AddSection("Interface")
+InterfaceManager:SetFolder("SlimeRNG")
+InterfaceManager:BuildInterfaceSection(Tabs.Settings)
+
+Tabs.Settings:AddSection("Config")
+SaveManager:SetFolder("SlimeRNG")
+SaveManager:SetLibrary(Fluent)
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetIgnoreIndexes({ "RebirthZone" })
+SaveManager:BuildConfigSection(Tabs.Settings)
+
+Tabs.Settings:AddSection("Performance")
+Tabs.Settings:AddToggle("Optimization", {
+    Title    = "Optimization Mode",
+    Default  = false,
+    Tooltip  = "Loads an external optimization script.",
+    Callback = function(val)
+        Config.Optimization = val
+        if val then
+            pcall(function()
+                loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/Optimization.lua"))()
+            end)
         end
     end
-end
+})
 
-printSuccess("=== Pet Simulator 99 Booth Analytics ===")
-printInfo("Repository: " .. GITHUB_OWNER .. "/" .. GITHUB_REPO)
-printInfo("File: " .. GITHUB_PATH)
-printInfo("Interval: " .. UPDATE_INTERVAL .. "s")
+-- ============================================================
+-- LOAD SAVED CONFIG & FINALISE
+-- ============================================================
+SaveManager:LoadAutoloadConfig()
+Window:SelectTab(1)
 
-waitForTradingPlaza()
-waitForNetworkReady()
-
-setupNetworkListener()
-wait(2)
-
-local dataLoaded = requestInitialData()
-if dataLoaded then
-    printSuccess("Initial data loaded")
-    local boothCount = 0
-    for _ in pairs(booths) do
-        boothCount = boothCount + 1
-    end
-    printInfo("Found " .. boothCount .. " booths")
-else
-    printError("No initial data, waiting for broadcasts")
-end
-
-wait(3)
-refreshDashboard()
-spawn(startLoop)
-printSuccess("Script running")
+Fluent:Notify({
+    Title    = "Slime RNG Automation",
+    Content  = "Script loaded! Use Right Ctrl to toggle UI.",
+    Duration = 5,
+})
