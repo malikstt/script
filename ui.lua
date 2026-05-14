@@ -6,7 +6,7 @@ local VirtualUser = game:GetService("VirtualUser")
 local webhookUrl = "https://discord.com/api/webhooks/1503019592258424942/58mydsCKdv3lieuUsebXNu2kLBT9aenLVZJ36y5zZ1uKFqNMRmnKn1ORgabStBrStYkg"
 
 if not request then
-    warn("[ServerFetcher] No request function available. Aborting.")
+    warn("nigga pls switch to a real executor ")
     return
 end
 
