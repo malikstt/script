@@ -3,6 +3,7 @@ local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
+local VirtualUser = game:GetService("VirtualUser")
 
 local webhookUrl = "https://discord.com/api/webhooks/1503019592258424942/58mydsCKdv3lieuUsebXNu2kLBT9aenLVZJ36y5zZ1uKFqNMRmnKn1ORgabStBrStYkg"
 
@@ -13,13 +14,13 @@ end
 
 local CONFIG = {
     PLACE_ID       = game.PlaceId,
-    LIMIT          = 5,
-    MAX_RETRIES    = 5,
-    BASE_WAIT      = 0.5,
-    BACKOFF_BASE   = 2.0,
-    BACKOFF_MAX    = 60,
+    LIMIT          = 100,
+    MAX_RETRIES    = 3,
+    BASE_WAIT      = 0.3,
+    BACKOFF_BASE   = 1.5,
+    BACKOFF_MAX    = 30,
     CURSOR_RETRIES = 3,
-    MAX_PAGES      = 500,
+    MAX_PAGES      = 100,
 }
 
 local STATE = {
@@ -425,11 +426,11 @@ sectionLabel2.Font = Enum.Font.GothamBold
 sectionLabel2.TextXAlignment = Enum.TextXAlignment.Left
 sectionLabel2.Parent = col2
 
--- Numeric inputs with clear-on-focus
-local limitBox, setLimit = makeNumericInput(col2, 28, "Server Limit (per page)", 5, 1, 100)
-local retriesBox, setRetries = makeNumericInput(col2, 60, "Max Retries", 5, 1, 20)
-local baseWaitBox, setBaseWait = makeNumericInput(col2, 92, "Base Wait (s)", 0.5, 0, 10)
-local maxPagesBox, setMaxPages = makeNumericInput(col2, 124, "Max Pages", 500, 1, 2000)
+-- Numeric inputs with optimized defaults
+local limitBox, setLimit = makeNumericInput(col2, 28, "Server Limit (per page)", 100, 1, 100)
+local retriesBox, setRetries = makeNumericInput(col2, 60, "Max Retries", 3, 1, 10)
+local baseWaitBox, setBaseWait = makeNumericInput(col2, 92, "Base Wait (s)", 0.3, 0.1, 5)
+local maxPagesBox, setMaxPages = makeNumericInput(col2, 124, "Max Pages", 100, 1, 500)
 
 makeDivider(col2, 157)
 
@@ -622,19 +623,34 @@ local function fetchPage(cursor)
 end
 
 local function applyConfigFromUI()
-    CONFIG.LIMIT = tonumber(limitBox.Text) or 5
+    CONFIG.LIMIT = tonumber(limitBox.Text) or 100
     CONFIG.LIMIT = math.clamp(CONFIG.LIMIT, 1, 100)
-    CONFIG.MAX_RETRIES = tonumber(retriesBox.Text) or 5
-    CONFIG.MAX_RETRIES = math.clamp(CONFIG.MAX_RETRIES, 1, 20)
-    CONFIG.BASE_WAIT = tonumber(baseWaitBox.Text) or 0.5
-    CONFIG.BASE_WAIT = math.clamp(CONFIG.BASE_WAIT, 0, 10)
-    CONFIG.MAX_PAGES = tonumber(maxPagesBox.Text) or 500
-    CONFIG.MAX_PAGES = math.clamp(CONFIG.MAX_PAGES, 1, 2000)
+    CONFIG.MAX_RETRIES = tonumber(retriesBox.Text) or 3
+    CONFIG.MAX_RETRIES = math.clamp(CONFIG.MAX_RETRIES, 1, 10)
+    CONFIG.BASE_WAIT = tonumber(baseWaitBox.Text) or 0.3
+    CONFIG.BASE_WAIT = math.clamp(CONFIG.BASE_WAIT, 0.1, 5)
+    CONFIG.MAX_PAGES = tonumber(maxPagesBox.Text) or 100
+    CONFIG.MAX_PAGES = math.clamp(CONFIG.MAX_PAGES, 1, 500)
+end
+
+-- Apply filter to a server based on current STATE filters
+local function shouldIncludeServer(server)
+    if STATE.filterActive and server.playing == 0 then
+        return false
+    end
+    if STATE.filterEmpty and server.playing > 0 then
+        return false
+    end
+    if STATE.filterHideFull and server.playing >= server.maxPlayers then
+        return false
+    end
+    return true
 end
 
 local function startFetch()
     if STATE.running then return end
 
+    -- Reset all STATE counters
     STATE.running       = true  
     STATE.stopped       = false  
     STATE.jobIdSet      = {}  
@@ -645,15 +661,21 @@ local function startFetch()
     STATE.duplicateCount= 0  
     STATE.startTime     = os.clock()  
 
+    -- Apply UI config values to CONFIG
+    applyConfigFromUI()
+    
+    -- Apply toggle states to STATE
     STATE.filterActive   = getActiveState()  
     STATE.filterEmpty    = getEmptyState()  
     STATE.filterHideFull = getHideFullState()  
+    STATE.antiAfkEnabled = getAntiAfkState()
 
-    applyConfigFromUI()  
     updateTotalLabel()
 
     setStatus("Fetching...")  
-    log("START", string.format("PlaceId %d | Limit %d | MaxPages %d", CONFIG.PLACE_ID, CONFIG.LIMIT, CONFIG.MAX_PAGES))  
+    log("START", string.format("PlaceId %d | Limit %d | MaxPages %d | Filters: Active=%s Empty=%s HideFull=%s", 
+        CONFIG.PLACE_ID, CONFIG.LIMIT, CONFIG.MAX_PAGES,
+        tostring(STATE.filterActive), tostring(STATE.filterEmpty), tostring(STATE.filterHideFull)))  
 
     task.spawn(function()  
         local cursor = nil  
@@ -678,21 +700,24 @@ local function startFetch()
                 local id = server.id  
                 if id then  
                     if not STATE.jobIdSet[id] then  
-                        STATE.jobIdSet[id] = true  
-                        local playing = server.playing or 0  
-                        local isActive = playing > 0  
-                        table.insert(STATE.jobIdList, {  
-                            id         = id,  
-                            playing    = playing,  
-                            maxPlayers = server.maxPlayers or 0,  
-                            active     = isActive,  
-                        })  
-                        newThisPage = newThisPage + 1  
-                        if isActive then  
-                            STATE.activeCount = STATE.activeCount + 1  
-                        else  
-                            STATE.emptyCount = STATE.emptyCount + 1  
-                        end  
+                        -- Apply filters before adding
+                        if shouldIncludeServer(server) then
+                            STATE.jobIdSet[id] = true  
+                            local playing = server.playing or 0  
+                            local isActive = playing > 0  
+                            table.insert(STATE.jobIdList, {  
+                                id         = id,  
+                                playing    = playing,  
+                                maxPlayers = server.maxPlayers or 0,  
+                                active     = isActive,  
+                            })  
+                            newThisPage = newThisPage + 1  
+                            if isActive then  
+                                STATE.activeCount = STATE.activeCount + 1  
+                            else  
+                                STATE.emptyCount = STATE.emptyCount + 1  
+                            end  
+                        end
                     else  
                         STATE.duplicateCount = STATE.duplicateCount + 1  
                     end  
@@ -702,7 +727,7 @@ local function startFetch()
             STATE.pageCount = STATE.pageCount + 1  
             updateTotalLabel()
             log("PAGE", string.format("#%d | new=%d | total=%d", STATE.pageCount, newThisPage, #STATE.jobIdList))  
-            setStatus(string.format("Page %d", STATE.pageCount))  
+            setStatus(string.format("Page %d/%d", STATE.pageCount, CONFIG.MAX_PAGES))  
             setBottom(string.format("Fetched %d servers | Active: %d | Empty: %d | Dupes: %d",  
                 #STATE.jobIdList, STATE.activeCount, STATE.emptyCount, STATE.duplicateCount))  
 
@@ -730,7 +755,7 @@ local function startFetch()
 
         until not cursor or STATE.pageCount >= CONFIG.MAX_PAGES or STATE.stopped  
 
-        if not STATE.stopped then  
+        if not STATE.stopped and not (STATE.pageCount >= CONFIG.MAX_PAGES) then
             setStatus("Building report...")  
             local content = getFullReportContent()
             local summary = string.format(  
@@ -739,7 +764,7 @@ local function startFetch()
             local timestamp = tostring(os.time())  
             sendReport(summary, content, "servers_" .. timestamp .. ".txt")  
             setStatus("Done")  
-        else  
+        elseif STATE.stopped then
             local content = getFullReportContent()
             local summary = string.format(  
                 "**Server Fetcher Stopped**\nTotal: **%d** | Active: **%d** | Empty: **%d** | Dupes skipped: **%d**",  
@@ -747,7 +772,7 @@ local function startFetch()
             local timestamp = tostring(os.time())  
             sendReport(summary, content, "stopped_" .. timestamp .. ".txt")  
             setStatus("Stopped")  
-        end  
+        end
 
         STATE.running = false  
     end)  
@@ -762,16 +787,15 @@ end
 
 local function enableAntiAfk()
     local lp = Players.LocalPlayer
-    local VirtualUser = game:GetService("VirtualUser")
+    if STATE.antiAfkConn then
+        STATE.antiAfkConn:Disconnect()
+        STATE.antiAfkConn = nil
+    end
     STATE.antiAfkConn = lp.Idled:Connect(function()
         VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
-        task.wait(1)
+        task.wait()
         VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
     end)
-    task.wait(1)
-    for _, x in pairs(getconnections(lp.Idled)) do
-        x:Disable()
-    end
 end
 
 local function disableAntiAfk()
@@ -781,34 +805,60 @@ local function disableAntiAfk()
     end
 end
 
+-- LOCK button functionality
+lockBtn.MouseButton1Click:Connect(function()
+    uiLocked = not uiLocked
+    if uiLocked then
+        lockBtn.BackgroundColor3 = Color3.fromRGB(180, 0, 0)
+        lockBtn.Text = "LOCKED"
+    else
+        lockBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+        lockBtn.Text = "LOCK"
+    end
+end)
+
+-- HIDE UI button functionality
+hideBtn.MouseButton1Click:Connect(function()
+    uiVisible = not uiVisible
+    mainFrame.Visible = uiVisible
+    hideBtn.Text = uiVisible and "HIDE UI" or "SHOW UI"
+end)
+
+-- START button
 startBtn.MouseButton1Click:Connect(function()
     startFetch()
 end)
 
+-- STOP button
 stopBtn.MouseButton1Click:Connect(function()
     stopFetch()
 end)
 
+-- SEND NOW button
 sendNowBtn.MouseButton1Click:Connect(function()
     sendNow()
 end)
 
+-- Toggle button connections
 toggleActiveBtn.MouseButton1Click:Connect(function()
     local val = not getActiveState()
     setActiveState(val)
     STATE.filterActive = val
+    setBottom(string.format("Active Only: %s", val and "ON" or "OFF"))
 end)
 
 toggleEmptyBtn.MouseButton1Click:Connect(function()
     local val = not getEmptyState()
     setEmptyState(val)
     STATE.filterEmpty = val
+    setBottom(string.format("Empty Only: %s", val and "ON" or "OFF"))
 end)
 
 toggleHideFullBtn.MouseButton1Click:Connect(function()
     local val = not getHideFullState()
     setHideFullState(val)
     STATE.filterHideFull = val
+    setBottom(string.format("Hide Full Servers: %s", val and "ON" or "OFF"))
 end)
 
 toggleAntiAfkBtn.MouseButton1Click:Connect(function()
@@ -817,24 +867,13 @@ toggleAntiAfkBtn.MouseButton1Click:Connect(function()
     STATE.antiAfkEnabled = val
     if val then
         enableAntiAfk()
+        setBottom("Anti AFK enabled")
     else
         disableAntiAfk()
+        setBottom("Anti AFK disabled")
     end
 end)
 
-lockBtn.MouseButton1Click:Connect(function()
-    uiLocked = not uiLocked
-    if uiLocked then
-        lockBtn.TextColor3 = Color3.fromRGB(180, 0, 0)
-        lockBtn.Text = "LOCKED"
-    else
-        lockBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        lockBtn.Text = "LOCK"
-    end
-end)
-
-hideBtn.MouseButton1Click:Connect(function()
-    uiVisible = not uiVisible
-    mainFrame.Visible = uiVisible
-    hideBtn.Text = uiVisible and "HIDE UI" or "SHOW UI"
-end)
+-- Initialize
+setStatus("Idle")
+setBottom("Ready. Configure settings and press START.")
