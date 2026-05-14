@@ -21,11 +21,10 @@ local CONFIG = {
     MAX_PAGES      = 100,
 }
 
--- Adaptive rate limit state tracked separately from UI state
 local RATE = {
     consecutiveSuccess = 0,
     consecutiveFail    = 0,
-    currentWait        = 0.15,   -- starts aggressive
+    currentWait        = 0.15,  
     minWait            = 0.15,
     maxWait            = 12.0,
     rateLimitHits      = 0,
@@ -470,9 +469,6 @@ sendNowBtn.TextSize = 11
 sendNowBtn.Font = Enum.Font.GothamBold
 sendNowBtn.Parent = btnRow
 Instance.new("UICorner", sendNowBtn).CornerRadius = UDim.new(0, 4)
-
--- ─── Helpers ────────────────────────────────────────────────────────────────
-
 local function setStatus(text)
     titleStatus.Text = "STATUS: " .. text
 end
@@ -489,28 +485,19 @@ local function log(tag, msg)
     print(string.format("[ServerFetcher][%s] %s", tag, msg))
 end
 
--- ─── Adaptive rate limiter ───────────────────────────────────────────────────
---
--- Strategy: AIMD (Additive Increase / Multiplicative Decrease)
---   • Every clean success nudges the inter-request wait DOWN by a small step.
---   • Every 429 multiplies the wait UP and triggers a hard cooldown pause.
---   • A soft-backoff is used for transient non-429 errors (network blips).
--- This lets the script naturally find the fastest sustainable pace without
--- ever fully stopping on rate-limit responses.
-
 local function onRateLimitHit(attempt)
     RATE.rateLimitHits   = RATE.rateLimitHits + 1
     RATE.consecutiveFail = RATE.consecutiveFail + 1
     RATE.consecutiveSuccess = 0
 
-    -- Multiplicative increase on the inter-request wait (AIMD)
+    --
     RATE.currentWait = math.min(
         RATE.currentWait * (CONFIG.BACKOFF_BASE ^ math.min(RATE.consecutiveFail, 5)),
         RATE.maxWait
     )
 
-    -- Cooldown: flat pause on top of the new wait before resuming
-    -- Grows with repeated rate-limits but is bounded
+    -- 
+    -- 
     local cooldown = math.min(6 * RATE.consecutiveFail, CONFIG.BACKOFF_MAX)
     -- Add ±20% jitter so parallel scripts don't slam simultaneously
     local jitter = cooldown * 0.2 * (math.random() * 2 - 1)
@@ -530,7 +517,7 @@ local function onRateLimitHit(attempt)
 end
 
 local function onSoftFail(attempt)
-    -- Non-429 transient error: simple exponential backoff, don't touch currentWait
+    -- don't touch currentWait
     local wait = math.min(
         0.8 * (CONFIG.BACKOFF_BASE ^ (attempt - 1)),
         CONFIG.BACKOFF_MAX
@@ -544,7 +531,6 @@ end
 local function onSuccess()
     RATE.consecutiveSuccess = RATE.consecutiveSuccess + 1
     RATE.consecutiveFail    = 0
-    -- Additive decrease: creep the wait down every 3 clean pages
     if RATE.consecutiveSuccess % 3 == 0 then
         RATE.currentWait = math.max(
             RATE.minWait,
@@ -552,8 +538,6 @@ local function onSuccess()
         )
     end
 end
-
--- ─── Core fetch ─────────────────────────────────────────────────────────────
 
 local function getFullReportContent()
     local lines = {
@@ -639,9 +623,6 @@ local function sendNow()
         end }
     })
 end
-
--- fetchPage: returns parsed data table on success, nil on permanent failure.
--- Never hard-stops on 429 — always retries after cooldown.
 local function fetchPage(cursor)
     local url = string.format(
         "https://games.roblox.com/v1/games/%d/servers/Public?limit=%d",
@@ -651,7 +632,7 @@ local function fetchPage(cursor)
         url = url .. "&cursor=" .. HttpService:UrlEncode(cursor)
     end
 
-    local maxAttempts = CONFIG.MAX_RETRIES + 2  -- a couple of extra attempts for rate limits
+    local maxAttempts = CONFIG.MAX_RETRIES + 2 
     local attempt = 0
 
     while attempt < maxAttempts do
