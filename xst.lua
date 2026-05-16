@@ -31,20 +31,23 @@ end
 
 local function base64Decode(data)
     local b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    data = string.gsub(data, '%s', '')
     data = string.gsub(data, '[^'..b64chars..'=]', '')
     local result = {}
     for i = 1, #data, 4 do
         local c1 = b64chars:find(data:sub(i, i)) - 1
         local c2 = b64chars:find(data:sub(i+1, i+1)) - 1
-        local c3 = b64chars:find(data:sub(i+2, i+2)) - 1
-        local c4 = b64chars:find(data:sub(i+3, i+3)) - 1
-        local n = (c1 * 0x40000) + (c2 * 0x1000) + (c3 * 0x40) + c4
+        local c3 = b64chars:find(data:sub(i+2, i+2))
+        local c4 = b64chars:find(data:sub(i+3, i+3))
+        local n3 = c3 and (c3 - 1) or 64
+        local n4 = c4 and (c4 - 1) or 64
+        local n = (c1 * 0x40000) + (c2 * 0x1000) + (n3 * 0x40) + n4
         local b1 = math.floor(n / 0x10000)
         local b2 = math.floor((n % 0x10000) / 0x100)
         local b3 = n % 0x100
         table.insert(result, string.char(b1))
-        if c3 ~= 64 then table.insert(result, string.char(b2)) end
-        if c4 ~= 64 then table.insert(result, string.char(b3)) end
+        if n3 ~= 64 then table.insert(result, string.char(b2)) end
+        if n4 ~= 64 then table.insert(result, string.char(b3)) end
     end
     return table.concat(result)
 end
@@ -244,7 +247,17 @@ while true do
             :InvokeServer(table.unpack(args))
 
         for _, listing in pairs(result1) do
-            local user_id = tostring(listing.user_id)
+            if not listing or type(listing) ~= "table" then continue end
+
+            local user_id = listing.user_id or listing.userId or listing.UserId
+            if not user_id then
+                warn("Unknown listing structure: " .. HttpService:JSONEncode(listing))
+                continue
+            end
+
+            user_id = tostring(user_id)
+            local job_id = listing.job_id or listing.jobId or listing.JobId or ""
+
             if not seenUsers[user_id] and not pendingIds[user_id] then
                 local response = request({
                     Url = "https://users.roblox.com/v1/users/" .. user_id,
@@ -252,10 +265,10 @@ while true do
                 })
                 if response.StatusCode == 200 then
                     local data = HttpService:JSONDecode(response.Body)
-                    local entry = data.name .. "|" .. user_id .. "|" .. tostring(listing.booth) .. "|" .. listing.job_id
+                    local entry = data.name .. "|" .. user_id .. "|" .. tostring(listing.booth or "") .. "|" .. job_id
                     table.insert(pendingSaves, entry)
                     pendingIds[user_id] = true
-                    task.spawn(sendWebhook, data.name, user_id, listing.job_id)
+                    task.spawn(sendWebhook, data.name, user_id, job_id)
                 end
             end
         end
