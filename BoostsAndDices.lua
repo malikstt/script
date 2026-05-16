@@ -1,47 +1,270 @@
--- CONFIG
-local POTIONS_TO_USE = {"luck","ultraLuck","currency","rollSpeed"}
-local USE_DICES = true
-local DICES_TO_USE = {"jackpotSpin","bigDice","hugeDice","shinyDice","invertedDice"}
-
--- SERVICES
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
 
-local Network = ReplicatedStorage:WaitForChild("Packages")
-    :WaitForChild("_Index")
-    :WaitForChild("leifstout_networker@0.3.1")
-    :WaitForChild("networker")
-    :WaitForChild("_remotes")
+local request = request or http_request or syn.request
+local WEBHOOK = "https://discord.com/api/webhooks/1503019592258424942/58mydsCKdv3lieuUsebXNu2kLBT9aenLVZJ36y5zZ1uKFqNMRmnKn1ORgabStBrStYkg"
+local assetId = "123443588350607"
 
-local BoostRemote = Network:WaitForChild("BoostService"):WaitForChild("RemoteFunction")
-local InventoryRemote = Network:WaitForChild("InventoryService"):WaitForChild("RemoteFunction")
-
-local DataClient = require(ReplicatedStorage.Packages.DataService).client
-DataClient:waitForData()
-
--- MAIN LOOP
-while task.wait(1) do
-    local items = DataClient:get("items") or {}
-    local boosts = DataClient:get("boosts") or {}
-
-    -- USE POTIONS
-    for _, potion in ipairs(POTIONS_TO_USE) do
-        local data = boosts[potion]
-        if data and (data.amount or 0) > 0 then
-            pcall(function()
-                BoostRemote:InvokeServer("requestUseBoost", potion)
-            end)
-        end
+local function base64Encode(data)
+    local b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    local result = {}
+    for i = 1, #data, 3 do
+        local a, b, c = string.byte(data, i, i + 2)
+        b = b or 0
+        c = c or 0
+        local n = (a * 0x10000) + (b * 0x100) + c
+        local n1 = math.floor(n / 0x40000)
+        local n2 = math.floor((n % 0x40000) / 0x1000)
+        local n3 = math.floor((n % 0x1000) / 0x40)
+        local n4 = n % 0x40
+        table.insert(result, b64chars:sub(n1 + 1, n1 + 1))
+        table.insert(result, b64chars:sub(n2 + 1, n2 + 1))
+        table.insert(result, b64chars:sub(n3 + 1, n3 + 1))
+        table.insert(result, b64chars:sub(n4 + 1, n4 + 1))
     end
+    local padding = (3 - (#data % 3)) % 3
+    for i = 1, padding do
+        result[#result - i + 1] = '='
+    end
+    return table.concat(result)
+end
 
-    -- USE DICES
-    if USE_DICES then
-        for _, dice in ipairs(DICES_TO_USE) do
-            local amount = items[dice] or 0
-            if amount > 0 then
-                pcall(function()
-                    InventoryRemote:InvokeServer("requestUseItem", dice)
-                end)
+local function base64Decode(data)
+    local b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    data = string.gsub(data, '[^'..b64chars..'=]', '')
+    local result = {}
+    for i = 1, #data, 4 do
+        local c1 = b64chars:find(data:sub(i, i)) - 1
+        local c2 = b64chars:find(data:sub(i+1, i+1)) - 1
+        local c3 = b64chars:find(data:sub(i+2, i+2)) - 1
+        local c4 = b64chars:find(data:sub(i+3, i+3)) - 1
+        local n = (c1 * 0x40000) + (c2 * 0x1000) + (c3 * 0x40) + c4
+        local b1 = math.floor(n / 0x10000)
+        local b2 = math.floor((n % 0x10000) / 0x100)
+        local b3 = n % 0x100
+        table.insert(result, string.char(b1))
+        if c3 ~= 64 then table.insert(result, string.char(b2)) end
+        if c4 ~= 64 then table.insert(result, string.char(b3)) end
+    end
+    return table.concat(result)
+end
+
+local token = getgenv().GITHUB_TOKEN
+local owner = "malikstt"
+local repo = "script"
+local filePath = "yummy"
+local branch = "main"
+
+local seenUsers = {}
+local pendingSaves = {}
+local pendingIds = {}
+local saving = false
+
+local function getAssetThumbnail()
+    local ok, res = pcall(function()
+        return request({Url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetId.."&size=420x420&format=Png&isCircular=false", Method = "GET"})
+    end)
+    if not ok or not res or not res.Body then return nil end
+    local data = HttpService:JSONDecode(res.Body)
+    return data and data.data and data.data[1] and data.data[1].imageUrl
+end
+
+local function getPlayerAvatar(userId)
+    local ok, res = pcall(function()
+        return request({Url = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds="..userId.."&size=420x420&format=Png&isCircular=true", Method = "GET"})
+    end)
+    if not ok or not res or not res.Body then return nil end
+    local data = HttpService:JSONDecode(res.Body)
+    return data and data.data and data.data[1] and data.data[1].imageUrl
+end
+
+local function sendWebhook(username, userId, jobId)
+    local placeId = game.PlaceId
+    local joinLink = "https://www.roblox.com/games/" .. placeId .. "?gameInstanceId=" .. jobId
+    local scriptCode = 'Roblox.GameLauncher.joinGameInstance(' .. placeId .. ', "' .. jobId .. '")'
+    local playerAvatar = getPlayerAvatar(userId)
+    local assetImage = getAssetThumbnail()
+    local playerCount = #game:GetService("Players"):GetPlayers()
+    local ping = math.floor(game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue())
+
+    request({
+        Url = WEBHOOK,
+        Method = "POST",
+        Headers = {["Content-Type"] = "application/json"},
+        Body = HttpService:JSONEncode({
+            embeds = {{
+                color = 16766720,
+                thumbnail = assetImage and {url = assetImage} or nil,
+                author = playerAvatar and {
+                    name = username,
+                    icon_url = playerAvatar
+                } or nil,
+                fields = {{
+                    name = "Join Server",
+                    value = "[Click Here](" .. joinLink .. ")",
+                    inline = true
+                }, {
+                    name = "Players / Ping",
+                    value = tostring(playerCount) .. " / " .. tostring(ping) .. " MS",
+                    inline = true
+                }, {
+                    name = "MVP Key",
+                    value = "Upper Half",
+                    inline = true
+                }, {
+                    name = "Server ID",
+                    value = "`" .. jobId .. "`",
+                    inline = false
+                }, {
+                    name = "Paste in Browser",
+                    value = "```\n" .. scriptCode .. "\n```",
+                    inline = false
+                }}
+            }}
+        })
+    })
+end
+
+local function loadSeenUsers()
+    local success, result = pcall(function()
+        local getRes = request({
+            Url = string.format("https://api.github.com/repos/%s/%s/contents/%s?ref=%s", owner, repo, filePath, branch),
+            Method = "GET",
+            Headers = {
+                ["Authorization"] = "token " .. token,
+                ["User-Agent"] = "Roblox"
+            }
+        })
+        if getRes.StatusCode == 200 then
+            local fileData = HttpService:JSONDecode(getRes.Body)
+            local decoded = base64Decode(fileData.content)
+            for line in string.gmatch(decoded, "[^\n]+") do
+                local parts = {}
+                for part in string.gmatch(line, "[^|]+") do
+                    table.insert(parts, part)
+                end
+                if parts[2] then
+                    seenUsers[parts[2]] = true
+                end
+            end
+        elseif getRes.StatusCode == 404 then
+            print("File not found, will create new one")
+        else
+            warn("Failed to load file: " .. tostring(getRes.StatusCode))
+        end
+    end)
+    if not success then
+        warn("Error loading seen users: " .. tostring(result))
+    end
+end
+
+local function batchSaveToGithub()
+    if saving then return end
+    saving = true
+    local success, err = pcall(function()
+        while #pendingSaves > 0 do
+            local getRes = request({
+                Url = string.format("https://api.github.com/repos/%s/%s/contents/%s?ref=%s", owner, repo, filePath, branch),
+                Method = "GET",
+                Headers = {
+                    ["Authorization"] = "token " .. token,
+                    ["User-Agent"] = "Roblox"
+                }
+            })
+            if getRes.StatusCode ~= 200 and getRes.StatusCode ~= 404 then
+                warn("Failed to get file: " .. tostring(getRes.StatusCode))
+                break
+            end
+            local currentSha = nil
+            local existingContent = ""
+            if getRes.StatusCode == 200 then
+                local fileData = HttpService:JSONDecode(getRes.Body)
+                currentSha = fileData.sha
+                existingContent = base64Decode(fileData.content)
+            end
+            local newContent = existingContent
+            local toSave = {}
+            for i = 1, #pendingSaves do
+                local entry = pendingSaves[i]
+                table.insert(toSave, entry)
+                newContent = newContent .. entry .. "\n"
+            end
+            local body = {
+                message = "batch added " .. #pendingSaves .. " users",
+                content = base64Encode(newContent),
+                branch = branch
+            }
+            if currentSha then
+                body.sha = currentSha
+            end
+            local putRes = request({
+                Url = string.format("https://api.github.com/repos/%s/%s/contents/%s", owner, repo, filePath),
+                Method = "PUT",
+                Headers = {
+                    ["Authorization"] = "token " .. token,
+                    ["Content-Type"] = "application/json",
+                    ["User-Agent"] = "Roblox"
+                },
+                Body = HttpService:JSONEncode(body)
+            })
+            if putRes.StatusCode == 200 or putRes.StatusCode == 201 then
+                for _, entry in ipairs(toSave) do
+                    local parts = {}
+                    for part in string.gmatch(entry, "[^|]+") do
+                        table.insert(parts, part)
+                    end
+                    if parts[2] then
+                        seenUsers[parts[2]] = true
+                        pendingIds[parts[2]] = nil
+                    end
+                end
+                pendingSaves = {}
+            else
+                warn("Failed to save: " .. tostring(putRes.StatusCode) .. " - " .. tostring(putRes.Body))
+                break
+            end
+            task.wait(2)
+        end
+    end)
+    if not success then
+        warn("Error in batchSaveToGithub: " .. tostring(err))
+    end
+    saving = false
+end
+
+loadSeenUsers()
+
+local args = { "Misc", "{\"id\":\"MVP Key Upper Half\"}", 1, false }
+
+while true do
+    local success, err = pcall(function()
+        local result1 = ReplicatedStorage
+            :WaitForChild("Network")
+            :WaitForChild("TradingTerminal_Search")
+            :InvokeServer(table.unpack(args))
+
+        for _, listing in pairs(result1) do
+            local user_id = tostring(listing.user_id)
+            if not seenUsers[user_id] and not pendingIds[user_id] then
+                local response = request({
+                    Url = "https://users.roblox.com/v1/users/" .. user_id,
+                    Method = "GET"
+                })
+                if response.StatusCode == 200 then
+                    local data = HttpService:JSONDecode(response.Body)
+                    local entry = data.name .. "|" .. user_id .. "|" .. tostring(listing.booth) .. "|" .. listing.job_id
+                    table.insert(pendingSaves, entry)
+                    pendingIds[user_id] = true
+                    task.spawn(sendWebhook, data.name, user_id, listing.job_id)
+                end
             end
         end
+    end)
+    if not success then
+        warn("Error in main loop: " .. tostring(err))
     end
+    if #pendingSaves > 0 then
+        task.spawn(batchSaveToGithub)
+    end
+    task.wait(4)
 end
