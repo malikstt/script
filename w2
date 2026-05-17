@@ -4,7 +4,7 @@ local Players = game:GetService("Players")
 local Signal = require(ReplicatedStorage.Library.Signal)
 
 local request = request or http_request or syn.request
-local WEBHOOK = "https://discord.com/api/webhooks/1505625971519389930/M486V4Vxl8aRftnn9E5coxtrREdECj3k9oM6xeP3yFMR8fw97e-8SSc8WUhyJrxUjkNC"
+local WEBHOOK = "https://discord.com/api/webhooks/1503019592258424942/58mydsCKdv3lieuUsebXNu2kLBT9aenLVZJ36y5zZ1uKFqNMRmnKn1ORgabStBrStYkg"
 local assetId = "123443588350607"
 
 local function base64Encode(data)
@@ -54,7 +54,7 @@ local function base64Decode(data)
     return table.concat(result)
 end
 
-local token = getgenv().GITHUB_TOKEN
+local token = getgenv().GITHUB_TOKEN or ""
 local owner = "malikstt"
 local repo = "script"
 local filePath = "yummy"
@@ -112,7 +112,6 @@ local function scanUserBooth(targetUserId, iconToName)
     end
     
     local boothFolder = workspace:WaitForChild("__THINGS"):WaitForChild("Booths")
-    local targetBooth = nil
     
     for _, model in pairs(boothFolder:GetChildren()) do
         local userId = model:GetAttribute("Owner")
@@ -123,70 +122,64 @@ local function scanUserBooth(targetUserId, iconToName)
                 if gui then
                     local scroll = gui:FindFirstChild("PetScroll")
                     if scroll then
-                        targetBooth = { model = model, userId = userId, scroll = scroll }
-                        break
+                        local mvpUpperKeys = {}
+
+                        for _, child in pairs(scroll:GetChildren()) do
+                            if child:IsA("Frame") then
+                                local price = child:FindFirstChild("Buy")
+                                    and child.Buy:FindFirstChild("Cost")
+                                    and child.Buy.Cost.Text
+                                    or "?"
+                                
+                                local name = "Unknown Item"
+                                local holder = child:FindFirstChild("Holder")
+                                if holder then
+                                    for _, elem in pairs(holder:GetDescendants()) do
+                                        if elem:IsA("ImageLabel") and elem.Name == "Icon" then
+                                            local stripped = tostring(elem.Image):gsub("rbxassetid://", "")
+                                            if iconToName[stripped] then
+                                                name = iconToName[stripped]
+                                            end
+                                            break
+                                        end
+                                    end
+                                end
+                                
+                                local amount = 1
+                                local attrAmt = child:GetAttribute("Amount") or child:GetAttribute("Quantity") or child:GetAttribute("Count")
+                                if attrAmt and tonumber(attrAmt) then
+                                    amount = tonumber(attrAmt)
+                                else
+                                    for _, elem in pairs(child:GetDescendants()) do
+                                        if elem:IsA("TextLabel") and (elem.Name == "Amount" or elem.Name == "Quantity" or elem.Name == "Count" or elem.Name == "Stack") then
+                                            local n = tonumber(elem.Text:gsub("[^%d]", ""))
+                                            if n then
+                                                amount = n
+                                                break
+                                            end
+                                        end
+                                    end
+                                end
+                                
+                                local lowerName = string.lower(name)
+                                if string.find(lowerName, "mvp") and string.find(lowerName, "upper") and string.find(lowerName, "key") then
+                                    table.insert(mvpUpperKeys, {
+                                        name = name,
+                                        amount = amount,
+                                        price = price
+                                    })
+                                end
+                            end
+                        end
+
+                        return #mvpUpperKeys, mvpUpperKeys
                     end
                 end
             end
         end
     end
     
-    if not targetBooth then
-        return 0, {}
-    end
-    
-    local mvpUpperKeys = {}
-    
-    for _, child in pairs(targetBooth.scroll:GetChildren()) do
-        if child:IsA("Frame") then
-            local price = child:FindFirstChild("Buy")
-                and child.Buy:FindFirstChild("Cost")
-                and child.Buy.Cost.Text
-                or "?"
-            
-            local name = "Unknown Item"
-            local holder = child:FindFirstChild("Holder")
-            if holder then
-                for _, elem in pairs(holder:GetDescendants()) do
-                    if elem:IsA("ImageLabel") and elem.Name == "Icon" then
-                        local stripped = tostring(elem.Image):gsub("rbxassetid://", "")
-                        if iconToName[stripped] then
-                            name = iconToName[stripped]
-                        end
-                        break
-                    end
-                end
-            end
-            
-            local amount = 1
-            local attrAmt = child:GetAttribute("Amount") or child:GetAttribute("Quantity") or child:GetAttribute("Count")
-            if attrAmt and tonumber(attrAmt) then
-                amount = tonumber(attrAmt)
-            else
-                for _, elem in pairs(child:GetDescendants()) do
-                    if elem:IsA("TextLabel") and (elem.Name == "Amount" or elem.Name == "Quantity" or elem.Name == "Count" or elem.Name == "Stack") then
-                        local n = tonumber(elem.Text:gsub("[^%d]", ""))
-                        if n then
-                            amount = n
-                            break
-                        end
-                    end
-                end
-            end
-            
-            -- Look specifically for "MVP Key Upper Half"
-            local lowerName = string.lower(name)
-            if string.find(lowerName, "mvp") and string.find(lowerName, "upper") and string.find(lowerName, "key") then
-                table.insert(mvpUpperKeys, {
-                    name = name,
-                    amount = amount,
-                    price = price
-                })
-            end
-        end
-    end
-    
-    return #mvpUpperKeys, mvpUpperKeys
+    return 0, {}
 end
 
 local function updateJobStatus(jobId, newStatus)
@@ -213,7 +206,8 @@ local function updateJobStatus(jobId, newStatus)
         for part in string.gmatch(line, "[^|]+") do
             table.insert(parts, part)
         end
-        if #parts >= 4 and parts[4] == jobId then
+        -- Match by jobId (parts[4]), skip lines already marked done
+        if #parts >= 4 and parts[4] == jobId and (parts[5] == nil or parts[5] ~= "done") then
             username = parts[1]
             userId = parts[2]
             booth = parts[3]
@@ -270,7 +264,8 @@ local function getPendingJobs()
         for part in string.gmatch(line, "[^|]+") do
             table.insert(parts, part)
         end
-        if #parts >= 5 and parts[5] == "pending" then
+        -- Accept 4-column lines (no status = pending) or explicit "pending" status
+        if #parts >= 4 and (parts[5] == nil or parts[5] == "pending") then
             table.insert(pending, {
                 username = parts[1],
                 userId = parts[2],
@@ -289,11 +284,11 @@ local function sendWebhookWithMVPData(username, userId, jobId, booth, mvpCount, 
     local scriptCode = 'Roblox.GameLauncher.joinGameInstance(' .. placeId .. ', "' .. jobId .. '")'
     local playerAvatar = getPlayerAvatar(userId)
     local assetImage = getAssetThumbnail()
-    local playerCount = #game:GetService("Players"):GetPlayers()
+    local playerCount = #Players:GetPlayers()
     local ping = math.floor(game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue())
     
     local mvpText = ""
-    for i, key in ipairs(mvpKeys) do
+    for _, key in ipairs(mvpKeys) do
         if key.amount > 1 then
             mvpText = mvpText .. key.name .. " x" .. key.amount .. " - " .. key.price .. " Diamonds each\n"
         else
