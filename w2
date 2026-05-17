@@ -1,569 +1,129 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local Workspace = game:GetService("Workspace")
-local LocalPlayer = Players.LocalPlayer
+local Signal = require(ReplicatedStorage.Library.Signal)
 
-local nonSaveVars = LocalPlayer:FindFirstChild("NonSaveVars")
-local ownsPlot = nonSaveVars and nonSaveVars:FindFirstChild("OwnsPlot")
-local currentPlot = ownsPlot and ownsPlot:IsA("ValueBase") and ownsPlot.Value or "7"
-local canvas = Workspace.Plots[tostring(currentPlot)].Interior.Shop1.Canvas
+local request = request or http_request or syn.request
+local WEBHOOK = "https://discord.com/api/webhooks/1503019592258424942/58mydsCKdv3lieuUsebXNu2kLBT9aenLVZJ36y5zZ1uKFqNMRmnKn1ORgabStBrStYkg"
+local assetId = "123443588350607"
 
-local AuctionsFolder = Workspace:WaitForChild("Debris"):WaitForChild("Auctions")
-local ItemsModule = require(ReplicatedStorage.Modules.Items)
-local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
-local GaragesModule = require(ReplicatedStorage.Modules["Garages-experiment1"])
-local Upgrades = require(ReplicatedStorage.Modules.Upgrades)
-
-local Events = ReplicatedStorage:WaitForChild("Events")
-local Auctions = Events.Auctions
-local EnterQueue = Auctions.EnterQueue
-local Skip = Auctions.Skip
-local SkipCountdown = Auctions.SkipCountdown
-local UpdateCurrentBid = Auctions.UpdateCurrentBid
-local PlaceBid = Auctions.PlaceBid
-local DataEvent = Events.Data.GetAll
-local Shop = Events.Shop
-local InsertFurniture = Shop.InsertFurniture
-local SellRemote = Shop.SellItemInShop
-local AcceptOffer = Shop.AcceptOfferServer
-local DeclineOffer = Shop.DeclineOfferServer
-local UpgradeClicked = Events.UI.UpgradeClicked
-
-local MIN_PROFIT_PERCENT = 5
-local MAX_PROFIT_PERCENT = 50
-local MAX_UPGRADE_PRICE = 500
-local TARGET_CASH = 500000
-local BID_CHECK_INTERVAL = 0.2
-local SKIP_COOLDOWN = 1
-local SHELVES = {
-    {Id = "4", SizeX = 14, SizeZ = 11, Max = math.huge},
-    {Id = "5", SizeX = 18, SizeZ = 21, Max = 3}
-}
-local FLOOR = 1
-local MAX_GARAGES_TO_BID = 2
-
-local inAuction = false
-local auctionEnded = false
-local currentGarage = nil
-local currentBidData = nil
-local myCash = 0
-local bidPlaced = false
-local processingItemsWon = false
-local lastSkipTime = 0
-local halted = false
-local garagesBidThisAuction = 0
-
-local upgradeKeys = {
-    "ShopLevel",
-    "InventoryLevel",
-    "CarryLevel"
-}
-
-local lastOfferCheck = 0
-local lastUpgradeCheck = 0
-local lastDataFetch = 0
-local lastInventoryCheck = 0
-local OFFER_COOLDOWN = 60
-local UPGRADE_COOLDOWN = 30
-local DATA_COOLDOWN = 2
-local INVENTORY_CHECK_COOLDOWN = 5
-
-local function formatNumber(n)
-    if n >= 1e6 then return string.format("%.1fM", n/1e6)
-    elseif n >= 1e3 then return string.format("%.1fK", n/1e3)
-    else return tostring(n) end
-end
-
-local function getDataRateLimited()
-    local now = tick()
-    if now - lastDataFetch >= DATA_COOLDOWN then
-        lastDataFetch = now
-        local success, data = pcall(function() return DataEvent:InvokeServer() end)
-        if success and data then
-            return data
-        end
+local function base64Encode(data)
+    local b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    local result = {}
+    for i = 1, #data, 3 do
+        local a, b, c = string.byte(data, i, i + 2)
+        b = b or 0
+        c = c or 0
+        local n = (a * 0x10000) + (b * 0x100) + c
+        local n1 = math.floor(n / 0x40000)
+        local n2 = math.floor((n % 0x40000) / 0x1000)
+        local n3 = math.floor((n % 0x1000) / 0x40)
+        local n4 = n % 0x40
+        table.insert(result, b64chars:sub(n1 + 1, n1 + 1))
+        table.insert(result, b64chars:sub(n2 + 1, n2 + 1))
+        table.insert(result, b64chars:sub(n3 + 1, n3 + 1))
+        table.insert(result, b64chars:sub(n4 + 1, n4 + 1))
     end
-    return nil
-end
-
-local function updateCash()
-    local data = getDataRateLimited()
-    if data and data.Cash then
-        myCash = tonumber(data.Cash) or 0
+    local padding = (3 - (#data % 3)) % 3
+    for i = 1, padding do
+        result[#result - i + 1] = '='
     end
-    return myCash
+    return table.concat(result)
 end
 
-local function getInventoryInfo()
-    local data = getDataRateLimited()
-    if not data then 
-        print("[INVENTORY] Failed to get data")
-        return nil 
+local function base64Decode(data)
+    local b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    data = string.gsub(data, '%s', '')
+    data = string.gsub(data, '[^'..b64chars..'=]', '')
+    local result = {}
+    for i = 1, #data, 4 do
+        local c1 = b64chars:find(data:sub(i, i)) - 1
+        local c2 = b64chars:find(data:sub(i+1, i+1)) - 1
+        local c3 = b64chars:find(data:sub(i+2, i+2))
+        local c4 = b64chars:find(data:sub(i+3, i+3))
+        local n3 = c3 and (c3 - 1) or 64
+        local n4 = c4 and (c4 - 1) or 64
+        local n = (c1 * 0x40000) + (c2 * 0x1000) + (n3 * 0x40) + n4
+        local b1 = math.floor(n / 0x10000)
+        local b2 = math.floor((n % 0x10000) / 0x100)
+        local b3 = n % 0x100
+        table.insert(result, string.char(b1))
+        if n3 ~= 64 then table.insert(result, string.char(b2)) end
+        if n4 ~= 64 then table.insert(result, string.char(b3)) end
     end
-    
-    local invLevel = data.InventoryLevel or 0
-    local carryLevel = data.CarryLevel or 0
-    local inv = data.Inventory or {}
-    local invCount = 0
-    for _ in pairs(inv) do invCount = invCount + 1 end
-    
-    local success, invSpace = pcall(function() return RepLibrary:GetInventorySpace(LocalPlayer, invLevel) end)
-    if not success then invSpace = 100 end
-    
-    local success2, carrySpace = pcall(function() return RepLibrary:GetCarrySpace(LocalPlayer, carryLevel) end)
-    if not success2 then carrySpace = 0 end
-    
-    return {
-        total = invSpace,
-        used = invCount,
-        available = invSpace - invCount,
-        carry = carrySpace,
-        level = invLevel
-    }
+    return table.concat(result)
 end
 
-local function getShelvesAndItems()
-    local shelves = {}
-    local shelvesWithItems = 0
-    local shelvesEmpty = 0
-    
-    local success, result = pcall(function()
-        local plotVal = LocalPlayer.NonSaveVars and LocalPlayer.NonSaveVars.OwnsPlot
-        if not plotVal or not plotVal.Value then return end
-        
-        local plotName = tostring(plotVal.Value)
-        local plot = Workspace.Plots:FindFirstChild(plotName)
-        if not plot then return end
-        
-        local furniture = plot:FindFirstChild("Furniture")
-        if not furniture then return end
-        
-        for _, furnitureItem in ipairs(furniture:GetChildren()) do
-            local s = furnitureItem:FindFirstChild("Shelves")
-            if s then
-                for _, shelf in ipairs(s:GetChildren()) do
-                    table.insert(shelves, shelf)
-                    if shelf:FindFirstChild("Item") then
-                        shelvesWithItems = shelvesWithItems + 1
-                    else
-                        shelvesEmpty = shelvesEmpty + 1
-                    end
-                end
-            end
-        end
+local token = getgenv().GITHUB_TOKEN
+local owner = "malikstt"
+local repo = "script"
+local filePath = "yummy"
+local branch = "main"
+
+local function getAssetThumbnail()
+    local ok, res = pcall(function()
+        return request({Url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetId.."&size=420x420&format=Png&isCircular=false", Method = "GET"})
     end)
-    
-    if not success then
-        print("[SHELVES] Error getting shelves: " .. tostring(result))
-    end
-    
-    return shelves, shelvesWithItems, shelvesEmpty
+    if not ok or not res or not res.Body then return nil end
+    local data = HttpService:JSONDecode(res.Body)
+    return data and data.data and data.data[1] and data.data[1].imageUrl
 end
 
-local function getMaxShelvesPossible()
-    local maxCount = 0
-    for _, shelf in ipairs(SHELVES) do
-        local fitX = math.floor(canvas.Size.X / shelf.SizeX)
-        local fitZ = math.floor(canvas.Size.Z / shelf.SizeZ)
-        maxCount = maxCount + (fitX * fitZ)
-    end
-    return maxCount
-end
-
-local function generateGridPositions(shelf)
-    local positions = {}
-    local fitX = math.floor(canvas.Size.X / shelf.SizeX)
-    local fitZ = math.floor(canvas.Size.Z / shelf.SizeZ)
-    local startX = canvas.Position.X - canvas.Size.X/2 + shelf.SizeX/2
-    local startZ = canvas.Position.Z - canvas.Size.Z/2 + shelf.SizeZ/2
-    local y = canvas.Position.Y + canvas.Size.Y/2 + 1
-    for x = 0, fitX - 1 do
-        for z = 0, fitZ - 1 do
-            table.insert(positions, Vector3.new(startX + x*shelf.SizeX, y, startZ + z*shelf.SizeZ))
-        end
-    end
-    return positions
-end
-
-local function placeShelvesIfNeeded()
-    local currentCount = 0
-    local _, shelvesWithItems, shelvesEmpty = getShelvesAndItems()
-    currentCount = shelvesWithItems + shelvesEmpty
-    
-    local maxPossible = getMaxShelvesPossible()
-    
-    print("[SHELVES] Current: " .. currentCount .. "/" .. maxPossible .. " (" .. shelvesEmpty .. " empty, " .. shelvesWithItems .. " full)")
-    
-    if currentCount >= maxPossible then
-        print("[SHELVES] Already at maximum")
-        return true
-    end
-    
-    print("[SHELVES] Placing shelves. Need " .. (maxPossible - currentCount) .. " more")
-    
-    local sortedShelves = {}
-    for _, shelf in ipairs(SHELVES) do
-        table.insert(sortedShelves, shelf)
-    end
-    table.sort(sortedShelves, function(a,b) return a.Max < b.Max end)
-    
-    for _, shelf in ipairs(sortedShelves) do
-        local positions = generateGridPositions(shelf)
-        local placedCount = 0
-        for _, pos in ipairs(positions) do
-            if placedCount >= shelf.Max then break end
-            
-            local newCount = 0
-            local _, withItems, empty = getShelvesAndItems()
-            newCount = withItems + empty
-            if newCount >= maxPossible then break end
-            
-            local success = pcall(function()
-                InsertFurniture:InvokeServer({Id = shelf.Id, CFrame = CFrame.new(pos), Floor = FLOOR})
-            end)
-            
-            if success then
-                placedCount = placedCount + 1
-                print("[SHELVES] Placed shelf type " .. shelf.Id)
-            end
-            task.wait(0.15)
-        end
-    end
-    
-    local finalCount = 0
-    local _, withItems, empty = getShelvesAndItems()
-    finalCount = withItems + empty
-    print("[SHELVES] Now have " .. finalCount .. "/" .. maxPossible .. " shelves")
-    return finalCount >= maxPossible
-end
-
-local function placeItemsOnShelves()
-    print("[PLACING ITEMS] Starting placement")
-    
-    local success, data = pcall(function() return GetAll:InvokeServer() end)
-    if not success or not data then
-        print("[PLACING ITEMS] Failed to get data")
-        return false
-    end
-    
-    local plotName = nil
-    local plotSuccess, plotResult = pcall(function()
-        local val = LocalPlayer:WaitForChild("NonSaveVars"):WaitForChild("OwnsPlot").Value
-        plotName = tostring(val)
+local function getPlayerAvatar(userId)
+    local ok, res = pcall(function()
+        return request({Url = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds="..userId.."&size=420x420&format=Png&isCircular=true", Method = "GET"})
     end)
+    if not ok or not res or not res.Body then return nil end
+    local data = HttpService:JSONDecode(res.Body)
+    return data and data.data and data.data[1] and data.data[1].imageUrl
+end
+
+local function loadIconToName()
+    local iconToName = {}
+    local collections = {"Pets", "Eggs", "Enchants", "Hoverboards", "Charms", "Ultimates", "MiscItems", "Potions", "Shovels", "WateringCans", "FishingRods", "Fruits", "Seeds", "Sprinklers", "XPPotions"}
     
-    if not plotSuccess or not plotName then
-        print("[PLACING ITEMS] Failed to get plot name")
-        return false
-    end
-    
-    local plot = Workspace.Plots:FindFirstChild(plotName)
-    if not plot then
-        print("[PLACING ITEMS] Plot not found: " .. tostring(plotName))
-        return false
-    end
-    
-    local shelves = {}
-    local furnitureSuccess, furnitureResult = pcall(function()
-        local furnitureFolder = plot:FindFirstChild("Furniture")
-        if furnitureFolder then
-            for _, furnitureItem in ipairs(furnitureFolder:GetChildren()) do
-                local s = furnitureItem:FindFirstChild("Shelves")
-                if s then
-                    for _, shelf in ipairs(s:GetChildren()) do
-                        if not shelf:FindFirstChild("Item") then
-                            table.insert(shelves, shelf)
+    for _, collection in ipairs(collections) do
+        local ok, response = pcall(function()
+            return request({ Url = "https://ps99.biggamesapi.io/api/collection/" .. collection, Method = "GET" })
+        end)
+        if ok and response and response.Body then
+            local parsed = HttpService:JSONDecode(response.Body)
+            if parsed and parsed.data then
+                for _, entry in ipairs(parsed.data) do
+                    local name = entry.configName
+                    local data = entry.configData
+                    if name and data then
+                        local icon = data.thumbnail or data.icon or data.Icon
+                        if icon then
+                            local stripped = tostring(icon):gsub("rbxassetid://", "")
+                            iconToName[stripped] = name
                         end
                     end
                 end
             end
         end
-    end)
-    
-    if not furnitureSuccess then
-        print("[PLACING ITEMS] Error getting shelves: " .. tostring(furnitureResult))
-        return false
     end
-    
-    print("[PLACING ITEMS] Found " .. #shelves .. " empty shelves")
-    
-    local guids = {}
-    local guidToName = {}
-    
-    for guid, info in pairs(data.Inventory) do
-        local id = tonumber(info.Id)
-        local itemData = ItemsModule[id]
-        local name = itemData and itemData.Name or "Unknown"
-        local lower = string.lower(name)
-        
-        if id ~= 681 and id ~= 2294 and not string.find(lower, "safe") then
-            table.insert(guids, guid)
-            guidToName[guid] = name
-        end
-    end
-    
-    print("[PLACING ITEMS] Found " .. #guids .. " placeable items in inventory")
-    
-    if #guids == 0 then
-        print("[PLACING ITEMS] No items to place")
-        return true
-    end
-    
-    if #shelves == 0 then
-        print("[PLACING ITEMS] No empty shelves")
-        return false
-    end
-    
-    local count = math.min(#shelves, #guids)
-    local placed = 0
-    
-    for i = 1, count do
-        local guid = guids[i]
-        local shelf = shelves[i]
-        
-        local fireSuccess = pcall(function()
-            SellRemote:FireServer(guid, shelf, true)
-        end)
-        
-        if fireSuccess then
-            placed = placed + 1
-            print("[PLACING ITEMS] Placed: " .. tostring(guidToName[guid] or "Unknown"))
-        else
-            print("[PLACING ITEMS] Failed to place item")
-        end
+    return iconToName
+end
+
+local function scanUserBooth(targetUserId, iconToName)
+    while not Signal.Invoke("Booths_IsLoaded") do
         task.wait(0.2)
     end
     
-    print("[PLACING ITEMS] Placed " .. placed .. " items on shelves")
-    return placed > 0
-end
-
-local function handleOffers()
-    local now = tick()
-    if now - lastOfferCheck < OFFER_COOLDOWN then return end
-    lastOfferCheck = now
+    local boothFolder = workspace:WaitForChild("__THINGS"):WaitForChild("Booths")
+    local targetBooth = nil
     
-    print("[OFFERS] Checking shelves")
-    
-    local _, beforeWithItems, beforeEmpty = getShelvesAndItems()
-    print("[OFFERS] Before: " .. beforeWithItems .. " full, " .. beforeEmpty .. " empty")
-    
-    local plotVal = LocalPlayer.NonSaveVars and LocalPlayer.NonSaveVars.OwnsPlot
-    if not plotVal or not plotVal.Value then return end
-    
-    local plotName = tostring(plotVal.Value)
-    local plot = Workspace.Plots:FindFirstChild(plotName)
-    if not plot then return end
-    
-    local furniture = plot:FindFirstChild("Furniture")
-    if not furniture then return end
-    
-    local offersFound = 0
-    local offersAccepted = 0
-    
-    for _, v in ipairs(furniture:GetDescendants()) do
-        if v.Name == "Shelves" then
-            for _, shelf in ipairs(v:GetChildren()) do
-                local offer = shelf:GetAttribute("Offer")
-                if not offer then continue end
-                
-                local itemFolder = shelf:FindFirstChild("Item")
-                if not itemFolder then continue end
-                
-                local item = itemFolder:GetChildren()[1]
-                if not item then continue end
-                
-                local id = item:GetAttribute("Id")
-                if not id then continue end
-                
-                local success, basePrice = pcall(function() return RepLibrary:GetItemPrice({Id = id}) end)
-                if not success or not basePrice or basePrice <= 0 then continue end
-                
-                local percent = ((offer - basePrice) / basePrice) * 100
-                offersFound = offersFound + 1
-                
-                if percent >= MIN_PROFIT_PERCENT and percent <= MAX_PROFIT_PERCENT then
-                    print("[OFFERS] Accepting: " .. string.format("%.1f%%", percent) .. " profit")
-                    local acceptSuccess = pcall(function() AcceptOffer:FireServer(shelf) end)
-                    if acceptSuccess then
-                        offersAccepted = offersAccepted + 1
-                    end
-                else
-                    print("[OFFERS] Declining: " .. string.format("%.1f%%", percent) .. " profit")
-                    pcall(function() DeclineOffer:FireServer(shelf) end)
-                end
-            end
-        end
-    end
-    
-    local _, afterWithItems, afterEmpty = getShelvesAndItems()
-    print("[OFFERS] After: " .. afterWithItems .. " full, " .. afterEmpty .. " empty")
-    print("[OFFERS] Checked " .. offersFound .. " offers, accepted " .. offersAccepted)
-end
-
-local function buyUpgrades()
-    local now = tick()
-    if now - lastUpgradeCheck < UPGRADE_COOLDOWN then return end
-    
-    local data = getDataRateLimited()
-    if not data then return end
-    
-    updateCash()
-    if myCash < MAX_UPGRADE_PRICE then 
-        print("[UPGRADES] Cannot afford any upgrades")
-        lastUpgradeCheck = now
-        return 
-    end
-    
-    print("[UPGRADES] Checking affordable upgrades")
-    local boughtAny = false
-    
-    for _, key in ipairs(upgradeKeys) do
-        local levels = Upgrades[key]
-        local current = data[key]
-        
-        if levels and current and levels[current + 1] then
-            local nextLevel = levels[current + 1]
-            
-            if nextLevel.Price and nextLevel.Price <= MAX_UPGRADE_PRICE and nextLevel.Price <= myCash then
-                print("[UPGRADES] Buying " .. key .. " for " .. formatNumber(nextLevel.Price))
-                local success = pcall(function() UpgradeClicked:InvokeServer(key) end)
-                if success then
-                    boughtAny = true
-                    task.wait(0.5)
-                    updateCash()
-                end
-            end
-        end
-    end
-    
-    if not boughtAny then
-        print("[UPGRADES] No affordable upgrades found")
-    end
-    
-    lastUpgradeCheck = now
-end
-
-local function getEntryCost(garageData)
-    return garageData.CashNeededToEnter or garageData.AuctionBudget or 0
-end
-
-local function getRandomAffordableGarage()
-    updateCash()
-    local affordable = {}
-    
-    for id, data in pairs(GaragesModule) do
-        if data.Type == "Cash" then
-            local entryCost = getEntryCost(data)
-            if entryCost > 0 and myCash >= entryCost then
-                table.insert(affordable, {id = id, data = data, cost = entryCost})
-            end
-        end
-    end
-    
-    if #affordable == 0 then return "51" end
-    
-    local randomIndex = math.random(1, #affordable)
-    return affordable[randomIndex].id
-end
-
-local function tryClick(obj)
-    if not obj then return end
-    pcall(function() obj:Activate() end)
-    if getconnections then
-        for _, v in pairs(getconnections(obj.MouseButton1Click)) do
-            pcall(function() v:Fire() end)
-        end
-    end
-end
-
-local function checkForButton()
-    local itemsWon = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon", true)
-    if itemsWon then
-        local button = itemsWon:FindFirstChild("Button", true)
-        if button then tryClick(button) end
-    end
-end
-
-local function handleItemsWon()
-    print("[ITEMS WON] Processing")
-    processingItemsWon = true
-    
-    local gui = LocalPlayer.PlayerGui:FindFirstChild("ItemsWon")
-    if not gui then
-        print("[ITEMS WON] GUI not found")
-        processingItemsWon = false
-        return
-    end
-    
-    local frame = gui:FindFirstChild("ItemsFrame") and gui.ItemsFrame:FindFirstChild("Frame")
-    if not frame then
-        print("[ITEMS WON] Frame not found")
-        processingItemsWon = false
-        return
-    end
-    
-    local data = getDataRateLimited()
-    if not data then
-        print("[ITEMS WON] Failed to get data")
-        processingItemsWon = false
-        return
-    end
-    
-    local itemsWon = data.ItemsWon or {}
-    if not itemsWon or next(itemsWon) == nil then
-        print("[ITEMS WON] No items to select")
-        processingItemsWon = false
-        return
-    end
-    
-    print("[ITEMS WON] " .. tostring(#itemsWon) .. " items available")
-    
-    local invInfo = getInventoryInfo()
-    if not invInfo then
-        print("[ITEMS WON] Failed to get inventory info")
-        processingItemsWon = false
-        return
-    end
-    
-    local slotsAvailable = invInfo.available + invInfo.carry
-    print("[ITEMS WON] Can take " .. slotsAvailable .. " items")
-    
-    local sortedItems = {}
-    for key, itemData in pairs(itemsWon) do
-        local itemId = itemData.itemId
-        local itemInfo = ItemsModule[itemId] or ItemsModule[tostring(itemId)]
-        local price = (itemInfo and itemInfo.Price) or 0
-        
-        table.insert(sortedItems, {
-            key = key,
-            id = itemId,
-            data = itemData,
-            price = price,
-            guid = key
-        })
-    end
-    
-    table.sort(sortedItems, function(a, b)
-        return a.price > b.price
-    end)
-    
-    local itemsToTake = math.min(#sortedItems, slotsAvailable)
-    print("[ITEMS WON] Taking top " .. itemsToTake .. " most valuable items")
-    
-    for i = 1, itemsToTake do
-        local item = sortedItems[i]
-        print("[ITEMS WON] Selecting item " .. i .. " value: " .. formatNumber(item.price))
-        
-        for _, btn in ipairs(frame:GetChildren()) do
-            if btn:IsA("ImageButton") and btn:FindFirstChild("Price") then
-                local priceLabel = btn:FindFirstChild("Price")
-                if priceLabel and priceLabel:IsA("TextLabel") then
-                    local btnPrice = tonumber(string.gsub(priceLabel.Text, "[^0-9]", "")) or 0
-                    if math.abs(btnPrice - item.price) < 10 then
-                        tryClick(btn)
-                        task.wait(0.3)
+    for _, model in pairs(boothFolder:GetChildren()) do
+        local userId = model:GetAttribute("Owner")
+        if userId == targetUserId then
+            local pets = model:FindFirstChild("Pets")
+            if pets then
+                local gui = pets:FindFirstChild("BoothTop")
+                if gui then
+                    local scroll = gui:FindFirstChild("PetScroll")
+                    if scroll then
+                        targetBooth = { model = model, userId = userId, scroll = scroll }
                         break
                     end
                 end
@@ -571,281 +131,283 @@ local function handleItemsWon()
         end
     end
     
-    local confirmButton = gui.ItemsFrame and gui.ItemsFrame:FindFirstChild("ConfirmButton")
-    if confirmButton then
-        repeat 
-            task.wait(0.1) 
-        until confirmButton.Visible
-        print("[ITEMS WON] Confirming selection")
-        tryClick(confirmButton)
+    if not targetBooth then
+        return 0, {}
     end
     
-    task.wait(1)
+    local mvpUpperKeys = {}
     
-    local sellButton = gui:FindFirstChild("SellItems") and 
-                      gui.SellItems:FindFirstChild("Frame") and 
-                      gui.SellItems.Frame:FindFirstChild("Normal") and 
-                      gui.SellItems.Frame.Normal:FindFirstChild("Button")
-    
-    if sellButton then
-        repeat 
-            task.wait(0.1) 
-        until sellButton.Visible
-        print("[ITEMS WON] Selling items")
-        tryClick(sellButton)
-        task.wait(0.5)
-        checkForButton()
+    for _, child in pairs(targetBooth.scroll:GetChildren()) do
+        if child:IsA("Frame") then
+            local price = child:FindFirstChild("Buy")
+                and child.Buy:FindFirstChild("Cost")
+                and child.Buy.Cost.Text
+                or "?"
+            
+            local name = "Unknown Item"
+            local holder = child:FindFirstChild("Holder")
+            if holder then
+                for _, elem in pairs(holder:GetDescendants()) do
+                    if elem:IsA("ImageLabel") and elem.Name == "Icon" then
+                        local stripped = tostring(elem.Image):gsub("rbxassetid://", "")
+                        if iconToName[stripped] then
+                            name = iconToName[stripped]
+                        end
+                        break
+                    end
+                end
+            end
+            
+            local amount = 1
+            local attrAmt = child:GetAttribute("Amount") or child:GetAttribute("Quantity") or child:GetAttribute("Count")
+            if attrAmt and tonumber(attrAmt) then
+                amount = tonumber(attrAmt)
+            else
+                for _, elem in pairs(child:GetDescendants()) do
+                    if elem:IsA("TextLabel") and (elem.Name == "Amount" or elem.Name == "Quantity" or elem.Name == "Count" or elem.Name == "Stack") then
+                        local n = tonumber(elem.Text:gsub("[^%d]", ""))
+                        if n then
+                            amount = n
+                            break
+                        end
+                    end
+                end
+            end
+            
+            -- Look specifically for "MVP Key Upper Half"
+            local lowerName = string.lower(name)
+            if string.find(lowerName, "mvp") and string.find(lowerName, "upper") and string.find(lowerName, "key") then
+                table.insert(mvpUpperKeys, {
+                    name = name,
+                    amount = amount,
+                    price = price
+                })
+            end
+        end
     end
     
-    task.wait(2)
-    processingItemsWon = false
-    print("[ITEMS WON] Complete")
+    return #mvpUpperKeys, mvpUpperKeys
 end
 
-local function getGarageHasItems(garage)
-    local success, result = pcall(function()
-        local itemsFolder = garage:FindFirstChild("Items")
-        return itemsFolder and #itemsFolder:GetChildren() > 0
-    end)
-    return success and result or false
-end
-
-local function shouldStop()
-    local invInfo = getInventoryInfo()
-    if not invInfo then 
-        print("[CHECK] Failed to get inventory info, continuing")
-        return false 
+local function updateJobStatus(jobId, newStatus)
+    if token == "" then return false end
+    
+    local getRes = request({
+        Url = string.format("https://api.github.com/repos/%s/%s/contents/%s?ref=%s", owner, repo, filePath, branch),
+        Method = "GET",
+        Headers = {["Authorization"] = "token " .. token, ["User-Agent"] = "Roblox"}
+    })
+    
+    if getRes.StatusCode ~= 200 then return false end
+    
+    local fileData = HttpService:JSONDecode(getRes.Body)
+    local decoded = base64Decode(fileData.content)
+    local lines = {}
+    local found = false
+    local username = ""
+    local userId = ""
+    local booth = ""
+    
+    for line in string.gmatch(decoded, "[^\n]+") do
+        local parts = {}
+        for part in string.gmatch(line, "[^|]+") do
+            table.insert(parts, part)
+        end
+        if #parts >= 4 and parts[4] == jobId then
+            username = parts[1]
+            userId = parts[2]
+            booth = parts[3]
+            local newLine = username .. "|" .. userId .. "|" .. booth .. "|" .. jobId .. "|" .. newStatus
+            table.insert(lines, newLine)
+            found = true
+        else
+            table.insert(lines, line)
+        end
     end
     
-    local _, shelvesWithItems, shelvesEmpty = getShelvesAndItems()
-    local shelvesFull = shelvesEmpty == 0
-    local invFull = invInfo.available <= 2
-    local cashGoal = myCash >= TARGET_CASH
+    if not found then return false end
     
-    print("[CHECK] Status - Shelves: " .. shelvesWithItems .. " full, " .. shelvesEmpty .. " empty | Inventory: " .. invInfo.used .. "/" .. invInfo.total .. " (" .. invInfo.available .. " free)")
+    local newContent = table.concat(lines, "\n")
+    local body = {
+        message = "Updated job " .. jobId .. " to " .. newStatus,
+        content = base64Encode(newContent),
+        branch = branch,
+        sha = fileData.sha
+    }
     
-    if cashGoal then
-        print("[STATUS] Reached cash goal: " .. formatNumber(myCash))
-        return true
-    end
+    local putRes = request({
+        Url = string.format("https://api.github.com/repos/%s/%s/contents/%s", owner, repo, filePath),
+        Method = "PUT",
+        Headers = {["Authorization"] = "token " .. token, ["Content-Type"] = "application/json", ["User-Agent"] = "Roblox"},
+        Body = HttpService:JSONEncode(body)
+    })
     
-    if shelvesFull and invFull then
-        print("[STATUS] STOP CONDITION MET - All shelves full and inventory almost full")
-        return true
-    end
-    
-    if not shelvesFull then
-        print("[STATUS] Continuing - " .. shelvesEmpty .. " empty shelves available")
-    elseif not invFull then
-        print("[STATUS] Continuing - " .. invInfo.available .. " inventory slots free")
+    if putRes.StatusCode == 200 or putRes.StatusCode == 201 then
+        print("[GITHUB] Updated " .. jobId .. " to " .. newStatus)
+        return true, username, userId, booth
     end
     
     return false
 end
 
-UpdateCurrentBid.OnClientEvent:Connect(function(data)
-    if data then
-        currentBidData = data
-    end
-end)
-
-AuctionsFolder.ChildAdded:Connect(function(garage)
-    if processingItemsWon then 
-        print("[AUCTION] Ignoring - processing items won")
-        return 
-    end
+local function getPendingJobs()
+    if token == "" then return {} end
     
-    inAuction = true
-    auctionEnded = false
-    currentGarage = garage
-    currentBidData = nil
+    local getRes = request({
+        Url = string.format("https://api.github.com/repos/%s/%s/contents/%s?ref=%s", owner, repo, filePath, branch),
+        Method = "GET",
+        Headers = {["Authorization"] = "token " .. token, ["User-Agent"] = "Roblox"}
+    })
     
-    local garageName = garage.Name
-    print("[AUCTION] Entered: " .. garageName)
+    if getRes.StatusCode ~= 200 then return {} end
     
-    if not getGarageHasItems(garage) then
-        print("[AUCTION] Garage has no items, skipping")
-        return
-    end
+    local fileData = HttpService:JSONDecode(getRes.Body)
+    local decoded = base64Decode(fileData.content)
+    local pending = {}
     
-    task.wait(2)
-    
-    if garagesBidThisAuction >= MAX_GARAGES_TO_BID then
-        print("[AUCTION] Already bid on " .. MAX_GARAGES_TO_BID .. " garages, skipping")
-        return
-    end
-    
-    local timeout = 0
-    while not currentBidData and timeout < 8 do
-        task.wait(0.5)
-        timeout = timeout + 0.5
-    end
-    
-    if not currentBidData then
-        print("[AUCTION] No bid data")
-        return
-    end
-    
-    local nextBid = currentBidData.nextBid
-    local canAfford = nextBid <= myCash
-    
-    print("[AUCTION] Next bid: " .. formatNumber(nextBid))
-    
-    if currentBidData.player == LocalPlayer then
-        print("[AUCTION] Already highest bidder")
-        bidPlaced = true
-        garagesBidThisAuction = garagesBidThisAuction + 1
-        return
-    end
-    
-    if canAfford then
-        print("[AUCTION] Placing bid")
-        local success = pcall(function() PlaceBid:InvokeServer(nextBid) end)
-        if success then
-            print("[AUCTION] Bid placed successfully")
-            bidPlaced = true
-            garagesBidThisAuction = garagesBidThisAuction + 1
-        else
-            print("[AUCTION] Bid failed")
+    for line in string.gmatch(decoded, "[^\n]+") do
+        local parts = {}
+        for part in string.gmatch(line, "[^|]+") do
+            table.insert(parts, part)
         end
-    else
-        print("[AUCTION] Cannot afford bid")
-    end
-end)
-
-AuctionsFolder.ChildRemoved:Connect(function()
-    if #AuctionsFolder:GetChildren() == 0 then
-        print("[AUCTION] Left auction")
-        inAuction = false
-        auctionEnded = true
-        currentGarage = nil
-        currentBidData = nil
-        bidPlaced = false
-        garagesBidThisAuction = 0
-        task.wait(2)
-        handleItemsWon()
-        placeItemsOnShelves()
-    end
-end)
-
-LocalPlayer.PlayerGui.DescendantAdded:Connect(function(obj)
-    if obj.Name == "Button" then
-        task.wait()
-        tryClick(obj)
-    end
-end)
-
-task.spawn(function()
-    while true do
-        if not halted then
-            pcall(function() handleOffers() end)
-            pcall(function() buyUpgrades() end)
+        if #parts >= 5 and parts[5] == "pending" then
+            table.insert(pending, {
+                username = parts[1],
+                userId = parts[2],
+                booth = parts[3],
+                jobId = parts[4]
+            })
         end
-        task.wait(1)
-    end
-end)
-
-task.spawn(function()
-    while true do
-        pcall(function()
-            for _, connection in pairs(getconnections(UserInputService.InputEnded)) do
-                if connection.Function then
-                    connection.Function({})
-                end
-            end
-        end)
-        task.wait(60)
-    end
-end)
-
-while true do
-    local mainSuccess, mainError = pcall(function()
-        print("[MAIN] Starting main loop")
-        updateCash()
-        
-        local stop = shouldStop()
-        print("[MAIN] Should stop: " .. tostring(stop))
-        
-        if stop then
-            print("[MAIN] Stop condition met, but continuing to check for space every 10 seconds")
-            while shouldStop() do
-                task.wait(10)
-                updateCash()
-                print("[MAIN] Still stopped, checking again in 10 seconds")
-            end
-            print("[MAIN] Space available, resuming auctions")
-        end
-        
-        print("[MAIN] Placing shelves if needed")
-        placeShelvesIfNeeded()
-        
-        if not inAuction and not processingItemsWon then
-            print("[AUCTION] Selecting random affordable garage")
-            local garageId = getRandomAffordableGarage()
-            local garageData = GaragesModule[garageId]
-            if garageData then
-                print("[AUCTION] Entering queue for garage: " .. garageData.Name)
-                local enterSuccess = pcall(function() EnterQueue:InvokeServer(garageId) end)
-                if not enterSuccess then
-                    print("[AUCTION] Failed to enter queue")
-                end
-            end
-        end
-        
-        local auctionStartTime = tick()
-        auctionEnded = false
-        
-        repeat
-            task.wait(0.1)
-        until inAuction or tick() - auctionStartTime > 10
-        
-        if not inAuction then
-            print("[AUCTION] Failed to join auction, retrying")
-            task.wait(1)
-            return
-        end
-        
-        while inAuction and not auctionEnded and not shouldStop() do
-            if currentGarage and getGarageHasItems(currentGarage) then
-                if bidPlaced then
-                    local bidStartTime = tick()
-                    
-                    while inAuction and currentGarage and not auctionEnded do
-                        if currentBidData and currentBidData.player ~= LocalPlayer then
-                            local nextBid = currentBidData.nextBid
-                            
-                            if nextBid <= myCash and garagesBidThisAuction < MAX_GARAGES_TO_BID then
-                                pcall(function() PlaceBid:InvokeServer(nextBid) end)
-                                garagesBidThisAuction = garagesBidThisAuction + 1
-                            end
-                        end
-                        
-                        if tick() - bidStartTime > 60 then break end
-                        task.wait(BID_CHECK_INTERVAL)
-                    end
-                end
-            else
-                if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
-                    print("[AUCTION] Skipping garage")
-                    pcall(function() SkipCountdown:InvokeServer() end)
-                    task.wait(0.1)
-                    pcall(function() Skip:InvokeServer() end)
-                    lastSkipTime = tick()
-                end
-            end
-            task.wait(0.5)
-        end
-        
-        task.wait(3)
-        checkForButton()
-        updateCash()
-    end)
-    
-    if not mainSuccess then
-        print("[MAIN] Error in main loop: " .. tostring(mainError))
     end
     
-    task.wait(1)
+    return pending
 end
 
-print("[MAIN] Script ended")
+local function sendWebhookWithMVPData(username, userId, jobId, booth, mvpCount, mvpKeys)
+    local placeId = game.PlaceId
+    local joinLink = "https://www.roblox.com/games/" .. placeId .. "?gameInstanceId=" .. jobId
+    local scriptCode = 'Roblox.GameLauncher.joinGameInstance(' .. placeId .. ', "' .. jobId .. '")'
+    local playerAvatar = getPlayerAvatar(userId)
+    local assetImage = getAssetThumbnail()
+    local playerCount = #game:GetService("Players"):GetPlayers()
+    local ping = math.floor(game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue())
+    
+    local mvpText = ""
+    for i, key in ipairs(mvpKeys) do
+        if key.amount > 1 then
+            mvpText = mvpText .. key.name .. " x" .. key.amount .. " - " .. key.price .. " Diamonds each\n"
+        else
+            mvpText = mvpText .. key.name .. " - " .. key.price .. " Diamonds\n"
+        end
+    end
+    
+    if mvpText == "" then
+        mvpText = "No MVP Key Upper Half found"
+    end
+    
+    local ok, res = pcall(function()
+        return request({
+            Url = WEBHOOK,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = HttpService:JSONEncode({
+                embeds = {{
+                    color = 16766720,
+                    thumbnail = assetImage and {url = assetImage} or nil,
+                    author = playerAvatar and {
+                        name = username,
+                        icon_url = playerAvatar
+                    } or nil,
+                    fields = {{
+                        name = "Join Server",
+                        value = "[Click Here](" .. joinLink .. ")",
+                        inline = true
+                    }, {
+                        name = "Players / Ping",
+                        value = tostring(playerCount) .. " / " .. tostring(ping) .. " MS",
+                        inline = true
+                    }, {
+                        name = "MVP Key Upper Half",
+                        value = tostring(mvpCount),
+                        inline = true
+                    }, {
+                        name = "MVP Key Details",
+                        value = "```\n" .. mvpText .. "```",
+                        inline = false
+                    }, {
+                        name = "Server ID",
+                        value = "`" .. jobId .. "`",
+                        inline = false
+                    }, {
+                        name = "Paste in Browser",
+                        value = "```\n" .. scriptCode .. "\n```",
+                        inline = false
+                    }}
+                }}
+            })
+        })
+    end)
+    
+    if not ok then
+        warn("[WEBHOOK] Failed: " .. tostring(res))
+    elseif res.StatusCode ~= 200 and res.StatusCode ~= 204 then
+        warn("[WEBHOOK] Bad status: " .. tostring(res.StatusCode))
+    else
+        print("[WEBHOOK] Sent successfully for " .. username)
+    end
+end
+
+-- Main execution
+print("[SCANNER] Loading icon mappings...")
+local iconToName = loadIconToName()
+print("[SCANNER] Loaded icon mappings")
+
+while true do
+    print("[SCANNER] Checking for pending jobs...")
+    local pendingJobs = getPendingJobs()
+    
+    if #pendingJobs == 0 then
+        print("[SCANNER] No pending jobs found. Waiting 30 seconds...")
+        task.wait(30)
+    else
+        for _, job in ipairs(pendingJobs) do
+            print("[SCANNER] Processing job: " .. job.jobId .. " for " .. job.username)
+            
+            local targetPlayer = Players:FindFirstChild(job.username)
+            local targetUserId = targetPlayer and targetPlayer.UserId
+            
+            if not targetUserId then
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p.Name:lower() == job.username:lower() then
+                        targetUserId = p.UserId
+                        targetPlayer = p
+                        break
+                    end
+                end
+            end
+            
+            if not targetUserId or tonumber(job.userId) ~= targetUserId then
+                print("[SCANNER] Player not in server: " .. job.username)
+                updateJobStatus(job.jobId, "done")
+                task.wait(2)
+            else
+                print("[SCANNER] Scanning booth for " .. job.username)
+                local mvpCount, mvpKeys = scanUserBooth(targetUserId, iconToName)
+                
+                print("[SCANNER] Found " .. mvpCount .. " MVP Key Upper Half")
+                
+                sendWebhookWithMVPData(job.username, job.userId, job.jobId, job.booth, mvpCount, mvpKeys)
+                
+                task.wait(2)
+                
+                local success = updateJobStatus(job.jobId, "done")
+                if success then
+                    print("[SCANNER] Marked " .. job.jobId .. " as done")
+                end
+            end
+            
+            print("[SCANNER] Waiting 10 seconds before next job...")
+            task.wait(10)
+        end
+    end
+end
