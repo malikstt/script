@@ -42,7 +42,6 @@ local upgUtils    = require(RS.Source.Features.Upgrades.UpgradeServiceUtils)
 local zonesData   = require(RS.Source.Game.Items.Zones)
 local idxRewards  = require(RS.Source.Features.Index.IndexRewards)
 
--- // GAMEPLAY FOLDER HELPER
 local function findGameplayFolder()
     for _, child in ipairs(workspace:GetChildren()) do
         if string.sub(child.Name, 1, 8) == "Gameplay" then
@@ -52,7 +51,6 @@ local function findGameplayFolder()
     return nil
 end
 
--- // IMPROVED ROOT PART DETECTION
 local function getRoot(instance)
     if not instance then return nil end
     if instance.PrimaryPart and instance.PrimaryPart.Parent then 
@@ -62,7 +60,6 @@ local function getRoot(instance)
     if root then return root end
     root = instance:FindFirstChild("RootPart")
     if root then return root end
-    -- Fallback: find any BasePart
     for _, part in ipairs(instance:GetChildren()) do
         if part:IsA("BasePart") then
             return part
@@ -71,20 +68,16 @@ local function getRoot(instance)
     return nil
 end
 
--- // IMPROVED MODEL SPEED WITH MULTIPLE METHODS
 local function setModelSpeed(folder, speed)
     if not folder then return end
     for _, model in ipairs(folder:GetChildren()) do
         if model:IsA("Model") then
-            -- Method 1: Humanoid
             local hum = model:FindFirstChildWhichIsA("Humanoid")
             if hum then 
                 hum.WalkSpeed = speed
             end
-            -- Method 2: Animator (for some games)
             local animator = model:FindFirstChildWhichIsA("Animator")
             if animator then
-                -- Some games use custom speed properties
                 pcall(function()
                     local humanoid = animator.Parent
                     if humanoid and humanoid:IsA("Humanoid") then
@@ -92,7 +85,6 @@ local function setModelSpeed(folder, speed)
                     end
                 end)
             end
-            -- Method 3: Check for speed values in attributes
             pcall(function()
                 if model:GetAttribute("WalkSpeed") then
                     model:SetAttribute("WalkSpeed", speed)
@@ -105,18 +97,16 @@ local function setModelSpeed(folder, speed)
     end
 end
 
--- // IMPROVED SPEED HANDLER FOR NEW SPAWNS
 local function watchForSpeed(folder, getSpeedFunc)
     if not folder then return nil end
     local connection
     connection = folder.ChildAdded:Connect(function(child)
-        task.wait(0.1) -- Wait for Humanoid to load
+        task.wait(0.1)
         if child:IsA("Model") then
             local hum = child:FindFirstChildWhichIsA("Humanoid")
             if hum then 
                 hum.WalkSpeed = getSpeedFunc()
             end
-            -- Also check for custom speed attributes
             pcall(function()
                 if child:GetAttribute("WalkSpeed") then
                     child:SetAttribute("WalkSpeed", getSpeedFunc())
@@ -127,7 +117,6 @@ local function watchForSpeed(folder, getSpeedFunc)
     return connection
 end
 
--- // MODULE-DRIVEN LOOKUPS
 local function getAllRarityNames()
     local names = {}
     local ok, tiers = pcall(rarityTiers.getTiers)
@@ -213,7 +202,6 @@ local function getUpgradeCost(upgradeId)
     return cost
 end
 
--- // HELPER FUNCTIONS
 local function formatNumber(n)
     if type(n) ~= "number" then return tostring(n) end
     local a = math.abs(n)
@@ -328,13 +316,11 @@ local function parseLuck(val)
     return n and (n * mult) or 0
 end
 
--- // IMPROVED TELEPORT TO ENEMIES WITH TWEENING
 local activeTweens = {}
 
 local function tweenToPosition(part, targetPos, duration)
     if not part or not targetPos then return end
     
-    -- Cancel existing tween on this part
     if activeTweens[part] then
         activeTweens[part]:Cancel()
         activeTweens[part] = nil
@@ -357,7 +343,47 @@ local function tweenToPosition(part, targetPos, duration)
     end)
 end
 
--- // RAYFIELD UI
+local function getBestSlimeGuid()
+    local stats = dataCli:get("stats") or {}
+    local rarest = stats.rarestRoll
+    if not rarest or not rarest.slimeData then return nil end
+    
+    local targetSlime = rarest.slimeData
+    local targetMutations = targetSlime.mutations or {}
+    local inventory = dataCli:get("inventory") or {}
+    
+    for guid, data in pairs(inventory) do
+        if type(data) == "table" and data.id == targetSlime.id then
+            local match = true
+            for k, v in pairs(targetMutations) do
+                if data.mutations and data.mutations[k] ~= v then
+                    match = false
+                    break
+                end
+            end
+            if match then
+                return guid
+            end
+        end
+    end
+    return nil
+end
+
+local function hasXpOrLevel(slime)
+    return (slime.xp or 0) > 0 or (slime.level or 1) > 1
+end
+
+local function getInventoryFruitIds()
+    local fruitIds = {"All"}
+    local items = dataCli:get("items") or {}
+    for itemId, amount in pairs(items) do
+        if type(amount) == "number" and amount > 0 then
+            table.insert(fruitIds, itemId)
+        end
+    end
+    return fruitIds
+end
+
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 local Window = Rayfield:CreateWindow({
@@ -382,7 +408,6 @@ local Window = Rayfield:CreateWindow({
     KeySystem = false,
 })
 
--- // MAIN TAB
 local MainTab = Window:CreateTab("Main", 138602335586757)
 
 MainTab:CreateSection("Welcome")
@@ -414,7 +439,6 @@ MainTab:CreateButton({
     end,
 })
 
--- // FARMING TAB
 local FarmingTab = Window:CreateTab("Farming", 138602335586757)
 
 FarmingTab:CreateSection("Zones")
@@ -487,27 +511,109 @@ local EquipBestSlimesToggle = FarmingTab:CreateToggle({
     end,
 })
 
-local TransferLevelsToggle = FarmingTab:CreateToggle({
-    Name         = "Auto Transfer Levels To Best Slime",
+local AutoFeedBestSlimeToggle = FarmingTab:CreateToggle({
+    Name         = "Auto Feed Best Slime",
     CurrentValue = false,
-    Flag         = "FarmingTransferLevels",
-    Callback     = function(Value) end,
+    Flag         = "FarmingAutoFeedBestSlime",
+    Callback     = function(Value)
+        if Value then
+            task.spawn(function()
+                while Rayfield.Flags.FarmingAutoFeedBestSlime.CurrentValue do
+                    local bestGuid = getBestSlimeGuid()
+                    if bestGuid then
+                        local selectedFruits = Rayfield.Flags.FarmingFruitsToFeed.CurrentOption or {"All"}
+                        local items = dataCli:get("items") or {}
+                        for foodType, amount in pairs(items) do
+                            if type(amount) == "number" and amount > 0 then
+                                local shouldFeed = false
+                                for _, selected in ipairs(selectedFruits) do
+                                    if selected == "All" or selected == foodType then
+                                        shouldFeed = true
+                                        break
+                                    end
+                                end
+                                if shouldFeed then
+                                    pcall(invRmt.InvokeServer, invRmt, "requestUseFood", foodType, bestGuid, amount)
+                                    task.wait(0.3)
+                                end
+                            end
+                        end
+                    end
+                    task.wait(5)
+                end
+            end)
+        end
+    end,
 })
 
-local AutoFeedToggle = FarmingTab:CreateToggle({
-    Name         = "Auto Feed",
-    CurrentValue = false,
-    Flag         = "FarmingAutoFeed",
-    Callback     = function(Value) end,
-})
+local initialFruits = getInventoryFruitIds()
 
-local AutoFeedModeDropdown = FarmingTab:CreateDropdown({
-    Name            = "Feed Mode",
-    Options         = {"Best Slime", "Whole Team Split"},
-    CurrentOption   = {"Best Slime"},
-    MultipleOptions = false,
-    Flag            = "FarmingAutoFeedMode",
+local FruitsToFeedDropdown = FarmingTab:CreateDropdown({
+    Name            = "Fruits to Feed",
+    Options         = initialFruits,
+    CurrentOption   = {"All"},
+    MultipleOptions = true,
+    Flag            = "FarmingFruitsToFeed",
     Callback        = function(Options) end,
+})
+
+task.spawn(function()
+    while true do
+        task.wait(10)
+        local currentFruits = getInventoryFruitIds()
+        local currentOptions = Rayfield.Flags.FarmingFruitsToFeed.CurrentOption or {"All"}
+        local needsUpdate = #currentFruits ~= #initialFruits
+        if not needsUpdate then
+            for i, v in ipairs(currentFruits) do
+                if v ~= initialFruits[i] then
+                    needsUpdate = true
+                    break
+                end
+            end
+        end
+        if needsUpdate then
+            initialFruits = currentFruits
+            FruitsToFeedDropdown:Refresh(currentFruits, true)
+            local newOptions = {}
+            for _, opt in ipairs(currentOptions) do
+                for _, fruit in ipairs(currentFruits) do
+                    if opt == fruit then
+                        table.insert(newOptions, opt)
+                        break
+                    end
+                end
+            end
+            if #newOptions == 0 then newOptions = {"All"} end
+            FruitsToFeedDropdown:Set(newOptions)
+        end
+    end
+end)
+
+local AutoTransferXPToggle = FarmingTab:CreateToggle({
+    Name         = "Auto Transfer XP to Best Slime",
+    CurrentValue = false,
+    Flag         = "FarmingAutoTransferXP",
+    Callback     = function(Value)
+        if Value then
+            task.spawn(function()
+                while Rayfield.Flags.FarmingAutoTransferXP.CurrentValue do
+                    local bestGuid = getBestSlimeGuid()
+                    if bestGuid then
+                        local inventory = dataCli:get("inventory") or {}
+                        for guid, data in pairs(inventory) do
+                            if type(data) == "table" and data.id and guid ~= bestGuid then
+                                if hasXpOrLevel(data) then
+                                    pcall(invRmt.InvokeServer, invRmt, "requestTransferXp", guid, bestGuid)
+                                    task.wait(0.5)
+                                end
+                            end
+                        end
+                    end
+                    task.wait(10)
+                end
+            end)
+        end
+    end,
 })
 
 FarmingTab:CreateSection("Rolling")
@@ -545,11 +651,21 @@ local CollectLootToggle = FarmingTab:CreateToggle({
                     :WaitForChild("LootService")
                     :WaitForChild("RemoteFunction")
                 while Rayfield.Flags.FarmingCollectLoot.CurrentValue do
-                    task.wait(30)
+                    task.wait(1)
                     local lootFolder = workspace:FindFirstChild("Loot")
                     if lootFolder then
-                        for _, l in ipairs(lootFolder:GetChildren()) do
-                            pcall(lootRmt.InvokeServer, lootRmt, "requestCollect", l.Name)
+                        local char = localPlr.Character
+                        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            local radius = Rayfield.Flags.FarmingCollectLootRadius.CurrentValue or 50
+                            for _, l in ipairs(lootFolder:GetChildren()) do
+                                if l:IsA("BasePart") then
+                                    local dist = (l.Position - hrp.Position).Magnitude
+                                    if dist <= radius then
+                                        pcall(lootRmt.InvokeServer, lootRmt, "requestCollect", l.Name)
+                                    end
+                                end
+                            end
                         end
                     end
                 end
@@ -558,7 +674,16 @@ local CollectLootToggle = FarmingTab:CreateToggle({
     end,
 })
 
--- // GAME TAB
+local CollectLootRadiusSlider = FarmingTab:CreateSlider({
+    Name         = "Collect Loot Radius",
+    Range        = {10, 500},
+    Increment    = 5,
+    Suffix       = " studs",
+    CurrentValue = 50,
+    Flag         = "FarmingCollectLootRadius",
+    Callback     = function(Value) end,
+})
+
 local GameTab = Window:CreateTab("Game", 82493603309814)
 
 GameTab:CreateSection("Rebirth")
@@ -646,7 +771,6 @@ local UpgradeModeDropdown = GameTab:CreateDropdown({
 
 GameTab:CreateSection("Enemies")
 
--- IMPROVED: Teleport To Enemies with TweenService
 local TeleportEnemiesToggle = GameTab:CreateToggle({
     Name         = "Teleport To Nearby Enemies (Tween)",
     CurrentValue = false,
@@ -662,7 +786,6 @@ local TeleportEnemiesToggle = GameTab:CreateToggle({
                     local hrp            = char and char:FindFirstChild("HumanoidRootPart")
 
                     if hrp and enemiesFolder then
-                        -- Find closest enemy to player
                         local closest, closestDist = nil, math.huge
                         for _, enemy in ipairs(enemiesFolder:GetChildren()) do
                             if enemy:IsA("Model") then
@@ -677,7 +800,6 @@ local TeleportEnemiesToggle = GameTab:CreateToggle({
                             end
                         end
 
-                        -- Teleport all slimes to that enemy using TweenService
                         if closest and slimesFolder then
                             local enemyRoot = getRoot(closest)
                             if enemyRoot and enemyRoot.Position then
@@ -700,7 +822,6 @@ local TeleportEnemiesToggle = GameTab:CreateToggle({
     end,
 })
 
--- IMPROVED: Super Fast Enemies with better detection
 local enemySpawnConnection = nil
 
 local SuperFastEnemiesToggle = GameTab:CreateToggle({
@@ -714,10 +835,8 @@ local SuperFastEnemiesToggle = GameTab:CreateToggle({
 
         local speed = Value and Rayfield.Flags.GameEnemySpeed.CurrentValue or 16
 
-        -- Update existing enemies
         setModelSpeed(enemiesFolder, speed)
 
-        -- Handle new spawns
         if enemySpawnConnection then
             enemySpawnConnection:Disconnect()
             enemySpawnConnection = nil
@@ -749,7 +868,6 @@ local EnemySpeedSlider = GameTab:CreateSlider({
 
 GameTab:CreateSection("Slime Speed")
 
--- IMPROVED: Super Fast Slimes with better detection
 local slimeSpawnConnection = nil
 
 local SuperFastSlimeToggle = GameTab:CreateToggle({
@@ -763,10 +881,8 @@ local SuperFastSlimeToggle = GameTab:CreateToggle({
 
         local speed = Value and Rayfield.Flags.GameSlimeSpeed.CurrentValue or 16
 
-        -- Update existing slimes
         setModelSpeed(slimesFolder, speed)
 
-        -- Handle new spawns
         if slimeSpawnConnection then
             slimeSpawnConnection:Disconnect()
             slimeSpawnConnection = nil
@@ -796,25 +912,6 @@ local SlimeSpeedSlider = GameTab:CreateSlider({
     end,
 })
 
-GameTab:CreateSection("Index")
-
-local AutoCompleteIndexToggle = GameTab:CreateToggle({
-    Name         = "Auto Complete Index",
-    CurrentValue = false,
-    Flag         = "GameAutoCompleteIndex",
-    Callback     = function(Value) end,
-})
-
-local IndexModeDropdown = GameTab:CreateDropdown({
-    Name            = "Index Mode",
-    Options         = allMutationNames,
-    CurrentOption   = {"Normal"},
-    MultipleOptions = true,
-    Flag            = "GameIndexMode",
-    Callback        = function(Options) end,
-})
-
--- // MISC TAB
 local MiscTab = Window:CreateTab("Misc", 96334002390551)
 
 MiscTab:CreateSection("Codes & Rewards")
@@ -974,9 +1071,6 @@ local DiceTypesDropdown = MiscTab:CreateDropdown({
     Callback        = function(Options) end,
 })
 
--- REMOVED: Friend Requests section (as requested)
-
--- // WEBHOOK TAB
 local WebhookTab = Window:CreateTab("Webhook", 84577758013974)
 
 WebhookTab:CreateSection("Configuration")
@@ -1070,7 +1164,6 @@ local MinimumLuckInput = WebhookTab:CreateInput({
     Callback                 = function(Text) end,
 })
 
--- // SETTINGS TAB
 local SettingsTab = Window:CreateTab("Settings", 122930981612451)
 
 SettingsTab:CreateSection("System")
@@ -1136,7 +1229,6 @@ local AutoRejoinToggle = SettingsTab:CreateToggle({
                     end)
                 end
                 
-                -- Watch for player leaving
                 localPlr.AncestryChanged:Connect(function()
                     if not localPlr.Parent and Rayfield.Flags.SettingsAutoRejoin.CurrentValue then
                         task.wait(1)
@@ -1208,7 +1300,6 @@ task.spawn(function()
     end
 end)
 
--- // WEBHOOK ROLL LISTENER
 task.spawn(function()
     local sentKeys        = {}
     local lastFingerprint = nil
@@ -1352,7 +1443,6 @@ task.spawn(function()
     end
 end)
 
--- // BOOT: Anti AFK
 do
     pcall(function()
         for _, x in pairs(getconnections(localPlr.Idled)) do
@@ -1368,7 +1458,6 @@ do
     end)
 end
 
--- // BOOT: Anti Kick
 do
     pcall(function()
         local mt  = getrawmetatable(game)
