@@ -63,14 +63,17 @@ local function stopLoop(name)
     end
 end
 
-local function createLoop(name, flag, fn, interval)
+local function createLoop(name, flagName, fn, interval)
     return function(val)
         stopLoop(name)
         if val then
             activeLoops[name] = true
             task.spawn(function()
-                while activeLoops[name] and flag.CurrentValue do
-                    if not fn() then break end
+                while activeLoops[name] do
+                    local flag = Rayfield.Flags[flagName]
+                    if not flag or not flag.CurrentValue then break end
+                    local success = pcall(fn)
+                    if not success then break end
                     task.wait(interval)
                 end
                 activeLoops[name] = nil
@@ -106,7 +109,7 @@ local function setModelSpeed(folder, speed)
             local hum = model:FindFirstChildWhichIsA("Humanoid")
             if hum then hum.WalkSpeed = speed end
             local rootPart = getRoot(model)
-            if rootPart and RunService:IsRunning() then
+            if rootPart then
                 rootPart.AssemblyLinearVelocity = rootPart.CFrame.LookVector * speed
             end
         end
@@ -401,12 +404,11 @@ MainTab:CreateButton({Name = "Save Config Manually", Callback = function() Rayfi
 local FarmingTab = Window:CreateTab("Farming", 138602335586757)
 FarmingTab:CreateSection("Zones")
 
-local lastTeleportedZone = nil
 FarmingTab:CreateToggle({
     Name = "Auto Stay In Best Unlocked Zone",
     CurrentValue = false,
     Flag = "FarmingStayInBestZone",
-    Callback = createLoop("StayInBestZone", Rayfield.Flags.FarmingStayInBestZone, function()
+    Callback = createLoop("StayInBestZone", "FarmingStayInBestZone", function()
         local ZONE_CEIL = zonesData.getMaxZone()
         local ownedMax = dataCli:get("maxZone") or 1
         local target = math.min(ownedMax, ZONE_CEIL)
@@ -414,8 +416,8 @@ FarmingTab:CreateToggle({
         if currentZone == target then return true end
         for z = target, 1, -1 do
             if zonesData.hasZone(z) then
-                local ok = pcall(zoneRmt.InvokeServer, zoneRmt, "requestTeleportZone", z)
-                if ok then task.wait(1) end
+                pcall(zoneRmt.InvokeServer, zoneRmt, "requestTeleportZone", z)
+                task.wait(1)
                 break
             end
         end
@@ -427,7 +429,7 @@ FarmingTab:CreateToggle({
     Name = "Auto Unlock Affordable Zones",
     CurrentValue = false,
     Flag = "FarmingUnlockAffordableZones",
-    Callback = createLoop("UnlockZones", Rayfield.Flags.FarmingUnlockAffordableZones, function()
+    Callback = createLoop("UnlockZones", "FarmingUnlockAffordableZones", function()
         local nextZone = (dataCli:get("maxZone") or 1) + 1
         if zonesData.hasZone(nextZone) then pcall(zoneRmt.InvokeServer, zoneRmt, "requestPurchaseZone") end
         return true
@@ -440,13 +442,15 @@ FarmingTab:CreateToggle({
     Name = "Auto Equip Best Slimes",
     CurrentValue = false,
     Flag = "FarmingEquipBestSlimes",
-    Callback = function(Value)
+    Callback = function(val)
         stopLoop("EquipSlimes")
-        if Value then
+        if val then
             activeLoops.EquipSlimes = true
             local delay = 30
             task.spawn(function()
-                while activeLoops.EquipSlimes and Rayfield.Flags.FarmingEquipBestSlimes.CurrentValue do
+                while activeLoops.EquipSlimes do
+                    local flag = Rayfield.Flags["FarmingEquipBestSlimes"]
+                    if not flag or not flag.CurrentValue then break end
                     pcall(invRmt.InvokeServer, invRmt, "requestEquipBest")
                     task.wait(delay)
                     delay = math.min(delay * 2, 600)
@@ -461,7 +465,7 @@ FarmingTab:CreateToggle({
     Name = "Auto Feed Best Slime",
     CurrentValue = false,
     Flag = "FarmingAutoFeedBestSlime",
-    Callback = createLoop("FeedSlime", Rayfield.Flags.FarmingAutoFeedBestSlime, function()
+    Callback = createLoop("FeedSlime", "FarmingAutoFeedBestSlime", function()
         local bestGuid = getBestSlimeGuid()
         if bestGuid then
             local selectedFruits = Rayfield.Flags.FarmingFruitsToFeed.CurrentOption or {"All"}
@@ -526,7 +530,7 @@ FarmingTab:CreateToggle({
     Name = "Auto Transfer XP to Best Slime",
     CurrentValue = false,
     Flag = "FarmingAutoTransferXP",
-    Callback = createLoop("TransferXP", Rayfield.Flags.FarmingAutoTransferXP, function()
+    Callback = createLoop("TransferXP", "FarmingAutoTransferXP", function()
         local bestGuid = getBestSlimeGuid()
         if bestGuid then
             local inventory = dataCli:get("inventory") or {}
@@ -549,7 +553,7 @@ FarmingTab:CreateToggle({
     Name = "Auto Fast Roll",
     CurrentValue = false,
     Flag = "FarmingFastRoll",
-    Callback = createLoop("FastRoll", Rayfield.Flags.FarmingFastRoll, function()
+    Callback = createLoop("FastRoll", "FarmingFastRoll", function()
         pcall(rollRmt.InvokeServer, rollRmt, "requestRoll")
         return true
     end, 0)
@@ -561,7 +565,7 @@ FarmingTab:CreateToggle({
     Name = "Auto Collect Loot",
     CurrentValue = false,
     Flag = "FarmingCollectLoot",
-    Callback = createLoop("CollectLoot", Rayfield.Flags.FarmingCollectLoot, function()
+    Callback = createLoop("CollectLoot", "FarmingCollectLoot", function()
         local lootFolder = workspace:FindFirstChild("Loot")
         if lootFolder then
             local char = localPlr.Character
@@ -597,7 +601,7 @@ GameTab:CreateToggle({
     Name = "Auto Rebirth",
     CurrentValue = false,
     Flag = "GameAutoRebirth",
-    Callback = createLoop("Rebirth", Rayfield.Flags.GameAutoRebirth, function()
+    Callback = createLoop("Rebirth", "GameAutoRebirth", function()
         local rbs = dataCli:get("rebirths") or 0
         local gp = dataCli:get("goop") or 0
         local fz = dataCli:get("furthestZone") or 0
@@ -623,13 +627,15 @@ GameTab:CreateToggle({
     Name = "Auto Upgrade Purchasing",
     CurrentValue = false,
     Flag = "GameAutoUpgrade",
-    Callback = function(Value)
+    Callback = function(val)
         stopLoop("Upgrades")
-        if Value then
+        if val then
             activeLoops.Upgrades = true
             local validUpgradeIds = getAllUpgradeIds()
             task.spawn(function()
-                while activeLoops.Upgrades and Rayfield.Flags.GameAutoUpgrade.CurrentValue do
+                while activeLoops.Upgrades do
+                    local flag = Rayfield.Flags["GameAutoUpgrade"]
+                    if not flag or not flag.CurrentValue then break end
                     local mode = (Rayfield.Flags.GameUpgradeMode.CurrentOption and Rayfield.Flags.GameUpgradeMode.CurrentOption) or {"All"}
                     local owned = dataCli:get("upgrades") or {}
                     local coins = dataCli:get("coins") or 0
@@ -677,12 +683,14 @@ GameTab:CreateToggle({
     Name = "Teleport To Nearest Enemy",
     CurrentValue = false,
     Flag = "GameTeleportToEnemy",
-    Callback = function(Value)
+    Callback = function(val)
         stopLoop("TeleportEnemy")
-        if Value then
+        if val then
             activeLoops.TeleportEnemy = true
             task.spawn(function()
-                while activeLoops.TeleportEnemy and Rayfield.Flags.GameTeleportToEnemy.CurrentValue do
+                while activeLoops.TeleportEnemy do
+                    local flag = Rayfield.Flags["GameTeleportToEnemy"]
+                    if not flag or not flag.CurrentValue then break end
                     local gameplayFolder = findGameplayFolder()
                     local enemiesFolder = gameplayFolder and gameplayFolder:FindFirstChild("Enemies")
                     local char = localPlr.Character
@@ -829,7 +837,7 @@ MiscTab:CreateToggle({
     Name = "Auto Claim Offline Earnings",
     CurrentValue = false,
     Flag = "MiscClaimOffline",
-    Callback = createLoop("OfflineEarnings", Rayfield.Flags.MiscClaimOffline, function()
+    Callback = createLoop("OfflineEarnings", "MiscClaimOffline", function()
         pcall(offRmt.InvokeServer, offRmt, "requestClaim")
         return true
     end, 60)
@@ -839,7 +847,7 @@ MiscTab:CreateToggle({
     Name = "Auto Claim Index Rewards",
     CurrentValue = false,
     Flag = "MiscClaimIndex",
-    Callback = createLoop("ClaimIndex", Rayfield.Flags.MiscClaimIndex, function()
+    Callback = createLoop("ClaimIndex", "MiscClaimIndex", function()
         local d = dataCli:get("index")
         if d and d.categories then
             local selectedCategories = Rayfield.Flags.MiscClaimIndexMode.CurrentOption or {"All"}
@@ -887,7 +895,7 @@ MiscTab:CreateToggle({
     Name = "Auto Use Potions",
     CurrentValue = false,
     Flag = "MiscUsePotions",
-    Callback = createLoop("UsePotions", Rayfield.Flags.MiscUsePotions, function()
+    Callback = createLoop("UsePotions", "MiscUsePotions", function()
         local boosts = dataCli:get("boosts") or {}
         local selected = Rayfield.Flags.MiscPotionTypes.CurrentOption or {}
         for _, kind in ipairs(boostKinds) do
@@ -935,7 +943,7 @@ MiscTab:CreateToggle({
     Name = "Auto Use Dice & Items",
     CurrentValue = false,
     Flag = "MiscUseDice",
-    Callback = createLoop("UseDice", Rayfield.Flags.MiscUseDice, function()
+    Callback = createLoop("UseDice", "MiscUseDice", function()
         local items = dataCli:get("items") or {}
         local selected = Rayfield.Flags.MiscDiceTypes.CurrentOption or {}
         for _, itemId in ipairs(inventoryItemIds) do
@@ -1030,7 +1038,7 @@ SettingsTab:CreateToggle({
             end)
             local VirtualUser = game:GetService("VirtualUser")
             antiAFKConn = localPlr.Idled:Connect(function()
-                if Rayfield.Flags.SettingsAntiAFK.CurrentValue then
+                if Rayfield.Flags.SettingsAntiAFK and Rayfield.Flags.SettingsAntiAFK.CurrentValue then
                     VirtualUser:CaptureController()
                     VirtualUser:ClickButton2(Vector2.new())
                 end
@@ -1039,14 +1047,12 @@ SettingsTab:CreateToggle({
     end
 })
 
-local antiKickActive = false
 SettingsTab:CreateToggle({
     Name = "Anti Kick",
     CurrentValue = false,
     Flag = "SettingsAntiKick",
     Callback = function(Value)
-        if Value and not antiKickActive then
-            antiKickActive = true
+        if Value then
             pcall(function()
                 local mt = getrawmetatable(game)
                 local old = mt.__namecall
@@ -1058,8 +1064,6 @@ SettingsTab:CreateToggle({
                 end)
                 setreadonly(mt, true)
             end)
-        elseif not Value then
-            antiKickActive = false
         end
     end
 })
@@ -1220,29 +1224,6 @@ task.spawn(function()
             end
         end
     end
-end)
-
-pcall(function()
-    for _, x in pairs(getconnections(localPlr.Idled)) do x:Disable() end
-end)
-local VirtualUser = game:GetService("VirtualUser")
-local antiAFKConnInitial = localPlr.Idled:Connect(function()
-    if Rayfield.Flags.SettingsAntiAFK and Rayfield.Flags.SettingsAntiAFK.CurrentValue then
-        VirtualUser:CaptureController()
-        VirtualUser:ClickButton2(Vector2.new())
-    end
-end)
-
-pcall(function()
-    local mt = getrawmetatable(game)
-    local old = mt.__namecall
-    setreadonly(mt, false)
-    mt.__namecall = newcclosure(function(self, ...)
-        local method = getnamecallmethod()
-        if method == "Kick" then return end
-        return old(self, ...)
-    end)
-    setreadonly(mt, true)
 end)
 
 Rayfield:LoadConfiguration()
