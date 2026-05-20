@@ -15,6 +15,10 @@ local rmt  = net:WaitForChild("_remotes")
 local dataCli = require(pkgs.DataService).client
 dataCli:waitForData()
 
+local Networker       = require(pkgs.Networker)
+local inventorySvc    = Networker.client.new("InventoryService")
+local xpTransferSvc   = Networker.client.new("XpTransferService")
+
 local rollRmt  = rmt:WaitForChild("RollService"):WaitForChild("RemoteFunction")
 local codeRmt  = rmt:WaitForChild("CodeService"):WaitForChild("RemoteFunction")
 local invRmt   = rmt:WaitForChild("InventoryService"):WaitForChild("RemoteFunction")
@@ -41,14 +45,10 @@ local diceUtils      = require(src.Features.SpecialDice.SpecialDiceServiceUtils)
 
 -- // DYNAMIC DATA FROM MODULES
 
--- Boost/potion kinds: ["luck", "ultraLuck", "currency", "rollSpeed"]
 local boostKinds = boostUtils.getKinds()
 
--- Dice item ids: ["jackpotSpin", "bigDice", "hugeDice", "shinyDice", "invertedDice"]
--- getInventoryItemIds excludes jackpotSpin, gives the actual usable dice
 local diceItemIds = diceUtils.getInventoryItemIds()
 
--- Build display name map for dice: id -> name  (e.g. "bigDice" -> "Big Dice")
 local diceDisplayNames = {}
 local diceDisplayToId  = {}
 for _, id in ipairs(diceItemIds) do
@@ -58,7 +58,6 @@ for _, id in ipairs(diceItemIds) do
     diceDisplayToId[displayName] = id
 end
 
--- Rarity names from RarityTiers in order
 local rarityNames = {}
 for _, tier in ipairs(rarityTiers.getTiers()) do
     table.insert(rarityNames, tier.name)
@@ -167,7 +166,28 @@ local function parseLuck(val)
     return n and (n * mult) or 0
 end
 
--- Collect all upgrade IDs and their costs from upgTree dynamically
+local function getBestSlimeGuid()
+    local stats = dataCli:get("stats") or {}
+    local rarest = stats.rarestRoll
+    if not rarest or not rarest.slimeData then return nil end
+    local targetSlime     = rarest.slimeData
+    local targetMutations = targetSlime.mutations or {}
+    local inventory       = dataCli:get("inventory") or {}
+    for guid, data in pairs(inventory) do
+        if type(data) == "table" and data.id == targetSlime.id then
+            local match = true
+            for k, v in pairs(targetMutations) do
+                if data.mutations and data.mutations[k] ~= v then
+                    match = false
+                    break
+                end
+            end
+            if match then return guid end
+        end
+    end
+    return nil
+end
+
 local function buildUpgradeList()
     local upgs = {}
     local costMap = {}
@@ -316,26 +336,75 @@ FarmingTab:CreateToggle({
 })
 
 FarmingTab:CreateToggle({
-    Name         = "Auto Transfer Levels To Best Slime",
-    CurrentValue = false,
-    Flag         = "FarmingTransferLevels",
-    Callback     = function(Value) end,
-})
-
-FarmingTab:CreateToggle({
-    Name         = "Auto Feed",
+    Name         = "Auto Feed Best Slime",
     CurrentValue = false,
     Flag         = "FarmingAutoFeed",
-    Callback     = function(Value) end,
+    Callback     = function(Value)
+        if Value then
+            task.spawn(function()
+                while Rayfield.Flags.FarmingAutoFeed.CurrentValue do
+                    local bestGuid = getBestSlimeGuid()
+                    if bestGuid then
+                        local items    = dataCli:get("items") or {}
+                        local selected = Rayfield.Flags.FarmingFruitTypes.CurrentOption or {}
+                        local toFeed = #selected > 0 and selected or nil
+                        for foodType, amount in pairs(items) do
+                            if type(amount) == "number" and amount > 0 then
+                                local allowed = true
+                                if toFeed then
+                                    allowed = false
+                                    for _, f in ipairs(toFeed) do
+                                        if f == foodType then allowed = true break end
+                                    end
+                                end
+                                if allowed then
+                                    pcall(inventorySvc.fetch, inventorySvc, "requestUseFood", foodType, bestGuid, amount)
+                                    task.wait(0.3)
+                                end
+                            end
+                        end
+                    end
+                    task.wait(30)
+                end
+            end)
+        end
+    end,
 })
 
 FarmingTab:CreateDropdown({
-    Name            = "Feed Mode",
-    Options         = {"Best Slime", "Whole Team Split"},
-    CurrentOption   = {"Best Slime"},
-    MultipleOptions = false,
-    Flag            = "FarmingAutoFeedMode",
+    Name            = "Fruits To Feed",
+    Options         = {"All"},
+    CurrentOption   = {"All"},
+    MultipleOptions = true,
+    Flag            = "FarmingFruitTypes",
     Callback        = function(Options) end,
+})
+
+FarmingTab:CreateToggle({
+    Name         = "Auto Transfer XP To Best Slime",
+    CurrentValue = false,
+    Flag         = "FarmingTransferXP",
+    Callback     = function(Value)
+        if Value then
+            task.spawn(function()
+                while Rayfield.Flags.FarmingTransferXP.CurrentValue do
+                    local bestGuid  = getBestSlimeGuid()
+                    local inventory = dataCli:get("inventory") or {}
+                    if bestGuid then
+                        for guid, data in pairs(inventory) do
+                            if type(data) == "table" and data.id and guid ~= bestGuid then
+                                if (data.xp or 0) > 0 or (data.level or 1) > 1 then
+                                    pcall(xpTransferSvc.fetch, xpTransferSvc, "requestTransferXp", guid, bestGuid)
+                                    task.wait(0.5)
+                                end
+                            end
+                        end
+                    end
+                    task.wait(30)
+                end
+            end)
+        end
+    end,
 })
 
 FarmingTab:CreateSection("Rolling")
@@ -378,6 +447,16 @@ FarmingTab:CreateToggle({
             end)
         end
     end,
+})
+
+FarmingTab:CreateSlider({
+    Name         = "Collect Loot Radius",
+    Range        = {0, 500},
+    Increment    = 1,
+    Suffix       = "",
+    CurrentValue = 500,
+    Flag         = "FarmingLootRadius",
+    Callback     = function(Value) end,
 })
 
 -- // GAME TAB
@@ -440,7 +519,6 @@ GameTab:CreateToggle({
                             if cost then
                                 local amt = cost.amount or 0
                                 local cur = cost.currency
-                                -- cur values from upgTree: "coins", "goop", "rollCurrency"
                                 local modeOk = mode == "All"
                                     or (mode == "Coins" and cur == "coins")
                                     or (mode == "Goop"  and cur == "goop")
@@ -470,14 +548,16 @@ GameTab:CreateDropdown({
     Callback        = function(Options) end,
 })
 
-GameTab:CreateSection("Enemies")
+GameTab:CreateSection("Combat")
 
 GameTab:CreateToggle({
-    Name         = "Teleport To Nearby Enemies",
+    Name         = "Teleport To Nearest Enemy",
     CurrentValue = false,
     Flag         = "GameTeleportEnemies",
     Callback     = function(Value) end,
 })
+
+GameTab:CreateSection("Enemies")
 
 GameTab:CreateToggle({
     Name         = "Super Fast Enemies",
@@ -515,24 +595,6 @@ GameTab:CreateSlider({
     Callback     = function(Value) end,
 })
 
-GameTab:CreateSection("Index")
-
-GameTab:CreateToggle({
-    Name         = "Auto Complete Index",
-    CurrentValue = false,
-    Flag         = "GameAutoCompleteIndex",
-    Callback     = function(Value) end,
-})
-
-GameTab:CreateDropdown({
-    Name            = "Index Mode",
-    Options         = {"Normal", "Shiny", "Big", "Huge", "Inverted"},
-    CurrentOption   = {"Normal"},
-    MultipleOptions = true,
-    Flag            = "GameIndexMode",
-    Callback        = function(Options) end,
-})
-
 -- // MISC TAB
 
 local MiscTab = Window:CreateTab("Misc", 96334002390551)
@@ -546,7 +608,6 @@ MiscTab:CreateToggle({
     Callback     = function(Value)
         if Value then
             task.spawn(function()
-                -- codes list is intentionally hardcoded; no module exposes known codes
                 local knownCodes = {}
                 local redeemedCodes = dataCli._data._data._codes or {}
                 for _, cd in ipairs(knownCodes) do
@@ -586,7 +647,6 @@ MiscTab:CreateToggle({
                 local function claimAll()
                     local d = dataCli:get("index")
                     if not d or not d.categories then return end
-                    -- idxRewards is the live module; categories and reward keys come from it
                     for cat, rewards in pairs(idxRewards) do
                         local cd = d.categories[cat]
                         if cd then
@@ -636,7 +696,6 @@ MiscTab:CreateToggle({
                     local boosts   = dataCli:get("boosts") or {}
                     local selected = Rayfield.Flags.MiscPotionTypes.CurrentOption or {}
                     for _, boostId in ipairs(selected) do
-                        -- boostId is the raw kind key from boostUtils.getKinds()
                         local d = boosts[boostId]
                         if d and (d.amount or 0) > 0 then
                             pcall(boostRmt.InvokeServer, boostRmt, "requestUseBoost", boostId)
@@ -648,7 +707,6 @@ MiscTab:CreateToggle({
     end,
 })
 
--- Potion options built dynamically from BoostServiceUtils.getKinds()
 MiscTab:CreateDropdown({
     Name            = "Potion Types",
     Options         = boostKinds,
@@ -669,7 +727,6 @@ MiscTab:CreateToggle({
                     local items    = dataCli:get("items") or {}
                     local selected = Rayfield.Flags.MiscDiceTypes.CurrentOption or {}
                     for _, displayName in ipairs(selected) do
-                        -- map display name back to raw item id
                         local itemId = diceDisplayToId[displayName]
                         if itemId and (items[itemId] or 0) > 0 then
                             pcall(invRmt.InvokeServer, invRmt, "requestUseItem", itemId)
@@ -681,7 +738,6 @@ MiscTab:CreateToggle({
     end,
 })
 
--- Dice options built dynamically from SpecialDiceServiceUtils.getInventoryItemIds() + getDefinition()
 do
     local diceDisplayList = {}
     for _, id in ipairs(diceItemIds) do
@@ -696,35 +752,6 @@ do
         Callback        = function(Options) end,
     })
 end
-
-MiscTab:CreateSection("Social")
-
-MiscTab:CreateToggle({
-    Name         = "Auto Send & Accept Friend Requests",
-    CurrentValue = false,
-    Flag         = "MiscFriendRequests",
-    Callback     = function(Value)
-        if Value then
-            task.spawn(function()
-                while Rayfield.Flags.MiscFriendRequests.CurrentValue do
-                    pcall(function()
-                        for _, player in ipairs(plrs:GetPlayers()) do
-                            if player ~= localPlr then
-                                local rel = localPlr:GetFriendStatus(player.UserId)
-                                if rel == Enum.FriendStatus.NotFriend then
-                                    localPlr:RequestFriendship(player)
-                                elseif rel == Enum.FriendStatus.FriendRequestReceived then
-                                    localPlr:AcceptFriendRequestAsync(player.UserId)
-                                end
-                            end
-                        end
-                    end)
-                    task.wait(300)
-                end
-            end)
-        end
-    end,
-})
 
 -- // WEBHOOK TAB
 
@@ -751,7 +778,7 @@ WebhookTab:CreateButton({
                     content  = ping,
                     username = "Game Hub",
                     embeds   = {{
-                        title       = "âœ… Webhook Test",
+                        title       = "✅ Webhook Test",
                         description = "Your webhook is working correctly!",
                         color       = 0x2ecc71,
                     }}
@@ -800,7 +827,6 @@ WebhookTab:CreateToggle({
     Callback     = function(Value) end,
 })
 
--- Rarity options built dynamically from RarityTiers.getTiers()
 WebhookTab:CreateDropdown({
     Name            = "Rarity To Send",
     Options         = rarityNames,
@@ -870,11 +896,9 @@ SettingsTab:CreateToggle({
 
 SettingsTab:CreateSection("Display")
 
-SettingsTab:CreateToggle({
-    Name         = "Display FPS & Server Ping",
-    CurrentValue = false,
-    Flag         = "SettingsDisplayFPS",
-    Callback     = function(Value) end,
+SettingsTab:CreateParagraph({
+    Title   = "FPS & Server Ping",
+    Content = "Enable to display live FPS and server ping. (coming soon)"
 })
 
 -- // ANTI AFK (always active, respects toggle state)
@@ -892,7 +916,7 @@ end
 -- // WEBHOOK ROLL LISTENER
 
 task.spawn(function()
-    local sentKeys       = {}
+    local sentKeys        = {}
     local lastFingerprint = nil
 
     local function sendWebhook(pName, displayName, rarity, chanceText, statsText, muts, mutList, img, rolls, coins, kills)
@@ -918,8 +942,8 @@ task.spawn(function()
         if mutList and #mutList > 0 then
             table.insert(fields, {name = "Mutations", value = table.concat(mutList, ", "), inline = true})
         end
-        table.insert(fields, {name = "ðŸª™ Coins", value = formatNumber(coins), inline = true})
-        table.insert(fields, {name = "âš”ï¸ Kills", value = formatNumber(kills), inline = true})
+        table.insert(fields, {name = "🪙 Coins", value = formatNumber(coins), inline = true})
+        table.insert(fields, {name = "⚔️ Kills", value = formatNumber(kills), inline = true})
 
         local sz = getMutationSize(muts)
         pcall(function()
@@ -932,7 +956,7 @@ task.spawn(function()
                     username = "Game Hub",
                     embeds   = {{
                         title       = "New Slime Rolled!",
-                        description = string.format("**||%s||** rolled **%s**!\n\nðŸŽ² **Total Rolls:** %s", pName, displayName, ordinal(rolls)),
+                        description = string.format("**||%s||** rolled **%s**!\n\n🎲 **Total Rolls:** %s", pName, displayName, ordinal(rolls)),
                         thumbnail   = finalImg and {url = finalImg, width = sz, height = sz} or nil,
                         fields      = fields,
                         color       = getMutationColor(muts),
@@ -976,10 +1000,7 @@ task.spawn(function()
             local isInverted  = muts and muts.inverted == true
             local hasMutation = muts ~= nil
 
-            -- Inverted filter: only send if toggle is ON
             if isInverted and not Rayfield.Flags.WebhookSendInverted.CurrentValue then continue end
-
-            -- Mutation filter: if OFF, skip non-inverted mutations (shiny/big/huge)
             if hasMutation and not isInverted and not Rayfield.Flags.WebhookSendMutations.CurrentValue then continue end
 
             local img  = isInverted and (slime and slime.invertedIcon or "N/A") or (slime and slime.image or "N/A")
@@ -994,10 +1015,8 @@ task.spawn(function()
             local finalOdds = baseOdds and (baseOdds / mult) or nil
             local chanceNum = finalOdds and (1 / finalOdds) or nil
 
-            -- Minimum luck filter
             if minLuck > 0 and chanceNum and chanceNum < minLuck then continue end
 
-            -- Rarity filter (final say â€” checked last)
             local rarity = getRarityFromOdds(baseOdds)
             local rarityAllowed = false
             for _, v in ipairs(allowedRarities) do
@@ -1013,11 +1032,11 @@ task.spawn(function()
 
             local statsText = ""
             if finalDmg > 0 and finalHp > 0 then
-                statsText = string.format("âš”ï¸ %s  â¤ï¸ %s", formatNumber(finalDmg), formatNumber(finalHp))
+                statsText = string.format("⚔️ %s  ❤️ %s", formatNumber(finalDmg), formatNumber(finalHp))
             elseif finalDmg > 0 then
-                statsText = string.format("âš”ï¸ %s", formatNumber(finalDmg))
+                statsText = string.format("⚔️ %s", formatNumber(finalDmg))
             elseif finalHp > 0 then
-                statsText = string.format("â¤ï¸ %s", formatNumber(finalHp))
+                statsText = string.format("❤️ %s", formatNumber(finalHp))
             end
 
             local pName = localPlr and localPlr.Name or "Someone"
