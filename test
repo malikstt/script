@@ -2,6 +2,9 @@ local RS        = game:GetService("ReplicatedStorage")
 local plrs      = game:GetService("Players")
 local http      = game:GetService("HttpService")
 local localPlr  = plrs.LocalPlayer
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local StarterGui = game:GetService("StarterGui")
 
 local pkgs  = RS:WaitForChild("Packages")
 local idx   = pkgs:WaitForChild("_Index")
@@ -27,23 +30,31 @@ if not src then warn("Main module missing") return end
 local itms      = src:WaitForChild("Game"):WaitForChild("Items")
 local rollFeat  = src:WaitForChild("Features"):WaitForChild("Roll")
 local mutFolder = src:WaitForChild("Features"):WaitForChild("Mutations")
-local boostFeat = src:WaitForChild("Features"):WaitForChild("Boosts")
-local itemsFeat = src:WaitForChild("Features"):WaitForChild("Items")
 
 local rollSlice   = require(rollFeat:WaitForChild("RollSlice"))
 local slimeData   = require(itms:WaitForChild("Slimes"))
 local rarityTiers = require(itms:WaitForChild("RarityTiers"))
 local mutations   = require(mutFolder:WaitForChild("Mutations"))
-local boostModule = require(boostFeat:WaitForChild("Boosts"))
-local itemModule  = require(itemsFeat:WaitForChild("Items"))
+local boostModule = require(RS.Source.Features.Boosts.BoostServiceUtils)
+local itemModule  = require(RS.Source.Features.SpecialDice.SpecialDiceServiceUtils)
 local upgTreeMod  = require(RS.Source.Features.Upgrades.UpgradeTree)
 local upgUtils    = require(RS.Source.Features.Upgrades.UpgradeServiceUtils)
 local zonesData   = require(RS.Source.Game.Items.Zones)
 local idxRewards  = require(RS.Source.Features.Index.IndexRewards)
 
+-- // GAMEPLAY FOLDER HELPER (for enemy/slime speed features)
+
+local function findGameplayFolder()
+    for _, child in ipairs(workspace:GetChildren()) do
+        if string.sub(child.Name, 1, 8) == "Gameplay" then
+            return child
+        end
+    end
+    return nil
+end
+
 -- // MODULE-DRIVEN LOOKUPS
 
--- ✅ All rarity names from rarityTiers.getTiers()
 local function getAllRarityNames()
     local names = {}
     local ok, tiers = pcall(rarityTiers.getTiers)
@@ -55,19 +66,15 @@ local function getAllRarityNames()
     return names
 end
 
--- ✅ All boost kinds from boostModule.getKinds()
 local function getAllBoostKinds()
     local kinds = {}
     local ok, result = pcall(boostModule.getKinds)
     if ok and result then
-        for _, kind in ipairs(result) do
-            table.insert(kinds, kind)
-        end
+        for _, kind in ipairs(result) do table.insert(kinds, kind) end
     end
     return kinds
 end
 
--- ✅ All inventory item ids from itemModule.getInventoryItemIds()
 local function getAllInventoryItemIds()
     local ids = {}
     local ok, result = pcall(itemModule.getInventoryItemIds)
@@ -77,8 +84,6 @@ local function getAllInventoryItemIds()
     return ids
 end
 
--- ✅ All mutation display names from upgTreeMod.getUnlockedMutations()
---    using a mock "owns everything" table so we get the full possible set
 local allMutationNames = (function()
     local mockOwned = setmetatable({}, {__index = function() return true end})
     local result = {"Normal"}
@@ -92,8 +97,6 @@ local allMutationNames = (function()
     return result
 end)()
 
--- ✅ All unique currency names from upgTreeMod.enums.levelBasedUpgrades cost entries
---    so UpgradeModeDropdown never has hardcoded currency strings
 local allUpgradeCurrencies = (function()
     local seen = {}
     local result = {"All"}
@@ -102,7 +105,6 @@ local allUpgradeCurrencies = (function()
             local cur = entry.cost.currency
             if not seen[cur] then
                 seen[cur] = true
-                -- Capitalize for display
                 local display = cur:sub(1,1):upper() .. cur:sub(2)
                 table.insert(result, display)
             end
@@ -135,7 +137,6 @@ local function formatNumber(n)
     return tostring(math.floor(n))
 end
 
--- ✅ Delegates to rarityTiers.getTier() — no hardcoded rarity names
 local function getRarityFromOdds(odds)
     if not odds or odds <= 0 then return "Unknown" end
     local ok, tier = pcall(rarityTiers.getTier, odds)
@@ -185,7 +186,6 @@ local function getThumbnailUrl(assetId)
     return nil
 end
 
--- ✅ Uses mutations.getIds() to enumerate present mutation keys — no hardcoded names
 local function getMutationSize(muts)
     if not muts then return 64 end
     local ids = mutations.getIds(muts)
@@ -197,10 +197,8 @@ local function getMutationSize(muts)
     return 64
 end
 
--- ✅ Uses mutations.getIds() — color map keys match module mutation ids exactly
 local function getMutationColor(muts)
     if not muts then return nil end
-    -- Priority order: inverted > huge > big > shiny
     local priority = {"inverted", "huge", "big", "shiny"}
     local colorMap = {
         inverted = 0x9b59b6,
@@ -229,6 +227,37 @@ local function parseLuck(val)
     end
     local n = tonumber(v)
     return n and (n * mult) or 0
+end
+
+-- // GAMEPLAY ENTITY HELPERS (shared by enemy/slime speed + teleport features)
+
+local function getRoot(instance)
+    if instance.PrimaryPart then return instance.PrimaryPart end
+    return instance:FindFirstChild("RootPart")
+        or instance:FindFirstChild("HumanoidRootPart")
+        or instance:FindFirstChildWhichIsA("BasePart")
+end
+
+local function getRandomTarget(folder)
+    if not folder then return nil end
+    local valid = {}
+    for _, child in ipairs(folder:GetChildren()) do
+        if child:IsA("Model") and getRoot(child) then
+            table.insert(valid, child)
+        end
+    end
+    if #valid == 0 then return nil end
+    return valid[math.random(1, #valid)]
+end
+
+local function setModelSpeed(folder, speed)
+    if not folder then return end
+    for _, model in ipairs(folder:GetChildren()) do
+        if model:IsA("Model") then
+            local hum = model:FindFirstChildWhichIsA("Humanoid")
+            if hum then hum.WalkSpeed = speed end
+        end
+    end
 end
 
 -- // RAYFIELD UI
@@ -265,7 +294,7 @@ MainTab:CreateSection("Welcome")
 
 MainTab:CreateParagraph({
     Title   = "Enabled By Default",
-    Content = "[+] Anti AFK"
+    Content = "[+] Anti AFK\n[+] Anti Kick"
 })
 
 MainTab:CreateParagraph({
@@ -304,16 +333,11 @@ local StayInBestZoneToggle = FarmingTab:CreateToggle({
         if Value then
             task.spawn(function()
                 while Rayfield.Flags.FarmingStayInBestZone.CurrentValue do
-                    -- ✅ ZONE_CEIL from zonesData.getMaxZone() — total zones in game
-                    -- ✅ ownedMax from dataCli "maxZone" — best ever unlocked (never drops)
-                    -- Both read fresh each loop so they reflect current state automatically
                     local ZONE_CEIL = zonesData.getMaxZone()
                     local ownedMax  = dataCli:get("maxZone") or 1
                     local target    = math.min(ownedMax, ZONE_CEIL)
-
                     for z = target, 1, -1 do
                         if not Rayfield.Flags.FarmingStayInBestZone.CurrentValue then break end
-                        -- ✅ hasZone() validates index exists before requesting
                         if zonesData.hasZone(z) then
                             local ok = pcall(zoneRmt.InvokeServer, zoneRmt, "requestTeleportZone", z)
                             if ok then
@@ -338,7 +362,6 @@ local UnlockAffordableZonesToggle = FarmingTab:CreateToggle({
         if Value then
             task.spawn(function()
                 while Rayfield.Flags.FarmingUnlockAffordableZones.CurrentValue do
-                    -- ✅ Check next zone exists in data before attempting purchase
                     local nextZone = (dataCli:get("maxZone") or 1) + 1
                     if zonesData.hasZone(nextZone) then
                         pcall(zoneRmt.InvokeServer, zoneRmt, "requestPurchaseZone")
@@ -458,7 +481,6 @@ local AutoRebirthToggle = GameTab:CreateToggle({
                     local rbs     = dataCli:get("rebirths") or 0
                     local gp      = dataCli:get("goop") or 0
                     local fz      = dataCli:get("furthestZone") or 0
-                    -- ⚠️ Rebirth cost formula still hardcoded — needs Rebirth module
                     local cost    = (2 ^ rbs) * 500
                     local minZone = tonumber(Rayfield.Flags.GameMinZoneRebirth.CurrentValue) or 0
                     if fz >= minZone and gp >= cost then
@@ -489,27 +511,22 @@ local AutoUpgradeToggle = GameTab:CreateToggle({
     Callback     = function(Value)
         if Value then
             task.spawn(function()
-                -- ✅ Valid upgrade IDs from enums.levelBasedUpgrades — no tree walking
                 local validUpgradeIds = {}
                 for id in pairs(upgTreeMod.enums.levelBasedUpgrades) do
                     table.insert(validUpgradeIds, id)
                 end
-
                 while task.wait(0.5) and Rayfield.Flags.GameAutoUpgrade.CurrentValue do
                     local mode  = Rayfield.Flags.GameUpgradeMode.CurrentOption[1] or "All"
                     local owned = dataCli:get("upgrades") or {}
                     local coins = dataCli:get("coins") or 0
                     local goop  = dataCli:get("goop") or 0
                     local rc    = dataCli:get("rollCurrency") or 0
-
                     for _, id in ipairs(validUpgradeIds) do
-                        -- ✅ upgUtils.ownsUpgrade instead of raw table check
                         if not upgUtils.ownsUpgrade(id, owned) then
                             local entry = upgTreeMod.enums.levelBasedUpgrades[id]
                             if entry and entry.cost then
                                 local amt = entry.cost.amount or 0
                                 local cur = entry.cost.currency
-                                -- ✅ Mode compare against raw currency string from module
                                 local modeOk = mode == "All"
                                     or string.lower(mode) == string.lower(cur)
                                 local affordable = (cur == "coins" and coins >= amt)
@@ -528,7 +545,6 @@ local AutoUpgradeToggle = GameTab:CreateToggle({
     end,
 })
 
--- ✅ Currency options derived from module upgrade entries — no hardcoded currency names
 local UpgradeModeDropdown = GameTab:CreateDropdown({
     Name            = "Upgrade Mode",
     Options         = allUpgradeCurrencies,
@@ -544,14 +560,86 @@ local TeleportEnemiesToggle = GameTab:CreateToggle({
     Name         = "Teleport To Nearby Enemies",
     CurrentValue = false,
     Flag         = "GameTeleportEnemies",
-    Callback     = function(Value) end,
+    Callback     = function(Value)
+        if Value then
+            task.spawn(function()
+                while Rayfield.Flags.GameTeleportEnemies.CurrentValue do
+                    local gameplayFolder = findGameplayFolder()
+                    local enemiesFolder  = gameplayFolder and gameplayFolder:FindFirstChild("Enemies")
+                    local slimesFolder   = gameplayFolder and gameplayFolder:FindFirstChild("Slimes")
+                    local char           = localPlr.Character
+                    local hrp            = char and char:FindFirstChild("HumanoidRootPart")
+
+                    if hrp and enemiesFolder then
+                        -- Find closest enemy to player
+                        local closest, closestDist = nil, math.huge
+                        for _, enemy in ipairs(enemiesFolder:GetChildren()) do
+                            if enemy:IsA("Model") then
+                                local root = getRoot(enemy)
+                                if root then
+                                    local dist = (root.Position - hrp.Position).Magnitude
+                                    if dist < closestDist then
+                                        closest     = enemy
+                                        closestDist = dist
+                                    end
+                                end
+                            end
+                        end
+
+                        -- Teleport all slimes to that enemy
+                        if closest and slimesFolder then
+                            local enemyRoot = getRoot(closest)
+                            if enemyRoot then
+                                for _, slime in ipairs(slimesFolder:GetChildren()) do
+                                    if slime:IsA("Model") then
+                                        local slimeRoot = getRoot(slime)
+                                        if slimeRoot then
+                                            slimeRoot.CFrame = enemyRoot.CFrame + Vector3.new(math.random(-3,3), 0, math.random(-3,3))
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    task.wait(0.5)
+                end
+            end)
+        end
+    end,
 })
 
 local SuperFastEnemiesToggle = GameTab:CreateToggle({
     Name         = "Super Fast Enemies",
     CurrentValue = false,
     Flag         = "GameSuperFastEnemies",
-    Callback     = function(Value) end,
+    Callback     = function(Value)
+        local gameplayFolder = findGameplayFolder()
+        local enemiesFolder  = gameplayFolder and gameplayFolder:FindFirstChild("Enemies")
+        if not enemiesFolder then return end
+
+        local speed = Value and Rayfield.Flags.GameEnemySpeed.CurrentValue or 16
+
+        -- Set speed on existing enemies
+        setModelSpeed(enemiesFolder, speed)
+
+        -- Keep applying to newly spawned enemies while toggle is on
+        if Value then
+            task.spawn(function()
+                local conn
+                conn = enemiesFolder.ChildAdded:Connect(function(child)
+                    if not Rayfield.Flags.GameSuperFastEnemies.CurrentValue then
+                        conn:Disconnect()
+                        return
+                    end
+                    if child:IsA("Model") then
+                        task.wait() -- wait for humanoid to load
+                        local hum = child:FindFirstChildWhichIsA("Humanoid")
+                        if hum then hum.WalkSpeed = Rayfield.Flags.GameEnemySpeed.CurrentValue end
+                    end
+                end)
+            end)
+        end
+    end,
 })
 
 local EnemySpeedSlider = GameTab:CreateSlider({
@@ -561,7 +649,14 @@ local EnemySpeedSlider = GameTab:CreateSlider({
     Suffix       = "",
     CurrentValue = 16,
     Flag         = "GameEnemySpeed",
-    Callback     = function(Value) end,
+    Callback     = function(Value)
+        -- Live-update speed if toggle is on
+        if Rayfield.Flags.GameSuperFastEnemies.CurrentValue then
+            local gameplayFolder = findGameplayFolder()
+            local enemiesFolder  = gameplayFolder and gameplayFolder:FindFirstChild("Enemies")
+            if enemiesFolder then setModelSpeed(enemiesFolder, Value) end
+        end
+    end,
 })
 
 GameTab:CreateSection("Slime Speed")
@@ -570,7 +665,32 @@ local SuperFastSlimeToggle = GameTab:CreateToggle({
     Name         = "Super Fast Slime Speed",
     CurrentValue = false,
     Flag         = "GameSuperFastSlime",
-    Callback     = function(Value) end,
+    Callback     = function(Value)
+        local gameplayFolder = findGameplayFolder()
+        local slimesFolder   = gameplayFolder and gameplayFolder:FindFirstChild("Slimes")
+        if not slimesFolder then return end
+
+        local speed = Value and Rayfield.Flags.GameSlimeSpeed.CurrentValue or 16
+
+        setModelSpeed(slimesFolder, speed)
+
+        if Value then
+            task.spawn(function()
+                local conn
+                conn = slimesFolder.ChildAdded:Connect(function(child)
+                    if not Rayfield.Flags.GameSuperFastSlime.CurrentValue then
+                        conn:Disconnect()
+                        return
+                    end
+                    if child:IsA("Model") then
+                        task.wait()
+                        local hum = child:FindFirstChildWhichIsA("Humanoid")
+                        if hum then hum.WalkSpeed = Rayfield.Flags.GameSlimeSpeed.CurrentValue end
+                    end
+                end)
+            end)
+        end
+    end,
 })
 
 local SlimeSpeedSlider = GameTab:CreateSlider({
@@ -580,7 +700,13 @@ local SlimeSpeedSlider = GameTab:CreateSlider({
     Suffix       = "",
     CurrentValue = 16,
     Flag         = "GameSlimeSpeed",
-    Callback     = function(Value) end,
+    Callback     = function(Value)
+        if Rayfield.Flags.GameSuperFastSlime.CurrentValue then
+            local gameplayFolder = findGameplayFolder()
+            local slimesFolder   = gameplayFolder and gameplayFolder:FindFirstChild("Slimes")
+            if slimesFolder then setModelSpeed(slimesFolder, Value) end
+        end
+    end,
 })
 
 GameTab:CreateSection("Index")
@@ -592,7 +718,6 @@ local AutoCompleteIndexToggle = GameTab:CreateToggle({
     Callback     = function(Value) end,
 })
 
--- ✅ Mutation names from upgTreeMod.getUnlockedMutations() via mock-owned table
 local IndexModeDropdown = GameTab:CreateDropdown({
     Name            = "Index Mode",
     Options         = allMutationNames,
@@ -608,7 +733,6 @@ local MiscTab = Window:CreateTab("Misc", 96334002390551)
 
 MiscTab:CreateSection("Codes & Rewards")
 
--- ⚠️ codeList still hardcoded — needs Codes module to fix
 local RedeemCodesToggle = MiscTab:CreateToggle({
     Name         = "Auto Redeem Codes",
     CurrentValue = false,
@@ -682,7 +806,6 @@ local ClaimIndexToggle = MiscTab:CreateToggle({
     end,
 })
 
--- ✅ Mutation names from module, prepended with "All"
 local ClaimIndexModeDropdown = MiscTab:CreateDropdown({
     Name            = "Index Reward Mode",
     Options         = (function()
@@ -711,7 +834,6 @@ local UsePotionsToggle = MiscTab:CreateToggle({
                     local boosts   = dataCli:get("boosts") or {}
                     local selected = Rayfield.Flags.MiscPotionTypes.CurrentOption or {}
                     for _, kind in ipairs(selected) do
-                        -- ✅ Validate via boostModule.getConfig() before using
                         local ok, cfg = pcall(boostModule.getConfig, kind)
                         local d = boosts[kind]
                         if ok and cfg and d and (d.amount or 0) > 0 then
@@ -724,7 +846,6 @@ local UsePotionsToggle = MiscTab:CreateToggle({
     end,
 })
 
--- ✅ Options from boostModule.getKinds()
 local PotionTypesDropdown = MiscTab:CreateDropdown({
     Name            = "Potion Types",
     Options         = #boostKinds > 0 and boostKinds or {"Luck"},
@@ -747,7 +868,6 @@ local UseDiceToggle = MiscTab:CreateToggle({
                     local items    = dataCli:get("items") or {}
                     local selected = Rayfield.Flags.MiscDiceTypes.CurrentOption or {}
                     for _, itemId in ipairs(selected) do
-                        -- ✅ Validate via itemModule.getDefinition() before using
                         local ok, def = pcall(itemModule.getDefinition, itemId)
                         if ok and def and (items[itemId] or 0) > 0 then
                             pcall(invRmt.InvokeServer, invRmt, "requestUseItem", itemId)
@@ -759,7 +879,6 @@ local UseDiceToggle = MiscTab:CreateToggle({
     end,
 })
 
--- ✅ Options from itemModule.getInventoryItemIds()
 local DiceTypesDropdown = MiscTab:CreateDropdown({
     Name            = "Dice & Item Types",
     Options         = #inventoryItemIds > 0 and inventoryItemIds or {"Luck Dice"},
@@ -873,7 +992,6 @@ local SendMutationsToggle = WebhookTab:CreateToggle({
     Callback     = function(Value) end,
 })
 
--- ✅ Rarity options from rarityTiers.getTiers()
 local allRarityNames = getAllRarityNames()
 
 local RarityDropdown = WebhookTab:CreateDropdown({
@@ -906,8 +1024,15 @@ local AntiAFKToggle = SettingsTab:CreateToggle({
     Flag         = "SettingsAntiAFK",
     Callback     = function(Value)
         if Value then
+            -- Method 1: disable Idled connections
+            pcall(function()
+                for _, x in pairs(getconnections(localPlr.Idled)) do
+                    x:Disable()
+                end
+            end)
+            -- Method 2: VirtualUser fallback
             local VirtualUser = game:GetService("VirtualUser")
-            game:GetService("Players").LocalPlayer.Idled:Connect(function()
+            localPlr.Idled:Connect(function()
                 if Rayfield.Flags.SettingsAntiAFK.CurrentValue then
                     VirtualUser:CaptureController()
                     VirtualUser:ClickButton2(Vector2.new())
@@ -921,14 +1046,45 @@ local AntiKickToggle = SettingsTab:CreateToggle({
     Name         = "Anti Kick",
     CurrentValue = false,
     Flag         = "SettingsAntiKick",
-    Callback     = function(Value) end,
+    Callback     = function(Value)
+        if Value then
+            pcall(function()
+                local mt  = getrawmetatable(game)
+                local old = mt.__namecall
+                setreadonly(mt, false)
+                mt.__namecall = newcclosure(function(self, ...)
+                    local method = getnamecallmethod()
+                    if method == "Kick" then return end
+                    return old(self, ...)
+                end)
+                setreadonly(mt, true)
+            end)
+        end
+    end,
 })
 
 local AutoRejoinToggle = SettingsTab:CreateToggle({
     Name         = "Auto Rejoin On Disconnect",
     CurrentValue = false,
     Flag         = "SettingsAutoRejoin",
-    Callback     = function(Value) end,
+    Callback     = function(Value)
+        if Value then
+            task.spawn(function()
+                local placeId = game.PlaceId
+                game:GetService("RunService").Heartbeat:Wait()
+                local conn
+                conn = game:GetService("Players").LocalPlayer.AncestryChanged:Connect(function()
+                    if not Rayfield.Flags.SettingsAutoRejoin.CurrentValue then
+                        conn:Disconnect()
+                        return
+                    end
+                    pcall(function()
+                        game:GetService("TeleportService"):Teleport(placeId)
+                    end)
+                end)
+            end)
+        end
+    end,
 })
 
 SettingsTab:CreateSection("Performance")
@@ -950,17 +1106,47 @@ local GPUSaverToggle = SettingsTab:CreateToggle({
     Name         = "GPU Saver",
     CurrentValue = false,
     Flag         = "SettingsGPUSaver",
-    Callback     = function(Value) end,
+    Callback     = function(Value)
+        pcall(function()
+            game:GetService("RunService"):Set3dRenderingEnabled(not Value)
+        end)
+    end,
 })
 
 SettingsTab:CreateSection("Display")
 
-local DisplayFPSToggle = SettingsTab:CreateToggle({
-    Name         = "Display FPS & Server Ping",
-    CurrentValue = false,
-    Flag         = "SettingsDisplayFPS",
-    Callback     = function(Value) end,
+-- Live FPS & Ping paragraph — updated every second via background loop
+local FPSPingParagraph = SettingsTab:CreateParagraph({
+    Title   = "FPS & Server Ping",
+    Content = "FPS: -- | Ping: --ms"
 })
+
+task.spawn(function()
+    local frameCount = 0
+    local elapsed    = 0
+    local lastFPS    = 0
+
+    RunService.RenderStepped:Connect(function(dt)
+        frameCount = frameCount + 1
+        elapsed    = elapsed + dt
+        if elapsed >= 1 then
+            lastFPS    = math.floor(frameCount / elapsed)
+            frameCount = 0
+            elapsed    = 0
+        end
+    end)
+
+    while true do
+        task.wait(1)
+        local ping = localPlr:GetNetworkPing and math.floor(localPlr:GetNetworkPing() * 1000) or 0
+        if FPSPingParagraph and FPSPingParagraph.Set then
+            FPSPingParagraph:Set({
+                Title   = "FPS & Server Ping",
+                Content = string.format("FPS: %d | Ping: %dms", lastFPS, ping)
+            })
+        end
+    end
+end)
 
 -- // WEBHOOK ROLL LISTENER
 
@@ -1050,7 +1236,6 @@ task.spawn(function()
             local okSlime, slime = pcall(slimeData.getSlime, id)
             slime = okSlime and slime or nil
 
-            -- ✅ mutations.getIds() enumerates present mutation keys — no hardcoded names
             local muts        = type(it.mutations) == "table" and next(it.mutations) ~= nil and it.mutations or nil
             local mutIds      = muts and mutations.getIds(muts) or {}
             local hasMutation = muts ~= nil
@@ -1069,7 +1254,6 @@ task.spawn(function()
             local baseDmg  = slime and slime.damage or 0
             local baseHp   = slime and slime.health or 0
 
-            -- ✅ All mutation math via mutations module functions
             local mult      = muts and mutations.getVisualOddsMultiplier(muts) or 1
             local statBonus = muts and mutations.getStatBonus(muts, "damage") or 1
             local finalOdds = baseOdds and (baseOdds / mult) or nil
@@ -1079,10 +1263,8 @@ task.spawn(function()
 
             if minLuck > 0 and chanceNum and chanceNum < minLuck then continue end
 
-            -- ✅ rarityTiers.getTier() via getRarityFromOdds
             local rarity      = getRarityFromOdds(baseOdds)
             local chanceText  = finalOdds and string.format("1 in %s", formatNumber(math.floor(1 / finalOdds + 0.5))) or "N/A"
-            -- ✅ Display name and mutation list from mutations module
             local displayName = muts and mutations.getDisplayName(name, muts) or name
             local mutList     = mutIds
 
@@ -1111,14 +1293,34 @@ task.spawn(function()
     end
 end)
 
--- // ANTI AFK BOOT
+-- // BOOT: Anti AFK (runs on load since enabled by default)
 do
+    pcall(function()
+        for _, x in pairs(getconnections(localPlr.Idled)) do
+            x:Disable()
+        end
+    end)
     local VirtualUser = game:GetService("VirtualUser")
-    game:GetService("Players").LocalPlayer.Idled:Connect(function()
+    localPlr.Idled:Connect(function()
         if Rayfield.Flags.SettingsAntiAFK and Rayfield.Flags.SettingsAntiAFK.CurrentValue then
             VirtualUser:CaptureController()
             VirtualUser:ClickButton2(Vector2.new())
         end
+    end)
+end
+
+-- // BOOT: Anti Kick (runs on load since it's critical)
+do
+    pcall(function()
+        local mt  = getrawmetatable(game)
+        local old = mt.__namecall
+        setreadonly(mt, false)
+        mt.__namecall = newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            if method == "Kick" then return end
+            return old(self, ...)
+        end)
+        setreadonly(mt, true)
     end)
 end
 
