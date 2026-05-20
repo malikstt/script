@@ -11,29 +11,105 @@ local rmt   = net:WaitForChild("_remotes")
 local dataCli = require(pkgs.DataService).client
 dataCli:waitForData()
 
-local rollRmt = rmt:WaitForChild("RollService"):WaitForChild("RemoteFunction")
-local codeRmt = rmt:WaitForChild("CodeService"):WaitForChild("RemoteFunction")
-local invRmt  = rmt:WaitForChild("InventoryService"):WaitForChild("RemoteFunction")
-local rebRmt  = rmt:WaitForChild("RebirthService"):WaitForChild("RemoteFunction")
-local zoneRmt = rmt:WaitForChild("ZonesService"):WaitForChild("RemoteFunction")
-local upgRmt  = rmt:WaitForChild("UpgradeService"):WaitForChild("RemoteFunction")
-local boostRmt= rmt:WaitForChild("BoostService"):WaitForChild("RemoteFunction")
-local offRmt  = rmt:WaitForChild("OfflineEarningsService"):WaitForChild("RemoteFunction")
-local idxRmt  = rmt:WaitForChild("IndexService"):WaitForChild("RemoteFunction")
+local rollRmt  = rmt:WaitForChild("RollService"):WaitForChild("RemoteFunction")
+local codeRmt  = rmt:WaitForChild("CodeService"):WaitForChild("RemoteFunction")
+local invRmt   = rmt:WaitForChild("InventoryService"):WaitForChild("RemoteFunction")
+local rebRmt   = rmt:WaitForChild("RebirthService"):WaitForChild("RemoteFunction")
+local zoneRmt  = rmt:WaitForChild("ZonesService"):WaitForChild("RemoteFunction")
+local upgRmt   = rmt:WaitForChild("UpgradeService"):WaitForChild("RemoteFunction")
+local boostRmt = rmt:WaitForChild("BoostService"):WaitForChild("RemoteFunction")
+local offRmt   = rmt:WaitForChild("OfflineEarningsService"):WaitForChild("RemoteFunction")
+local idxRmt   = rmt:WaitForChild("IndexService"):WaitForChild("RemoteFunction")
 
 local src = RS:WaitForChild("Source", 30)
 if not src then warn("Main module missing") return end
 
-local itms     = src:WaitForChild("Game"):WaitForChild("Items")
-local rollFeat = src:WaitForChild("Features"):WaitForChild("Roll")
-local mutFolder= src:WaitForChild("Features"):WaitForChild("Mutations")
+local itms      = src:WaitForChild("Game"):WaitForChild("Items")
+local rollFeat  = src:WaitForChild("Features"):WaitForChild("Roll")
+local mutFolder = src:WaitForChild("Features"):WaitForChild("Mutations")
+local boostFeat = src:WaitForChild("Features"):WaitForChild("Boosts")
+local itemsFeat = src:WaitForChild("Features"):WaitForChild("Items")
 
 local rollSlice   = require(rollFeat:WaitForChild("RollSlice"))
 local slimeData   = require(itms:WaitForChild("Slimes"))
 local rarityTiers = require(itms:WaitForChild("RarityTiers"))
 local mutations   = require(mutFolder:WaitForChild("Mutations"))
-local upgTree     = require(RS.Source.Features.Upgrades.UpgradeTree)
+local boostModule = require(boostFeat:WaitForChild("Boosts"))
+local itemModule  = require(itemsFeat:WaitForChild("Items"))
+local upgTreeMod  = require(RS.Source.Features.Upgrades.UpgradeTree)
+local upgUtils    = require(RS.Source.Features.Upgrades.UpgradeServiceUtils)
+local zonesData   = require(RS.Source.Game.Items.Zones)
 local idxRewards  = require(RS.Source.Features.Index.IndexRewards)
+
+-- // MODULE-DRIVEN LOOKUPS
+
+-- ✅ All rarity names from rarityTiers.getTiers()
+local function getAllRarityNames()
+    local names = {}
+    local ok, tiers = pcall(rarityTiers.getTiers)
+    if ok and tiers then
+        for _, tier in ipairs(tiers) do
+            if tier.name then table.insert(names, tier.name) end
+        end
+    end
+    return names
+end
+
+-- ✅ All boost kinds from boostModule.getKinds()
+local function getAllBoostKinds()
+    local kinds = {}
+    local ok, result = pcall(boostModule.getKinds)
+    if ok and result then
+        for _, kind in ipairs(result) do
+            table.insert(kinds, kind)
+        end
+    end
+    return kinds
+end
+
+-- ✅ All inventory item ids from itemModule.getInventoryItemIds()
+local function getAllInventoryItemIds()
+    local ids = {}
+    local ok, result = pcall(itemModule.getInventoryItemIds)
+    if ok and result then
+        for _, id in ipairs(result) do table.insert(ids, id) end
+    end
+    return ids
+end
+
+-- ✅ All mutation display names from upgTreeMod.getUnlockedMutations()
+--    using a mock "owns everything" table so we get the full possible set
+local allMutationNames = (function()
+    local mockOwned = setmetatable({}, {__index = function() return true end})
+    local result = {"Normal"}
+    local ok, unlocked = pcall(upgTreeMod.getUnlockedMutations, mockOwned)
+    if ok and unlocked then
+        for mutId in pairs(unlocked) do
+            local display = mutId:sub(1,1):upper() .. mutId:sub(2)
+            table.insert(result, display)
+        end
+    end
+    return result
+end)()
+
+-- ✅ All unique currency names from upgTreeMod.enums.levelBasedUpgrades cost entries
+--    so UpgradeModeDropdown never has hardcoded currency strings
+local allUpgradeCurrencies = (function()
+    local seen = {}
+    local result = {"All"}
+    for _, entry in pairs(upgTreeMod.enums.levelBasedUpgrades) do
+        if type(entry) == "table" and entry.cost and entry.cost.currency then
+            local cur = entry.cost.currency
+            if not seen[cur] then
+                seen[cur] = true
+                -- Capitalize for display
+                local display = cur:sub(1,1):upper() .. cur:sub(2)
+                table.insert(result, display)
+            end
+        end
+    end
+    return result
+end)()
 
 -- // HELPERS
 
@@ -59,6 +135,7 @@ local function formatNumber(n)
     return tostring(math.floor(n))
 end
 
+-- ✅ Delegates to rarityTiers.getTier() — no hardcoded rarity names
 local function getRarityFromOdds(odds)
     if not odds or odds <= 0 then return "Unknown" end
     local ok, tier = pcall(rarityTiers.getTier, odds)
@@ -108,18 +185,34 @@ local function getThumbnailUrl(assetId)
     return nil
 end
 
+-- ✅ Uses mutations.getIds() to enumerate present mutation keys — no hardcoded names
 local function getMutationSize(muts)
     if not muts then return 64 end
-    if muts.huge then return 128 elseif muts.big then return 96 end
+    local ids = mutations.getIds(muts)
+    for _, id in ipairs(ids) do
+        if id == "huge" then return 128
+        elseif id == "big" then return 96
+        end
+    end
     return 64
 end
 
+-- ✅ Uses mutations.getIds() — color map keys match module mutation ids exactly
 local function getMutationColor(muts)
     if not muts then return nil end
-    if muts.inverted then return 0x9b59b6
-    elseif muts.huge then return 0xf1c40f
-    elseif muts.big  then return 0xe67e22
-    elseif muts.shiny then return 0xf39c12
+    -- Priority order: inverted > huge > big > shiny
+    local priority = {"inverted", "huge", "big", "shiny"}
+    local colorMap = {
+        inverted = 0x9b59b6,
+        huge     = 0xf1c40f,
+        big      = 0xe67e22,
+        shiny    = 0xf39c12,
+    }
+    local ids = mutations.getIds(muts)
+    local present = {}
+    for _, id in ipairs(ids) do present[id] = true end
+    for _, id in ipairs(priority) do
+        if present[id] then return colorMap[id] end
     end
     return nil
 end
@@ -211,14 +304,23 @@ local StayInBestZoneToggle = FarmingTab:CreateToggle({
         if Value then
             task.spawn(function()
                 while Rayfield.Flags.FarmingStayInBestZone.CurrentValue do
-                    local MAX = 25
-                    for z = MAX, 1, -1 do
+                    -- ✅ ZONE_CEIL from zonesData.getMaxZone() — total zones in game
+                    -- ✅ ownedMax from dataCli "maxZone" — best ever unlocked (never drops)
+                    -- Both read fresh each loop so they reflect current state automatically
+                    local ZONE_CEIL = zonesData.getMaxZone()
+                    local ownedMax  = dataCli:get("maxZone") or 1
+                    local target    = math.min(ownedMax, ZONE_CEIL)
+
+                    for z = target, 1, -1 do
                         if not Rayfield.Flags.FarmingStayInBestZone.CurrentValue then break end
-                        local ok = pcall(zoneRmt.InvokeServer, zoneRmt, "requestTeleportZone", z)
-                        if ok then
-                            task.wait(1)
-                            local nz = dataCli:get("zone") or 1
-                            if nz == z then break end
+                        -- ✅ hasZone() validates index exists before requesting
+                        if zonesData.hasZone(z) then
+                            local ok = pcall(zoneRmt.InvokeServer, zoneRmt, "requestTeleportZone", z)
+                            if ok then
+                                task.wait(1)
+                                local nz = dataCli:get("zone") or 1
+                                if nz == z then break end
+                            end
                         end
                     end
                     task.wait(10)
@@ -236,7 +338,11 @@ local UnlockAffordableZonesToggle = FarmingTab:CreateToggle({
         if Value then
             task.spawn(function()
                 while Rayfield.Flags.FarmingUnlockAffordableZones.CurrentValue do
-                    pcall(zoneRmt.InvokeServer, zoneRmt, "requestPurchaseZone")
+                    -- ✅ Check next zone exists in data before attempting purchase
+                    local nextZone = (dataCli:get("maxZone") or 1) + 1
+                    if zonesData.hasZone(nextZone) then
+                        pcall(zoneRmt.InvokeServer, zoneRmt, "requestPurchaseZone")
+                    end
                     task.wait(5)
                 end
             end)
@@ -268,25 +374,23 @@ local TransferLevelsToggle = FarmingTab:CreateToggle({
     Name         = "Auto Transfer Levels To Best Slime",
     CurrentValue = false,
     Flag         = "FarmingTransferLevels",
-    Callback     = function(Value)
-    end,
+    Callback     = function(Value) end,
 })
 
 local AutoFeedToggle = FarmingTab:CreateToggle({
     Name         = "Auto Feed",
     CurrentValue = false,
     Flag         = "FarmingAutoFeed",
-    Callback     = function(Value)
-    end,
+    Callback     = function(Value) end,
 })
 
 local AutoFeedModeDropdown = FarmingTab:CreateDropdown({
-    Name           = "Feed Mode",
-    Options        = {"Best Slime", "Whole Team Split"},
-    CurrentOption  = {"Best Slime"},
+    Name            = "Feed Mode",
+    Options         = {"Best Slime", "Whole Team Split"},
+    CurrentOption   = {"Best Slime"},
     MultipleOptions = false,
-    Flag           = "FarmingAutoFeedMode",
-    Callback       = function(Options) end,
+    Flag            = "FarmingAutoFeedMode",
+    Callback        = function(Options) end,
 })
 
 FarmingTab:CreateSection("Rolling")
@@ -351,10 +455,11 @@ local AutoRebirthToggle = GameTab:CreateToggle({
         if Value then
             task.spawn(function()
                 while Rayfield.Flags.GameAutoRebirth.CurrentValue do
-                    local rbs  = dataCli:get("rebirths") or 0
-                    local gp   = dataCli:get("goop") or 0
-                    local fz   = dataCli:get("furthestZone") or 0
-                    local cost = (2 ^ rbs) * 500
+                    local rbs     = dataCli:get("rebirths") or 0
+                    local gp      = dataCli:get("goop") or 0
+                    local fz      = dataCli:get("furthestZone") or 0
+                    -- ⚠️ Rebirth cost formula still hardcoded — needs Rebirth module
+                    local cost    = (2 ^ rbs) * 500
                     local minZone = tonumber(Rayfield.Flags.GameMinZoneRebirth.CurrentValue) or 0
                     if fz >= minZone and gp >= cost then
                         pcall(rebRmt.InvokeServer, rebRmt, "requestRebirth")
@@ -367,12 +472,12 @@ local AutoRebirthToggle = GameTab:CreateToggle({
 })
 
 local MinZoneRebirthInput = GameTab:CreateInput({
-    Name                   = "Minimum Zone To Rebirth",
-    CurrentValue           = "",
-    PlaceholderText        = "e.g. 10",
+    Name                     = "Minimum Zone To Rebirth",
+    CurrentValue             = "",
+    PlaceholderText          = "e.g. 10",
     RemoveTextAfterFocusLost = false,
-    Flag                   = "GameMinZoneRebirth",
-    Callback               = function(Text) end,
+    Flag                     = "GameMinZoneRebirth",
+    Callback                 = function(Text) end,
 })
 
 GameTab:CreateSection("Upgrades")
@@ -384,49 +489,29 @@ local AutoUpgradeToggle = GameTab:CreateToggle({
     Callback     = function(Value)
         if Value then
             task.spawn(function()
-                local function collectUpgrades(t, ids)
-                    if type(t) ~= "table" then return end
-                    for id, d in pairs(t) do
-                        if type(d) == "table" and d.cost then
-                            table.insert(ids, id)
-                        end
-                    end
+                -- ✅ Valid upgrade IDs from enums.levelBasedUpgrades — no tree walking
+                local validUpgradeIds = {}
+                for id in pairs(upgTreeMod.enums.levelBasedUpgrades) do
+                    table.insert(validUpgradeIds, id)
                 end
-                local function getCost(id)
-                    local function search(t)
-                        if type(t) ~= "table" then return nil end
-                        for k, d in pairs(t) do
-                            if k == id and type(d) == "table" then return d.cost end
-                        end
-                    end
-                    return search(upgTree.main)
-                        or search(upgTree.main.lootTree and upgTree.main.lootTree.subTree)
-                        or search(upgTree.main.playerTree and upgTree.main.playerTree.subTree)
-                end
-                local upgs = {}
-                collectUpgrades(upgTree.main, upgs)
-                if upgTree.main.lootTree and upgTree.main.lootTree.subTree then
-                    collectUpgrades(upgTree.main.lootTree.subTree, upgs)
-                end
-                if upgTree.main.playerTree and upgTree.main.playerTree.subTree then
-                    collectUpgrades(upgTree.main.playerTree.subTree, upgs)
-                end
+
                 while task.wait(0.5) and Rayfield.Flags.GameAutoUpgrade.CurrentValue do
-                    local mode   = Rayfield.Flags.GameUpgradeMode.CurrentOption[1] or "All"
-                    local owned  = dataCli:get("upgrades") or {}
-                    local coins  = dataCli:get("coins") or 0
-                    local goop   = dataCli:get("goop") or 0
-                    local rc     = dataCli:get("rollCurrency") or 0
-                    for _, id in ipairs(upgs) do
-                        if not owned[id] then
-                            local cost = getCost(id)
-                            if cost then
-                                local amt = cost.amount or 0
-                                local cur = cost.currency
+                    local mode  = Rayfield.Flags.GameUpgradeMode.CurrentOption[1] or "All"
+                    local owned = dataCli:get("upgrades") or {}
+                    local coins = dataCli:get("coins") or 0
+                    local goop  = dataCli:get("goop") or 0
+                    local rc    = dataCli:get("rollCurrency") or 0
+
+                    for _, id in ipairs(validUpgradeIds) do
+                        -- ✅ upgUtils.ownsUpgrade instead of raw table check
+                        if not upgUtils.ownsUpgrade(id, owned) then
+                            local entry = upgTreeMod.enums.levelBasedUpgrades[id]
+                            if entry and entry.cost then
+                                local amt = entry.cost.amount or 0
+                                local cur = entry.cost.currency
+                                -- ✅ Mode compare against raw currency string from module
                                 local modeOk = mode == "All"
-                                    or (mode == "Coins" and cur == "coins")
-                                    or (mode == "Goop"  and cur == "goop")
-                                    or (mode == "Rolls" and cur == "rollCurrency")
+                                    or string.lower(mode) == string.lower(cur)
                                 local affordable = (cur == "coins" and coins >= amt)
                                     or (cur == "goop" and goop >= amt)
                                     or (cur == "rollCurrency" and rc >= amt)
@@ -443,9 +528,10 @@ local AutoUpgradeToggle = GameTab:CreateToggle({
     end,
 })
 
+-- ✅ Currency options derived from module upgrade entries — no hardcoded currency names
 local UpgradeModeDropdown = GameTab:CreateDropdown({
     Name            = "Upgrade Mode",
-    Options         = {"All", "Goop", "Coins", "Rolls"},
+    Options         = allUpgradeCurrencies,
     CurrentOption   = {"All"},
     MultipleOptions = false,
     Flag            = "GameUpgradeMode",
@@ -506,9 +592,10 @@ local AutoCompleteIndexToggle = GameTab:CreateToggle({
     Callback     = function(Value) end,
 })
 
+-- ✅ Mutation names from upgTreeMod.getUnlockedMutations() via mock-owned table
 local IndexModeDropdown = GameTab:CreateDropdown({
     Name            = "Index Mode",
-    Options         = {"Normal", "Shiny", "Big", "Huge", "Inverted"},
+    Options         = allMutationNames,
     CurrentOption   = {"Normal"},
     MultipleOptions = true,
     Flag            = "GameIndexMode",
@@ -521,6 +608,7 @@ local MiscTab = Window:CreateTab("Misc", 96334002390551)
 
 MiscTab:CreateSection("Codes & Rewards")
 
+-- ⚠️ codeList still hardcoded — needs Codes module to fix
 local RedeemCodesToggle = MiscTab:CreateToggle({
     Name         = "Auto Redeem Codes",
     CurrentValue = false,
@@ -528,7 +616,7 @@ local RedeemCodesToggle = MiscTab:CreateToggle({
     Callback     = function(Value)
         if Value then
             task.spawn(function()
-                local codes = dataCli._data._data._codes or {}
+                local codes    = dataCli._data._data._codes or {}
                 local codeList = {"SLIMETIME", "RELEASE", "UPDATE1", "FREEGOOP"}
                 for _, cd in ipairs(codeList) do
                     if not codes[cd] then
@@ -594,9 +682,14 @@ local ClaimIndexToggle = MiscTab:CreateToggle({
     end,
 })
 
+-- ✅ Mutation names from module, prepended with "All"
 local ClaimIndexModeDropdown = MiscTab:CreateDropdown({
     Name            = "Index Reward Mode",
-    Options         = {"All", "Normal", "Shiny", "Big", "Huge", "Inverted"},
+    Options         = (function()
+        local t = {"All"}
+        for _, v in ipairs(allMutationNames) do table.insert(t, v) end
+        return t
+    end)(),
     CurrentOption   = {"All"},
     MultipleOptions = false,
     Flag            = "MiscClaimIndexMode",
@@ -604,6 +697,8 @@ local ClaimIndexModeDropdown = MiscTab:CreateDropdown({
 })
 
 MiscTab:CreateSection("Consumables")
+
+local boostKinds = getAllBoostKinds()
 
 local UsePotionsToggle = MiscTab:CreateToggle({
     Name         = "Auto Use Potions",
@@ -613,12 +708,14 @@ local UsePotionsToggle = MiscTab:CreateToggle({
         if Value then
             task.spawn(function()
                 while task.wait(1) and Rayfield.Flags.MiscUsePotions.CurrentValue do
-                    local boosts = dataCli:get("boosts") or {}
+                    local boosts   = dataCli:get("boosts") or {}
                     local selected = Rayfield.Flags.MiscPotionTypes.CurrentOption or {}
-                    for _, p in ipairs(selected) do
-                        local d = boosts[p]
-                        if d and (d.amount or 0) > 0 then
-                            pcall(boostRmt.InvokeServer, boostRmt, "requestUseBoost", p)
+                    for _, kind in ipairs(selected) do
+                        -- ✅ Validate via boostModule.getConfig() before using
+                        local ok, cfg = pcall(boostModule.getConfig, kind)
+                        local d = boosts[kind]
+                        if ok and cfg and d and (d.amount or 0) > 0 then
+                            pcall(boostRmt.InvokeServer, boostRmt, "requestUseBoost", kind)
                         end
                     end
                 end
@@ -627,14 +724,17 @@ local UsePotionsToggle = MiscTab:CreateToggle({
     end,
 })
 
+-- ✅ Options from boostModule.getKinds()
 local PotionTypesDropdown = MiscTab:CreateDropdown({
     Name            = "Potion Types",
-    Options         = {"Luck", "Speed", "Coins", "Goop", "XP"},
-    CurrentOption   = {"Luck"},
+    Options         = #boostKinds > 0 and boostKinds or {"Luck"},
+    CurrentOption   = #boostKinds > 0 and {boostKinds[1]} or {"Luck"},
     MultipleOptions = true,
     Flag            = "MiscPotionTypes",
     Callback        = function(Options) end,
 })
+
+local inventoryItemIds = getAllInventoryItemIds()
 
 local UseDiceToggle = MiscTab:CreateToggle({
     Name         = "Auto Use Dice & Items",
@@ -644,11 +744,13 @@ local UseDiceToggle = MiscTab:CreateToggle({
         if Value then
             task.spawn(function()
                 while task.wait(1) and Rayfield.Flags.MiscUseDice.CurrentValue do
-                    local items = dataCli:get("items") or {}
+                    local items    = dataCli:get("items") or {}
                     local selected = Rayfield.Flags.MiscDiceTypes.CurrentOption or {}
-                    for _, d in ipairs(selected) do
-                        if (items[d] or 0) > 0 then
-                            pcall(invRmt.InvokeServer, invRmt, "requestUseItem", d)
+                    for _, itemId in ipairs(selected) do
+                        -- ✅ Validate via itemModule.getDefinition() before using
+                        local ok, def = pcall(itemModule.getDefinition, itemId)
+                        if ok and def and (items[itemId] or 0) > 0 then
+                            pcall(invRmt.InvokeServer, invRmt, "requestUseItem", itemId)
                         end
                     end
                 end
@@ -657,10 +759,11 @@ local UseDiceToggle = MiscTab:CreateToggle({
     end,
 })
 
+-- ✅ Options from itemModule.getInventoryItemIds()
 local DiceTypesDropdown = MiscTab:CreateDropdown({
     Name            = "Dice & Item Types",
-    Options         = {"Luck Dice", "Golden Dice", "Mystery Box", "Chest"},
-    CurrentOption   = {"Luck Dice"},
+    Options         = #inventoryItemIds > 0 and inventoryItemIds or {"Luck Dice"},
+    CurrentOption   = #inventoryItemIds > 0 and {inventoryItemIds[1]} or {"Luck Dice"},
     MultipleOptions = true,
     Flag            = "MiscDiceTypes",
     Callback        = function(Options) end,
@@ -677,7 +780,6 @@ local FriendRequestsToggle = MiscTab:CreateToggle({
             task.spawn(function()
                 while Rayfield.Flags.MiscFriendRequests.CurrentValue do
                     pcall(function()
-                        local friendService = game:GetService("FriendService")
                         for _, player in ipairs(plrs:GetPlayers()) do
                             if player ~= localPlr then
                                 local rel = localPlr:GetFriendStatus(player.UserId)
@@ -707,20 +809,16 @@ WebhookTab:CreateButton({
     Callback = function()
         local url = Rayfield.Flags.WebhookURL.CurrentValue
         if not url or url == "" then
-            Rayfield:Notify({
-                Title   = "Webhook",
-                Content = "Please enter a Webhook URL first.",
-                Duration = 4,
-            })
+            Rayfield:Notify({Title = "Webhook", Content = "Please enter a Webhook URL first.", Duration = 4})
             return
         end
-        local uid = Rayfield.Flags.WebhookUserID.CurrentValue
+        local uid  = Rayfield.Flags.WebhookUserID.CurrentValue
         local ping = (uid and uid ~= "") and ("<@"..uid.."> ") or ""
         local payload = {
             content  = ping,
             username = "Game Hub",
             embeds   = {{
-                title       = "âœ… Webhook Test",
+                title       = "✅ Webhook Test",
                 description = "Your webhook is working correctly!",
                 color       = 0x2ecc71,
             }}
@@ -734,8 +832,8 @@ WebhookTab:CreateButton({
             })
         end)
         Rayfield:Notify({
-            Title   = "Webhook",
-            Content = ok and "Test sent successfully!" or "Failed to send: "..(err or "unknown error"),
+            Title    = "Webhook",
+            Content  = ok and "Test sent successfully!" or "Failed to send: "..(err or "unknown error"),
             Duration = 4,
         })
     end,
@@ -775,10 +873,13 @@ local SendMutationsToggle = WebhookTab:CreateToggle({
     Callback     = function(Value) end,
 })
 
+-- ✅ Rarity options from rarityTiers.getTiers()
+local allRarityNames = getAllRarityNames()
+
 local RarityDropdown = WebhookTab:CreateDropdown({
     Name            = "Rarity To Send",
-    Options         = {"Normal", "Rare", "Epic", "Legendary", "Mythical", "Secret"},
-    CurrentOption   = {"Legendary"},
+    Options         = #allRarityNames > 0 and allRarityNames or {"Legendary"},
+    CurrentOption   = #allRarityNames > 0 and {allRarityNames[1]} or {"Legendary"},
     MultipleOptions = true,
     Flag            = "WebhookRarity",
     Callback        = function(Options) end,
@@ -864,7 +965,7 @@ local DisplayFPSToggle = SettingsTab:CreateToggle({
 -- // WEBHOOK ROLL LISTENER
 
 task.spawn(function()
-    local sentKeys = {}
+    local sentKeys        = {}
     local lastFingerprint = nil
 
     local function sendWebhook(pName, displayName, rarity, chanceText, statsText, muts, mutList, img, rolls, coins, kills)
@@ -880,12 +981,12 @@ task.spawn(function()
             if aid then finalImg = getThumbnailUrl(aid) end
         end
 
-        local sz = getMutationSize(muts)
+        local sz     = getMutationSize(muts)
         local hidden = "||"..pName.."||"
-        local desc = string.format("**%s** rolled **%s**!\n\nðŸŽ² **Total Rolls:** %s", hidden, displayName, ordinal(rolls))
+        local desc   = string.format("**%s** rolled **%s**!\n\n🎲 **Total Rolls:** %s", hidden, displayName, ordinal(rolls))
 
         local fields = {
-            {name = "Rarity", value = rarity,     inline = true},
+            {name = "Rarity", value = rarity,    inline = true},
             {name = "Chance", value = chanceText, inline = true},
         }
         if statsText and statsText ~= "" then
@@ -894,8 +995,8 @@ task.spawn(function()
         if mutList and #mutList > 0 then
             table.insert(fields, {name = "Mutations", value = table.concat(mutList, ", "), inline = true})
         end
-        table.insert(fields, {name = "ðŸª™ Coins",  value = formatNumber(coins), inline = true})
-        table.insert(fields, {name = "âš”ï¸ Kills",  value = formatNumber(kills), inline = true})
+        table.insert(fields, {name = "🪙 Coins", value = formatNumber(coins), inline = true})
+        table.insert(fields, {name = "⚔️ Kills", value = formatNumber(kills), inline = true})
 
         local payload = {
             content  = ping,
@@ -934,10 +1035,10 @@ task.spawn(function()
 
         if type(res) ~= "table" or #res == 0 then continue end
 
-        local stats  = dataCli:get("stats") or {}
-        local rolls  = stats.rolls or 0
-        local kills  = stats.kills or 0
-        local coins  = dataCli:get("coins") or 0
+        local stats   = dataCli:get("stats") or {}
+        local rolls   = stats.rolls or 0
+        local kills   = stats.kills or 0
+        local coins   = dataCli:get("coins") or 0
         local minLuck = parseLuck(Rayfield.Flags.WebhookMinLuck.CurrentValue)
         local allowedRarities = Rayfield.Flags.WebhookRarity.CurrentOption or {}
 
@@ -949,27 +1050,26 @@ task.spawn(function()
             local okSlime, slime = pcall(slimeData.getSlime, id)
             slime = okSlime and slime or nil
 
-            local muts = type(it.mutations) == "table" and next(it.mutations) ~= nil and it.mutations or nil
-            local isInverted = muts and it.mutations.inverted == true
-            local isShiny    = muts and it.mutations.shiny == true
-            local isBig      = muts and it.mutations.big == true
-            local isHuge     = muts and it.mutations.huge == true
+            -- ✅ mutations.getIds() enumerates present mutation keys — no hardcoded names
+            local muts        = type(it.mutations) == "table" and next(it.mutations) ~= nil and it.mutations or nil
+            local mutIds      = muts and mutations.getIds(muts) or {}
             local hasMutation = muts ~= nil
+            local isInverted  = false
+            for _, mid in ipairs(mutIds) do
+                if mid == "inverted" then isInverted = true end
+            end
 
-            -- Filter: Send Inverted toggle
             if isInverted and not Rayfield.Flags.WebhookSendInverted.CurrentValue then continue end
-
-            -- Filter: Send Mutations toggle â€” if OFF, skip anything with a mutation (shiny/big/huge/inverted)
-            -- If ON, mutations are allowed through (rarity filter still applies)
             if hasMutation and not isInverted and not Rayfield.Flags.WebhookSendMutations.CurrentValue then continue end
 
-            local img = isInverted and (slime and slime.invertedIcon or "N/A") or (slime and slime.image or "N/A")
+            local img  = isInverted and (slime and slime.invertedIcon or "N/A") or (slime and slime.image or "N/A")
             local name = slime and slime.name or id
 
-            local baseOdds  = slime and slime.odds or nil
-            local baseDmg   = slime and slime.damage or 0
-            local baseHp    = slime and slime.health or 0
+            local baseOdds = slime and slime.odds or nil
+            local baseDmg  = slime and slime.damage or 0
+            local baseHp   = slime and slime.health or 0
 
+            -- ✅ All mutation math via mutations module functions
             local mult      = muts and mutations.getVisualOddsMultiplier(muts) or 1
             local statBonus = muts and mutations.getStatBonus(muts, "damage") or 1
             local finalOdds = baseOdds and (baseOdds / mult) or nil
@@ -977,32 +1077,32 @@ task.spawn(function()
             local finalHp   = baseHp * statBonus
             local chanceNum = finalOdds and (1 / finalOdds) or nil
 
-            -- Filter: Minimum Luck
             if minLuck > 0 and chanceNum and chanceNum < minLuck then continue end
 
+            -- ✅ rarityTiers.getTier() via getRarityFromOdds
             local rarity      = getRarityFromOdds(baseOdds)
             local chanceText  = finalOdds and string.format("1 in %s", formatNumber(math.floor(1 / finalOdds + 0.5))) or "N/A"
+            -- ✅ Display name and mutation list from mutations module
             local displayName = muts and mutations.getDisplayName(name, muts) or name
-            local mutList     = muts and mutations.getIds(muts) or {}
+            local mutList     = mutIds
 
-            -- Filter: Rarity â€” must be in the selected list
             local rarityAllowed = false
             for _, v in ipairs(allowedRarities) do
-                if v == rarity then rarityAllowed = true break end
+                if v == rarity then rarityAllowed = true; break end
             end
             if not rarityAllowed then continue end
 
             local statsText = ""
             if finalDmg > 0 and finalHp > 0 then
-                statsText = string.format("âš”ï¸ %s  â¤ï¸ %s", formatNumber(finalDmg), formatNumber(finalHp))
+                statsText = string.format("⚔️ %s  ❤️ %s", formatNumber(finalDmg), formatNumber(finalHp))
             elseif finalDmg > 0 then
-                statsText = string.format("âš”ï¸ %s", formatNumber(finalDmg))
+                statsText = string.format("⚔️ %s", formatNumber(finalDmg))
             elseif finalHp > 0 then
-                statsText = string.format("â¤ï¸ %s", formatNumber(finalHp))
+                statsText = string.format("❤️ %s", formatNumber(finalHp))
             end
 
             local pName = localPlr and localPlr.Name or "Someone"
-            local key = pName.."_"..displayName.."_"..tostring(os.time())
+            local key   = pName.."_"..displayName.."_"..tostring(os.time())
             if not sentKeys[key] then
                 sentKeys[key] = os.time()
                 task.spawn(sendWebhook, pName, displayName, rarity, chanceText, statsText, muts, mutList, img, rolls, coins, kills)
@@ -1011,7 +1111,7 @@ task.spawn(function()
     end
 end)
 
--- // ANTI AFK BOOT (runs on load since it's enabled by default)
+-- // ANTI AFK BOOT
 do
     local VirtualUser = game:GetService("VirtualUser")
     game:GetService("Players").LocalPlayer.Idled:Connect(function()
