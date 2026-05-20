@@ -14,6 +14,9 @@ local rmt = net:WaitForChild("_remotes")
 local dataCli = require(pkgs.DataService).client
 dataCli:waitForData()
 
+local Networker = require(pkgs.Networker)
+local InventoryService = Networker.client.new("InventoryService")
+
 local rollRmt  = rmt:WaitForChild("RollService"):WaitForChild("RemoteFunction")
 local codeRmt  = rmt:WaitForChild("CodeService"):WaitForChild("RemoteFunction")
 local invRmt   = rmt:WaitForChild("InventoryService"):WaitForChild("RemoteFunction")
@@ -255,7 +258,7 @@ local v = string.upper(val)
 local suffix = string.sub(v, -2)
 if suffix == "QN" or suffix == "Qn" then mult = 1e18; v = string.sub(v, 1, -3)
 elseif suffix == "QD" or suffix == "Qd" then mult = 1e15; v = string.sub(v, 1, -3)
-elseif suffix == "SX" or suffix == "Sx" then mult = 1e12; v = string.sub(v, 1, -3)
+elseif suffix == "SX" or suffix == "Sx" then mult = 1e21; v = string.sub(v, 1, -3)
 else
 local last = string.sub(v, -1)
 if last == "T" then mult = 1e12; v = string.sub(v, 1, -2)
@@ -346,34 +349,6 @@ end
 return nil
 end
 
-local activeTweens = {}
-
-local function tweenToPosition(part, targetPos, duration)
-if not part or not targetPos then return end
-
-if activeTweens[part] then  
-    activeTweens[part]:Cancel()  
-    activeTweens[part] = nil  
-end  
-  
-local tweenInfo = TweenInfo.new(  
-    duration or 0.3,  
-    Enum.EasingStyle.Quad,  
-    Enum.EasingDirection.Out  
-)  
-  
-local goal = {CFrame = CFrame.new(targetPos)}  
-local tween = TweenService:Create(part, tweenInfo, goal)  
-  
-activeTweens[part] = tween  
-tween:Play()  
-  
-tween.Completed:Connect(function()  
-    activeTweens[part] = nil  
-end)
-
-end
-
 local function getBestSlimeGuid()
 local stats = dataCli:get("stats") or {}
 local rarest = stats.rarestRoll
@@ -461,7 +436,7 @@ Content = "[+] Anti AFK\n[+] Anti Kick"
 
 MainTab:CreateParagraph({
 Title   = "Latest Update",
-Content = "[+] Improved Slime/Enemy Speed detection\n[+] Tween-based teleport to enemies\n[+] Fixed auto rejoin\n\n[i] Report bugs at discord.gg/idiothub"
+Content = "[+] Fixed Auto Feed using Networker\n[+] Fixed XP Transfer\n[+] Added Teleport To Enemy\n\n[i] Report bugs at discord.gg/idiothub"
 })
 
 MainTab:CreateButton({
@@ -577,7 +552,9 @@ break
 end
 end
 if shouldFeed then
-pcall(invRmt.InvokeServer, invRmt, "requestUseFood", fruitId, bestGuid, amount)
+pcall(function()
+InventoryService:fetch("requestUseFood", fruitId, bestGuid, amount)
+end)
 task.wait(0.3)
 end
 end
@@ -648,7 +625,9 @@ local inventory = dataCli:get("inventory") or {}
 for guid, data in pairs(inventory) do
 if type(data) == "table" and data.id and guid ~= bestGuid then
 if hasXpOrLevel(data) then
-pcall(invRmt.InvokeServer, invRmt, "requestTransferXp", guid, bestGuid)
+pcall(function()
+InventoryService:fetch("requestTransferXp", guid, bestGuid)
+end)
 task.wait(0.5)
 end
 end
@@ -819,51 +798,51 @@ Flag            = "GameUpgradeMode",
 Callback        = function(Options) end,
 })
 
-GameTab:CreateSection("Enemies")
+GameTab:CreateSection("Combat")
 
-local TeleportEnemiesToggle = GameTab:CreateToggle({
-Name         = "Teleport To Nearby Enemies (Tween)",
+local TeleportToEnemyToggle = GameTab:CreateToggle({
+Name         = "Teleport To Nearest Enemy",
 CurrentValue = false,
-Flag         = "GameTeleportEnemies",
+Flag         = "GameTeleportToEnemy",
 Callback     = function(Value)
 if Value then
 task.spawn(function()
-while Rayfield.Flags.GameTeleportEnemies.CurrentValue do
+while Rayfield.Flags.GameTeleportToEnemy.CurrentValue do
 local gameplayFolder = findGameplayFolder()
-local enemiesFolder  = gameplayFolder and gameplayFolder:FindFirstChild("Enemies")
-local char           = localPlr.Character
-local hrp            = char and char:FindFirstChild("HumanoidRootPart")
+local enemiesFolder = gameplayFolder and gameplayFolder:FindFirstChild("Enemies")
+local char = localPlr.Character
+local hrp = char and char:FindFirstChild("HumanoidRootPart")
 
-if hrp and enemiesFolder then  
-                    local closest, closestDist = nil, math.huge  
-                    for _, enemy in ipairs(enemiesFolder:GetChildren()) do  
-                        if enemy:IsA("Model") then  
-                            local root = getRoot(enemy)  
-                            if root and root.Position then  
-                                local dist = (root.Position - hrp.Position).Magnitude  
-                                if dist < closestDist then  
-                                    closest     = enemy  
-                                    closestDist = dist  
-                                end  
-                            end  
-                        end  
-                    end  
+if hrp and enemiesFolder then
+local closest, closestDist = nil, math.huge
+for _, enemy in ipairs(enemiesFolder:GetChildren()) do
+if enemy:IsA("Model") then
+local root = getRoot(enemy)
+if root and root.Position then
+local dist = (root.Position - hrp.Position).Magnitude
+if dist < closestDist then
+closest = enemy
+closestDist = dist
+end
+end
+end
+end
 
-                    if closest then  
-                        local enemyRoot = getRoot(closest)  
-                        if enemyRoot and enemyRoot.Position then  
-                            local offset = Vector3.new(math.random(-3, 3), 0, math.random(-3, 3))  
-                            tweenToPosition(hrp, enemyRoot.Position + offset, 0.25)  
-                        end  
-                    end  
-                end  
-                task.wait(0.5)  
-            end  
-        end)  
-    end  
+if closest then
+local enemyRoot = getRoot(closest)
+if enemyRoot and enemyRoot.Position then
+hrp.CFrame = CFrame.new(enemyRoot.Position)
+end
+end
+end
+task.wait(0.3)
+end
+end)
+end
 end,
-
 })
+
+GameTab:CreateSection("Enemies")
 
 local enemySpawnConnection = nil
 
