@@ -93,21 +93,48 @@ local allMutationNames = (function()
 	return result
 end)()
 
-local allUpgradeCurrencies = (function()
-	local seen = {}
-	local result = {"All"}
-	for _, entry in pairs(upgTreeMod.enums.levelBasedUpgrades) do
-		if type(entry) == "table" and entry.cost and entry.cost.currency then
-			local cur = entry.cost.currency
-			if not seen[cur] then
-				seen[cur] = true
-				local display = cur:sub(1,1):upper() .. cur:sub(2)
-				table.insert(result, display)
+local allUpgradeCurrencies = {"All", "Coins", "Goop", "RollCurrency"}
+
+local function getAllUpgradeIds()
+	local ids = {}
+	local function collectFrom(tbl)
+		if type(tbl) ~= "table" then return end
+		for id, data in pairs(tbl) do
+			if type(data) == "table" and data.cost then
+				table.insert(ids, id)
 			end
 		end
 	end
-	return result
-end)()
+	pcall(function()
+		collectFrom(upgTreeMod.main)
+		if upgTreeMod.main.lootTree and upgTreeMod.main.lootTree.subTree then
+			collectFrom(upgTreeMod.main.lootTree.subTree)
+		end
+		if upgTreeMod.main.playerTree and upgTreeMod.main.playerTree.subTree then
+			collectFrom(upgTreeMod.main.playerTree.subTree)
+		end
+	end)
+	return ids
+end
+
+local function getUpgradeCost(upgradeId)
+	local function findIn(tbl)
+		if type(tbl) ~= "table" then return nil end
+		for id, data in pairs(tbl) do
+			if id == upgradeId and type(data) == "table" then
+				return data.cost
+			end
+		end
+		return nil
+	end
+	local cost
+	pcall(function()
+		cost = findIn(upgTreeMod.main)
+			or findIn(upgTreeMod.main.lootTree and upgTreeMod.main.lootTree.subTree)
+			or findIn(upgTreeMod.main.playerTree and upgTreeMod.main.playerTree.subTree)
+	end)
+	return cost
+end
 
 local function formatNumber(n)
 	if type(n) ~= "number" then return tostring(n) end
@@ -495,22 +522,19 @@ local AutoUpgradeToggle = GameTab:CreateToggle({
 	Callback     = function(Value)
 		if Value then
 			task.spawn(function()
-				local validUpgradeIds = {}
-				for id in pairs(upgTreeMod.enums.levelBasedUpgrades) do
-					table.insert(validUpgradeIds, id)
-				end
+				local validUpgradeIds = getAllUpgradeIds()
 				while task.wait(0.5) and Rayfield.Flags.GameAutoUpgrade.CurrentValue do
-					local mode  = Rayfield.Flags.GameUpgradeMode.CurrentOption[1] or "All"
+					local mode  = (Rayfield.Flags.GameUpgradeMode.CurrentOption and Rayfield.Flags.GameUpgradeMode.CurrentOption[1]) or "All"
 					local owned = dataCli:get("upgrades") or {}
 					local coins = dataCli:get("coins") or 0
 					local goop  = dataCli:get("goop") or 0
 					local rc    = dataCli:get("rollCurrency") or 0
 					for _, id in ipairs(validUpgradeIds) do
-						if not upgUtils.ownsUpgrade(id, owned) then
-							local entry = upgTreeMod.enums.levelBasedUpgrades[id]
-							if entry and entry.cost then
-								local amt = entry.cost.amount or 0
-								local cur = entry.cost.currency
+						if not owned[id] then
+							local cost = getUpgradeCost(id)
+							if cost then
+								local amt = cost.amount or 0
+								local cur = cost.currency or ""
 								local modeOk = mode == "All"
 									or string.lower(mode) == string.lower(cur)
 								local affordable = (cur == "coins" and coins >= amt)
