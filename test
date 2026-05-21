@@ -754,37 +754,33 @@ GameTab:CreateToggle({
             return
         end
         task.spawn(function()
-            while teleportActive
-                  and Rayfield.Flags.GameTeleportEnemies
-                  and Rayfield.Flags.GameTeleportEnemies.CurrentValue do
-
+            while teleportActive and Rayfield.Flags.GameTeleportEnemies and Rayfield.Flags.GameTeleportEnemies.CurrentValue do
                 local char = localPlr.Character
                 local myHRP = char and char:FindFirstChild("HumanoidRootPart")
-
                 if myHRP then
                     if lockedEnemy and not isEnemyAlive(lockedEnemy) then
                         lockedEnemy = nil
                     end
-
                     if not lockedEnemy then
                         lockedEnemy = pickNearestEnemy(myHRP.Position)
                     end
-
                     if lockedEnemy then
                         local targetRoot = getRootPart(lockedEnemy)
                         if targetRoot then
                             local teleportPos = targetRoot.Position + Vector3.new(0, 3, 0)
-                            local teleportService = rmt:FindFirstChild("TeleportService")
-                            if teleportService then
-                                local teleportRemote = teleportService:FindFirstChild("RemoteFunction")
-                                if teleportRemote then
-                                    pcall(teleportRemote.InvokeServer, teleportRemote, teleportPos)
+                            local teleportRmt = rmt:FindFirstChild("TeleportService")
+                            if teleportRmt then
+                                local rf = teleportRmt:FindFirstChild("RemoteFunction")
+                                if rf then
+                                    pcall(rf.InvokeServer, rf, teleportPos)
+                                else
+                                    local re = teleportRmt:FindFirstChild("RemoteEvent")
+                                    if re then pcall(re.FireServer, re, teleportPos) end
                                 end
                             end
                         end
                     end
                 end
-
                 task.wait(0.2)
             end
             lockedEnemy = nil
@@ -1239,47 +1235,44 @@ task.spawn(function()
     while true do
         task.wait(0.1)
 
-        if not Rayfield.Flags.WebhookEnabled or not Rayfield.Flags.WebhookEnabled.CurrentValue then goto continue end
-        if wh_storedUrl == "" then goto continue end
+        if not Rayfield.Flags.WebhookEnabled or not Rayfield.Flags.WebhookEnabled.CurrentValue then
+            -- do nothing
+        elseif wh_storedUrl ~= "" then
+            local ok, res = pcall(rollSlice.rollResults)
+            if ok and type(res) == "table" and #res > 0 then
+                local fp = wh_getRollFingerprint(res)
+                if fp ~= wh_lastFingerprint then
+                    wh_lastFingerprint = fp
 
-        local ok, res = pcall(rollSlice.rollResults)
-        if not ok or type(res) ~= "table" or #res == 0 then goto continue end
+                    local sendAll     = Rayfield.Flags.WebhookSendAll and Rayfield.Flags.WebhookSendAll.CurrentValue
+                    local sendNew     = Rayfield.Flags.WebhookSendNew and Rayfield.Flags.WebhookSendNew.CurrentValue
+                    local sendMutated = Rayfield.Flags.WebhookSendMutated and Rayfield.Flags.WebhookSendMutated.CurrentValue
 
-        local fp = wh_getRollFingerprint(res)
-        if fp == wh_lastFingerprint then goto continue end
-        wh_lastFingerprint = fp
+                    for _, r in ipairs(res) do
+                        local it = wh_getFirstItem(r)
+                        if it then
+                            local slimeId = tostring(it.id or "")
+                            if slimeId ~= "" then
+                                local muts = type(it.mutations) == "table" and next(it.mutations) ~= nil and it.mutations or nil
+                                local okS, slm = pcall(slimeData.getSlime, slimeId)
+                                local slm_obj = okS and slm or nil
 
-        local sendAll     = Rayfield.Flags.WebhookSendAll     and Rayfield.Flags.WebhookSendAll.CurrentValue
-        local sendNew     = Rayfield.Flags.WebhookSendNew     and Rayfield.Flags.WebhookSendNew.CurrentValue
-        local sendMutated = Rayfield.Flags.WebhookSendMutated and Rayfield.Flags.WebhookSendMutated.CurrentValue
+                                local hasMutation = muts ~= nil
+                                local isNew = wh_isNewSlime(slimeId, muts)
 
-        for _, r in ipairs(res) do
-            local it = wh_getFirstItem(r)
-            if not it then goto continue end
+                                local shouldSend = sendAll or (sendNew and isNew) or (sendMutated and hasMutation and wh_isMutationAllowed(muts))
 
-            local slimeId = tostring(it.id or "")
-            if slimeId == "" then goto continue end
-
-            local muts      = type(it.mutations) == "table" and next(it.mutations) ~= nil and it.mutations or nil
-            local okS, slm  = pcall(slimeData.getSlime, slimeId)
-            local slm_obj   = okS and slm or nil
-
-            local hasMutation = muts ~= nil
-            local isNew       = wh_isNewSlime(slimeId, muts)
-
-            local shouldSend = sendAll
-                or (sendNew and isNew)
-                or (sendMutated and hasMutation and wh_isMutationAllowed(muts))
-
-            if shouldSend then
-                local uid = Rayfield.Flags.WebhookUserID.CurrentValue
-                task.spawn(wh_sendWebhook, slimeId, slm_obj, muts, wh_storedUrl, uid)
+                                if shouldSend then
+                                    local uid = Rayfield.Flags.WebhookUserID.CurrentValue
+                                    task.spawn(wh_sendWebhook, slimeId, slm_obj, muts, wh_storedUrl, uid)
+                                end
+                            end
+                        end
+                    end
+                end
             end
-            
-            ::continue::
         end
-        
-        ::continue::
+        task.wait()
     end
 end)
 
