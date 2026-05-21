@@ -115,7 +115,6 @@ local function findGameplayFolder()
     return nil
 end
 
--- Anti-kick metatable hook
 local mt = getrawmetatable(game)
 local old_namecall = mt.__namecall
 setreadonly(mt, false)
@@ -154,9 +153,6 @@ local Window = Rayfield:CreateWindow({
     KeySystem = false,
 })
 
--- =========================================================
--- MAIN TAB
--- =========================================================
 local MainTab = Window:CreateTab("Main", 138602335586757)
 
 MainTab:CreateSection("Status")
@@ -212,9 +208,6 @@ MainTab:CreateButton({
     end,
 })
 
--- =========================================================
--- FARMING TAB
--- =========================================================
 local FarmingTab = Window:CreateTab("Farming", 138602335586757)
 
 FarmingTab:CreateSection("Zones")
@@ -372,9 +365,6 @@ FarmingTab:CreateToggle({
     end,
 })
 
--- =========================================================
--- GAME TAB
--- =========================================================
 local GameTab = Window:CreateTab("Game", 82493603309814)
 
 GameTab:CreateSection("Rebirth")
@@ -464,135 +454,6 @@ GameTab:CreateDropdown({
 
 GameTab:CreateSection("Combat")
 
-GameTab:CreateToggle({
-    Name = "Teleport To Nearest Enemy",
-    CurrentValue = false,
-    Flag = "GameTeleportEnemies",
-    Callback = function(Value)
-        if Value then
-            task.spawn(function()
-                local lockedEnemy = nil
-
-                local function getRootPart(model)
-                    return model.PrimaryPart
-                        or model:FindFirstChild("HumanoidRootPart")
-                        or model:FindFirstChild("RootPart")
-                        or model:FindFirstChildWhichIsA("BasePart")
-                end
-
-                local function targetValid()
-                    if not lockedEnemy or not lockedEnemy.Parent then return false end
-                    local hum = lockedEnemy:FindFirstChildOfClass("Humanoid")
-                    if hum and hum.Health <= 0 then return false end
-                    if not getRootPart(lockedEnemy) then return false end
-                    return true
-                end
-
-                while Rayfield.Flags.GameTeleportEnemies.CurrentValue do
-                    local char = localPlr.Character
-                    local myHRP = char and char:FindFirstChild("HumanoidRootPart")
-
-                    if myHRP then
-                        local gp = findGameplayFolder()
-                        local enemyFolder = gp and gp:FindFirstChild("Enemies")
-
-                        if enemyFolder then
-                            if not targetValid() then
-                                lockedEnemy = nil
-                                local best, bestDist = nil, math.huge
-                                for _, e in ipairs(enemyFolder:GetChildren()) do
-                                    local rp = getRootPart(e)
-                                    if rp then
-                                        local hum = e:FindFirstChildOfClass("Humanoid")
-                                        if not hum or hum.Health > 0 then
-                                            local d = (rp.Position - myHRP.Position).Magnitude
-                                            if d < bestDist then
-                                                best = e
-                                                bestDist = d
-                                            end
-                                        end
-                                    end
-                                end
-                                lockedEnemy = best
-                            end
-
-                            if lockedEnemy then
-                                local rp = getRootPart(lockedEnemy)
-                                if rp then
-                                    local myPos = myHRP.Position
-                                    local tgtPos = rp.Position
-                                    local dist = (tgtPos - myPos).Magnitude
-                                    if dist > 3 then
-                                        local dir = (tgtPos - myPos).Unit
-                                        local step = math.min(15, dist - 3)
-                                        pcall(function()
-                                            myHRP.CFrame = CFrame.new(myPos + dir * step, tgtPos)
-                                        end)
-                                    end
-                                end
-                            end
-                        end
-                    end
-
-                    task.wait(0.05)
-                end
-
-                lockedEnemy = nil
-            end)
-        end
-    end,
-})
-
-GameTab:CreateSection("Enemies")
-
-GameTab:CreateToggle({
-    Name = "⚠️ Super Fast Enemies (High CPU)",
-    CurrentValue = false,
-    Flag = "GameSuperFastEnemies",
-    Callback = function(Value) end,
-})
-
-GameTab:CreateSlider({
-    Name = "Enemy Speed",
-    Range = {1, 20},
-    Increment = 1,
-    Suffix = "x",
-    CurrentValue = 2,
-    Flag = "GameEnemySpeed",
-    Callback = function(Value) end,
-})
-
-GameTab:CreateSection("Slime Speed")
-
-GameTab:CreateToggle({
-    Name = "⚠️ Super Fast Slime Speed (High CPU)",
-    CurrentValue = false,
-    Flag = "GameSuperFastSlime",
-    Callback = function(Value) end,
-})
-
-GameTab:CreateSlider({
-    Name = "Slime Speed",
-    Range = {1, 20},
-    Increment = 1,
-    Suffix = "x",
-    CurrentValue = 2,
-    Flag = "GameSlimeSpeed",
-    Callback = function(Value) end,
-})
-
-local _gpCache = nil
-local _gpCacheTime = 0
-local function getCachedGameplay()
-    local now = tick()
-    if _gpCache and _gpCache.Parent and (now - _gpCacheTime) < 5 then
-        return _gpCache
-    end
-    _gpCache = findGameplayFolder()
-    _gpCacheTime = now
-    return _gpCache
-end
-
 local function getRootPart(model)
     return model.PrimaryPart
         or model:FindFirstChild("HumanoidRootPart")
@@ -600,69 +461,282 @@ local function getRootPart(model)
         or model:FindFirstChildWhichIsA("BasePart")
 end
 
-local _prevPositions = {}
-
-local _speedAccum = 0
-RunService.Heartbeat:Connect(function(dt)
-    _speedAccum = _speedAccum + dt
-    if _speedAccum < 0.05 then return end
-    local elapsed = _speedAccum
-    _speedAccum = 0
-
-    local enemyOn = Rayfield.Flags.GameSuperFastEnemies and Rayfield.Flags.GameSuperFastEnemies.CurrentValue
-    local slimeOn = Rayfield.Flags.GameSuperFastSlime and Rayfield.Flags.GameSuperFastSlime.CurrentValue
-    if not enemyOn and not slimeOn then
-        if next(_prevPositions) then _prevPositions = {} end
-        return
-    end
-
-    local gp = getCachedGameplay()
-    if not gp then return end
-
-    local function processFolder(folder, multiplier)
-        if not folder then return end
-        for _, model in ipairs(folder:GetChildren()) do
-            if model:IsA("Model") then
-                local rp = getRootPart(model)
-                if rp then
-                    local hum = model:FindFirstChildOfClass("Humanoid")
-                    if not hum or hum.Health > 0 then
-                        local id = model:GetDebugId()
-                        local prev = _prevPositions[id]
-                        local curr = rp.Position
-                        if prev then
-                            local delta = curr - prev
-                            local dMag = delta.Magnitude
-                            if dMag > 0.001 and dMag < 20 then
-                                local scaled = delta * (multiplier - 1)
-                                local newPos = curr + scaled
-                                pcall(function()
-                                    model:PivotTo(model:GetPivot() + scaled)
-                                end)
-                                _prevPositions[id] = newPos
-                            else
-                                _prevPositions[id] = curr
+GameTab:CreateToggle({
+    Name = "Teleport To Nearest Enemy",
+    CurrentValue = false,
+    Flag = "GameTeleportEnemies",
+    Callback = function(Value)
+        if Value then
+            task.spawn(function()
+                while Rayfield.Flags.GameTeleportEnemies.CurrentValue do
+                    local char = localPlr.Character
+                    local myHRP = char and char:FindFirstChild("HumanoidRootPart")
+                    
+                    if myHRP then
+                        local gp = findGameplayFolder()
+                        local enemyFolder = gp and gp:FindFirstChild("Enemies")
+                        
+                        if enemyFolder then
+                            local closest = nil
+                            local closestDist = math.huge
+                            
+                            for _, enemy in ipairs(enemyFolder:GetChildren()) do
+                                local rp = getRootPart(enemy)
+                                if rp then
+                                    local hum = enemy:FindFirstChildOfClass("Humanoid")
+                                    if not hum or hum.Health > 0 then
+                                        local dist = (rp.Position - myHRP.Position).Magnitude
+                                        if dist < closestDist then
+                                            closestDist = dist
+                                            closest = rp
+                                        end
+                                    end
+                                end
                             end
-                        else
-                            _prevPositions[id] = curr
+                            
+                            if closest then
+                                myHRP.CFrame = CFrame.new(closest.Position + Vector3.new(0, 2, 0))
+                            end
                         end
                     end
+                    
+                    task.wait(0.1)
                 end
-            end
+            end)
         end
-    end
+    end,
+})
 
-    if enemyOn then
-        processFolder(gp:FindFirstChild("Enemies"), Rayfield.Flags.GameEnemySpeed.CurrentValue)
-    end
-    if slimeOn then
-        processFolder(gp:FindFirstChild("Slimes"), Rayfield.Flags.GameSlimeSpeed.CurrentValue)
-    end
-end)
+GameTab:CreateSection("Floating Enemies")
 
--- =========================================================
--- MISC TAB
--- =========================================================
+GameTab:CreateToggle({
+    Name = "Float Enemies Around Player",
+    CurrentValue = false,
+    Flag = "GameFloatEnemies",
+    Callback = function(Value)
+        if Value then
+            task.spawn(function()
+                while Rayfield.Flags.GameFloatEnemies.CurrentValue do
+                    local char = localPlr.Character
+                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                    
+                    if hrp then
+                        local gp = findGameplayFolder()
+                        local enemiesFolder = gp and gp:FindFirstChild("Enemies")
+                        
+                        if enemiesFolder then
+                            local enemies = {}
+                            for _, enemy in ipairs(enemiesFolder:GetChildren()) do
+                                if enemy:IsA("Model") and getRootPart(enemy) then
+                                    table.insert(enemies, enemy)
+                                end
+                            end
+                            
+                            local count = #enemies
+                            if count > 0 then
+                                local t = tick()
+                                local rotationTime = t * (Rayfield.Flags.GameFloatSpeed.CurrentValue or 1)
+                                local verticalTime = t * (Rayfield.Flags.GameFloatWaveSpeed.CurrentValue or 2)
+                                local radius = Rayfield.Flags.GameFloatRadius.CurrentValue or 12
+                                local waveHeight = Rayfield.Flags.GameFloatWaveHeight.CurrentValue or 1.5
+                                
+                                for i, enemy in ipairs(enemies) do
+                                    local angle = ((i / count) * math.pi * 2) + rotationTime
+                                    local bobbingOffset = math.sin(verticalTime + i) * waveHeight
+                                    
+                                    local pos = hrp.Position + Vector3.new(
+                                        math.cos(angle) * radius,
+                                        bobbingOffset + 2,
+                                        math.sin(angle) * radius
+                                    )
+                                    
+                                    pcall(function()
+                                        local lookDirection = (pos - hrp.Position).Unit
+                                        enemy:PivotTo(CFrame.lookAt(pos, pos + lookDirection))
+                                    end)
+                                end
+                            end
+                        end
+                    end
+                    
+                    task.wait()
+                end
+            end)
+        end
+    end,
+})
+
+GameTab:CreateSlider({
+    Name = "Float Radius",
+    Range = {5, 25},
+    Increment = 1,
+    Suffix = "studs",
+    CurrentValue = 12,
+    Flag = "GameFloatRadius",
+    Callback = function(Value) end,
+})
+
+GameTab:CreateSlider({
+    Name = "Float Rotation Speed",
+    Range = {0.5, 5},
+    Increment = 0.1,
+    Suffix = "x",
+    CurrentValue = 1,
+    Flag = "GameFloatSpeed",
+    Callback = function(Value) end,
+})
+
+GameTab:CreateSlider({
+    Name = "Float Wave Speed",
+    Range = {1, 10},
+    Increment = 0.5,
+    Suffix = "x",
+    CurrentValue = 3,
+    Flag = "GameFloatWaveSpeed",
+    Callback = function(Value) end,
+})
+
+GameTab:CreateSlider({
+    Name = "Float Wave Height",
+    Range = {0.5, 5},
+    Increment = 0.5,
+    Suffix = "studs",
+    CurrentValue = 1.5,
+    Flag = "GameFloatWaveHeight",
+    Callback = function(Value) end,
+})
+
+GameTab:CreateSection("Attack System")
+
+GameTab:CreateToggle({
+    Name = "Attack Floating Enemies",
+    CurrentValue = false,
+    Flag = "GameAttackEnemies",
+    Callback = function(Value)
+        if Value then
+            task.spawn(function()
+                local slimeAttackTimers = {}
+                
+                while Rayfield.Flags.GameAttackEnemies.CurrentValue do
+                    local char = localPlr.Character
+                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                    
+                    if hrp then
+                        local gp = findGameplayFolder()
+                        local enemiesFolder = gp and gp:FindFirstChild("Enemies")
+                        local slimesFolder = gp and gp:FindFirstChild("Slimes")
+                        
+                        if enemiesFolder and slimesFolder then
+                            local enemies = {}
+                            for _, enemy in ipairs(enemiesFolder:GetChildren()) do
+                                local eRoot = getRootPart(enemy)
+                                if enemy:IsA("Model") and eRoot then
+                                    local hum = enemy:FindFirstChildOfClass("Humanoid")
+                                    if not hum or hum.Health > 0 then
+                                        table.insert(enemies, {model = enemy, root = eRoot})
+                                    end
+                                end
+                            end
+                            
+                            local slimes = {}
+                            for _, slime in ipairs(slimesFolder:GetChildren()) do
+                                local sRoot = getRootPart(slime)
+                                if slime:IsA("Model") and sRoot then
+                                    table.insert(slimes, {model = slime, root = sRoot, id = slime.Name})
+                                end
+                            end
+                            
+                            local slimeCount = #slimes
+                            if slimeCount > 0 and #enemies > 0 then
+                                local t = tick()
+                                local radius = Rayfield.Flags.GameFloatRadius.CurrentValue or 12
+                                local speed = Rayfield.Flags.GameFloatSpeed.CurrentValue or 1
+                                local waveSpeed = Rayfield.Flags.GameFloatWaveSpeed.CurrentValue or 3
+                                local waveHeight = Rayfield.Flags.GameFloatWaveHeight.CurrentValue or 1.5
+                                local attackRange = Rayfield.Flags.GameAttackRange.CurrentValue or 25
+                                local lungeSpeed = Rayfield.Flags.GameAttackLungeSpeed.CurrentValue or 15
+                                
+                                for i, slimeData in ipairs(slimes) do
+                                    local slime = slimeData.model
+                                    local sRoot = slimeData.root
+                                    local slimeId = slimeData.id
+                                    
+                                    local angle = ((i / slimeCount) * math.pi * 2) + (t * speed)
+                                    local bobbing = math.sin((t * waveSpeed) + i) * waveHeight
+                                    
+                                    local orbitPos = hrp.Position + Vector3.new(
+                                        math.cos(angle) * radius,
+                                        bobbing + 2,
+                                        math.sin(angle) * radius
+                                    )
+                                    
+                                    local closestEnemy = nil
+                                    local closestDist = attackRange
+                                    
+                                    for _, enemyData in ipairs(enemies) do
+                                        local dist = (sRoot.Position - enemyData.root.Position).Magnitude
+                                        if dist < closestDist then
+                                            closestDist = dist
+                                            closestEnemy = enemyData
+                                        end
+                                    end
+                                    
+                                    local finalPos = orbitPos
+                                    local lookTarget = orbitPos + (orbitPos - hrp.Position).Unit
+                                    
+                                    if closestEnemy then
+                                        if not slimeAttackTimers[slimeId] then
+                                            slimeAttackTimers[slimeId] = t
+                                        end
+                                        
+                                        local attackTime = t - slimeAttackTimers[slimeId]
+                                        local lungeProgress = math.sin(attackTime * lungeSpeed)
+                                        
+                                        if lungeProgress > 0 then
+                                            finalPos = orbitPos:Lerp(closestEnemy.root.Position, lungeProgress * 0.85)
+                                            lookTarget = closestEnemy.root.Position
+                                        else
+                                            slimeAttackTimers[slimeId] = t
+                                        end
+                                    else
+                                        slimeAttackTimers[slimeId] = nil
+                                    end
+                                    
+                                    pcall(function()
+                                        slime:PivotTo(CFrame.lookAt(finalPos, lookTarget))
+                                    end)
+                                end
+                            end
+                        end
+                    end
+                    
+                    task.wait()
+                end
+            end)
+        end
+    end,
+})
+
+GameTab:CreateSlider({
+    Name = "Attack Range",
+    Range = {10, 50},
+    Increment = 1,
+    Suffix = "studs",
+    CurrentValue = 25,
+    Flag = "GameAttackRange",
+    Callback = function(Value) end,
+})
+
+GameTab:CreateSlider({
+    Name = "Attack Lunge Speed",
+    Range = {5, 30},
+    Increment = 1,
+    Suffix = "x",
+    CurrentValue = 15,
+    Flag = "GameAttackLungeSpeed",
+    Callback = function(Value) end,
+})
+
 local MiscTab = Window:CreateTab("Misc", 96334002390551)
 
 MiscTab:CreateSection("Codes & Rewards")
@@ -816,9 +890,6 @@ do
     })
 end
 
--- =========================================================
--- SETTINGS TAB
--- =========================================================
 local SettingsTab = Window:CreateTab("Settings", 122930981612451)
 
 SettingsTab:CreateSection("System")
