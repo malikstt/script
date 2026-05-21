@@ -27,9 +27,8 @@ end)
 
 local function safeRemote(serviceName)
     local svc = rmt:FindFirstChild(serviceName) or rmt:WaitForChild(serviceName, 10)
-    if not svc then warn("[FruitHub] Remote service missing: " .. serviceName) return nil end
+    if not svc then return nil end
     local rf = svc:FindFirstChild("RemoteFunction") or svc:WaitForChild("RemoteFunction", 10)
-    if not rf then warn("[FruitHub] RemoteFunction missing in: " .. serviceName) end
     return rf
 end
 
@@ -45,7 +44,7 @@ local idxRmt   = safeRemote("IndexService")
 local lootRmt  = safeRemote("LootService")
 
 local src = RS:WaitForChild("Source", 30)
-if not src then warn("Main module missing") return end
+if not src then return end
 
 local rarityTiers = require(src.Game.Items.RarityTiers)
 local upgTree     = require(src.Features.Upgrades.UpgradeTree)
@@ -88,7 +87,7 @@ local function wh_formatNumber(n)
 end
 
 local function wh_getRarityFromOdds(odds)
-    if not odds or odds <= 0 then return "Unknown" end
+    if not odds or type(odds) ~= "number" or odds <= 0 then return "Unknown" end
     local ok, tier = pcall(rarityTiers.getTier, odds)
     return (ok and tier and tier.name) or "Unknown"
 end
@@ -202,7 +201,7 @@ local function wh_sendWebhook(slimeId, slime, muts, url, uid)
     local statBonus   = muts and mutations.getStatBonus(muts, "damage") or 1
     local finalOdds   = baseOdds and (baseOdds / mult) or nil
     local rarity      = wh_getRarityFromOdds(baseOdds)
-    local chanceText  = finalOdds and string.format("1 in %s", wh_formatNumber(math.floor(1 / finalOdds + 0.5))) or "N/A"
+    local chanceText  = (finalOdds and type(finalOdds) == "number" and finalOdds > 0) and string.format("1 in %s", wh_formatNumber(math.floor(1 / finalOdds + 0.5))) or "N/A"
 
     local img = (muts and muts.inverted) and (slime and slime.invertedIcon) or (slime and slime.image)
     local finalImg = nil
@@ -256,7 +255,7 @@ local function wh_sendWebhook(slimeId, slime, muts, url, uid)
                 content = ping,
                 username = "Fruit Hub",
                 embeds = {{
-                    title       = "New Slime Rolled!",
+                    title       = "🎲 New Slime Rolled!",
                     description = string.format("**||%s||** rolled **%s**!\n\n🎲 **Total Rolls:** %s", pName, displayName, wh_ordinal(rolls)),
                     thumbnail   = finalImg and {url = finalImg, width = sz, height = sz} or nil,
                     fields      = fields,
@@ -390,12 +389,12 @@ end)
 
 MainTab:CreateParagraph({
     Title = "Enabled By Default",
-    Content = "[+] Anti AFK"
+    Content = "✅ Anti AFK"
 })
 
 MainTab:CreateParagraph({
     Title = "Latest Update",
-    Content = "[+] Fixed Gameplay folder detection\n[+] Fixed floating enemies & teleport\n[+] Fixed attack system\n[+] Optimized caches"
+    Content = "✅ Fixed Gameplay folder detection\n✅ Fixed floating enemies & teleport\n✅ Fixed attack system\n✅ Optimized caches"
 })
 
 MainTab:CreateButton({
@@ -538,7 +537,7 @@ FarmingTab:CreateToggle({
             task.spawn(function()
                 while Rayfield.Flags.FarmingFastRoll and Rayfield.Flags.FarmingFastRoll.CurrentValue do
                     pcall(rollRmt.InvokeServer, rollRmt, "requestRoll")
-                    task.wait()
+                    task.wait(0.05)
                 end
             end)
         end
@@ -872,6 +871,16 @@ GameTab:CreateSlider({
 
 local slimeAttackTimers = {}
 
+local function safePivotTo(model, cf)
+    if not model or not model.Parent then return end
+    pcall(function()
+        local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
+        if primary and not primary:IsA("UnionOperation") then
+            model:PivotTo(cf)
+        end
+    end)
+end
+
 RunService.RenderStepped:Connect(function()
     if not floatActive and not attackActive then return end
 
@@ -899,10 +908,8 @@ RunService.RenderStepped:Connect(function()
                 math.sin(angle) * radius
             )
 
-            pcall(function()
-                local lookDirection = (pos - hrp.Position).Unit
-                enemy.model:PivotTo(CFrame.lookAt(pos, pos + lookDirection))
-            end)
+            local lookDirection = (pos - hrp.Position).Unit
+            safePivotTo(enemy.model, CFrame.lookAt(pos, pos + lookDirection))
         end
     end
 
@@ -951,9 +958,7 @@ RunService.RenderStepped:Connect(function()
                 slimeAttackTimers[slime.id] = nil
             end
 
-            pcall(function()
-                slime.model:PivotTo(CFrame.lookAt(finalPos, lookTarget))
-            end)
+            safePivotTo(slime.model, CFrame.lookAt(finalPos, lookTarget))
         end
     end
 end)
@@ -1236,43 +1241,49 @@ task.spawn(function()
         task.wait(0.1)
 
         if not Rayfield.Flags.WebhookEnabled or not Rayfield.Flags.WebhookEnabled.CurrentValue then
-            -- do nothing
+            
         elseif wh_storedUrl ~= "" then
             local ok, res = pcall(rollSlice.rollResults)
-            if ok and type(res) == "table" and #res > 0 then
-                local fp = wh_getRollFingerprint(res)
-                if fp ~= wh_lastFingerprint then
-                    wh_lastFingerprint = fp
+            if not ok or type(res) ~= "table" or #res == 0 then
+                task.wait(0.5)
+                
+            end
 
-                    local sendAll     = Rayfield.Flags.WebhookSendAll and Rayfield.Flags.WebhookSendAll.CurrentValue
-                    local sendNew     = Rayfield.Flags.WebhookSendNew and Rayfield.Flags.WebhookSendNew.CurrentValue
-                    local sendMutated = Rayfield.Flags.WebhookSendMutated and Rayfield.Flags.WebhookSendMutated.CurrentValue
+            local fp = wh_getRollFingerprint(res)
+            if fp ~= wh_lastFingerprint then
+                local sendAll     = Rayfield.Flags.WebhookSendAll and Rayfield.Flags.WebhookSendAll.CurrentValue
+                local sendNew     = Rayfield.Flags.WebhookSendNew and Rayfield.Flags.WebhookSendNew.CurrentValue
+                local sendMutated = Rayfield.Flags.WebhookSendMutated and Rayfield.Flags.WebhookSendMutated.CurrentValue
 
-                    for _, r in ipairs(res) do
-                        local it = wh_getFirstItem(r)
-                        if it then
-                            local slimeId = tostring(it.id or "")
-                            if slimeId ~= "" then
-                                local muts = type(it.mutations) == "table" and next(it.mutations) ~= nil and it.mutations or nil
-                                local okS, slm = pcall(slimeData.getSlime, slimeId)
-                                local slm_obj = okS and slm or nil
+                local anySent = false
+                for _, r in ipairs(res) do
+                    local it = wh_getFirstItem(r)
+                    if it then
+                        local slimeId = tostring(it.id or "")
+                        if slimeId ~= "" then
+                            local muts = type(it.mutations) == "table" and next(it.mutations) ~= nil and it.mutations or nil
+                            local okS, slm = pcall(slimeData.getSlime, slimeId)
+                            local slm_obj = okS and slm or nil
 
-                                local hasMutation = muts ~= nil
-                                local isNew = wh_isNewSlime(slimeId, muts)
+                            local hasMutation = muts ~= nil
+                            local isNew = wh_isNewSlime(slimeId, muts)
 
-                                local shouldSend = sendAll or (sendNew and isNew) or (sendMutated and hasMutation and wh_isMutationAllowed(muts))
+                            local shouldSend = sendAll or (sendNew and isNew) or (sendMutated and hasMutation and wh_isMutationAllowed(muts))
 
-                                if shouldSend then
-                                    local uid = Rayfield.Flags.WebhookUserID.CurrentValue
-                                    task.spawn(wh_sendWebhook, slimeId, slm_obj, muts, wh_storedUrl, uid)
-                                end
+                            if shouldSend then
+                                local uid = Rayfield.Flags.WebhookUserID.CurrentValue
+                                task.spawn(wh_sendWebhook, slimeId, slm_obj, muts, wh_storedUrl, uid)
+                                anySent = true
                             end
                         end
                     end
                 end
+
+                if anySent or true then
+                    wh_lastFingerprint = fp
+                end
             end
         end
-        task.wait()
     end
 end)
 
