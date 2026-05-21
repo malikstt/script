@@ -181,6 +181,24 @@ local function wh_ordinal(n)
 end
 
 local wh_sentFingerprints = {}
+local wh_fingerprintCount = 0
+
+local function wh_cleanupFingerprints()
+    wh_fingerprintCount = 0
+    wh_sentFingerprints = {}
+end
+
+local function wh_addFingerprint(fp)
+    wh_sentFingerprints[fp] = true
+    wh_fingerprintCount = wh_fingerprintCount + 1
+    if wh_fingerprintCount > 500 then
+        wh_cleanupFingerprints()
+    end
+end
+
+local function wh_hasFingerprint(fp)
+    return wh_sentFingerprints[fp] == true
+end
 
 local function wh_buildPing(uid)
     if uid and uid ~= "" then
@@ -191,8 +209,8 @@ local function wh_buildPing(uid)
 end
 
 local function wh_sendWebhook(slimeId, slime, muts, url, uid, fingerprint)
-    if wh_sentFingerprints[fingerprint] then return end
-    wh_sentFingerprints[fingerprint] = true
+    if wh_hasFingerprint(fingerprint) then return end
+    wh_addFingerprint(fingerprint)
     
     local ping        = wh_buildPing(uid)
     local name        = slime and slime.name or slimeId
@@ -534,9 +552,12 @@ FarmingTab:CreateToggle({
     Callback = function(Value)
         if Value then
             task.spawn(function()
+                local rollSlice = require(game:GetService("ReplicatedStorage"):WaitForChild("Source"):WaitForChild("Features"):WaitForChild("Roll"):WaitForChild("RollSlice"))
                 while Rayfield.Flags.FarmingFastRoll and Rayfield.Flags.FarmingFastRoll.CurrentValue do
-                    pcall(rollRmt.InvokeServer, rollRmt, "requestRoll")
-                    task.wait(0.05)
+                    pcall(function()
+                        game:GetService("ReplicatedStorage"):WaitForChild("Packages"):WaitForChild("_Index"):WaitForChild("leifstout_networker@0.3.1"):WaitForChild("networker"):WaitForChild("_remotes"):WaitForChild("RollService"):WaitForChild("RemoteFunction"):InvokeServer("requestRoll")
+                    end)
+                    task.wait(rollSlice.rollTime())
                 end
             end)
         end
@@ -657,132 +678,72 @@ GameTab:CreateDropdown({
 
 GameTab:CreateSection("Combat")
 
-local function getRootPart(model)
-    return model.PrimaryPart
-        or model:FindFirstChild("HumanoidRootPart")
-        or model:FindFirstChild("RootPart")
-        or model:FindFirstChildWhichIsA("BasePart")
-end
-
-local teleportActive = false
-local floatActive    = false
-local attackActive   = false
-
-local enemyCache = {}
-local slimeCache = {}
-local cacheTime  = 0
-
-local function updateCaches()
-    local now = tick()
-    if now - cacheTime < 0.5 then return end
-    cacheTime = now
-
-    local gp = findGameplayFolder()
-    if not gp then return end
-
-    local enemiesFolder = gp:FindFirstChild("Enemies")
-    local slimesFolder  = gp:FindFirstChild("Slimes")
-
-    enemyCache = {}
-    if enemiesFolder then
-        for _, enemy in ipairs(enemiesFolder:GetChildren()) do
-            if enemy:IsA("Model") then
-                local root = getRootPart(enemy)
-                if root then
-                    table.insert(enemyCache, {model = enemy, root = root})
-                end
-            end
-        end
-    end
-
-    slimeCache = {}
-    if slimesFolder then
-        for _, slime in ipairs(slimesFolder:GetChildren()) do
-            if slime:IsA("Model") then
-                local root = getRootPart(slime)
-                if root then
-                    table.insert(slimeCache, {model = slime, root = root, id = slime.Name})
-                end
-            end
-        end
-    end
-end
-
-local lockedEnemy = nil
-
-local function isEnemyAlive(enemyModel)
-    if not enemyModel or not enemyModel.Parent then return false end
-    local root = getRootPart(enemyModel)
-    if not root then return false end
-    local hum = enemyModel:FindFirstChildOfClass("Humanoid")
-    if hum and hum.Health <= 0 then return false end
-    return true
-end
-
-local function pickNearestEnemy(myPos)
-    local gp = findGameplayFolder()
-    if not gp then return nil end
-    local enemiesFolder = gp:FindFirstChild("Enemies")
-    if not enemiesFolder then return nil end
-
-    local closest, closestDist = nil, math.huge
-    for _, enemy in ipairs(enemiesFolder:GetChildren()) do
-        if enemy:IsA("Model") and isEnemyAlive(enemy) then
-            local root = getRootPart(enemy)
-            if root then
-                local dist = (root.Position - myPos).Magnitude
-                if dist < closestDist then
-                    closestDist = dist
-                    closest     = enemy
-                end
-            end
-        end
-    end
-    return closest
-end
-
 GameTab:CreateToggle({
-    Name = "Teleport To Nearest Enemy",
+    Name = "Spam Slime Gun",
     CurrentValue = false,
-    Flag = "GameTeleportEnemies",
+    Flag = "GameSpamSlimeGun",
     Callback = function(Value)
-        teleportActive = Value
-        if not Value then
-            lockedEnemy = nil
-            return
-        end
-        task.spawn(function()
-            while teleportActive and Rayfield.Flags.GameTeleportEnemies and Rayfield.Flags.GameTeleportEnemies.CurrentValue do
-                local char = localPlr.Character
-                local myHRP = char and char:FindFirstChild("HumanoidRootPart")
-                if myHRP then
-                    if lockedEnemy and not isEnemyAlive(lockedEnemy) then
-                        lockedEnemy = nil
+        if Value then
+            task.spawn(function()
+                local Players = game:GetService("Players")
+                local VirtualInputManager = game:GetService("VirtualInputManager")
+                local ReplicatedStorage = game:GetService("ReplicatedStorage")
+                local LocalPlayer = Players.LocalPlayer
+                local Gameplay = require(ReplicatedStorage.Source.Features.Gameplay.GameplayServiceClient)
+                local DataService = require(ReplicatedStorage.Packages.DataService).client
+                local GoopUtils = require(ReplicatedStorage.Source.Features.GoopGun.GoopGunServiceUtils)
+                
+                local function equipGun()
+                    local char = LocalPlayer.Character
+                    if not char then return end
+                    local hum = char:FindFirstChildWhichIsA("Humanoid")
+                    if not hum then return end
+                    local tool = char:FindFirstChild("SlimeGun") or LocalPlayer.Backpack:FindFirstChild("SlimeGun")
+                    if tool and tool.Parent ~= char then
+                        hum:EquipTool(tool)
                     end
-                    if not lockedEnemy then
-                        lockedEnemy = pickNearestEnemy(myHRP.Position)
-                    end
-                    if lockedEnemy then
-                        local targetRoot = getRootPart(lockedEnemy)
-                        if targetRoot then
-                            local teleportPos = targetRoot.Position + Vector3.new(0, 3, 0)
-                            local teleportRmt = rmt:FindFirstChild("TeleportService")
-                            if teleportRmt then
-                                local rf = teleportRmt:FindFirstChild("RemoteFunction")
-                                if rf then
-                                    pcall(rf.InvokeServer, rf, teleportPos)
-                                else
-                                    local re = teleportRmt:FindFirstChild("RemoteEvent")
-                                    if re then pcall(re.FireServer, re, teleportPos) end
-                                end
+                end
+                
+                local function getRoot()
+                    local char = LocalPlayer.Character
+                    if not char then return end
+                    local hum = char:FindFirstChildWhichIsA("Humanoid")
+                    if not hum then return end
+                    return hum.RootPart
+                end
+                
+                local function getClosestEnemy()
+                    local gameplay = Gameplay.gameplay
+                    local root = getRoot()
+                    if not gameplay or not root then return end
+                    local upgrades = DataService:get("upgrades") or {}
+                    local range = GoopUtils.getRange(upgrades)
+                    local closest
+                    local dist = math.huge
+                    for id, enemy in pairs(gameplay.enemies) do
+                        if enemy and not enemy.dead and enemy.pos then
+                            local mag = (enemy.pos - root.Position).Magnitude
+                            if mag <= range and mag < dist then
+                                dist = mag
+                                closest = id
                             end
                         end
                     end
+                    return closest
                 end
-                task.wait(0.2)
-            end
-            lockedEnemy = nil
-        end)
+                
+                while Rayfield.Flags.GameSpamSlimeGun and Rayfield.Flags.GameSpamSlimeGun.CurrentValue do
+                    local enemy = getClosestEnemy()
+                    if enemy then
+                        equipGun()
+                        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+                        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+                    end
+                    local upgrades = DataService:get("upgrades") or {}
+                    task.wait(GoopUtils.getFireRate(upgrades))
+                end
+            end)
+        end
     end,
 })
 
@@ -1131,7 +1092,7 @@ WebhookTab:CreateInput({
     Name = "Webhook URL",
     CurrentValue = "",
     PlaceholderText = "Paste your Discord webhook URL",
-    RemoveTextAfterFocusLost = false,
+    RemoveTextAfterFocusLost = true,
     Flag = "WebhookURLDisplay",
     Callback = function(Text)
         if Text and Text:match("^https://discord") then
