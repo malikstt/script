@@ -464,7 +464,6 @@ GameTab:CreateDropdown({
 
 GameTab:CreateSection("Combat")
 
--- Locks onto nearest enemy, lerps toward it, only re-targets once it's gone
 GameTab:CreateToggle({
     Name = "Teleport To Nearest Enemy",
     CurrentValue = false,
@@ -473,41 +472,57 @@ GameTab:CreateToggle({
         if Value then
             task.spawn(function()
                 local lockedEnemy = nil
+                local lockedHRP = nil
+
+                local function targetValid()
+                    if not lockedEnemy or not lockedEnemy.Parent then return false end
+                    if not lockedHRP or not lockedHRP.Parent then return false end
+                    local hum = lockedEnemy:FindFirstChildOfClass("Humanoid")
+                    if hum and hum.Health <= 0 then return false end
+                    return true
+                end
+
                 while Rayfield.Flags.GameTeleportEnemies.CurrentValue do
-                    local gp = findGameplayFolder()
-                    local enemies = gp and gp:FindFirstChild("Enemies")
-                    local hrp = localPlr.Character and localPlr.Character:FindFirstChild("HumanoidRootPart")
+                    local char = localPlr.Character
+                    local myHRP = char and char:FindFirstChild("HumanoidRootPart")
 
-                    if hrp and enemies then
-                        -- Drop lock if enemy gone
-                        if lockedEnemy and (not lockedEnemy.Parent or not lockedEnemy:FindFirstChild("HumanoidRootPart")) then
-                            lockedEnemy = nil
-                        end
+                    if myHRP then
+                        local gp = findGameplayFolder()
+                        local enemyFolder = gp and gp:FindFirstChild("Enemies")
 
-                        -- Pick nearest if no lock
-                        if not lockedEnemy then
-                            local target, dist = nil, math.huge
-                            for _, e in ipairs(enemies:GetChildren()) do
-                                local erp = e:FindFirstChild("HumanoidRootPart")
-                                if erp then
-                                    local d = (erp.Position - hrp.Position).Magnitude
-                                    if d < dist then target = e; dist = d end
+                        if enemyFolder then
+                            if not targetValid() then
+                                lockedEnemy = nil
+                                lockedHRP = nil
+                                local best, bestDist = nil, math.huge
+                                for _, e in ipairs(enemyFolder:GetChildren()) do
+                                    local erp = e:FindFirstChild("HumanoidRootPart")
+                                    if erp then
+                                        local d = (erp.Position - myHRP.Position).Magnitude
+                                        if d < bestDist then
+                                            best = e
+                                            bestDist = d
+                                        end
+                                    end
+                                end
+                                if best then
+                                    lockedEnemy = best
+                                    lockedHRP = best:FindFirstChild("HumanoidRootPart")
                                 end
                             end
-                            lockedEnemy = target
-                        end
 
-                        -- Lerp toward locked enemy
-                        if lockedEnemy then
-                            local erp = lockedEnemy:FindFirstChild("HumanoidRootPart")
-                            if erp then
-                                hrp.CFrame = hrp.CFrame:Lerp(erp.CFrame * CFrame.new(0, 0, 3), 0.3)
+                            if lockedHRP and lockedHRP.Parent then
+                                local goal = lockedHRP.CFrame * CFrame.new(0, 0, 3.5)
+                                myHRP.CFrame = myHRP.CFrame:Lerp(goal, 0.4)
                             end
                         end
                     end
 
-                    task.wait(0.1)
+                    task.wait(0.05)
                 end
+
+                lockedEnemy = nil
+                lockedHRP = nil
             end)
         end
     end,
@@ -551,33 +566,58 @@ GameTab:CreateSlider({
     Callback = function(Value) end,
 })
 
-local function applySpeed(folder, speedValue, deltaTime)
+local _gpCache = nil
+local _gpCacheTime = 0
+local function getCachedGameplay()
+    local now = tick()
+    if _gpCache and _gpCache.Parent and (now - _gpCacheTime) < 5 then
+        return _gpCache
+    end
+    _gpCache = findGameplayFolder()
+    _gpCacheTime = now
+    return _gpCache
+end
+
+local function applySpeedToFolder(folder, speedValue, dt)
     if not folder then return end
-    for _, model in ipairs(folder:GetChildren()) do
+    local children = folder:GetChildren()
+    local extra = (speedValue - 16) * dt
+    for i = 1, #children do
+        local model = children[i]
         local hrp = model:FindFirstChild("HumanoidRootPart")
         if hrp then
+            if extra > 0 then
+                pcall(function()
+                    hrp.CFrame = hrp.CFrame * CFrame.new(0, 0, -extra)
+                end)
+            end
             local hum = model:FindFirstChildOfClass("Humanoid")
             if hum then
                 pcall(function() hum.WalkSpeed = speedValue end)
-            end
-            if speedValue > 16 then
-                pcall(function()
-                    hrp.CFrame = hrp.CFrame * CFrame.new(0, 0, -(speedValue - 16) * deltaTime)
-                end)
             end
         end
     end
 end
 
+local _speedAccum = 0
 RunService.Heartbeat:Connect(function(dt)
-    local gp = findGameplayFolder()
-    if gp then
-        if Rayfield.Flags.GameSuperFastEnemies and Rayfield.Flags.GameSuperFastEnemies.CurrentValue then
-            applySpeed(gp:FindFirstChild("Enemies"), Rayfield.Flags.GameEnemySpeed.CurrentValue, dt)
-        end
-        if Rayfield.Flags.GameSuperFastSlime and Rayfield.Flags.GameSuperFastSlime.CurrentValue then
-            applySpeed(gp:FindFirstChild("Slimes"), Rayfield.Flags.GameSlimeSpeed.CurrentValue, dt)
-        end
+    _speedAccum = _speedAccum + dt
+    if _speedAccum < 0.05 then return end
+    local elapsed = _speedAccum
+    _speedAccum = 0
+
+    local enemyOn = Rayfield.Flags.GameSuperFastEnemies and Rayfield.Flags.GameSuperFastEnemies.CurrentValue
+    local slimeOn = Rayfield.Flags.GameSuperFastSlime and Rayfield.Flags.GameSuperFastSlime.CurrentValue
+    if not enemyOn and not slimeOn then return end
+
+    local gp = getCachedGameplay()
+    if not gp then return end
+
+    if enemyOn then
+        applySpeedToFolder(gp:FindFirstChild("Enemies"), Rayfield.Flags.GameEnemySpeed.CurrentValue, elapsed)
+    end
+    if slimeOn then
+        applySpeedToFolder(gp:FindFirstChild("Slimes"), Rayfield.Flags.GameSlimeSpeed.CurrentValue, elapsed)
     end
 end)
 
