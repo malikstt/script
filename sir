@@ -1,290 +1,440 @@
 repeat task.wait() until game:IsLoaded()
 
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local HttpService = game:GetService("HttpService")
-local TeleportService = game:GetService("TeleportService")
+local RS = game:GetService("ReplicatedStorage")
+local http = game:GetService("HttpService")
+local plrs = game:GetService("Players")
+local localPlr = plrs.LocalPlayer
 
-local LocalPlayer = Players.LocalPlayer
-local placeId = game.PlaceId
+local pkgs = RS:WaitForChild("Packages")
+local dataCli = require(pkgs.DataService).client
+dataCli:waitForData()
 
-local Network = require(ReplicatedStorage.Library.Client.Network)
-local Items = require(ReplicatedStorage.Library.Items)
-local Save = require(ReplicatedStorage.Library.Client.Save)
+local src = RS:WaitForChild("Source", 30)
+if not src then warn("Source missing") return end
 
-local MAX_RETRIES = 3
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1495059756371546345/L3e0gHM3cdJAhq80YGviVwkvNOcJKOKYjerPBRPp2I5mli4FZ7r8vD7-8LPrBqWODKNw"
+local rollSlice = require(src.Features.Roll.RollSlice)
+local slimeData = require(src.Game.Items.Slimes)
+local rarityTiers = require(src.Game.Items.RarityTiers)
+local mutations = require(src.Features.Mutations.Mutations)
 
-local CALLER = {
-    Caller = {
-        LineNumber = 527,
-        ScriptClass = "ModuleScript",
-        Variadic = false,
-        Traceback = "ReplicatedStorage.Library.Client.BoothCmds:527 function PromptPurchase2\nReplicatedStorage.Library.Client.BoothCmds:654 function promptOtherPlayerBooth2\nReplicatedStorage.Library.Client.BoothCmds:996",
-        ScriptPath = "ReplicatedStorage.Library.Client.BoothCmds",
-        FunctionName = "PromptPurchase2",
-        Handle = "function: 0x192a00f6dcd86076",
-        ScriptType = "Instance",
-        ParameterCount = 2,
-        SourceIdentifier = "ReplicatedStorage.Library.Client.BoothCmds"
+-- ================================================
+-- Helpers
+-- ================================================
+
+local function formatNumber(n)
+    if type(n) ~= "number" then return tostring(n) end
+    local suffixes = {
+        {1e18, "Qn"}, {1e15, "Qd"}, {1e12, "T"},
+        {1e9, "B"}, {1e6, "M"}, {1e3, "K"}
     }
-}
-
-local function commas(n)
-    local s = tostring(math.floor(n))
-    local result = ""
-    local count = 0
-    for i = #s, 1, -1 do
-        if count > 0 and count % 3 == 0 then
-            result = "," .. result
-        end
-        result = s:sub(i, i) .. result
-        count = count + 1
-    end
-    return result
-end
-
-local function redactUsername(name)
-    local visible = math.max(1, math.floor(#name / 3))
-    return name:sub(1, visible) .. string.rep("*", #name - visible)
-end
-
-local function getGems()
-    local data = Save.Get()
-    if not data then return 0 end
-    for _, v in pairs(data.Inventory.Currency) do
-        if v.id == "Diamonds" then
-            return v._am
-        end
-    end
-    return 0
-end
-
-local function getIconFromDirectory(item, class)
-    local dir = item:Directory()
-    if not dir then return nil end
-    if class == "Pet" then
-        return (dir.thumbnail or ""):gsub("rbxassetid://","")
-    elseif class == "Egg" then
-        return (dir.icon or ""):gsub("rbxassetid://","")
-    elseif class == "Enchant" or class == "Charm" or class == "Hoverboard" or class == "Ultimate" then
-        return (dir.Icon or ""):gsub("rbxassetid://","")
-    end
-end
-
-local function resolveRobloxThumbnail(assetId)
-    if not assetId then return nil end
-    local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetId.."&size=420x420&format=Png&isCircular=false"
-    local res = request({Url=url,Method="GET"})
-    if res and res.Success then
-        local data = HttpService:JSONDecode(res.Body)
-        if data and data.data and data.data[1] then
-            return data.data[1].imageUrl
-        end
-    end
-end
-
-local function sendWebhook(name, quantity, price, rap, gemsLeft, assetId)
-    local profit = rap - price
-    local profitPct = math.floor(((rap-price)/rap)*10000)/100
-    local thumbnailUrl = resolveRobloxThumbnail(assetId)
-    local redacted = redactUsername(LocalPlayer.Name)
-
-    local embed = {
-        title = "Booth Sniper has sniped a new Item!",
-        color = 0x9B59B6,
-        fields = {
-            {
-                name = "Sniped Item Info:",
-                value = table.concat({
-                    "**Item:** "..name.." (x"..quantity..")",
-                    "**Paid:** "..commas(price*quantity),
-                    "**RAP:** "..commas(rap),
-                    "**Profit:** "..commas(profit).." ("..profitPct.."%)"
-                },"\n"),
-                inline = false
-            },
-            {
-                name = "User Info:",
-                value = table.concat({
-                    "**Diamonds Left:** "..commas(gemsLeft),
-                    "**In Account:** "..redacted
-                },"\n"),
-                inline = false
-            }
-        }
-    }
-
-    if thumbnailUrl then
-        embed.thumbnail = {url = thumbnailUrl}
-    end
-
-    request({
-        Url = WEBHOOK_URL,
-        Method = "POST",
-        Headers = {["Content-Type"]="application/json"},
-        Body = HttpService:JSONEncode({
-            username="Booth Sniper",
-            embeds={embed}
-        })
-    })
-end
-
-local function getProfitThreshold(item)
-    if not item or not item._data then return nil end
-
-    local class = item._data.class
-
-    if class == "Pet" then
-        local dir = item:Directory()
-        if dir then
-            if dir.titanic or dir.gargantuan then
-                return 0.10
-            end
-            if dir.huge then
-                return 0.15
+    for _, s in ipairs(suffixes) do
+        if math.abs(n) >= s[1] then
+            local fm = n / s[1]
+            if math.abs(fm - math.floor(fm)) < 0.01 then
+                return string.format("%d%s", math.floor(fm), s[2])
+            else
+                return string.format("%.1f%s", fm, s[2])
             end
         end
-    elseif class == "Egg" then
-        local rarity = item:GetRarity()
-        if rarity and rarity.Name == "Exclusive" then
-            return 0.10
-        end
-    elseif class == "Enchant" then
-        local name = item:GetName()
-        local dir = ReplicatedStorage.__DIRECTORY.Enchants.Exclusive
-        if dir and dir:FindFirstChild(name) then
-            return 0.20
-        end
-    elseif class == "Hoverboard" then
-        return 0.40
-    elseif class == "Charm" then
-        return 0.20
-    elseif class == "Ultimate" then
-        return 0.40
     end
+    return tostring(math.floor(n))
+end
 
+local function getRarityFromOdds(odds)
+    if not odds or odds <= 0 then return "Unknown" end
+    local ok, tier = pcall(rarityTiers.getTier, odds)
+    return (ok and tier and tier.name) or "Unknown"
+end
+
+local function getFirstItem(r)
+    if type(r) ~= "table" then return nil end
+    for _, e in ipairs(r) do
+        if type(e) == "table" and e.id then return e end
+    end
     return nil
 end
 
-local function shouldBuy(item, price, rap)
-    local threshold = getProfitThreshold(item)
-    if not threshold then return false end
-    if not rap or rap <= 0 then return false end
-    local profitRatio = (rap - price) / rap
-    return profitRatio >= threshold
+local function getRollFingerprint(res)
+    if type(res) ~= "table" or #res == 0 then return "empty" end
+    local parts = {}
+    for i, r in ipairs(res) do
+        local it = getFirstItem(r)
+        parts[i] = it and tostring(it.id) or tostring(i)
+    end
+    return #res .. "|" .. table.concat(parts, ",")
 end
 
-local function attemptPurchase(playerID, listingId, name, quantity)
-    for attempt = 1, MAX_RETRIES do
-        local ok = pcall(function()
-            ReplicatedStorage.Network.Booths_RequestPurchase:InvokeServer(playerID,{[listingId]=quantity},CALLER)
-        end)
-        if ok then
-            return true
-        end
-        task.wait(0.5)
-    end
+local function getIndexCategory(muts)
+    if not muts then return "basic" end
+    if muts.inverted then return "inverted" end
+    if muts.huge then return "huge" end
+    if muts.big then return "big" end
+    if muts.shiny then return "shiny" end
+    return "basic"
 end
 
-Network.Fired("Booths_Broadcast"):Connect(function(player, packet)
-    if not packet then return end
-
-    for listingId, listing in pairs(packet.Listings) do
-        if not listing or not listing.ItemData then continue end
-
-        local item = Items.From(
-            listing.ItemData.class,
-            listing.ItemData.data
-        ):SetUID(listing.ItemData.uid)
-
-        local name = item:GetName()
-        local rap = item:GetRAP() or 0
-        local price = listing.DiamondCost
-        local totalAvailable = listing.ItemData.amount or 1
-
-        if price and price > 0 then
-            if shouldBuy(item, price, rap) then
-                local gems = getGems()
-                local quantity = math.min(totalAvailable, math.floor(gems/price))
-
-                if quantity > 0 then
-                    local bought = attemptPurchase(packet.PlayerID, listingId, name, quantity)
-                    if bought then
-                        local gemsAfter = getGems()
-                        local assetId = getIconFromDirectory(item, listing.ItemData.class)
-                        task.spawn(function()
-                            sendWebhook(name, quantity, price, rap, gemsAfter, assetId)
-                        end)
-                    end
-                end
-            end
-        end
-    end
-end)
-
-local function fetchServers(cursor)
-    local url = "https://games.roblox.com/v1/games/"..placeId.."/servers/Public?limit=100"
-    if cursor then
-        url ..= "&cursor="..cursor
-    end
-    local ok,res = pcall(function()
-        return game:HttpGet(url)
-    end)
-    if not ok then return nil end
-    return HttpService:JSONDecode(res)
+local function isNewSlime(slimeId, muts)
+    local indexData = dataCli:get("index") or {}
+    local categories = indexData.categories or {}
+    local category = getIndexCategory(muts)
+    local catData = categories[category]
+    local unlocked = catData and catData.unlocked or {}
+    return not unlocked[slimeId]
 end
 
-local function serverHop()
-    math.randomseed(tick()*10000)
-    local rng = Random.new()
-
-    if rng:NextInteger(1,100) > 60 then
-        return
-    end
-
-    local servers = {}
-    local cursor
-
-    while true do
-        local data = fetchServers(cursor)
-        if not data then break end
-
-        for _,v in ipairs(data.data) do
-            if v.playing < v.maxPlayers then
-                table.insert(servers,v)
-            end
-        end
-
-        cursor = data.nextPageCursor
-        if not cursor then break end
-    end
-
-    table.sort(servers,function(a,b)
-        return a.playing > b.playing
-    end)
-
-    for _,server in ipairs(servers) do
-        if server.playing >= 30 and server.playing < 35 then
-            local targetJob = server.id
-            TeleportService:TeleportToPlaceInstance(placeId,targetJob,LocalPlayer)
-            task.wait(5)
-            if game.JobId == targetJob then
-                break
-            end
-        end
-    end
+local function getMutationType(muts)
+    if not muts then return "basic" end
+    if muts.inverted then return "inverted" end
+    if muts.huge then return "huge" end
+    if muts.big then return "big" end
+    if muts.shiny then return "shiny" end
+    return "basic"
 end
 
-task.spawn(function()
-    while true do
-        task.wait(3600)
-        if #Players:GetPlayers() < 10 then
-            serverHop()
+local thumbnailCache = {}
+local function getThumbnailUrl(assetId)
+    if not assetId then return nil end
+    if thumbnailCache[assetId] then return thumbnailCache[assetId] end
+    local ok, res = pcall(request, {
+        Url = "https://thumbnails.roblox.com/v1/assets?assetIds=" .. assetId .. "&size=420x420&format=Png&isCircular=false",
+        Method = "GET"
+    })
+    if ok and res and res.Success then
+        local data = http:JSONDecode(res.Body)
+        if data and data.data and data.data[1] then
+            thumbnailCache[assetId] = data.data[1].imageUrl
+            return thumbnailCache[assetId]
+        end
+    end
+    return nil
+end
+
+local function getMutationSize(muts)
+    if not muts then return 64 end
+    if muts.huge then return 128 elseif muts.big then return 96 end
+    return 64
+end
+
+local function getMutationColor(muts)
+    if not muts then return 0x3498db end
+    if muts.inverted then return 0x9b59b6
+    elseif muts.huge then return 0xf1c40f
+    elseif muts.big then return 0xe67e22
+    elseif muts.shiny then return 0xf39c12
+    end
+    return 0x3498db
+end
+
+local function ordinal(n)
+    local s = tostring(n)
+    local last, tens = n % 10, n % 100
+    if tens >= 11 and tens <= 13 then return s.."th" end
+    if last == 1 then return s.."st" end
+    if last == 2 then return s.."nd" end
+    if last == 3 then return s.."rd" end
+    return s.."th"
+end
+
+-- ================================================
+-- Webhook sender
+-- ================================================
+
+local sentKeys = {}
+
+local function sendWebhook(slimeId, slime, muts)
+    if not Rayfield.Flags.WebhookEnabled or not Rayfield.Flags.WebhookEnabled.CurrentValue then return end
+    local url = Rayfield.Flags.WebhookURL.CurrentValue
+    if not url or url == "" then return end
+
+    local uid = Rayfield.Flags.WebhookUserID.CurrentValue
+    local ping = ""
+    if uid and uid ~= "" then
+        if uid == "@everyone" or uid == "@here" then
+            ping = uid .. " "
         else
-            serverHop()
+            ping = "<@" .. uid .. "> "
+        end
+    else
+        ping = "@everyone "
+    end
+
+    local name = slime and slime.name or slimeId
+    local displayName = muts and mutations.getDisplayName(name, muts) or name
+    local baseOdds = slime and slime.odds or nil
+    local baseDmg = slime and slime.damage or 0
+    local baseHp = slime and slime.health or 0
+    local mult = muts and mutations.getVisualOddsMultiplier(muts) or 1
+    local statBonus = muts and mutations.getStatBonus(muts, "damage") or 1
+    local finalOdds = baseOdds and (baseOdds / mult) or nil
+    local rarity = getRarityFromOdds(baseOdds)
+    local chanceText = finalOdds and string.format("1 in %s", formatNumber(math.floor(1 / finalOdds + 0.5))) or "N/A"
+
+    local img = (muts and muts.inverted) and (slime and slime.invertedIcon) or (slime and slime.image)
+    local finalImg = nil
+    if img and img ~= "N/A" then
+        local aid = string.match(tostring(img), "rbxassetid://(%d+)")
+        if aid then finalImg = getThumbnailUrl(aid) end
+    end
+
+    local mutList = muts and mutations.getIds(muts) or {}
+
+    local finalDmg = baseDmg * statBonus
+    local finalHp = baseHp * statBonus
+    local statsText = ""
+    if finalDmg > 0 and finalHp > 0 then
+        statsText = string.format("âš”ï¸ %s  â¤ï¸ %s", formatNumber(finalDmg), formatNumber(finalHp))
+    elseif finalDmg > 0 then
+        statsText = string.format("âš”ï¸ %s", formatNumber(finalDmg))
+    elseif finalHp > 0 then
+        statsText = string.format("â¤ï¸ %s", formatNumber(finalHp))
+    end
+
+    local stats = dataCli:get("stats") or {}
+    local rolls = stats.rolls or 0
+    local kills = stats.kills or 0
+    local coins = dataCli:get("coins") or 0
+    local pName = localPlr and localPlr.Name or "Someone"
+    local sz = getMutationSize(muts)
+
+    local fields = {
+        {name = "Rarity", value = rarity, inline = true},
+        {name = "Chance", value = chanceText, inline = true},
+    }
+    if statsText ~= "" then
+        table.insert(fields, {name = "Stats", value = statsText, inline = true})
+    end
+    if #mutList > 0 then
+        table.insert(fields, {name = "Mutations", value = table.concat(mutList, ", "), inline = true})
+    end
+    table.insert(fields, {name = "ðŸª™ Coins", value = formatNumber(coins), inline = true})
+    table.insert(fields, {name = "âš”ï¸ Kills", value = formatNumber(kills), inline = true})
+
+    local key = pName .. "_" .. displayName .. "_" .. tostring(os.time())
+    if sentKeys[key] then return end
+    sentKeys[key] = true
+
+    pcall(function()
+        request({
+            Url = url,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = http:JSONEncode({
+                content = ping,
+                username = "Game Hub",
+                embeds = {{
+                    title = "New Slime Rolled!",
+                    description = string.format("**||%s||** rolled **%s**!\n\nðŸŽ² **Total Rolls:** %s", pName, displayName, ordinal(rolls)),
+                    thumbnail = finalImg and {url = finalImg, width = sz, height = sz} or nil,
+                    fields = fields,
+                    color = getMutationColor(muts),
+                }}
+            })
+        })
+    end)
+end
+
+-- ================================================
+-- Rayfield UI
+-- ================================================
+
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Window = Rayfield:CreateWindow({
+    Name = "Slime Webhook",
+    Icon = 0,
+    LoadingTitle = "Loading...",
+    LoadingSubtitle = "Please wait...",
+    Theme = "Default",
+    ToggleUIKeybind = "K",
+    DisableRayfieldPrompts = false,
+    DisableBuildWarnings = false,
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = nil,
+        FileName = "SlimeWebhook"
+    },
+    KeySystem = false,
+})
+
+local Tab = Window:CreateTab("Webhook", 84577758013974)
+
+Tab:CreateSection("Configuration")
+
+Tab:CreateToggle({
+    Name = "Enable Webhook",
+    CurrentValue = false,
+    Flag = "WebhookEnabled",
+    Callback = function(Value) end,
+})
+
+Tab:CreateInput({
+    Name = "Webhook URL",
+    CurrentValue = "",
+    PlaceholderText = "https://discord.com/api/webhooks/...",
+    RemoveTextAfterFocusLost = false,
+    Flag = "WebhookURL",
+    Callback = function(Text) end,
+})
+
+Tab:CreateInput({
+    Name = "User ID To Ping",
+    CurrentValue = "@everyone",
+    PlaceholderText = "Discord User ID or @everyone",
+    RemoveTextAfterFocusLost = false,
+    Flag = "WebhookUserID",
+    Callback = function(Text) end,
+})
+
+Tab:CreateButton({
+    Name = "Test Webhook",
+    Callback = function()
+        local url = Rayfield.Flags.WebhookURL.CurrentValue
+        if not url or url == "" then
+            Rayfield:Notify({Title = "Webhook", Content = "Please enter a Webhook URL first.", Duration = 4})
+            return
+        end
+        if not Rayfield.Flags.WebhookEnabled.CurrentValue then
+            Rayfield:Notify({Title = "Webhook", Content = "Please enable Webhook first.", Duration = 4})
+            return
+        end
+        local uid = Rayfield.Flags.WebhookUserID.CurrentValue
+        local ping = ""
+        if uid and uid ~= "" then
+            if uid == "@everyone" or uid == "@here" then
+                ping = uid .. " "
+            else
+                ping = "<@" .. uid .. "> "
+            end
+        else
+            ping = "@everyone "
+        end
+        local ok, err = pcall(function()
+            request({
+                Url = url,
+                Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = http:JSONEncode({
+                    content = ping,
+                    username = "Game Hub",
+                    embeds = {{
+                        title = "âœ… Webhook Test",
+                        description = "Your webhook is working correctly!",
+                        color = 0x2ecc71,
+                    }}
+                })
+            })
+        end)
+        Rayfield:Notify({
+            Title = "Webhook",
+            Content = ok and "Test sent successfully!" or "Failed: " .. (err or "unknown"),
+            Duration = 4,
+        })
+    end,
+})
+
+Tab:CreateSection("Filters")
+
+Tab:CreateToggle({
+    Name = "Send All Slimes",
+    CurrentValue = false,
+    Flag = "WebhookSendAll",
+    Callback = function(Value) end,
+})
+
+Tab:CreateToggle({
+    Name = "Send New Slimes Only",
+    CurrentValue = false,
+    Flag = "WebhookSendNew",
+    Callback = function(Value) end,
+})
+
+Tab:CreateToggle({
+    Name = "Send Mutated Slimes",
+    CurrentValue = false,
+    Flag = "WebhookSendMutated",
+    Callback = function(Value) end,
+})
+
+Tab:CreateDropdown({
+    Name = "Mutations Filter",
+    Options = {"All", "Shiny", "Big", "Huge", "Inverted"},
+    CurrentOption = {"All"},
+    MultipleOptions = true,
+    Flag = "WebhookMutations",
+    Callback = function(Options) end,
+})
+
+Rayfield:LoadConfiguration()
+
+-- ================================================
+-- Main loop
+-- ================================================
+
+local lastFingerprint = nil
+
+local function isMutationAllowed(muts)
+    local selected = Rayfield.Flags.WebhookMutations and Rayfield.Flags.WebhookMutations.CurrentOption or {"All"}
+    for _, v in ipairs(selected) do
+        if v == "All" then return true end
+    end
+    if not muts then return false end
+    local mutType = getMutationType(muts)
+    for _, v in ipairs(selected) do
+        if string.lower(v) == mutType then return true end
+    end
+    return false
+end
+
+while true do
+    task.wait(0.1)
+
+    if not Rayfield.Flags.WebhookEnabled or not Rayfield.Flags.WebhookEnabled.CurrentValue then continue end
+    local url = Rayfield.Flags.WebhookURL.CurrentValue
+    if not url or url == "" then continue end
+
+    local ok, res = pcall(rollSlice.rollResults)
+    if not ok or type(res) ~= "table" or #res == 0 then continue end
+
+    local fp = getRollFingerprint(res)
+    if fp == lastFingerprint then continue end
+    lastFingerprint = fp
+
+    local sendAll     = Rayfield.Flags.WebhookSendAll and Rayfield.Flags.WebhookSendAll.CurrentValue
+    local sendNew     = Rayfield.Flags.WebhookSendNew and Rayfield.Flags.WebhookSendNew.CurrentValue
+    local sendMutated = Rayfield.Flags.WebhookSendMutated and Rayfield.Flags.WebhookSendMutated.CurrentValue
+
+    for _, r in ipairs(res) do
+        local it = getFirstItem(r)
+        if not it then continue end
+
+        local slimeId = tostring(it.id or "")
+        if slimeId == "" then continue end
+
+        local muts = type(it.mutations) == "table" and next(it.mutations) ~= nil and it.mutations or nil
+        local okS, slime = pcall(slimeData.getSlime, slimeId)
+        slime = okS and slime or nil
+
+        local hasMutation = muts ~= nil
+        local isNew = isNewSlime(slimeId, muts)
+
+        local shouldSend = false
+
+        -- Send All has highest priority
+        if sendAll then
+            shouldSend = true
+        else
+            -- Send New: send if new (regardless of mutation)
+            if sendNew and isNew then
+                shouldSend = true
+            end
+            -- Send Mutated: send if has mutation AND mutation is in filter
+            if sendMutated and hasMutation and isMutationAllowed(muts) then
+                shouldSend = true
+            end
+        end
+
+        if shouldSend then
+            task.spawn(sendWebhook, slimeId, slime, muts)
         end
     end
-end)
-
-print("Script loaded")
+end
