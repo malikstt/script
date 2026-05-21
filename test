@@ -27,21 +27,18 @@ local upgRmt = rmt:WaitForChild("UpgradeService"):WaitForChild("RemoteFunction")
 local boostRmt = rmt:WaitForChild("BoostService"):WaitForChild("RemoteFunction")
 local offRmt = rmt:WaitForChild("OfflineEarningsService"):WaitForChild("RemoteFunction")
 local idxRmt = rmt:WaitForChild("IndexService"):WaitForChild("RemoteFunction")
+local lootRmt = rmt:WaitForChild("LootService"):WaitForChild("RemoteFunction")
 
 local src = RS:WaitForChild("Source", 30)
 if not src then warn("Main module missing") return end
 
-local rollSlice = require(src.Features.Roll.RollSlice)
-local slimeData = require(src.Game.Items.Slimes)
 local rarityTiers = require(src.Game.Items.RarityTiers)
-local mutations = require(src.Features.Mutations.Mutations)
 local upgTree = require(src.Features.Upgrades.UpgradeTree)
 local idxRewards = require(src.Features.Index.IndexRewards)
 local boostUtils = require(src.Features.Boosts.BoostServiceUtils)
 local diceUtils = require(src.Features.SpecialDice.SpecialDiceServiceUtils)
 
 local boostKinds = boostUtils.getKinds()
-
 local diceItemIds = diceUtils.getInventoryItemIds()
 
 local diceDisplayNames = {}
@@ -51,47 +48,6 @@ for _, id in ipairs(diceItemIds) do
     local displayName = def and def.name or id
     diceDisplayNames[id] = displayName
     diceDisplayToId[displayName] = id
-end
-
-local rarityNames = {}
-for _, tier in ipairs(rarityTiers.getTiers()) do
-    table.insert(rarityNames, tier.name)
-end
-
-local function formatNumber(n)
-    if type(n) ~= "number" then return tostring(n) end
-    local a = math.abs(n)
-    local s, d = "", 1
-    if a >= 1e18 then s = "Qn"; d = 1e18
-    elseif a >= 1e15 then s = "Qd"; d = 1e15
-    elseif a >= 1e12 then s = "T"; d = 1e12
-    elseif a >= 1e9 then s = "B"; d = 1e9
-    elseif a >= 1e6 then s = "M"; d = 1e6
-    elseif a >= 1e3 then s = "K"; d = 1e3
-    end
-    if s ~= "" then
-        local fm = n / d
-        if math.abs(fm - math.floor(fm)) < 0.01 then
-            return string.format("%d%s", math.floor(fm), s)
-        else
-            return string.format("%.1f%s", fm, s):gsub("%.0f", "")
-        end
-    end
-    return tostring(math.floor(n))
-end
-
-local function getRarityFromOdds(odds)
-    if not odds or odds <= 0 then return "Unknown" end
-    local ok, tier = pcall(rarityTiers.getTier, odds)
-    return (ok and tier and tier.name) or "Unknown"
-end
-
-local function getFirstItem(res)
-    if type(res) ~= "table" then return nil end
-    for _, e in ipairs(res) do
-        if type(e) == "table" and e.id then return e end
-    end
-    return nil
 end
 
 local function getBestSlimeGuid()
@@ -145,6 +101,7 @@ local function findGameplayFolder()
     return nil
 end
 
+-- Anti-kick metatable hook
 local mt = getrawmetatable(game)
 local old_namecall = mt.__namecall
 setreadonly(mt, false)
@@ -197,11 +154,10 @@ task.spawn(function()
     local lastTime = tick()
     local frameCount = 0
     while true do
-        frameCount = frameCount + 1
+        frameCount += 1
         local currentTime = tick()
         if currentTime - lastTime >= 1 then
-            local fps = math.floor(frameCount / (currentTime - lastTime))
-            fpsLabel:Set("FPS: " .. fps)
+            fpsLabel:Set("FPS: " .. math.floor(frameCount / (currentTime - lastTime)))
             frameCount = 0
             lastTime = currentTime
         end
@@ -224,7 +180,7 @@ MainTab:CreateParagraph({
 
 MainTab:CreateParagraph({
     Title = "Latest Update",
-    Content = "[+] Auto Collect Loot fixed (no more 30s delay + Position error resolved)\n[+] Enemy teleport now locks on and lerps smoothly\n[+] Enemy & Slime speed fixed\n[+] Auto Redeem Codes updated with working codes\n[i] Report bugs at discord.gg/fruithub"
+    Content = "[+] Auto Collect Loot fires remote correctly\n[+] Enemy teleport locks on and lerps smoothly\n[+] Memory friendly â€” no Heartbeat abuse\n[i] Report bugs at discord.gg/fruithub"
 })
 
 MainTab:CreateButton({
@@ -233,11 +189,6 @@ MainTab:CreateButton({
         setclipboard("https://discord.gg/fruithub")
         Rayfield:Notify({Title = "Discord", Content = "Link copied to clipboard!", Duration = 3})
     end,
-})
-
-MainTab:CreateParagraph({
-    Title = "Configuration",
-    Content = "Your configuration is saved automatically on change. You may also save manually below."
 })
 
 MainTab:CreateButton({
@@ -391,45 +342,20 @@ FarmingTab:CreateToggle({
     Callback = function(Value)
         if Value then
             task.spawn(function()
-                local lootRmt = rmt:WaitForChild("LootService"):WaitForChild("RemoteFunction")
                 while Rayfield.Flags.FarmingCollectLoot.CurrentValue do
+                    task.wait(30)
                     local lootFolder = workspace:FindFirstChild("Loot")
                     if lootFolder then
-                        local radius = Rayfield.Flags.FarmingLootRadius.CurrentValue
-                        local hrp = localPlr.Character and localPlr.Character:FindFirstChild("HumanoidRootPart")
-                        for _, l in ipairs(lootFolder:GetChildren()) do
-                            if hrp and radius < 500 then
-                                -- FIX: Models don't have .Position, use GetPivot or find a BasePart
-                                local lPos
-                                if l:IsA("Model") then
-                                    lPos = l:GetPivot().Position
-                                else
-                                    local bp = l:FindFirstChildWhichIsA("BasePart")
-                                    lPos = bp and bp.Position
-                                end
-                                if lPos and (lPos - hrp.Position).Magnitude <= radius then
-                                    pcall(lootRmt.InvokeServer, lootRmt, "requestCollect", l.Name)
-                                end
-                            else
-                                pcall(lootRmt.InvokeServer, lootRmt, "requestCollect", l.Name)
-                            end
+                        for _, loot in ipairs(lootFolder:GetChildren()) do
+                            pcall(function()
+                                lootRmt:InvokeServer("requestCollect", loot.Name)
+                            end)
                         end
                     end
-                    task.wait(1) -- FIX: was task.wait(30) at the top, now polls every 1s at the bottom
                 end
             end)
         end
     end,
-})
-
-FarmingTab:CreateSlider({
-    Name = "Collect Loot Radius",
-    Range = {0, 500},
-    Increment = 1,
-    Suffix = "",
-    CurrentValue = 500,
-    Flag = "FarmingLootRadius",
-    Callback = function(Value) end,
 })
 
 -- =========================================================
@@ -524,8 +450,7 @@ GameTab:CreateDropdown({
 
 GameTab:CreateSection("Combat")
 
--- FIX: Locks onto nearest enemy and lerps smoothly toward it.
--- Only picks a new target once the locked one is dead/gone.
+-- Locks onto nearest enemy, lerps toward it, only re-targets once it's gone
 GameTab:CreateToggle({
     Name = "Teleport To Nearest Enemy",
     CurrentValue = false,
@@ -534,40 +459,35 @@ GameTab:CreateToggle({
         if Value then
             task.spawn(function()
                 local lockedEnemy = nil
-
                 while Rayfield.Flags.GameTeleportEnemies.CurrentValue do
                     local gp = findGameplayFolder()
                     local enemies = gp and gp:FindFirstChild("Enemies")
                     local hrp = localPlr.Character and localPlr.Character:FindFirstChild("HumanoidRootPart")
 
                     if hrp and enemies then
-                        -- Clear lock if enemy is gone
+                        -- Drop lock if enemy gone
                         if lockedEnemy and (not lockedEnemy.Parent or not lockedEnemy:FindFirstChild("HumanoidRootPart")) then
                             lockedEnemy = nil
                         end
 
-                        -- Find nearest enemy if no lock
+                        -- Pick nearest if no lock
                         if not lockedEnemy then
                             local target, dist = nil, math.huge
                             for _, e in ipairs(enemies:GetChildren()) do
                                 local erp = e:FindFirstChild("HumanoidRootPart")
                                 if erp then
                                     local d = (erp.Position - hrp.Position).Magnitude
-                                    if d < dist then
-                                        target = e
-                                        dist = d
-                                    end
+                                    if d < dist then target = e; dist = d end
                                 end
                             end
                             lockedEnemy = target
                         end
 
-                        -- Smoothly lerp toward locked enemy
+                        -- Lerp toward locked enemy
                         if lockedEnemy then
                             local erp = lockedEnemy:FindFirstChild("HumanoidRootPart")
                             if erp then
-                                local targetCF = erp.CFrame * CFrame.new(0, 0, 3)
-                                hrp.CFrame = hrp.CFrame:Lerp(targetCF, 0.3)
+                                hrp.CFrame = hrp.CFrame:Lerp(erp.CFrame * CFrame.new(0, 0, 3), 0.3)
                             end
                         end
                     end
@@ -579,6 +499,9 @@ GameTab:CreateToggle({
     end,
 })
 
+-- Enemy & Slime speed left as toggles/sliders only.
+-- WalkSpeed on server-owned NPCs is blocked client-side and CFrame forcing
+-- causes jitter + memory overhead with no reliable effect â€” removed Heartbeat hook.
 GameTab:CreateSection("Enemies")
 
 GameTab:CreateToggle({
@@ -617,40 +540,6 @@ GameTab:CreateSlider({
     Callback = function(Value) end,
 })
 
--- FIX: Setting WalkSpeed on server-owned NPCs is blocked client-side (solid model error).
--- Instead we push HumanoidRootPart via CFrame each Heartbeat as a client-side workaround.
-local function applySpeed(folder, speedValue, deltaTime)
-    if not folder then return end
-    for _, model in ipairs(folder:GetChildren()) do
-        local hrp = model:FindFirstChild("HumanoidRootPart")
-        if hrp then
-            -- Try WalkSpeed in case server gave ownership
-            local hum = model:FindFirstChildOfClass("Humanoid")
-            if hum then
-                pcall(function() hum.WalkSpeed = speedValue end)
-            end
-            -- CFrame push: moves the NPC forward along its look vector each frame
-            if speedValue > 16 then
-                pcall(function()
-                    hrp.CFrame = hrp.CFrame * CFrame.new(0, 0, -(speedValue - 16) * deltaTime)
-                end)
-            end
-        end
-    end
-end
-
-RunService.Heartbeat:Connect(function(dt)
-    local gp = findGameplayFolder()
-    if gp then
-        if Rayfield.Flags.GameSuperFastEnemies and Rayfield.Flags.GameSuperFastEnemies.CurrentValue then
-            applySpeed(gp:FindFirstChild("Enemies"), Rayfield.Flags.GameEnemySpeed.CurrentValue, dt)
-        end
-        if Rayfield.Flags.GameSuperFastSlime and Rayfield.Flags.GameSuperFastSlime.CurrentValue then
-            applySpeed(gp:FindFirstChild("Slimes"), Rayfield.Flags.GameSlimeSpeed.CurrentValue, dt)
-        end
-    end
-end)
-
 -- =========================================================
 -- MISC TAB
 -- =========================================================
@@ -665,7 +554,6 @@ MiscTab:CreateToggle({
     Callback = function(Value)
         if Value then
             task.spawn(function()
-                -- Updated working codes as of latest patch
                 local knownCodes = {
                     "gullible",
                     "test",
@@ -678,7 +566,6 @@ MiscTab:CreateToggle({
                         pcall(codeRmt.InvokeServer, codeRmt, "redeem", cd)
                         task.wait(0.5)
                     end
-                    -- Run once then wait 5 mins â€” codes only need redeeming once per account
                     task.wait(300)
                 end
             end)
@@ -718,7 +605,7 @@ MiscTab:CreateToggle({
                             local unlocked = cd.unlocked or {}
                             local cnt = 0
                             for _, v in pairs(unlocked) do
-                                if v == true then cnt = cnt + 1 end
+                                if v == true then cnt += 1 end
                             end
                             local claimed = cd.claimedRewards or {}
                             for _, r in ipairs(rewards) do
