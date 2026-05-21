@@ -180,7 +180,7 @@ local function wh_ordinal(n)
     return s.."th"
 end
 
-local wh_sentKeys = {}
+local wh_sentFingerprints = {}
 
 local function wh_buildPing(uid)
     if uid and uid ~= "" then
@@ -190,7 +190,10 @@ local function wh_buildPing(uid)
     return "@everyone "
 end
 
-local function wh_sendWebhook(slimeId, slime, muts, url, uid)
+local function wh_sendWebhook(slimeId, slime, muts, url, uid, fingerprint)
+    if wh_sentFingerprints[fingerprint] then return end
+    wh_sentFingerprints[fingerprint] = true
+    
     local ping        = wh_buildPing(uid)
     local name        = slime and slime.name or slimeId
     local displayName = muts and mutations.getDisplayName(name, muts) or name
@@ -228,10 +231,6 @@ local function wh_sendWebhook(slimeId, slime, muts, url, uid)
     local coins  = dataCli:get("coins") or 0
     local pName  = localPlr and localPlr.Name or "Someone"
     local sz     = wh_getMutationSize(muts)
-
-    local key = pName .. "_" .. displayName .. "_" .. tostring(os.time())
-    if wh_sentKeys[key] then return end
-    wh_sentKeys[key] = true
 
     local fields = {
         {name = "Rarity", value = rarity,     inline = true},
@@ -389,12 +388,12 @@ end)
 
 MainTab:CreateParagraph({
     Title = "Enabled By Default",
-    Content = "✅ Anti AFK"
+    Content = "[+] Anti AFK"
 })
 
 MainTab:CreateParagraph({
     Title = "Latest Update",
-    Content = "✅ Fixed Gameplay folder detection\n✅ Fixed floating enemies & teleport\n✅ Fixed attack system\n✅ Optimized caches"
+    Content = "[+] Fixed Gameplay folder detection\n[+] Fixed floating enemies & teleport\n[+] Fixed attack system\n[+] Optimized caches"
 })
 
 MainTab:CreateButton({
@@ -1132,7 +1131,7 @@ WebhookTab:CreateInput({
     Name = "Webhook URL",
     CurrentValue = "",
     PlaceholderText = "Paste your Discord webhook URL",
-    RemoveTextAfterFocusLost = true,
+    RemoveTextAfterFocusLost = false,
     Flag = "WebhookURLDisplay",
     Callback = function(Text)
         if Text and Text:match("^https://discord") then
@@ -1225,9 +1224,14 @@ local wh_lastFingerprint = nil
 
 local function wh_isMutationAllowed(muts)
     local selected = Rayfield.Flags.WebhookMutations and Rayfield.Flags.WebhookMutations.CurrentOption or {"All"}
+    local allSelected = false
     for _, v in ipairs(selected) do
-        if v == "All" then return true end
+        if v == "All" then
+            allSelected = true
+            break
+        end
     end
+    if allSelected then return true end
     if not muts then return false end
     local mutType = wh_getMutationType(muts)
     for _, v in ipairs(selected) do
@@ -1247,40 +1251,37 @@ task.spawn(function()
             if not ok or type(res) ~= "table" or #res == 0 then
                 task.wait(0.5)
                 
-            end
+            else
+                local fp = wh_getRollFingerprint(res)
+                if fp ~= wh_lastFingerprint then
+                    wh_lastFingerprint = fp
+                    
+                    local sendAll     = Rayfield.Flags.WebhookSendAll and Rayfield.Flags.WebhookSendAll.CurrentValue
+                    local sendNew     = Rayfield.Flags.WebhookSendNew and Rayfield.Flags.WebhookSendNew.CurrentValue
+                    local sendMutated = Rayfield.Flags.WebhookSendMutated and Rayfield.Flags.WebhookSendMutated.CurrentValue
 
-            local fp = wh_getRollFingerprint(res)
-            if fp ~= wh_lastFingerprint then
-                local sendAll     = Rayfield.Flags.WebhookSendAll and Rayfield.Flags.WebhookSendAll.CurrentValue
-                local sendNew     = Rayfield.Flags.WebhookSendNew and Rayfield.Flags.WebhookSendNew.CurrentValue
-                local sendMutated = Rayfield.Flags.WebhookSendMutated and Rayfield.Flags.WebhookSendMutated.CurrentValue
+                    for _, r in ipairs(res) do
+                        local it = wh_getFirstItem(r)
+                        if it then
+                            local slimeId = tostring(it.id or "")
+                            if slimeId ~= "" then
+                                local muts = type(it.mutations) == "table" and next(it.mutations) ~= nil and it.mutations or nil
+                                local okS, slm = pcall(slimeData.getSlime, slimeId)
+                                local slm_obj = okS and slm or nil
 
-                local anySent = false
-                for _, r in ipairs(res) do
-                    local it = wh_getFirstItem(r)
-                    if it then
-                        local slimeId = tostring(it.id or "")
-                        if slimeId ~= "" then
-                            local muts = type(it.mutations) == "table" and next(it.mutations) ~= nil and it.mutations or nil
-                            local okS, slm = pcall(slimeData.getSlime, slimeId)
-                            local slm_obj = okS and slm or nil
+                                local hasMutation = muts ~= nil
+                                local isNew = wh_isNewSlime(slimeId, muts)
 
-                            local hasMutation = muts ~= nil
-                            local isNew = wh_isNewSlime(slimeId, muts)
+                                local shouldSend = sendAll or (sendNew and isNew) or (sendMutated and hasMutation and wh_isMutationAllowed(muts))
 
-                            local shouldSend = sendAll or (sendNew and isNew) or (sendMutated and hasMutation and wh_isMutationAllowed(muts))
-
-                            if shouldSend then
-                                local uid = Rayfield.Flags.WebhookUserID.CurrentValue
-                                task.spawn(wh_sendWebhook, slimeId, slm_obj, muts, wh_storedUrl, uid)
-                                anySent = true
+                                if shouldSend then
+                                    local uid = Rayfield.Flags.WebhookUserID.CurrentValue
+                                    local itemFingerprint = fp .. "_" .. slimeId .. "_" .. tostring(muts and mutations.getIds(muts) or "")
+                                    task.spawn(wh_sendWebhook, slimeId, slm_obj, muts, wh_storedUrl, uid, itemFingerprint)
+                                end
                             end
                         end
                     end
-                end
-
-                if anySent or true then
-                    wh_lastFingerprint = fp
                 end
             end
         end
