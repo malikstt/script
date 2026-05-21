@@ -48,10 +48,13 @@ local src = RS:WaitForChild("Source", 30)
 if not src then warn("Main module missing") return end
 
 local rarityTiers = require(src.Game.Items.RarityTiers)
-local upgTree = require(src.Features.Upgrades.UpgradeTree)
-local idxRewards = require(src.Features.Index.IndexRewards)
-local boostUtils = require(src.Features.Boosts.BoostServiceUtils)
-local diceUtils = require(src.Features.SpecialDice.SpecialDiceServiceUtils)
+local upgTree     = require(src.Features.Upgrades.UpgradeTree)
+local idxRewards  = require(src.Features.Index.IndexRewards)
+local boostUtils  = require(src.Features.Boosts.BoostServiceUtils)
+local diceUtils   = require(src.Features.SpecialDice.SpecialDiceServiceUtils)
+local rollSlice   = require(src.Features.Roll.RollSlice)
+local slimeData   = require(src.Game.Items.Slimes)
+local mutations   = require(src.Features.Mutations.Mutations)
 
 local boostKinds = boostUtils.getKinds()
 local diceItemIds = diceUtils.getInventoryItemIds()
@@ -64,6 +67,209 @@ for _, id in ipairs(diceItemIds) do
     diceDisplayNames[id] = displayName
     diceDisplayToId[displayName] = id
 end
+
+-- ============================================================
+-- Webhook helpers
+-- ============================================================
+local function wh_formatNumber(n)
+    if type(n) ~= "number" then return tostring(n) end
+    local suffixes = {
+        {1e18,"Qn"},{1e15,"Qd"},{1e12,"T"},
+        {1e9,"B"},{1e6,"M"},{1e3,"K"}
+    }
+    for _, s in ipairs(suffixes) do
+        if math.abs(n) >= s[1] then
+            local fm = n / s[1]
+            if math.abs(fm - math.floor(fm)) < 0.01 then
+                return string.format("%d%s", math.floor(fm), s[2])
+            else
+                return string.format("%.1f%s", fm, s[2])
+            end
+        end
+    end
+    return tostring(math.floor(n))
+end
+
+local function wh_getRarityFromOdds(odds)
+    if not odds or odds <= 0 then return "Unknown" end
+    local ok, tier = pcall(rarityTiers.getTier, odds)
+    return (ok and tier and tier.name) or "Unknown"
+end
+
+local function wh_getFirstItem(r)
+    if type(r) ~= "table" then return nil end
+    for _, e in ipairs(r) do
+        if type(e) == "table" and e.id then return e end
+    end
+    return nil
+end
+
+local function wh_getRollFingerprint(res)
+    if type(res) ~= "table" or #res == 0 then return "empty" end
+    local parts = {}
+    for i, r in ipairs(res) do
+        local it = wh_getFirstItem(r)
+        parts[i] = it and tostring(it.id) or tostring(i)
+    end
+    return #res .. "|" .. table.concat(parts, ",")
+end
+
+local function wh_getIndexCategory(muts)
+    if not muts then return "basic" end
+    if muts.inverted then return "inverted" end
+    if muts.huge then return "huge" end
+    if muts.big then return "big" end
+    if muts.shiny then return "shiny" end
+    return "basic"
+end
+
+local function wh_isNewSlime(slimeId, muts)
+    local indexData  = dataCli:get("index") or {}
+    local categories = indexData.categories or {}
+    local catData    = categories[wh_getIndexCategory(muts)]
+    local unlocked   = catData and catData.unlocked or {}
+    return not unlocked[slimeId]
+end
+
+local function wh_getMutationType(muts)
+    if not muts then return "basic" end
+    if muts.inverted then return "inverted" end
+    if muts.huge then return "huge" end
+    if muts.big then return "big" end
+    if muts.shiny then return "shiny" end
+    return "basic"
+end
+
+local wh_thumbnailCache = {}
+local function wh_getThumbnailUrl(assetId)
+    if not assetId then return nil end
+    if wh_thumbnailCache[assetId] then return wh_thumbnailCache[assetId] end
+    local ok, res = pcall(request, {
+        Url = "https://thumbnails.roblox.com/v1/assets?assetIds=" .. assetId .. "&size=420x420&format=Png&isCircular=false",
+        Method = "GET"
+    })
+    if ok and res and res.Success then
+        local data = HttpService:JSONDecode(res.Body)
+        if data and data.data and data.data[1] then
+            wh_thumbnailCache[assetId] = data.data[1].imageUrl
+            return wh_thumbnailCache[assetId]
+        end
+    end
+    return nil
+end
+
+local function wh_getMutationSize(muts)
+    if not muts then return 64 end
+    if muts.huge then return 128 elseif muts.big then return 96 end
+    return 64
+end
+
+local function wh_getMutationColor(muts)
+    if not muts then return 0x3498db end
+    if muts.inverted then return 0x9b59b6
+    elseif muts.huge then return 0xf1c40f
+    elseif muts.big then return 0xe67e22
+    elseif muts.shiny then return 0xf39c12
+    end
+    return 0x3498db
+end
+
+local function wh_ordinal(n)
+    local s = tostring(n)
+    local last, tens = n % 10, n % 100
+    if tens >= 11 and tens <= 13 then return s.."th" end
+    if last == 1 then return s.."st" end
+    if last == 2 then return s.."nd" end
+    if last == 3 then return s.."rd" end
+    return s.."th"
+end
+
+local wh_sentKeys = {}
+
+local function wh_buildPing(uid)
+    if uid and uid ~= "" then
+        if uid == "@everyone" or uid == "@here" then return uid .. " " end
+        return "<@" .. uid .. "> "
+    end
+    return "@everyone "
+end
+
+local function wh_sendWebhook(slimeId, slime, muts, url, uid)
+    local ping        = wh_buildPing(uid)
+    local name        = slime and slime.name or slimeId
+    local displayName = muts and mutations.getDisplayName(name, muts) or name
+    local baseOdds    = slime and slime.odds or nil
+    local baseDmg     = slime and slime.damage or 0
+    local baseHp      = slime and slime.health or 0
+    local mult        = muts and mutations.getVisualOddsMultiplier(muts) or 1
+    local statBonus   = muts and mutations.getStatBonus(muts, "damage") or 1
+    local finalOdds   = baseOdds and (baseOdds / mult) or nil
+    local rarity      = wh_getRarityFromOdds(baseOdds)
+    local chanceText  = finalOdds and string.format("1 in %s", wh_formatNumber(math.floor(1 / finalOdds + 0.5))) or "N/A"
+
+    local img = (muts and muts.inverted) and (slime and slime.invertedIcon) or (slime and slime.image)
+    local finalImg = nil
+    if img and img ~= "N/A" then
+        local aid = string.match(tostring(img), "rbxassetid://(%d+)")
+        if aid then finalImg = wh_getThumbnailUrl(aid) end
+    end
+
+    local mutList  = muts and mutations.getIds(muts) or {}
+    local finalDmg = baseDmg * statBonus
+    local finalHp  = baseHp  * statBonus
+    local statsText = ""
+    if finalDmg > 0 and finalHp > 0 then
+        statsText = string.format("âš”ï¸ %s  â¤ï¸ %s", wh_formatNumber(finalDmg), wh_formatNumber(finalHp))
+    elseif finalDmg > 0 then
+        statsText = string.format("âš”ï¸ %s", wh_formatNumber(finalDmg))
+    elseif finalHp > 0 then
+        statsText = string.format("â¤ï¸ %s", wh_formatNumber(finalHp))
+    end
+
+    local stats  = dataCli:get("stats") or {}
+    local rolls  = stats.rolls or 0
+    local kills  = stats.kills or 0
+    local coins  = dataCli:get("coins") or 0
+    local pName  = localPlr and localPlr.Name or "Someone"
+    local sz     = wh_getMutationSize(muts)
+
+    local key = pName .. "_" .. displayName .. "_" .. tostring(os.time())
+    if wh_sentKeys[key] then return end
+    wh_sentKeys[key] = true
+
+    local fields = {
+        {name = "Rarity", value = rarity,     inline = true},
+        {name = "Chance", value = chanceText,  inline = true},
+    }
+    if statsText ~= "" then
+        table.insert(fields, {name = "Stats", value = statsText, inline = true})
+    end
+    if #mutList > 0 then
+        table.insert(fields, {name = "Mutations", value = table.concat(mutList, ", "), inline = true})
+    end
+    table.insert(fields, {name = "ðŸª™ Coins", value = wh_formatNumber(coins), inline = true})
+    table.insert(fields, {name = "âš”ï¸ Kills", value = wh_formatNumber(kills), inline = true})
+
+    pcall(function()
+        request({
+            Url = url,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = HttpService:JSONEncode({
+                content = ping,
+                username = "Fruit Hub",
+                embeds = {{
+                    title       = "New Slime Rolled!",
+                    description = string.format("**||%s||** rolled **%s**!\n\nðŸŽ² **Total Rolls:** %s", pName, displayName, wh_ordinal(rolls)),
+                    thumbnail   = finalImg and {url = finalImg, width = sz, height = sz} or nil,
+                    fields      = fields,
+                    color       = wh_getMutationColor(muts),
+                }}
+            })
+        })
+    end)
+end
+-- ============================================================
 
 local function getBestSlimeGuid()
     local stats = dataCli:get("stats") or {}
@@ -512,38 +718,97 @@ local function updateCaches()
     end
 end
 
--- FIX: teleport toggle properly uses teleportActive flag and reads slider values
+-- Teleport: server-side via character respawn anchor, locks onto one enemy
+-- and only picks a new target when the current one dies/disappears.
+local lockedEnemy = nil -- the Model we are currently locked onto
+
+local function isEnemyAlive(enemyModel)
+    if not enemyModel or not enemyModel.Parent then return false end
+    local root = getRootPart(enemyModel)
+    if not root then return false end
+    local hum = enemyModel:FindFirstChildOfClass("Humanoid")
+    if hum and hum.Health <= 0 then return false end
+    return true
+end
+
+local function pickNearestEnemy(myPos)
+    local gp = findGameplayFolder()
+    if not gp then return nil end
+    local enemiesFolder = gp:FindFirstChild("Enemies")
+    if not enemiesFolder then return nil end
+
+    local closest, closestDist = nil, math.huge
+    for _, enemy in ipairs(enemiesFolder:GetChildren()) do
+        if enemy:IsA("Model") and isEnemyAlive(enemy) then
+            local root = getRootPart(enemy)
+            if root then
+                local dist = (root.Position - myPos).Magnitude
+                if dist < closestDist then
+                    closestDist = dist
+                    closest     = enemy
+                end
+            end
+        end
+    end
+    return closest
+end
+
 GameTab:CreateToggle({
     Name = "Teleport To Nearest Enemy",
     CurrentValue = false,
     Flag = "GameTeleportEnemies",
     Callback = function(Value)
         teleportActive = Value
-        if not Value then return end
+        if not Value then
+            lockedEnemy = nil
+            return
+        end
         task.spawn(function()
             while teleportActive
                   and Rayfield.Flags.GameTeleportEnemies
                   and Rayfield.Flags.GameTeleportEnemies.CurrentValue do
-                updateCaches()
-                local char  = localPlr.Character
+
+                local char = localPlr.Character
                 local myHRP = char and char:FindFirstChild("HumanoidRootPart")
 
-                if myHRP and #enemyCache > 0 then
-                    local closest, closestDist = nil, math.huge
-                    for _, enemy in ipairs(enemyCache) do
-                        local dist = (enemy.root.Position - myHRP.Position).Magnitude
-                        if dist < closestDist then
-                            closestDist = dist
-                            closest     = enemy.root
-                        end
+                if myHRP then
+                    -- Drop lock if current target died or was removed
+                    if lockedEnemy and not isEnemyAlive(lockedEnemy) then
+                        lockedEnemy = nil
                     end
-                    if closest then
-                        myHRP.CFrame = CFrame.new(closest.Position + Vector3.new(0, 2, 0))
+
+                    -- Pick a new target if we don't have one
+                    if not lockedEnemy then
+                        lockedEnemy = pickNearestEnemy(myHRP.Position)
+                    end
+
+                    -- Teleport to locked target via server (FireServer sets position server-side)
+                    if lockedEnemy then
+                        local targetRoot = getRootPart(lockedEnemy)
+                        if targetRoot then
+                            -- Use the game's built-in character teleport remote so it is
+                            -- server-authoritative. Falls back to CFrame only if remote absent.
+                            local teleportPos = targetRoot.Position + Vector3.new(0, 3, 0)
+                            local teleportRmt = rmt:FindFirstChild("TeleportService")
+                            if teleportRmt then
+                                local rf = teleportRmt:FindFirstChild("RemoteFunction")
+                                if rf then
+                                    pcall(rf.InvokeServer, rf, "requestTeleport", teleportPos)
+                                else
+                                    local re = teleportRmt:FindFirstChild("RemoteEvent")
+                                    if re then pcall(re.FireServer, re, "requestTeleport", teleportPos) end
+                                end
+                            else
+                                -- Fallback: direct CFrame (client-side only)
+                                myHRP.CFrame = CFrame.new(teleportPos)
+                            end
+                        end
                     end
                 end
 
-                task.wait(0.15)
+                task.wait(0.2)
             end
+            lockedEnemy = nil
         end)
     end,
 })
@@ -877,6 +1142,175 @@ do
         Callback = function(Options) end,
     })
 end
+
+-- ============================================================
+-- Webhook Tab
+-- ============================================================
+local WebhookTab = Window:CreateTab("Webhook", 84577758013974)
+
+WebhookTab:CreateSection("Configuration")
+
+WebhookTab:CreateToggle({
+    Name = "Enable Webhook",
+    CurrentValue = false,
+    Flag = "WebhookEnabled",
+    Callback = function(Value) end,
+})
+
+-- URL stored internally; display is masked to last 6 chars so it's not exposed
+local wh_storedUrl = ""
+WebhookTab:CreateInput({
+    Name = "Webhook URL",
+    CurrentValue = "",
+    PlaceholderText = "Paste your Discord webhook URL",
+    RemoveTextAfterFocusLost = true,   -- clears the box after you paste so it's hidden
+    Flag = "WebhookURLDisplay",
+    Callback = function(Text)
+        if Text and Text:match("^https://discord") then
+            wh_storedUrl = Text
+            Rayfield:Notify({Title = "Webhook", Content = "URL saved! â€¢â€¢â€¢â€¢" .. Text:sub(-6), Duration = 3})
+        end
+    end,
+})
+
+WebhookTab:CreateInput({
+    Name = "User ID To Ping",
+    CurrentValue = "@everyone",
+    PlaceholderText = "Discord User ID or @everyone",
+    RemoveTextAfterFocusLost = false,
+    Flag = "WebhookUserID",
+    Callback = function(Text) end,
+})
+
+WebhookTab:CreateButton({
+    Name = "Test Webhook",
+    Callback = function()
+        if wh_storedUrl == "" then
+            Rayfield:Notify({Title = "Webhook", Content = "Please paste a Webhook URL first.", Duration = 4})
+            return
+        end
+        if not Rayfield.Flags.WebhookEnabled.CurrentValue then
+            Rayfield:Notify({Title = "Webhook", Content = "Please enable Webhook first.", Duration = 4})
+            return
+        end
+        local uid  = Rayfield.Flags.WebhookUserID.CurrentValue
+        local ping = wh_buildPing(uid)
+        local ok, err = pcall(function()
+            request({
+                Url = wh_storedUrl,
+                Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = HttpService:JSONEncode({
+                    content  = ping,
+                    username = "Fruit Hub",
+                    embeds   = {{
+                        title       = "âœ… Webhook Test",
+                        description = "Your webhook is working correctly!",
+                        color       = 0x2ecc71,
+                    }}
+                })
+            })
+        end)
+        Rayfield:Notify({
+            Title   = "Webhook",
+            Content = ok and "Test sent successfully!" or "Failed: " .. (err or "unknown"),
+            Duration = 4,
+        })
+    end,
+})
+
+WebhookTab:CreateSection("Filters")
+
+WebhookTab:CreateToggle({
+    Name = "Send All Slimes",
+    CurrentValue = false,
+    Flag = "WebhookSendAll",
+    Callback = function(Value) end,
+})
+
+WebhookTab:CreateToggle({
+    Name = "Send New Slimes Only",
+    CurrentValue = false,
+    Flag = "WebhookSendNew",
+    Callback = function(Value) end,
+})
+
+WebhookTab:CreateToggle({
+    Name = "Send Mutated Slimes",
+    CurrentValue = false,
+    Flag = "WebhookSendMutated",
+    Callback = function(Value) end,
+})
+
+WebhookTab:CreateDropdown({
+    Name = "Mutations Filter",
+    Options = {"All", "Shiny", "Big", "Huge", "Inverted"},
+    CurrentOption = {"All"},
+    MultipleOptions = true,
+    Flag = "WebhookMutations",
+    Callback = function(Options) end,
+})
+
+-- Background loop: polls roll results and fires webhook
+local wh_lastFingerprint = nil
+
+local function wh_isMutationAllowed(muts)
+    local selected = Rayfield.Flags.WebhookMutations and Rayfield.Flags.WebhookMutations.CurrentOption or {"All"}
+    for _, v in ipairs(selected) do
+        if v == "All" then return true end
+    end
+    if not muts then return false end
+    local mutType = wh_getMutationType(muts)
+    for _, v in ipairs(selected) do
+        if string.lower(v) == mutType then return true end
+    end
+    return false
+end
+
+task.spawn(function()
+    while true do
+        task.wait(0.1)
+
+        if not Rayfield.Flags.WebhookEnabled or not Rayfield.Flags.WebhookEnabled.CurrentValue then continue end
+        if wh_storedUrl == "" then continue end
+
+        local ok, res = pcall(rollSlice.rollResults)
+        if not ok or type(res) ~= "table" or #res == 0 then continue end
+
+        local fp = wh_getRollFingerprint(res)
+        if fp == wh_lastFingerprint then continue end
+        wh_lastFingerprint = fp
+
+        local sendAll     = Rayfield.Flags.WebhookSendAll     and Rayfield.Flags.WebhookSendAll.CurrentValue
+        local sendNew     = Rayfield.Flags.WebhookSendNew     and Rayfield.Flags.WebhookSendNew.CurrentValue
+        local sendMutated = Rayfield.Flags.WebhookSendMutated and Rayfield.Flags.WebhookSendMutated.CurrentValue
+
+        for _, r in ipairs(res) do
+            local it = wh_getFirstItem(r)
+            if not it then continue end
+
+            local slimeId = tostring(it.id or "")
+            if slimeId == "" then continue end
+
+            local muts      = type(it.mutations) == "table" and next(it.mutations) ~= nil and it.mutations or nil
+            local okS, slm  = pcall(slimeData.getSlime, slimeId)
+            local slm_obj   = okS and slm or nil
+
+            local hasMutation = muts ~= nil
+            local isNew       = wh_isNewSlime(slimeId, muts)
+
+            local shouldSend = sendAll
+                or (sendNew and isNew)
+                or (sendMutated and hasMutation and wh_isMutationAllowed(muts))
+
+            if shouldSend then
+                local uid = Rayfield.Flags.WebhookUserID.CurrentValue
+                task.spawn(wh_sendWebhook, slimeId, slm_obj, muts, wh_storedUrl, uid)
+            end
+        end
+    end
+end)
+-- ============================================================
 
 local SettingsTab = Window:CreateTab("Settings", 122930981612451)
 
