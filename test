@@ -68,9 +68,6 @@ for _, id in ipairs(diceItemIds) do
     diceDisplayToId[displayName] = id
 end
 
--- ============================================================
--- Webhook helpers
--- ============================================================
 local function wh_formatNumber(n)
     if type(n) ~= "number" then return tostring(n) end
     local suffixes = {
@@ -219,11 +216,11 @@ local function wh_sendWebhook(slimeId, slime, muts, url, uid)
     local finalHp  = baseHp  * statBonus
     local statsText = ""
     if finalDmg > 0 and finalHp > 0 then
-        statsText = string.format("âš”ï¸ %s  â¤ï¸ %s", wh_formatNumber(finalDmg), wh_formatNumber(finalHp))
+        statsText = string.format("⚔️ %s  ❤️ %s", wh_formatNumber(finalDmg), wh_formatNumber(finalHp))
     elseif finalDmg > 0 then
-        statsText = string.format("âš”ï¸ %s", wh_formatNumber(finalDmg))
+        statsText = string.format("⚔️ %s", wh_formatNumber(finalDmg))
     elseif finalHp > 0 then
-        statsText = string.format("â¤ï¸ %s", wh_formatNumber(finalHp))
+        statsText = string.format("❤️ %s", wh_formatNumber(finalHp))
     end
 
     local stats  = dataCli:get("stats") or {}
@@ -247,8 +244,8 @@ local function wh_sendWebhook(slimeId, slime, muts, url, uid)
     if #mutList > 0 then
         table.insert(fields, {name = "Mutations", value = table.concat(mutList, ", "), inline = true})
     end
-    table.insert(fields, {name = "ðŸª™ Coins", value = wh_formatNumber(coins), inline = true})
-    table.insert(fields, {name = "âš”ï¸ Kills", value = wh_formatNumber(kills), inline = true})
+    table.insert(fields, {name = "💰 Coins", value = wh_formatNumber(coins), inline = true})
+    table.insert(fields, {name = "⚔️ Kills", value = wh_formatNumber(kills), inline = true})
 
     pcall(function()
         request({
@@ -260,7 +257,7 @@ local function wh_sendWebhook(slimeId, slime, muts, url, uid)
                 username = "Fruit Hub",
                 embeds = {{
                     title       = "New Slime Rolled!",
-                    description = string.format("**||%s||** rolled **%s**!\n\nðŸŽ² **Total Rolls:** %s", pName, displayName, wh_ordinal(rolls)),
+                    description = string.format("**||%s||** rolled **%s**!\n\n🎲 **Total Rolls:** %s", pName, displayName, wh_ordinal(rolls)),
                     thumbnail   = finalImg and {url = finalImg, width = sz, height = sz} or nil,
                     fields      = fields,
                     color       = wh_getMutationColor(muts),
@@ -269,7 +266,6 @@ local function wh_sendWebhook(slimeId, slime, muts, url, uid)
         })
     end)
 end
--- ============================================================
 
 local function getBestSlimeGuid()
     local stats = dataCli:get("stats") or {}
@@ -315,7 +311,6 @@ local function buildUpgradeList()
     return upgs, costMap
 end
 
--- FIX: Use pattern match instead of exact name so "Gameplay_123" etc. are found
 local GameplayFolder = nil
 local function findGameplayFolder()
     if GameplayFolder and GameplayFolder.Parent then return GameplayFolder end
@@ -664,7 +659,6 @@ GameTab:CreateDropdown({
 
 GameTab:CreateSection("Combat")
 
--- FIX: getRootPart used consistently everywhere
 local function getRootPart(model)
     return model.PrimaryPart
         or model:FindFirstChild("HumanoidRootPart")
@@ -680,8 +674,6 @@ local enemyCache = {}
 local slimeCache = {}
 local cacheTime  = 0
 
--- FIX: removed Humanoid health filter (was killing the cache incorrectly),
---      uses pattern-matched Gameplay folder
 local function updateCaches()
     local now = tick()
     if now - cacheTime < 0.5 then return end
@@ -718,9 +710,7 @@ local function updateCaches()
     end
 end
 
--- Teleport: server-side via character respawn anchor, locks onto one enemy
--- and only picks a new target when the current one dies/disappears.
-local lockedEnemy = nil -- the Model we are currently locked onto
+local lockedEnemy = nil
 
 local function isEnemyAlive(enemyModel)
     if not enemyModel or not enemyModel.Parent then return false end
@@ -772,35 +762,24 @@ GameTab:CreateToggle({
                 local myHRP = char and char:FindFirstChild("HumanoidRootPart")
 
                 if myHRP then
-                    -- Drop lock if current target died or was removed
                     if lockedEnemy and not isEnemyAlive(lockedEnemy) then
                         lockedEnemy = nil
                     end
 
-                    -- Pick a new target if we don't have one
                     if not lockedEnemy then
                         lockedEnemy = pickNearestEnemy(myHRP.Position)
                     end
 
-                    -- Teleport to locked target via server (FireServer sets position server-side)
                     if lockedEnemy then
                         local targetRoot = getRootPart(lockedEnemy)
                         if targetRoot then
-                            -- Use the game's built-in character teleport remote so it is
-                            -- server-authoritative. Falls back to CFrame only if remote absent.
                             local teleportPos = targetRoot.Position + Vector3.new(0, 3, 0)
-                            local teleportRmt = rmt:FindFirstChild("TeleportService")
-                            if teleportRmt then
-                                local rf = teleportRmt:FindFirstChild("RemoteFunction")
-                                if rf then
-                                    pcall(rf.InvokeServer, rf, "requestTeleport", teleportPos)
-                                else
-                                    local re = teleportRmt:FindFirstChild("RemoteEvent")
-                                    if re then pcall(re.FireServer, re, "requestTeleport", teleportPos) end
+                            local teleportService = rmt:FindFirstChild("TeleportService")
+                            if teleportService then
+                                local teleportRemote = teleportService:FindFirstChild("RemoteFunction")
+                                if teleportRemote then
+                                    pcall(teleportRemote.InvokeServer, teleportRemote, teleportPos)
                                 end
-                            else
-                                -- Fallback: direct CFrame (client-side only)
-                                myHRP.CFrame = CFrame.new(teleportPos)
                             end
                         end
                     end
@@ -815,7 +794,6 @@ GameTab:CreateToggle({
 
 GameTab:CreateSection("Floating Enemies")
 
--- FIX: toggle correctly sets floatActive
 GameTab:CreateToggle({
     Name = "Float Enemies Around Player",
     CurrentValue = false,
@@ -867,7 +845,6 @@ GameTab:CreateSlider({
 
 GameTab:CreateSection("Attack System")
 
--- FIX: toggle correctly sets attackActive
 GameTab:CreateToggle({
     Name = "Attack Floating Enemies",
     CurrentValue = false,
@@ -899,8 +876,6 @@ GameTab:CreateSlider({
 
 local slimeAttackTimers = {}
 
--- FIX: single unified RenderStepped that handles both float (enemies) and
---      attack (slimes), matching the standalone scripts exactly
 RunService.RenderStepped:Connect(function()
     if not floatActive and not attackActive then return end
 
@@ -916,7 +891,6 @@ RunService.RenderStepped:Connect(function()
     local waveSpeed = Rayfield.Flags.GameFloatWaveSpeed and Rayfield.Flags.GameFloatWaveSpeed.CurrentValue or 3
     local waveHeight= Rayfield.Flags.GameFloatWaveHeight and Rayfield.Flags.GameFloatWaveHeight.CurrentValue or 1.5
 
-    -- Float enemies around the player
     if floatActive and #enemyCache > 0 then
         local enemyCount = #enemyCache
         for i, enemy in ipairs(enemyCache) do
@@ -936,7 +910,6 @@ RunService.RenderStepped:Connect(function()
         end
     end
 
-    -- Attack system: orbit slimes and lunge them at nearby enemies
     if attackActive and #slimeCache > 0 and #enemyCache > 0 then
         local attackRange = Rayfield.Flags.GameAttackRange     and Rayfield.Flags.GameAttackRange.CurrentValue     or 25
         local lungeSpeed  = Rayfield.Flags.GameAttackLungeSpeed and Rayfield.Flags.GameAttackLungeSpeed.CurrentValue or 15
@@ -952,7 +925,6 @@ RunService.RenderStepped:Connect(function()
                 math.sin(angle) * radius
             )
 
-            -- Find the closest enemy to this slime's orbit position
             local closestEnemy, closestDist = nil, attackRange
             for _, enemy in ipairs(enemyCache) do
                 local dist = (orbitPos - enemy.root.Position).Magnitude
@@ -1143,9 +1115,6 @@ do
     })
 end
 
--- ============================================================
--- Webhook Tab
--- ============================================================
 local WebhookTab = Window:CreateTab("Webhook", 84577758013974)
 
 WebhookTab:CreateSection("Configuration")
@@ -1157,18 +1126,18 @@ WebhookTab:CreateToggle({
     Callback = function(Value) end,
 })
 
--- URL stored internally; display is masked to last 6 chars so it's not exposed
 local wh_storedUrl = ""
 WebhookTab:CreateInput({
     Name = "Webhook URL",
     CurrentValue = "",
     PlaceholderText = "Paste your Discord webhook URL",
-    RemoveTextAfterFocusLost = true,   -- clears the box after you paste so it's hidden
+    RemoveTextAfterFocusLost = true,
     Flag = "WebhookURLDisplay",
     Callback = function(Text)
         if Text and Text:match("^https://discord") then
             wh_storedUrl = Text
-            Rayfield:Notify({Title = "Webhook", Content = "URL saved! â€¢â€¢â€¢â€¢" .. Text:sub(-6), Duration = 3})
+            local masked = string.rep("•", #Text - 6) .. Text:sub(-6)
+            Rayfield:Notify({Title = "Webhook", Content = "URL saved: " .. masked, Duration = 3})
         end
     end,
 })
@@ -1204,7 +1173,7 @@ WebhookTab:CreateButton({
                     content  = ping,
                     username = "Fruit Hub",
                     embeds   = {{
-                        title       = "âœ… Webhook Test",
+                        title       = "✅ Webhook Test",
                         description = "Your webhook is working correctly!",
                         color       = 0x2ecc71,
                     }}
@@ -1251,7 +1220,6 @@ WebhookTab:CreateDropdown({
     Callback = function(Options) end,
 })
 
--- Background loop: polls roll results and fires webhook
 local wh_lastFingerprint = nil
 
 local function wh_isMutationAllowed(muts)
@@ -1271,14 +1239,14 @@ task.spawn(function()
     while true do
         task.wait(0.1)
 
-        if not Rayfield.Flags.WebhookEnabled or not Rayfield.Flags.WebhookEnabled.CurrentValue then continue end
-        if wh_storedUrl == "" then continue end
+        if not Rayfield.Flags.WebhookEnabled or not Rayfield.Flags.WebhookEnabled.CurrentValue then goto continue end
+        if wh_storedUrl == "" then goto continue end
 
         local ok, res = pcall(rollSlice.rollResults)
-        if not ok or type(res) ~= "table" or #res == 0 then continue end
+        if not ok or type(res) ~= "table" or #res == 0 then goto continue end
 
         local fp = wh_getRollFingerprint(res)
-        if fp == wh_lastFingerprint then continue end
+        if fp == wh_lastFingerprint then goto continue end
         wh_lastFingerprint = fp
 
         local sendAll     = Rayfield.Flags.WebhookSendAll     and Rayfield.Flags.WebhookSendAll.CurrentValue
@@ -1287,10 +1255,10 @@ task.spawn(function()
 
         for _, r in ipairs(res) do
             local it = wh_getFirstItem(r)
-            if not it then continue end
+            if not it then goto continue end
 
             local slimeId = tostring(it.id or "")
-            if slimeId == "" then continue end
+            if slimeId == "" then goto continue end
 
             local muts      = type(it.mutations) == "table" and next(it.mutations) ~= nil and it.mutations or nil
             local okS, slm  = pcall(slimeData.getSlime, slimeId)
@@ -1307,10 +1275,13 @@ task.spawn(function()
                 local uid = Rayfield.Flags.WebhookUserID.CurrentValue
                 task.spawn(wh_sendWebhook, slimeId, slm_obj, muts, wh_storedUrl, uid)
             end
+            
+            ::continue::
         end
+        
+        ::continue::
     end
 end)
--- ============================================================
 
 local SettingsTab = Window:CreateTab("Settings", 122930981612451)
 
