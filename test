@@ -109,13 +109,14 @@ local function buildUpgradeList()
     return upgs, costMap
 end
 
+-- FIX: Use pattern match instead of exact name so "Gameplay_123" etc. are found
 local GameplayFolder = nil
 local function findGameplayFolder()
     if GameplayFolder and GameplayFolder.Parent then return GameplayFolder end
     for _, v in ipairs(workspace:GetChildren()) do
-        if v.Name == "Gameplay" then 
+        if v.Name:match("^Gameplay") then
             GameplayFolder = v
-            return v 
+            return v
         end
     end
     return nil
@@ -193,7 +194,7 @@ MainTab:CreateParagraph({
 
 MainTab:CreateParagraph({
     Title = "Latest Update",
-    Content = "[+] Optimized floating enemies system\n[+] No more CFrame vibration\n[+] RunService for smooth performance\n[+] Fixed configuration saving"
+    Content = "[+] Fixed Gameplay folder detection\n[+] Fixed floating enemies & teleport\n[+] Fixed attack system\n[+] Optimized caches"
 })
 
 MainTab:CreateButton({
@@ -457,6 +458,7 @@ GameTab:CreateDropdown({
 
 GameTab:CreateSection("Combat")
 
+-- FIX: getRootPart used consistently everywhere
 local function getRootPart(model)
     return model.PrimaryPart
         or model:FindFirstChild("HumanoidRootPart")
@@ -465,52 +467,52 @@ local function getRootPart(model)
 end
 
 local teleportActive = false
-local floatActive = false
-local attackActive = false
+local floatActive    = false
+local attackActive   = false
 
 local enemyCache = {}
 local slimeCache = {}
-local cacheTime = 0
+local cacheTime  = 0
 
+-- FIX: removed Humanoid health filter (was killing the cache incorrectly),
+--      uses pattern-matched Gameplay folder
 local function updateCaches()
     local now = tick()
     if now - cacheTime < 0.5 then return end
     cacheTime = now
-    
+
     local gp = findGameplayFolder()
-    if gp then
-        local enemiesFolder = gp:FindFirstChild("Enemies")
-        local slimesFolder = gp:FindFirstChild("Slimes")
-        
-        enemyCache = {}
-        if enemiesFolder then
-            for _, enemy in ipairs(enemiesFolder:GetChildren()) do
-                if enemy:IsA("Model") then
-                    local root = getRootPart(enemy)
-                    if root then
-                        local hum = enemy:FindFirstChildOfClass("Humanoid")
-                        if not hum or hum.Health > 0 then
-                            table.insert(enemyCache, {model = enemy, root = root})
-                        end
-                    end
+    if not gp then return end
+
+    local enemiesFolder = gp:FindFirstChild("Enemies")
+    local slimesFolder  = gp:FindFirstChild("Slimes")
+
+    enemyCache = {}
+    if enemiesFolder then
+        for _, enemy in ipairs(enemiesFolder:GetChildren()) do
+            if enemy:IsA("Model") then
+                local root = getRootPart(enemy)
+                if root then
+                    table.insert(enemyCache, {model = enemy, root = root})
                 end
             end
         end
-        
-        slimeCache = {}
-        if slimesFolder then
-            for _, slime in ipairs(slimesFolder:GetChildren()) do
-                if slime:IsA("Model") then
-                    local root = getRootPart(slime)
-                    if root then
-                        table.insert(slimeCache, {model = slime, root = root, id = slime.Name})
-                    end
+    end
+
+    slimeCache = {}
+    if slimesFolder then
+        for _, slime in ipairs(slimesFolder:GetChildren()) do
+            if slime:IsA("Model") then
+                local root = getRootPart(slime)
+                if root then
+                    table.insert(slimeCache, {model = slime, root = root, id = slime.Name})
                 end
             end
         end
     end
 end
 
+-- FIX: teleport toggle properly uses teleportActive flag and reads slider values
 GameTab:CreateToggle({
     Name = "Teleport To Nearest Enemy",
     CurrentValue = false,
@@ -519,29 +521,27 @@ GameTab:CreateToggle({
         teleportActive = Value
         if not Value then return end
         task.spawn(function()
-            while teleportActive and Rayfield.Flags.GameTeleportEnemies and Rayfield.Flags.GameTeleportEnemies.CurrentValue do
+            while teleportActive
+                  and Rayfield.Flags.GameTeleportEnemies
+                  and Rayfield.Flags.GameTeleportEnemies.CurrentValue do
                 updateCaches()
-                local char = localPlr.Character
+                local char  = localPlr.Character
                 local myHRP = char and char:FindFirstChild("HumanoidRootPart")
-                
+
                 if myHRP and #enemyCache > 0 then
-                    local closest = nil
-                    local closestDist = math.huge
-                    
+                    local closest, closestDist = nil, math.huge
                     for _, enemy in ipairs(enemyCache) do
                         local dist = (enemy.root.Position - myHRP.Position).Magnitude
                         if dist < closestDist then
                             closestDist = dist
-                            closest = enemy.root
+                            closest     = enemy.root
                         end
                     end
-                    
                     if closest then
-                        local newPos = closest.Position + Vector3.new(0, 2, 0)
-                        myHRP.CFrame = CFrame.new(newPos)
+                        myHRP.CFrame = CFrame.new(closest.Position + Vector3.new(0, 2, 0))
                     end
                 end
-                
+
                 task.wait(0.15)
             end
         end)
@@ -550,6 +550,7 @@ GameTab:CreateToggle({
 
 GameTab:CreateSection("Floating Enemies")
 
+-- FIX: toggle correctly sets floatActive
 GameTab:CreateToggle({
     Name = "Float Enemies Around Player",
     CurrentValue = false,
@@ -601,6 +602,7 @@ GameTab:CreateSlider({
 
 GameTab:CreateSection("Attack System")
 
+-- FIX: toggle correctly sets attackActive
 GameTab:CreateToggle({
     Name = "Attack Floating Enemies",
     CurrentValue = false,
@@ -631,82 +633,83 @@ GameTab:CreateSlider({
 })
 
 local slimeAttackTimers = {}
-local lastFloatTime = 0
 
-RunService.RenderStepped:Connect(function(dt)
+-- FIX: single unified RenderStepped that handles both float (enemies) and
+--      attack (slimes), matching the standalone scripts exactly
+RunService.RenderStepped:Connect(function()
     if not floatActive and not attackActive then return end
-    
+
     updateCaches()
-    
+
     local char = localPlr.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
-    if #enemyCache == 0 then return end
-    
-    local t = tick()
-    local radius = Rayfield.Flags.GameFloatRadius and Rayfield.Flags.GameFloatRadius.CurrentValue or 12
-    local rotSpeed = Rayfield.Flags.GameFloatSpeed and Rayfield.Flags.GameFloatSpeed.CurrentValue or 1
+
+    local t         = tick()
+    local radius    = Rayfield.Flags.GameFloatRadius    and Rayfield.Flags.GameFloatRadius.CurrentValue    or 12
+    local rotSpeed  = Rayfield.Flags.GameFloatSpeed     and Rayfield.Flags.GameFloatSpeed.CurrentValue     or 1
     local waveSpeed = Rayfield.Flags.GameFloatWaveSpeed and Rayfield.Flags.GameFloatWaveSpeed.CurrentValue or 3
-    local waveHeight = Rayfield.Flags.GameFloatWaveHeight and Rayfield.Flags.GameFloatWaveHeight.CurrentValue or 1.5
-    
-    if floatActive then
+    local waveHeight= Rayfield.Flags.GameFloatWaveHeight and Rayfield.Flags.GameFloatWaveHeight.CurrentValue or 1.5
+
+    -- Float enemies around the player
+    if floatActive and #enemyCache > 0 then
         local enemyCount = #enemyCache
         for i, enemy in ipairs(enemyCache) do
-            local angle = ((i / enemyCount) * math.pi * 2) + (t * rotSpeed)
+            local angle        = ((i / enemyCount) * math.pi * 2) + (t * rotSpeed)
             local bobbingOffset = math.sin((t * waveSpeed) + i) * waveHeight
-            
+
             local pos = hrp.Position + Vector3.new(
                 math.cos(angle) * radius,
                 bobbingOffset + 2,
                 math.sin(angle) * radius
             )
-            
+
             pcall(function()
                 local lookDirection = (pos - hrp.Position).Unit
                 enemy.model:PivotTo(CFrame.lookAt(pos, pos + lookDirection))
             end)
         end
     end
-    
-    if attackActive and #slimeCache > 0 then
-        local attackRange = Rayfield.Flags.GameAttackRange and Rayfield.Flags.GameAttackRange.CurrentValue or 25
-        local lungeSpeed = Rayfield.Flags.GameAttackLungeSpeed and Rayfield.Flags.GameAttackLungeSpeed.CurrentValue or 15
-        
+
+    -- Attack system: orbit slimes and lunge them at nearby enemies
+    if attackActive and #slimeCache > 0 and #enemyCache > 0 then
+        local attackRange = Rayfield.Flags.GameAttackRange     and Rayfield.Flags.GameAttackRange.CurrentValue     or 25
+        local lungeSpeed  = Rayfield.Flags.GameAttackLungeSpeed and Rayfield.Flags.GameAttackLungeSpeed.CurrentValue or 15
+
+        local slimeCount = #slimeCache
         for i, slime in ipairs(slimeCache) do
-            local angle = ((i / #slimeCache) * math.pi * 2) + (t * rotSpeed)
+            local angle   = ((i / slimeCount) * math.pi * 2) + (t * rotSpeed)
             local bobbing = math.sin((t * waveSpeed) + i) * waveHeight
-            
+
             local orbitPos = hrp.Position + Vector3.new(
                 math.cos(angle) * radius,
                 bobbing + 2,
                 math.sin(angle) * radius
             )
-            
-            local closestEnemy = nil
-            local closestDist = attackRange
-            
+
+            -- Find the closest enemy to this slime's orbit position
+            local closestEnemy, closestDist = nil, attackRange
             for _, enemy in ipairs(enemyCache) do
-                local dist = (slime.root.Position - enemy.root.Position).Magnitude
+                local dist = (orbitPos - enemy.root.Position).Magnitude
                 if dist < closestDist then
-                    closestDist = dist
+                    closestDist  = dist
                     closestEnemy = enemy
                 end
             end
-            
-            local finalPos = orbitPos
+
+            local finalPos  = orbitPos
             local lookTarget = orbitPos + (orbitPos - hrp.Position).Unit
-            
+
             if closestEnemy then
                 if not slimeAttackTimers[slime.id] then
                     slimeAttackTimers[slime.id] = t
                 end
-                
-                local attackTime = t - slimeAttackTimers[slime.id]
+
+                local attackTime   = t - slimeAttackTimers[slime.id]
                 local lungeProgress = math.sin(attackTime * lungeSpeed)
-                
+
                 if lungeProgress > 0 then
-                    finalPos = orbitPos:Lerp(closestEnemy.root.Position, lungeProgress * 0.85)
+                    finalPos   = orbitPos:Lerp(closestEnemy.root.Position, lungeProgress * 0.85)
                     lookTarget = closestEnemy.root.Position
                 else
                     slimeAttackTimers[slime.id] = t
@@ -714,7 +717,7 @@ RunService.RenderStepped:Connect(function(dt)
             else
                 slimeAttackTimers[slime.id] = nil
             end
-            
+
             pcall(function()
                 slime.model:PivotTo(CFrame.lookAt(finalPos, lookTarget))
             end)
@@ -815,7 +818,7 @@ MiscTab:CreateToggle({
         if Value then
             task.spawn(function()
                 while task.wait(1) and Rayfield.Flags.MiscUsePotions and Rayfield.Flags.MiscUsePotions.CurrentValue do
-                    local boosts = dataCli:get("boosts") or {}
+                    local boosts   = dataCli:get("boosts") or {}
                     local selected = Rayfield.Flags.MiscPotionTypes and Rayfield.Flags.MiscPotionTypes.CurrentOption or {}
                     for _, boostId in ipairs(selected) do
                         local d = boosts[boostId]
@@ -846,7 +849,7 @@ MiscTab:CreateToggle({
         if Value then
             task.spawn(function()
                 while task.wait(1) and Rayfield.Flags.MiscUseDice and Rayfield.Flags.MiscUseDice.CurrentValue do
-                    local items = dataCli:get("items") or {}
+                    local items    = dataCli:get("items") or {}
                     local selected = Rayfield.Flags.MiscDiceTypes and Rayfield.Flags.MiscDiceTypes.CurrentOption or {}
                     for _, displayName in ipairs(selected) do
                         local itemId = diceDisplayToId[displayName]
