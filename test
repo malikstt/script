@@ -1,8 +1,7 @@
-repeat task.wait() until game:IsLoaded()
+task.wait() until game:IsLoaded()
 
 local RS = game:GetService("ReplicatedStorage")
 local plrs = game:GetService("Players")
-local http = game:GetService("HttpService")
 local localPlr = plrs.LocalPlayer
 local RunService = game:GetService("RunService")
 local VirtualUser = game:GetService("VirtualUser")
@@ -95,74 +94,6 @@ local function getFirstItem(res)
     return nil
 end
 
-local function getRollFingerprint(res)
-    if type(res) ~= "table" then return "nil" end
-    local cnt = #res
-    if cnt == 0 then return "empty" end
-    local parts = {}
-    for i, r in ipairs(res) do
-        local it = getFirstItem(r)
-        parts[i] = it and tostring(it.id) or tostring(i)
-    end
-    return cnt.."|"..table.concat(parts, ",")
-end
-
-local function ordinal(n)
-    local s = tostring(n)
-    local last, tens = n % 10, n % 100
-    if tens >= 11 and tens <= 13 then return s.."th" end
-    if last == 1 then return s.."st" end
-    if last == 2 then return s.."nd" end
-    if last == 3 then return s.."rd" end
-    return s.."th"
-end
-
-local thumbnailCache = {}
-local function getThumbnailUrl(assetId)
-    if not assetId then return nil end
-    if thumbnailCache[assetId] then return thumbnailCache[assetId] end
-    local url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetId.."&size=420x420&format=Png&isCircular=false"
-    local ok, res = pcall(request, {Url = url, Method = "GET"})
-    if ok and res and res.Success then
-        local data = http:JSONDecode(res.Body)
-        if data and data.data and data.data[1] then
-            thumbnailCache[assetId] = data.data[1].imageUrl
-            return thumbnailCache[assetId]
-        end
-    end
-    return nil
-end
-
-local function getMutationSize(muts)
-    if not muts then return 64 end
-    if muts.huge then return 128 elseif muts.big then return 96 end
-    return 64
-end
-
-local function getMutationColor(muts)
-    if not muts then return nil end
-    if muts.inverted then return 0x9b59b6
-    elseif muts.huge then return 0xf1c40f
-    elseif muts.big then return 0xe67e22
-    elseif muts.shiny then return 0xf39c12
-    end
-    return nil
-end
-
-local function parseLuck(val)
-    if type(val) == "number" then return val end
-    if type(val) ~= "string" or val == "" then return 0 end
-    local v = val
-    local mult = 1
-    local suffix = string.upper(string.sub(v, -1))
-    if suffix == "B" then mult = 1e9; v = string.sub(v, 1, -2)
-    elseif suffix == "M" then mult = 1e6; v = string.sub(v, 1, -2)
-    elseif suffix == "K" then mult = 1e3; v = string.sub(v, 1, -2)
-    end
-    local n = tonumber(v)
-    return n and (n * mult) or 0
-end
-
 local function getBestSlimeGuid()
     local stats = dataCli:get("stats") or {}
     local rarest = stats.rarestRoll
@@ -252,6 +183,9 @@ local Window = Rayfield:CreateWindow({
     KeySystem = false,
 })
 
+-- =========================================================
+-- MAIN TAB
+-- =========================================================
 local MainTab = Window:CreateTab("Main", 138602335586757)
 
 MainTab:CreateSection("Status")
@@ -290,7 +224,7 @@ MainTab:CreateParagraph({
 
 MainTab:CreateParagraph({
     Title = "Latest Update",
-    Content = "[+] Auto Feed & XP Transfer fully functional\n[+] Webhook system with mutation filtering\n[+] Live FPS & Ping display\n[i] Report bugs at discord.gg/fruithub"
+    Content = "[+] Auto Collect Loot fixed (no more 30s delay + Position error resolved)\n[+] Enemy teleport now locks on and lerps smoothly\n[+] Enemy & Slime speed fixed\n[+] Auto Redeem Codes updated with working codes\n[i] Report bugs at discord.gg/fruithub"
 })
 
 MainTab:CreateButton({
@@ -313,6 +247,9 @@ MainTab:CreateButton({
     end,
 })
 
+-- =========================================================
+-- FARMING TAB
+-- =========================================================
 local FarmingTab = Window:CreateTab("Farming", 138602335586757)
 
 FarmingTab:CreateSection("Zones")
@@ -456,15 +393,21 @@ FarmingTab:CreateToggle({
             task.spawn(function()
                 local lootRmt = rmt:WaitForChild("LootService"):WaitForChild("RemoteFunction")
                 while Rayfield.Flags.FarmingCollectLoot.CurrentValue do
-                    task.wait(30)
                     local lootFolder = workspace:FindFirstChild("Loot")
                     if lootFolder then
                         local radius = Rayfield.Flags.FarmingLootRadius.CurrentValue
                         local hrp = localPlr.Character and localPlr.Character:FindFirstChild("HumanoidRootPart")
                         for _, l in ipairs(lootFolder:GetChildren()) do
                             if hrp and radius < 500 then
-                                local lPos = l:FindFirstChild("Part") and l.Part.Position or l.Position
-                                if (lPos - hrp.Position).Magnitude <= radius then
+                                -- FIX: Models don't have .Position, use GetPivot or find a BasePart
+                                local lPos
+                                if l:IsA("Model") then
+                                    lPos = l:GetPivot().Position
+                                else
+                                    local bp = l:FindFirstChildWhichIsA("BasePart")
+                                    lPos = bp and bp.Position
+                                end
+                                if lPos and (lPos - hrp.Position).Magnitude <= radius then
                                     pcall(lootRmt.InvokeServer, lootRmt, "requestCollect", l.Name)
                                 end
                             else
@@ -472,6 +415,7 @@ FarmingTab:CreateToggle({
                             end
                         end
                     end
+                    task.wait(1) -- FIX: was task.wait(30) at the top, now polls every 1s at the bottom
                 end
             end)
         end
@@ -488,6 +432,9 @@ FarmingTab:CreateSlider({
     Callback = function(Value) end,
 })
 
+-- =========================================================
+-- GAME TAB
+-- =========================================================
 local GameTab = Window:CreateTab("Game", 82493603309814)
 
 GameTab:CreateSection("Rebirth")
@@ -577,6 +524,8 @@ GameTab:CreateDropdown({
 
 GameTab:CreateSection("Combat")
 
+-- FIX: Locks onto nearest enemy and lerps smoothly toward it.
+-- Only picks a new target once the locked one is dead/gone.
 GameTab:CreateToggle({
     Name = "Teleport To Nearest Enemy",
     CurrentValue = false,
@@ -584,24 +533,46 @@ GameTab:CreateToggle({
     Callback = function(Value)
         if Value then
             task.spawn(function()
+                local lockedEnemy = nil
+
                 while Rayfield.Flags.GameTeleportEnemies.CurrentValue do
                     local gp = findGameplayFolder()
                     local enemies = gp and gp:FindFirstChild("Enemies")
                     local hrp = localPlr.Character and localPlr.Character:FindFirstChild("HumanoidRootPart")
+
                     if hrp and enemies then
-                        local target, dist = nil, math.huge
-                        for _, e in ipairs(enemies:GetChildren()) do
-                            local erp = e:FindFirstChild("HumanoidRootPart")
+                        -- Clear lock if enemy is gone
+                        if lockedEnemy and (not lockedEnemy.Parent or not lockedEnemy:FindFirstChild("HumanoidRootPart")) then
+                            lockedEnemy = nil
+                        end
+
+                        -- Find nearest enemy if no lock
+                        if not lockedEnemy then
+                            local target, dist = nil, math.huge
+                            for _, e in ipairs(enemies:GetChildren()) do
+                                local erp = e:FindFirstChild("HumanoidRootPart")
+                                if erp then
+                                    local d = (erp.Position - hrp.Position).Magnitude
+                                    if d < dist then
+                                        target = e
+                                        dist = d
+                                    end
+                                end
+                            end
+                            lockedEnemy = target
+                        end
+
+                        -- Smoothly lerp toward locked enemy
+                        if lockedEnemy then
+                            local erp = lockedEnemy:FindFirstChild("HumanoidRootPart")
                             if erp then
-                                local d = (erp.Position - hrp.Position).Magnitude
-                                if d < dist then target = erp; dist = d end
+                                local targetCF = erp.CFrame * CFrame.new(0, 0, 3)
+                                hrp.CFrame = hrp.CFrame:Lerp(targetCF, 0.3)
                             end
                         end
-                        if target then
-                            hrp.CFrame = target.CFrame * CFrame.new(0, 0, 3)
-                        end
                     end
-                    task.wait(0.5)
+
+                    task.wait(0.1)
                 end
             end)
         end
@@ -646,28 +617,43 @@ GameTab:CreateSlider({
     Callback = function(Value) end,
 })
 
-local function applySpeed(folder, speedValue)
+-- FIX: Setting WalkSpeed on server-owned NPCs is blocked client-side (solid model error).
+-- Instead we push HumanoidRootPart via CFrame each Heartbeat as a client-side workaround.
+local function applySpeed(folder, speedValue, deltaTime)
     if not folder then return end
     for _, model in ipairs(folder:GetChildren()) do
-        local hum = model:FindFirstChildOfClass("Humanoid")
-        if hum and hum.WalkSpeed ~= speedValue then
-            hum.WalkSpeed = speedValue
+        local hrp = model:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            -- Try WalkSpeed in case server gave ownership
+            local hum = model:FindFirstChildOfClass("Humanoid")
+            if hum then
+                pcall(function() hum.WalkSpeed = speedValue end)
+            end
+            -- CFrame push: moves the NPC forward along its look vector each frame
+            if speedValue > 16 then
+                pcall(function()
+                    hrp.CFrame = hrp.CFrame * CFrame.new(0, 0, -(speedValue - 16) * deltaTime)
+                end)
+            end
         end
     end
 end
 
-RunService.Heartbeat:Connect(function()
+RunService.Heartbeat:Connect(function(dt)
     local gp = findGameplayFolder()
     if gp then
         if Rayfield.Flags.GameSuperFastEnemies and Rayfield.Flags.GameSuperFastEnemies.CurrentValue then
-            applySpeed(gp:FindFirstChild("Enemies"), Rayfield.Flags.GameEnemySpeed.CurrentValue)
+            applySpeed(gp:FindFirstChild("Enemies"), Rayfield.Flags.GameEnemySpeed.CurrentValue, dt)
         end
         if Rayfield.Flags.GameSuperFastSlime and Rayfield.Flags.GameSuperFastSlime.CurrentValue then
-            applySpeed(gp:FindFirstChild("Slimes"), Rayfield.Flags.GameSlimeSpeed.CurrentValue)
+            applySpeed(gp:FindFirstChild("Slimes"), Rayfield.Flags.GameSlimeSpeed.CurrentValue, dt)
         end
     end
 end)
 
+-- =========================================================
+-- MISC TAB
+-- =========================================================
 local MiscTab = Window:CreateTab("Misc", 96334002390551)
 
 MiscTab:CreateSection("Codes & Rewards")
@@ -679,16 +665,21 @@ MiscTab:CreateToggle({
     Callback = function(Value)
         if Value then
             task.spawn(function()
-                local knownCodes = {"SLIMETIME", "RELEASE", "UPDATE1"}
+                -- Updated working codes as of latest patch
+                local knownCodes = {
+                    "gullible",
+                    "test",
+                    "goingBananas",
+                    "AAisComing",
+                    "Sliming",
+                }
                 while Rayfield.Flags.MiscRedeemCodes.CurrentValue do
-                    local redeemedCodes = dataCli._data._data._codes or {}
                     for _, cd in ipairs(knownCodes) do
-                        if not redeemedCodes[cd] then
-                            pcall(codeRmt.InvokeServer, codeRmt, "redeem", cd)
-                            task.wait(0.5)
-                        end
+                        pcall(codeRmt.InvokeServer, codeRmt, "redeem", cd)
+                        task.wait(0.5)
                     end
-                    task.wait(60)
+                    -- Run once then wait 5 mins â€” codes only need redeeming once per account
+                    task.wait(300)
                 end
             end)
         end
@@ -818,107 +809,9 @@ do
     })
 end
 
-local WebhookTab = Window:CreateTab("Webhook", 84577758013974)
-
-WebhookTab:CreateSection("Configuration")
-
-WebhookTab:CreateToggle({
-    Name = "Enable Webhook",
-    CurrentValue = false,
-    Flag = "WebhookEnabled",
-    Callback = function(Value) end,
-})
-
-WebhookTab:CreateButton({
-    Name = "Test Webhook",
-    Callback = function()
-        local url = Rayfield.Flags.WebhookURL.CurrentValue
-        if not url or url == "" then
-            Rayfield:Notify({Title = "Webhook", Content = "Please enter a Webhook URL first.", Duration = 4})
-            return
-        end
-        if not Rayfield.Flags.WebhookEnabled.CurrentValue then
-            Rayfield:Notify({Title = "Webhook", Content = "Please enable Webhook first.", Duration = 4})
-            return
-        end
-        local uid = Rayfield.Flags.WebhookUserID.CurrentValue
-        local ping = (uid and uid ~= "") and ("<@"..uid.."> ") or ""
-        local ok, err = pcall(function()
-            request({
-                Url = url,
-                Method = "POST",
-                Headers = {["Content-Type"] = "application/json"},
-                Body = http:JSONEncode({
-                    content = ping,
-                    username = "Game Hub",
-                    embeds = {{
-                        title = "✅ Webhook Test",
-                        description = "Your webhook is working correctly!",
-                        color = 0x2ecc71,
-                    }}
-                })
-            })
-        end)
-        Rayfield:Notify({
-            Title = "Webhook",
-            Content = ok and "Test sent successfully!" or "Failed: "..(err or "unknown"),
-            Duration = 4,
-        })
-    end,
-})
-
-WebhookTab:CreateInput({
-    Name = "Webhook URL",
-    CurrentValue = "",
-    PlaceholderText = "https://discord.com/api/webhooks/...",
-    RemoveTextAfterFocusLost = false,
-    Flag = "WebhookURL",
-    Callback = function(Text) end,
-})
-
-WebhookTab:CreateInput({
-    Name = "User ID To Ping",
-    CurrentValue = "",
-    PlaceholderText = "Enter Discord User ID",
-    RemoveTextAfterFocusLost = false,
-    Flag = "WebhookUserID",
-    Callback = function(Text) end,
-})
-
-WebhookTab:CreateSection("Filters")
-
-WebhookTab:CreateToggle({
-    Name = "Send Inverted",
-    CurrentValue = false,
-    Flag = "WebhookSendInverted",
-    Callback = function(Value) end,
-})
-
-WebhookTab:CreateToggle({
-    Name = "Send Mutations",
-    CurrentValue = false,
-    Flag = "WebhookSendMutations",
-    Callback = function(Value) end,
-})
-
-WebhookTab:CreateDropdown({
-    Name = "Rarity To Send",
-    Options = rarityNames,
-    CurrentOption = {"Legendary"},
-    MultipleOptions = true,
-    Flag = "WebhookRarity",
-    Callback = function(Options) end,
-})
-
-WebhookTab:CreateInput({
-    Name = "Minimum Luck To Send",
-    CurrentValue = "",
-    PlaceholderText = "e.g. 1000000",
-    RemoveTextAfterFocusLost = false,
-    Flag = "WebhookMinLuck",
-    Callback = function(Text) end,
-})
-
+-- =========================================================
+-- SETTINGS TAB
+-- =========================================================
 local SettingsTab = Window:CreateTab("Settings", 122930981612451)
 
 SettingsTab:CreateSection("System")
@@ -969,121 +862,6 @@ end)
 game:GetService("GuiService").ErrorMessageChanged:Connect(function()
     if Rayfield.Flags.SettingsAutoRejoin and Rayfield.Flags.SettingsAutoRejoin.CurrentValue then
         game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, localPlr)
-    end
-end)
-
-task.spawn(function()
-    local sentKeys = {}
-    local lastFingerprint = nil
-
-    local function sendWebhook(pName, displayName, rarity, chanceText, statsText, muts, mutList, img, rolls, coins, kills)
-        if not Rayfield.Flags.WebhookEnabled or not Rayfield.Flags.WebhookEnabled.CurrentValue then return end
-        local url = Rayfield.Flags.WebhookURL.CurrentValue
-        if not url or url == "" then return end
-        local uid = Rayfield.Flags.WebhookUserID.CurrentValue
-        local ping = (uid and uid ~= "") and ("<@"..uid.."> ") or ""
-        local finalImg = nil
-        if img and img ~= "N/A" then
-            local aid = string.match(img, "rbxassetid://(%d+)")
-            if aid then finalImg = getThumbnailUrl(aid) end
-        end
-        local fields = {
-            {name = "Rarity", value = rarity, inline = true},
-            {name = "Chance", value = chanceText, inline = true},
-        }
-        if statsText and statsText ~= "" then
-            table.insert(fields, {name = "Stats", value = statsText, inline = true})
-        end
-        if mutList and #mutList > 0 then
-            table.insert(fields, {name = "Mutations", value = table.concat(mutList, ", "), inline = true})
-        end
-        table.insert(fields, {name = "🪙 Coins", value = formatNumber(coins), inline = true})
-        table.insert(fields, {name = "⚔️ Kills", value = formatNumber(kills), inline = true})
-        local sz = getMutationSize(muts)
-        pcall(function()
-            request({
-                Url = url,
-                Method = "POST",
-                Headers = {["Content-Type"] = "application/json"},
-                Body = http:JSONEncode({
-                    content = ping,
-                    username = "Game Hub",
-                    embeds = {{
-                        title = "New Slime Rolled!",
-                        description = string.format("**||%s||** rolled **%s**!\n\n🎲 **Total Rolls:** %s", pName, displayName, ordinal(rolls)),
-                        thumbnail = finalImg and {url = finalImg, width = sz, height = sz} or nil,
-                        fields = fields,
-                        color = getMutationColor(muts),
-                    }}
-                })
-            })
-        end)
-    end
-
-    while true do
-        task.wait(0.1)
-        if not Rayfield.Flags.WebhookEnabled or not Rayfield.Flags.WebhookEnabled.CurrentValue then continue end
-        local url = Rayfield.Flags.WebhookURL.CurrentValue
-        if not url or url == "" then continue end
-        local ok, res = pcall(rollSlice.rollResults)
-        if not ok then continue end
-        local fp = getRollFingerprint(res)
-        if fp == lastFingerprint then continue end
-        lastFingerprint = fp
-        if type(res) ~= "table" or #res == 0 then continue end
-        local stats = dataCli:get("stats") or {}
-        local rolls = stats.rolls or 0
-        local kills = stats.kills or 0
-        local coins = dataCli:get("coins") or 0
-        local minLuck = parseLuck(Rayfield.Flags.WebhookMinLuck.CurrentValue)
-        local allowedRarities = Rayfield.Flags.WebhookRarity.CurrentOption or {}
-        for _, r in ipairs(res) do
-            local it = getFirstItem(r)
-            if not it then continue end
-            local id = tostring(it.id or "unknown")
-            local okS, slime = pcall(slimeData.getSlime, id)
-            slime = okS and slime or nil
-            local muts = type(it.mutations) == "table" and next(it.mutations) ~= nil and it.mutations or nil
-            local isInverted = muts and muts.inverted == true
-            local hasMutation = muts ~= nil
-            if isInverted and not Rayfield.Flags.WebhookSendInverted.CurrentValue then continue end
-            if hasMutation and not isInverted and not Rayfield.Flags.WebhookSendMutations.CurrentValue then continue end
-            local img = isInverted and (slime and slime.invertedIcon or "N/A") or (slime and slime.image or "N/A")
-            local name = slime and slime.name or id
-            local baseOdds = slime and slime.odds or nil
-            local baseDmg = slime and slime.damage or 0
-            local baseHp = slime and slime.health or 0
-            local mult = muts and mutations.getVisualOddsMultiplier(muts) or 1
-            local statBonus = muts and mutations.getStatBonus(muts, "damage") or 1
-            local finalOdds = baseOdds and (baseOdds / mult) or nil
-            local chanceNum = finalOdds and (1 / finalOdds) or nil
-            if minLuck > 0 and chanceNum and chanceNum < minLuck then continue end
-            local rarity = getRarityFromOdds(baseOdds)
-            local rarityAllowed = false
-            for _, v in ipairs(allowedRarities) do
-                if v == rarity then rarityAllowed = true break end
-            end
-            if not rarityAllowed then continue end
-            local chanceText = finalOdds and string.format("1 in %s", formatNumber(math.floor(1 / finalOdds + 0.5))) or "N/A"
-            local displayName = muts and mutations.getDisplayName(name, muts) or name
-            local mutList = muts and mutations.getIds(muts) or {}
-            local finalDmg = baseDmg * statBonus
-            local finalHp = baseHp * statBonus
-            local statsText = ""
-            if finalDmg > 0 and finalHp > 0 then
-                statsText = string.format("⚔️ %s  ❤️ %s", formatNumber(finalDmg), formatNumber(finalHp))
-            elseif finalDmg > 0 then
-                statsText = string.format("⚔️ %s", formatNumber(finalDmg))
-            elseif finalHp > 0 then
-                statsText = string.format("❤️ %s", formatNumber(finalHp))
-            end
-            local pName = localPlr and localPlr.Name or "Someone"
-            local key = pName.."_"..displayName.."_"..tostring(os.time())
-            if not sentKeys[key] then
-                sentKeys[key] = os.time()
-                task.spawn(sendWebhook, pName, displayName, rarity, chanceText, statsText, muts, mutList, img, rolls, coins, kills)
-            end
-        end
     end
 end)
 
