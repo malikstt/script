@@ -1,5 +1,72 @@
 repeat task.wait() until game:IsLoaded()
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- COMPATIBILITY PREAMBLE – ensures the script runs on Delta, Wave, Solara,
+-- Xeno, Codex, VegaX, mobile executors, and any other LuaU environment.
+-- All original features are preserved; unsupported APIs gracefully degrade.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- Normalize setreadonly (make_readonly / make_writeable fallback)
+if not setreadonly then
+    setreadonly = make_readonly or (function(t, state)
+        if state == false and make_writeable then
+            make_writeable(t)
+        elseif state == true and make_readonly then
+            make_readonly(t)
+        end
+    end)
+end
+
+-- Normalize getconnections (get_signal_cons / getsignalconnections fallback)
+if not getconnections then
+    getconnections = get_signal_cons or getsignalconnections or function()
+        return {}
+    end
+end
+
+-- Normalize HTTP request function (syn.request / http_request / http.request / fluxus.request)
+if not request then
+    request = (syn and syn.request)
+        or http_request
+        or (http and http.request)
+        or (fluxus and fluxus.request)
+        or (function(opts)
+            if opts.Method == "GET" then
+                local ok, result = pcall(function()
+                    return game:GetService("HttpService"):GetAsync(opts.Url)
+                end)
+                if ok then
+                    return { Success = true, Body = result, StatusCode = 200 }
+                end
+            end
+            warn("[CactusHub] HTTP request not supported on this executor")
+            return { Success = false, Body = "", StatusCode = 0 }
+        end)
+end
+
+-- Normalize setclipboard (toclipboard / set_clipboard / Clipboard.set)
+if not setclipboard then
+    setclipboard = toclipboard
+        or set_clipboard
+        or (Clipboard and Clipboard.set)
+        or function(s) warn("[CactusHub] setclipboard not supported") end
+end
+
+-- Normalize newcclosure (use plain function if missing)
+if not newcclosure then
+    newcclosure = function(f) return f end
+end
+
+-- Normalize getnamecallmethod (return empty string if missing)
+if not getnamecallmethod then
+    getnamecallmethod = function() return "" end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- END OF COMPATIBILITY PREAMBLE
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- Original service and variable declarations (unchanged)
 local _0x3f7a2b = game:GetService("ReplicatedStorage")
 local _0x8c2d1e = game:GetService("Players")
 local _0x9a4b7c = _0x8c2d1e.LocalPlayer
@@ -321,22 +388,71 @@ local function _0x3e2c8f()
     return nil
 end
 
-local _0x3c8a2f = getrawmetatable(game)
-local _0x4a7b2c = _0x3c8a2f.__namecall
-setreadonly(_0x3c8a2f, false)
-_0x3c8a2f.__namecall = newcclosure(function(_0x1b3f8a, ...)
-    local _0x3d2c7e = getnamecallmethod()
-    if _0x3d2c7e == "Kick" or _0x3d2c7e == "kick" then
-        if _0x2c5d8f and _0x2c5d8f.Flags and _0x2c5d8f.Flags.SettingsAntiKick and _0x2c5d8f.Flags.SettingsAntiKick.CurrentValue then
-            return nil
-        end
+-- ═══════════════════════════════════════════════════════════════════════════
+-- LOAD RAYFIELD WITH SAFE FALLBACK (critical for cross-executor stability)
+-- ═══════════════════════════════════════════════════════════════════════════
+local _0x2c5d8f
+local _rayfield_ok, _rayfield_err = pcall(function()
+    local src = game:HttpGet('https://sirius.menu/rayfield')
+    local fn, compileErr = loadstring(src)
+    if not fn then
+        error("Rayfield compile error: " .. tostring(compileErr))
     end
-    return _0x4a7b2c(_0x1b3f8a, ...)
+    _0x2c5d8f = fn()
 end)
-setreadonly(_0x3c8a2f, true)
 
-local _0x2c5d8f = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+if not _rayfield_ok or not _0x2c5d8f then
+    warn("[CactusHub] Failed to load Rayfield UI: " .. tostring(_rayfield_err))
+    -- Create a full stub that prevents any nil-index crashes
+    _0x2c5d8f = setmetatable({}, {
+        __index = function(t, k)
+            if k == "Flags" then
+                local flags = setmetatable({}, {
+                    __index = function(ft, fk)
+                        return { CurrentValue = false, CurrentOption = { "" } }
+                    end
+                })
+                return flags
+            end
+            return function(...)
+                return setmetatable({}, {
+                    __index = function(_, _)
+                        return function(...) return setmetatable({}, {
+                            __index = function() return function() return {} end end
+                        }) end
+                    end
+                })
+            end
+        end
+    })
+    _0x2c5d8f.Flags = _0x2c5d8f.Flags or {}
+end
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- METAMETHOD HOOK FOR ANTI-KICK (wrapped in pcall, moved after Rayfield load)
+-- ═══════════════════════════════════════════════════════════════════════════
+pcall(function()
+    local mt = getrawmetatable(game)
+    if not mt then return end
+    local oldNamecall = mt.__namecall
+    if setreadonly then setreadonly(mt, false) end
+    mt.__namecall = newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        if method == "Kick" or method == "kick" then
+            if _0x2c5d8f and _0x2c5d8f.Flags and 
+               _0x2c5d8f.Flags.SettingsAntiKick and 
+               _0x2c5d8f.Flags.SettingsAntiKick.CurrentValue then
+                return nil
+            end
+        end
+        return oldNamecall(self, ...)
+    end)
+    if setreadonly then setreadonly(mt, true) end
+end)
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- RAYFIELD UI INITIALIZATION (original code, now protected by stub)
+-- ═══════════════════════════════════════════════════════════════════════════
 local _0x4f2a8c_window = _0x2c5d8f:CreateWindow({
     Name = "Cactus Hub",
     Icon = 0,
@@ -1240,11 +1356,28 @@ _0x2a7b4c_tab:CreateButton({
                 })
             })
         end)
-        _0x2c5d8f:Notify({
-            Title   = "Webhook",
-            Content = _0x3e4a2c and "Test sent successfully!" or "Failed: " .. (_0x1a6b4c or "unknown"),
-            Duration = 4,
-        })
+        -- Additional user feedback when HTTP is not supported
+        if not _0x3e4a2c then
+            if not (syn and syn.request) and not http_request and not (http and http.request) and not (fluxus and fluxus.request) then
+                _0x2c5d8f:Notify({
+                    Title = "Webhook",
+                    Content = "HTTP requests not supported on your executor.",
+                    Duration = 5
+                })
+            else
+                _0x2c5d8f:Notify({
+                    Title   = "Webhook",
+                    Content = "Failed: " .. (_0x1a6b4c or "unknown"),
+                    Duration = 4,
+                })
+            end
+        else
+            _0x2c5d8f:Notify({
+                Title   = "Webhook",
+                Content = "Test sent successfully!",
+                Duration = 4,
+            })
+        end
     end,
 })
 
@@ -1358,14 +1491,21 @@ _0x7d2c4a_tab:CreateToggle({
     CurrentValue = true,
     Flag = "SettingsAntiAFK",
     Callback = function(Value)
-        if Value then
-            for _, x in pairs(getconnections(_0x9a4b7c.Idled)) do
-                x:Disable()
+        -- Safe getconnections usage with pcall and fallback
+        local ok, err = pcall(function()
+            local conns = getconnections and getconnections(_0x9a4b7c.Idled) or {}
+            if Value then
+                for _, x in pairs(conns) do
+                    pcall(function() x:Disable() end)
+                end
+            else
+                for _, x in pairs(conns) do
+                    pcall(function() x:Enable() end)
+                end
             end
-        else
-            for _, x in pairs(getconnections(_0x9a4b7c.Idled)) do
-                x:Enable()
-            end
+        end)
+        if not ok then
+            warn("[CactusHub] getconnections error: " .. tostring(err))
         end
     end,
 })
