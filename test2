@@ -5,8 +5,8 @@ local TARGET_HIGHEST_HP = false
 task.spawn(function()
     repeat task.wait() until game:IsLoaded()
 
-    local Players    = game:GetService("Players")
-    local RepStorage = game:GetService("ReplicatedStorage")
+    local Players      = game:GetService("Players")
+    local RepStorage   = game:GetService("ReplicatedStorage")
     local TweenService = game:GetService("TweenService")
 
     local player    = Players.LocalPlayer
@@ -19,92 +19,139 @@ task.spawn(function()
     local GoopGunServiceUtils   = require(RepStorage.Source.Features.GoopGun.GoopGunServiceUtils)
     local DataService           = require(RepStorage.Packages.DataService).client
 
+    -- UI Setup
     local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "SlimeGunPopups"
+    screenGui.Name = "SlimeGunHUD"
     screenGui.ResetOnSpawn = false
     screenGui.IgnoreGuiInset = true
+    screenGui.DisplayOrder = 999
     screenGui.Parent = player.PlayerGui
 
-    local popups = {}
+    local container = Instance.new("Frame")
+    container.Name = "PopupContainer"
+    container.Position = UDim2.new(0, 16, 0, 16)
+    container.Size = UDim2.new(0, 260, 1, -32)
+    container.BackgroundTransparency = 1
+    container.Parent = screenGui
 
-    local function repositionPopups()
-        for i, frame in ipairs(popups) do
-            local targetY = 0.85 - (i - 1) * 0.055
-            TweenService:Create(frame, TweenInfo.new(0.15), {
-                Position = UDim2.new(0.5, 0, targetY, 0)
-            }):Play()
-        end
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.VerticalAlignment = Enum.VerticalAlignment.Top
+    layout.Padding = UDim.new(0, 6)
+    layout.Parent = container
+
+    local popupCount = 0
+
+    local COLORS = {
+        normal  = Color3.fromRGB(120, 220, 255),
+        big     = Color3.fromRGB(255, 180, 50),
+        huge    = Color3.fromRGB(255, 80, 80),
+        shiny   = Color3.fromRGB(255, 230, 50),
+        inverted = Color3.fromRGB(180, 80, 255),
+    }
+
+    local function getMutationColor(mutations)
+        if not mutations then return COLORS.normal end
+        if mutations.inverted then return COLORS.inverted end
+        if mutations.huge     then return COLORS.huge end
+        if mutations.shiny    then return COLORS.shiny end
+        if mutations.big      then return COLORS.big end
+        return COLORS.normal
     end
 
-    local function showPopup(text, dmg)
-        local frame = Instance.new("Frame")
-        frame.AnchorPoint = Vector2.new(0.5, 0.5)
-        frame.Position = UDim2.new(0.5, 0, 0.85, 0)
-        frame.Size = UDim2.new(0, 320, 0, 36)
-        frame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-        frame.BackgroundTransparency = 0.3
-        frame.BorderSizePixel = 0
-        frame.Parent = screenGui
-
-        local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, 8)
-        corner.Parent = frame
-
-        local label = Instance.new("TextLabel")
-        label.Size = UDim2.new(1, -12, 1, 0)
-        label.Position = UDim2.new(0, 12, 0, 0)
-        label.BackgroundTransparency = 1
-        label.TextColor3 = Color3.fromRGB(255, 255, 255)
-        label.TextXAlignment = Enum.TextXAlignment.Left
-        label.Font = Enum.Font.GothamBold
-        label.TextSize = 14
-        label.Text = text
-        label.Parent = frame
-
-        local dmgLabel = Instance.new("TextLabel")
-        dmgLabel.Size = UDim2.new(0, 60, 1, 0)
-        dmgLabel.Position = UDim2.new(1, -70, 0, 0)
-        dmgLabel.BackgroundTransparency = 1
-        dmgLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
-        dmgLabel.TextXAlignment = Enum.TextXAlignment.Right
-        dmgLabel.Font = Enum.Font.GothamBold
-        dmgLabel.TextSize = 14
-        dmgLabel.Text = "-" .. tostring(dmg)
-        dmgLabel.Parent = frame
-
-        table.insert(popups, 1, frame)
-        repositionPopups()
-
-        task.delay(2, function()
-            TweenService:Create(frame, TweenInfo.new(0.4), {
-                BackgroundTransparency = 1
-            }):Play()
-            TweenService:Create(label, TweenInfo.new(0.4), {
-                TextTransparency = 1
-            }):Play()
-            TweenService:Create(dmgLabel, TweenInfo.new(0.4), {
-                TextTransparency = 1
-            }):Play()
-            task.wait(0.4)
-            local idx = table.find(popups, frame)
-            if idx then table.remove(popups, idx) end
-            frame:Destroy()
-            repositionPopups()
-        end)
-    end
-
-    local function getEnemyName(enemy)
-        local name = tostring(enemy.enemyId or "Slime")
+    local function getEnemyLabel(enemy)
+        local tier = "Lv." .. tostring(enemy.enemyId or 1)
         if enemy.mutations then
             local tags = {}
-            for mut, _ in pairs(enemy.mutations) do
+            for mut in pairs(enemy.mutations) do
                 table.insert(tags, mut:sub(1,1):upper() .. mut:sub(2))
             end
             if #tags > 0 then
-                name = table.concat(tags, " ") .. " " .. name
+                return table.concat(tags, " ") .. " Slime " .. tier
             end
         end
-        return name
+        return "Slime " .. tier
+    end
+
+    local function showPopup(enemyLabel, dmg, hpAfter, accentColor)
+        popupCount += 1
+
+        local frame = Instance.new("Frame")
+        frame.Name = "Popup_" .. popupCount
+        frame.Size = UDim2.new(1, 0, 0, 52)
+        frame.BackgroundColor3 = Color3.fromRGB(10, 10, 18)
+        frame.BackgroundTransparency = 0.1
+        frame.BorderSizePixel = 0
+        frame.ClipsDescendants = true
+        frame.LayoutOrder = popupCount
+        frame.Parent = container
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 10)
+        corner.Parent = frame
+
+        local accent = Instance.new("Frame")
+        accent.Size = UDim2.new(0, 3, 1, 0)
+        accent.Position = UDim2.new(0, 0, 0, 0)
+        accent.BackgroundColor3 = accentColor
+        accent.BorderSizePixel = 0
+        accent.Parent = frame
+
+        local accentCorner = Instance.new("UICorner")
+        accentCorner.CornerRadius = UDim.new(0, 10)
+        accentCorner.Parent = accent
+
+        local nameLabel = Instance.new("TextLabel")
+        nameLabel.Position = UDim2.new(0, 14, 0, 6)
+        nameLabel.Size = UDim2.new(1, -90, 0, 20)
+        nameLabel.BackgroundTransparency = 1
+        nameLabel.Text = enemyLabel
+        nameLabel.TextColor3 = Color3.fromRGB(220, 220, 230)
+        nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+        nameLabel.Font = Enum.Font.GothamBold
+        nameLabel.TextSize = 13
+        nameLabel.Parent = frame
+
+        local hpLabel = Instance.new("TextLabel")
+        hpLabel.Position = UDim2.new(0, 14, 0, 28)
+        hpLabel.Size = UDim2.new(1, -90, 0, 16)
+        hpLabel.BackgroundTransparency = 1
+        hpLabel.Text = "HP remaining: " .. tostring(math.max(0, math.floor(hpAfter)))
+        hpLabel.TextColor3 = Color3.fromRGB(130, 130, 150)
+        hpLabel.TextXAlignment = Enum.TextXAlignment.Left
+        hpLabel.Font = Enum.Font.Gotham
+        hpLabel.TextSize = 11
+        hpLabel.Parent = frame
+
+        local dmgLabel = Instance.new("TextLabel")
+        dmgLabel.Position = UDim2.new(1, -80, 0, 0)
+        dmgLabel.Size = UDim2.new(0, 72, 1, 0)
+        dmgLabel.BackgroundTransparency = 1
+        dmgLabel.Text = "-" .. tostring(math.floor(dmg))
+        dmgLabel.TextColor3 = accentColor
+        dmgLabel.TextXAlignment = Enum.TextXAlignment.Right
+        dmgLabel.Font = Enum.Font.GothamBold
+        dmgLabel.TextSize = 20
+        dmgLabel.Parent = frame
+
+        -- slide in
+        frame.Position = UDim2.new(-1, 0, 0, 0)
+        TweenService:Create(frame, TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+            Position = UDim2.new(0, 0, 0, 0)
+        }):Play()
+
+        task.delay(2.2, function()
+            TweenService:Create(frame, TweenInfo.new(0.35, Enum.EasingStyle.Quint), {
+                BackgroundTransparency = 1,
+                Size = UDim2.new(1, 0, 0, 0)
+            }):Play()
+            TweenService:Create(nameLabel, TweenInfo.new(0.35), { TextTransparency = 1 }):Play()
+            TweenService:Create(hpLabel,   TweenInfo.new(0.35), { TextTransparency = 1 }):Play()
+            TweenService:Create(dmgLabel,  TweenInfo.new(0.35), { TextTransparency = 1 }):Play()
+            TweenService:Create(accent,    TweenInfo.new(0.35), { BackgroundTransparency = 1 }):Play()
+            task.wait(0.35)
+            frame:Destroy()
+        end)
     end
 
     local function ensureEquipped()
@@ -135,4 +182,55 @@ task.spawn(function()
                     local dist = (enemy.pos - rootPart.Position).Magnitude
                     if bestVal == nil or dist < bestVal then
                         bestVal = dist
-                        best =
+                        best = uniqueId
+                    end
+                elseif TARGET_LOWEST_HP then
+                    if bestVal == nil or enemy.health < bestVal then
+                        bestVal = enemy.health
+                        best = uniqueId
+                    end
+                elseif TARGET_HIGHEST_HP then
+                    if bestVal == nil or enemy.health > bestVal then
+                        bestVal = enemy.health
+                        best = uniqueId
+                    end
+                end
+            end
+        end
+
+        return best
+    end
+
+    repeat task.wait() until ensureEquipped()
+
+    while true do
+        if humanoid.Health <= 0 then break end
+        ensureEquipped()
+
+        local upgrades = DataService:get("upgrades") or {}
+        local fireRate = GoopGunServiceUtils.getFireRate(upgrades)
+
+        local uniqueId = selectTarget()
+        if uniqueId then
+            local gameplay = GameplayServiceClient.gameplay
+            local enemy = gameplay and gameplay.enemies[uniqueId]
+            local hpBefore = enemy and enemy.health or 0
+            local enemyLabel = enemy and getEnemyLabel(enemy) or "Slime"
+            local accentColor = enemy and getMutationColor(enemy.mutations) or COLORS.normal
+
+            local wrapper = GoopGunServiceClient.wrapper
+            if wrapper and wrapper.onEnemyHit then
+                wrapper.onEnemyHit(uniqueId)
+            end
+
+            task.wait()
+            local hpAfter = enemy and enemy.health or 0
+            local dmg = hpBefore - hpAfter
+            if dmg > 0 then
+                showPopup(enemyLabel, dmg, hpAfter, accentColor)
+            end
+        end
+
+        task.wait(fireRate)
+    end
+end)
