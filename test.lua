@@ -399,14 +399,14 @@ _0x1b6d4a_main:CreateParagraph({
 _0x1b6d4a_main:CreateButton({
     Name = "Copy Discord Invite",
     Callback = function()
-        setclipboard("https://discord.gg/Yw6bvAPTr")
+        setclipboard("https://discord.gg/6ANCjyaR5")
         _0x2c5d8f:Notify({Title = "Discord", Content = "Link copied to clipboard!", Duration = 3})
     end,
 })
 
 _0x1b6d4a_main:CreateParagraph({
     Title = "",
-    Content = "Report bugs in the Discord\nhttps://discord.gg/Yw6bvAPTr"
+    Content = "Report bugs in the Discord\nhttps://discord.gg/6ANCjyaR5"
 })
 
 _0x1b6d4a_main:CreateButton({
