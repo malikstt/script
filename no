@@ -1,767 +1,957 @@
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TARGET_CLOSEST    = true
+local TARGET_LOWEST_HP  = false
+local TARGET_HIGHEST_HP = false
 
-pcall(function()
-	settings().Rendering.QualityLevel = 1
-end)
-pcall(function()
-	workspace:SetAttribute("3dRenderingEnabled", false)
-end)
+local Players       = game:GetService("Players")
+local RunService    = game:GetService("RunService")
+local TweenService  = game:GetService("TweenService")
+local RepStorage    = game:GetService("ReplicatedStorage")
+
+pcall(function() settings().Rendering.QualityLevel = 1 end)
+pcall(function() workspace:SetAttribute("3dRenderingEnabled", false) end)
 
 local DataClient = require(
-	ReplicatedStorage:WaitForChild("Packages"):WaitForChild("DataService")
+    RepStorage:WaitForChild("Packages"):WaitForChild("DataService")
 ).client
-
 local data = DataClient._data._data
 
 local LocalPlayer = Players.LocalPlayer
+local playerGui   = LocalPlayer:WaitForChild("PlayerGui")
 
-local UPDATE_INTERVAL = 0.5
-local STATUS_INTERVAL = 5
-local TWEEN_TIME = 0.25
+local UPDATE_INTERVAL  = 0.5
+local STATUS_INTERVAL  = 5
+local TWEEN_FAST       = 0.15
+local TWEEN_MED        = 0.25
+local TWEEN_SLOW       = 0.4
+local NOTIF_LIFETIME   = 2.8
+local NOTIF_MAX        = 7
 
 local PALETTE = {
-	bg      = Color3.fromRGB(5, 5, 8),
-	panel   = Color3.fromRGB(10, 12, 18),
-	border  = Color3.fromRGB(30, 35, 50),
-	accent  = Color3.fromRGB(80, 160, 255),
-	gold    = Color3.fromRGB(255, 210, 60),
-	diamond = Color3.fromRGB(120, 230, 255),
-	void    = Color3.fromRGB(180, 80, 255),
-	text    = Color3.fromRGB(220, 228, 245),
-	dim     = Color3.fromRGB(100, 110, 135),
+    bg       = Color3.fromRGB(6,  7, 12),
+    surface  = Color3.fromRGB(11, 13, 20),
+    panel    = Color3.fromRGB(15, 18, 28),
+    card     = Color3.fromRGB(18, 22, 34),
+    border   = Color3.fromRGB(35, 42, 62),
+    accent   = Color3.fromRGB(80,  160, 255),
+    accentDim= Color3.fromRGB(40,  90,  160),
+    gold     = Color3.fromRGB(255, 210,  60),
+    diamond  = Color3.fromRGB(120, 230, 255),
+    void     = Color3.fromRGB(180,  80, 255),
+    green    = Color3.fromRGB( 80, 220,  80),
+    red      = Color3.fromRGB(255,  80,  80),
+    text     = Color3.fromRGB(215, 225, 245),
+    subtext  = Color3.fromRGB(130, 140, 165),
+    dim      = Color3.fromRGB( 75,  85, 110),
+    white    = Color3.new(1, 1, 1),
 }
 
-local ASSET_IDS = {
-	rebirth = "rbxassetid://132563621658654",
-	goop    = "rbxassetid://114367663524453",
-	coins   = "rbxassetid://103275559073812",
-	kills   = "rbxassetid://111148706433634",
-	zone    = "rbxassetid://96591575070730",
-	goldDice = "rbxassetid://133158717152423",
-	diamondDice = "rbxassetid://139581611167886",
-	voidDice = "rbxassetid://98779770728903",
+local ASSETS = {
+    rebirth     = "rbxassetid://132563621658654",
+    goop        = "rbxassetid://114367663524453",
+    coins       = "rbxassetid://103275559073812",
+    kills       = "rbxassetid://111148706433634",
+    zone        = "rbxassetid://96591575070730",
+    goldDice    = "rbxassetid://133158717152423",
+    diamondDice = "rbxassetid://139581611167886",
+    voidDice    = "rbxassetid://98779770728903",
 }
 
 local DICE_FRAMES = {"|", "/", "-", "\\"}
 
 local SUFFIXES = {
-	{1e15, "Qd"},
-	{1e12, "T"},
-	{1e9,  "B"},
-	{1e6,  "M"},
-	{1e3,  "K"},
+    {1e15, "Qd"}, {1e12, "T"}, {1e9, "B"}, {1e6, "M"}, {1e3, "K"},
 }
 
 local function formatNum(n)
-	n = tonumber(n) or 0
-	for _, pair in ipairs(SUFFIXES) do
-		local threshold, suffix = pair[1], pair[2]
-		if n >= threshold then
-			local v = n / threshold
-			local s = string.format("%.2f", v)
-			s = s:gsub("%.?0+$", "")
-			return s .. suffix
-		end
-	end
-	return tostring(math.floor(n))
+    n = tonumber(n) or 0
+    for _, p in ipairs(SUFFIXES) do
+        if n >= p[1] then
+            local s = string.format("%.2f", n / p[1]):gsub("%.?0+$", "")
+            return s .. p[2]
+        end
+    end
+    return tostring(math.floor(n))
 end
 
-local function tweenProp(obj, props, t)
-	t = t or TWEEN_TIME
-	TweenService:Create(obj, TweenInfo.new(t, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props):Play()
+local function safeGet(...)
+    local cur = data
+    for _, k in ipairs({...}) do
+        if type(cur) ~= "table" then return 0 end
+        cur = cur[k]
+        if cur == nil then return 0 end
+    end
+    return tonumber(cur) or 0
 end
 
-local function pulse(label)
-	tweenProp(label, {TextTransparency = 0.6}, 0.05)
-	task.delay(0.05, function()
-		tweenProp(label, {TextTransparency = 0}, 0.2)
-	end)
+local function tween(obj, props, t, style, dir)
+    TweenService:Create(obj,
+        TweenInfo.new(t or TWEEN_MED,
+            style or Enum.EasingStyle.Quart,
+            dir   or Enum.EasingDirection.Out),
+        props
+    ):Play()
 end
 
-local function make(class, props, parent)
-	local obj = Instance.new(class)
-	for k, v in pairs(props) do
-		obj[k] = v
-	end
-	if parent then obj.Parent = parent end
-	return obj
+local function pulse(lbl)
+    tween(lbl, {TextTransparency = 0.55}, 0.04)
+    task.delay(0.04, function()
+        tween(lbl, {TextTransparency = 0}, 0.18)
+    end)
 end
 
-local function makeFrame(props, parent)
-	props.BackgroundTransparency = props.BackgroundTransparency or 0
-	return make("Frame", props, parent)
+local function updateLabel(lbl, newText)
+    if lbl and lbl.Text ~= newText then
+        lbl.Text = newText
+        pulse(lbl)
+    end
 end
 
-local function makeLabel(props, parent)
-	props.BackgroundTransparency = 1
-	props.Font = props.Font or Enum.Font.GothamBold
-	props.TextScaled = true
-	props.TextWrapped = false
-	return make("TextLabel", props, parent)
+local function make(cls, props, parent)
+    local o = Instance.new(cls)
+    for k, v in pairs(props) do o[k] = v end
+    if parent then o.Parent = parent end
+    return o
 end
 
-local function makeImageLabel(props, parent)
-	props.BackgroundTransparency = 1
-	props.ScaleType = props.ScaleType or Enum.ScaleType.Fit
-	return make("ImageLabel", props, parent)
+local function frame(props, parent)
+    props.BackgroundTransparency = props.BackgroundTransparency or 0
+    return make("Frame", props, parent)
 end
 
-local function addCorner(parent, radius)
-	make("UICorner", {CornerRadius = UDim.new(0, radius or 6)}, parent)
+local function label(props, parent)
+    props.BackgroundTransparency = 1
+    props.Font     = props.Font     or Enum.Font.GothamBold
+    props.TextScaled  = props.TextScaled  ~= false
+    props.TextWrapped = false
+    return make("TextLabel", props, parent)
 end
 
-local function addStroke(parent, color, thickness)
-	make("UIStroke", {
-		Color = color or PALETTE.border,
-		Thickness = thickness or 1,
-		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-	}, parent)
+local function image(props, parent)
+    props.BackgroundTransparency = 1
+    props.ScaleType = props.ScaleType or Enum.ScaleType.Fit
+    return make("ImageLabel", props, parent)
 end
 
-local function addListLayout(parent, props)
-	local ul = Instance.new("UIListLayout")
-	ul.FillDirection = props.FillDirection or Enum.FillDirection.Vertical
-	ul.HorizontalAlignment = props.HAlign or Enum.HorizontalAlignment.Center
-	ul.VerticalAlignment = props.VAlign or Enum.VerticalAlignment.Top
-	ul.Padding = props.Padding or UDim.new(0, 12)
-	ul.SortOrder = Enum.SortOrder.LayoutOrder
-	ul.Parent = parent
-	return ul
+local function corner(parent, r)
+    make("UICorner", {CornerRadius = UDim.new(0, r or 8)}, parent)
 end
 
-local function getPlayerThumbnail(userId)
-	local ok, img = pcall(function()
-		return Players:GetUserThumbnailAsync(userId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
-	end)
-	if ok then return img end
-	return ""
+local function stroke(parent, col, thick)
+    make("UIStroke", {
+        Color = col or PALETTE.border,
+        Thickness = thick or 1,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+    }, parent)
 end
 
-local function buildHUD(playerGui)
-	local existing = playerGui:FindFirstChild("__MAINHUD__")
-	if existing then existing:Destroy() end
+local function listLayout(parent, props)
+    props = props or {}
+    return make("UIListLayout", {
+        FillDirection      = props.fill    or Enum.FillDirection.Vertical,
+        HorizontalAlignment= props.hAlign  or Enum.HorizontalAlignment.Left,
+        VerticalAlignment  = props.vAlign  or Enum.VerticalAlignment.Top,
+        Padding            = props.pad     or UDim.new(0, 8),
+        SortOrder          = Enum.SortOrder.LayoutOrder,
+        Parent             = parent,
+    })
+end
 
-	local screenGui = make("ScreenGui", {
-		Name = "__MAINHUD__",
-		ResetOnSpawn = false,
-		IgnoreGuiInset = true,
-		DisplayOrder = 9999,
-		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-		Parent = playerGui,
-	})
+local function padding(parent, t, b, l, r)
+    make("UIPadding", {
+        PaddingTop    = UDim.new(0, t or 8),
+        PaddingBottom = UDim.new(0, b or 8),
+        PaddingLeft   = UDim.new(0, l or 10),
+        PaddingRight  = UDim.new(0, r or 10),
+    }, parent)
+end
 
-	local scaleContainer = makeFrame({
-		Name = "ScaleContainer",
-		Size = UDim2.fromScale(1, 1),
-		Position = UDim2.fromScale(0, 0),
-		BackgroundColor3 = PALETTE.bg,
-		BackgroundTransparency = 0,
-	}, screenGui)
+local function divider(parent, order)
+    local d = frame({
+        Size = UDim2.new(1, 0, 0, 1),
+        BackgroundColor3 = PALETTE.border,
+        LayoutOrder = order or 99,
+    }, parent)
+    return d
+end
 
-	make("UIScale", {Scale = 1}, scaleContainer)
+local function sectionHeader(parent, text, order)
+    local lbl = label({
+        Size = UDim2.new(1, 0, 0, 14),
+        Text = text,
+        TextColor3 = PALETTE.dim,
+        Font = Enum.Font.Gotham,
+        TextScaled = false,
+        TextSize = 10,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        LayoutOrder = order or 1,
+    }, parent)
+    return lbl
+end
 
-	make("UIAspectRatioConstraint", {
-		AspectRatio = 16 / 9,
-		AspectType = Enum.AspectType.ScaleWithParentSize,
-		DominantAxis = Enum.DominantAxis.Width,
-	}, scaleContainer)
+local function statRow(parent, assetId, leftText, rightInit, accentColor, order)
+    local row = frame({
+        Size = UDim2.new(1, 0, 0, 38),
+        BackgroundColor3 = PALETTE.card,
+        LayoutOrder = order or 1,
+    }, parent)
+    corner(row, 7)
 
-	makeFrame({
-		Name = "Overlay",
-		Size = UDim2.fromScale(1, 1),
-		BackgroundColor3 = Color3.new(0, 0, 0),
-		BackgroundTransparency = 0.96,
-		ZIndex = 10,
-	}, scaleContainer)
+    frame({
+        Size = UDim2.new(0, 3, 0.6, 0),
+        Position = UDim2.new(0, 0, 0.2, 0),
+        BackgroundColor3 = accentColor or PALETTE.accent,
+    }, row)
 
-	local topCenter = makeFrame({
-		Name = "TopCenter",
-		Size = UDim2.fromScale(0.28, 0.09),
-		Position = UDim2.fromScale(0.36, 0.01),
-		BackgroundColor3 = PALETTE.panel,
-	}, scaleContainer)
-	addCorner(topCenter, 8)
-	addStroke(topCenter, PALETTE.accent, 1)
+    local iconBox = frame({
+        Size = UDim2.new(0, 30, 0, 30),
+        Position = UDim2.new(0, 8, 0.5, -15),
+        BackgroundColor3 = Color3.fromRGB(20, 24, 36),
+    }, row)
+    corner(iconBox, 6)
 
-	local avatarFrame = makeFrame({
-		Name = "AvatarFrame",
-		Size = UDim2.fromScale(0.18, 0.85),
-		Position = UDim2.fromScale(0.02, 0.075),
-		BackgroundColor3 = PALETTE.border,
-	}, topCenter)
-	addCorner(avatarFrame, 6)
-	make("UIAspectRatioConstraint", {
-		AspectRatio = 1,
-		AspectType = Enum.AspectType.ScaleWithParentSize,
-		DominantAxis = Enum.DominantAxis.Height,
-	}, avatarFrame)
+    if assetId and assetId ~= "" then
+        image({
+            Size = UDim2.fromScale(0.75, 0.75),
+            Position = UDim2.fromScale(0.125, 0.125),
+            Image = assetId,
+        }, iconBox)
+    end
 
-	local avatarImg = makeImageLabel({
-		Name = "Avatar",
-		Size = UDim2.fromScale(1, 1),
-		Position = UDim2.fromScale(0, 0),
-		Image = "",
-		ScaleType = Enum.ScaleType.Fit,
-	}, avatarFrame)
-	addCorner(avatarImg, 6)
+    label({
+        Size = UDim2.new(0.42, 0, 1, 0),
+        Position = UDim2.new(0, 44, 0, 0),
+        Text = leftText,
+        TextColor3 = PALETTE.subtext,
+        Font = Enum.Font.Gotham,
+        TextScaled = false,
+        TextSize = 11,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    }, row)
 
-	local usernameLabel = makeLabel({
-		Name = "Username",
-		Size = UDim2.fromScale(0.77, 1),
-		Position = UDim2.fromScale(0.21, 0),
-		Text = LocalPlayer.Name,
-		TextColor3 = PALETTE.text,
-		Font = Enum.Font.GothamBold,
-		TextXAlignment = Enum.TextXAlignment.Center,
-	}, topCenter)
+    local val = label({
+        Size = UDim2.new(0, 72, 1, 0),
+        Position = UDim2.new(1, -76, 0, 0),
+        Text = rightInit or "0",
+        TextColor3 = accentColor or PALETTE.text,
+        Font = Enum.Font.GothamBold,
+        TextScaled = false,
+        TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Right,
+    }, row)
 
-	task.spawn(function()
-		local img = getPlayerThumbnail(LocalPlayer.UserId)
-		avatarImg.Image = img
-	end)
+    return row, val
+end
 
-	local centerProgressionPanel = makeFrame({
-		Name = "CenterProgressionPanel",
-		Size = UDim2.fromScale(0.28, 0.16),
-		Position = UDim2.fromScale(0.36, 0.12),
-		BackgroundColor3 = PALETTE.panel,
-	}, scaleContainer)
-	addCorner(centerProgressionPanel, 10)
-	addStroke(centerProgressionPanel, PALETTE.border)
+local function emojiStatRow(parent, emojiChar, leftText, rightInit, accentColor, order)
+    local row = frame({
+        Size = UDim2.new(1, 0, 0, 38),
+        BackgroundColor3 = PALETTE.card,
+        LayoutOrder = order or 1,
+    }, parent)
+    corner(row, 7)
 
-	local centerPadding = make("UIPadding", {
-		PaddingTop = UDim.new(0.02, 0),
-		PaddingBottom = UDim.new(0.02, 0),
-		PaddingLeft = UDim.new(0.04, 0),
-		PaddingRight = UDim.new(0.04, 0),
-	}, centerProgressionPanel)
+    frame({
+        Size = UDim2.new(0, 3, 0.6, 0),
+        Position = UDim2.new(0, 0, 0.2, 0),
+        BackgroundColor3 = accentColor or PALETTE.accent,
+    }, row)
 
-	local centerLayout = addListLayout(centerProgressionPanel, {
-		Padding = UDim.new(0, 6),
-	})
+    local iconBox = frame({
+        Size = UDim2.new(0, 30, 0, 30),
+        Position = UDim2.new(0, 8, 0.5, -15),
+        BackgroundColor3 = Color3.fromRGB(20, 24, 36),
+    }, row)
+    corner(iconBox, 6)
 
-	local function makeProgressionRow(parent, assetId, labelText, accentColor, startVal)
-		local row = makeFrame({
-			Size = UDim2.fromScale(1, 0.26),
-			BackgroundColor3 = Color3.fromRGB(14, 16, 24),
-		}, parent)
-		addCorner(row, 5)
+    label({
+        Size = UDim2.fromScale(1, 1),
+        Text = emojiChar,
+        TextColor3 = PALETTE.accent,
+        Font = Enum.Font.GothamBold,
+        TextScaled = true,
+    }, iconBox)
 
-		local iconContainer = makeFrame({
-			Name = "IconContainer",
-			Size = UDim2.fromScale(0.22, 1),
-			BackgroundTransparency = 1,
-		}, row)
+    label({
+        Size = UDim2.new(0.42, 0, 1, 0),
+        Position = UDim2.new(0, 44, 0, 0),
+        Text = leftText,
+        TextColor3 = PALETTE.subtext,
+        Font = Enum.Font.Gotham,
+        TextScaled = false,
+        TextSize = 11,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    }, row)
 
-		local iconImg = makeImageLabel({
-			Size = UDim2.fromScale(1, 0.7),
-			Position = UDim2.fromScale(0, 0.15),
-			Image = assetId,
-			ScaleType = Enum.ScaleType.Fit,
-		}, iconContainer)
-		make("UIAspectRatioConstraint", {
-			AspectRatio = 1,
-			AspectType = Enum.AspectType.ScaleWithParentSize,
-			DominantAxis = Enum.DominantAxis.Height,
-		}, iconImg)
+    local val = label({
+        Size = UDim2.new(0, 72, 1, 0),
+        Position = UDim2.new(1, -76, 0, 0),
+        Text = rightInit or "0",
+        TextColor3 = accentColor or PALETTE.text,
+        Font = Enum.Font.GothamBold,
+        TextScaled = false,
+        TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Right,
+    }, row)
 
-		local textLabel = makeLabel({
-			Size = UDim2.fromScale(0.52, 0.8),
-			Position = UDim2.fromScale(0.24, 0.1),
-			Text = labelText,
-			TextColor3 = PALETTE.dim,
-			Font = Enum.Font.Gotham,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			TextScaled = true,
-		}, row)
+    return row, val
+end
 
-		local valLbl = makeLabel({
-			Size = UDim2.fromScale(0.22, 0.8),
-			Position = UDim2.fromScale(0.76, 0.1),
-			Text = startVal or "-",
-			TextColor3 = accentColor,
-			Font = Enum.Font.GothamBold,
-			TextXAlignment = Enum.TextXAlignment.Right,
-		}, row)
+local function buildHUD()
+    local existing = playerGui:FindFirstChild("__APEX_HUD__")
+    if existing then existing:Destroy() end
 
-		return row, valLbl
-	end
+    local sg = make("ScreenGui", {
+        Name             = "__APEX_HUD__",
+        ResetOnSpawn     = false,
+        IgnoreGuiInset   = true,
+        DisplayOrder     = 9999,
+        ZIndexBehavior   = Enum.ZIndexBehavior.Sibling,
+        Parent           = playerGui,
+    })
 
-	local goldenRow, goldenVal = makeProgressionRow(centerProgressionPanel, ASSET_IDS.goldDice, "Next Golden", PALETTE.gold, "-")
-	local diamondRow, diamondVal = makeProgressionRow(centerProgressionPanel, ASSET_IDS.diamondDice, "Next Diamond", PALETTE.diamond, "-")
-	local voidRow, voidVal = makeProgressionRow(centerProgressionPanel, ASSET_IDS.voidDice, "Next Void", PALETTE.void, "-")
+    local root = frame({
+        Name = "Root",
+        Size = UDim2.fromScale(1, 1),
+        BackgroundColor3 = PALETTE.bg,
+    }, sg)
+    make("UIScale", {Scale = 1}, root)
+    make("UIAspectRatioConstraint", {
+        AspectRatio  = 16/9,
+        AspectType   = Enum.AspectType.ScaleWithParentSize,
+        DominantAxis = Enum.DominantAxis.Width,
+    }, root)
 
-	local timerContainer = makeFrame({
-		Name = "TimerContainer",
-		Size = UDim2.fromScale(0.18, 0.1),
-		Position = UDim2.fromScale(0.41, 0.45),
-		BackgroundColor3 = PALETTE.panel,
-	}, scaleContainer)
-	addCorner(timerContainer, 12)
-	addStroke(timerContainer, PALETTE.accent, 2)
+    local vignette = image({
+        Name  = "Vignette",
+        Size  = UDim2.fromScale(1, 1),
+        Image = "rbxassetid://6677623990",
+        ImageTransparency = 0.72,
+        ImageColor3 = Color3.new(0, 0, 0),
+        ZIndex = 5,
+    }, root)
 
-	local timerLabel = makeLabel({
-		Name = "Timer",
-		Size = UDim2.fromScale(1, 1),
-		Text = "00:00",
-		TextColor3 = PALETTE.accent,
-		Font = Enum.Font.GothamBold,
-		TextScaled = true,
-	}, timerContainer)
+    local header = frame({
+        Name = "Header",
+        Size = UDim2.new(1, 0, 0, 44),
+        Position = UDim2.fromScale(0, 0),
+        BackgroundColor3 = PALETTE.surface,
+        ZIndex = 4,
+    }, root)
+    make("UIStroke", {
+        Color = PALETTE.border,
+        Thickness = 1,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+    }, header)
 
-	local leftPanel = makeFrame({
-		Name = "LeftPanel",
-		Size = UDim2.fromScale(0.18, 0.78),
-		Position = UDim2.fromScale(0.01, 0.11),
-		BackgroundColor3 = PALETTE.panel,
-	}, scaleContainer)
-	addCorner(leftPanel, 10)
-	addStroke(leftPanel, PALETTE.border)
+    frame({
+        Size = UDim2.new(1, 0, 0, 1),
+        Position = UDim2.new(0, 0, 1, -1),
+        BackgroundColor3 = PALETTE.accent,
+        ZIndex = 5,
+    }, header)
 
-	local leftPadding = make("UIPadding", {
-		PaddingTop = UDim.new(0.02, 0),
-		PaddingBottom = UDim.new(0.02, 0),
-		PaddingLeft = UDim.new(0.04, 0),
-		PaddingRight = UDim.new(0.04, 0),
-	}, leftPanel)
+    local avatarWrap = frame({
+        Size = UDim2.new(0, 32, 0, 32),
+        Position = UDim2.new(0, 10, 0.5, -16),
+        BackgroundColor3 = PALETTE.border,
+        ZIndex = 5,
+    }, header)
+    corner(avatarWrap, 6)
 
-	local leftLayout = addListLayout(leftPanel, {
-		Padding = UDim.new(0, 10),
-	})
+    local avatarImg = image({
+        Size = UDim2.fromScale(1, 1),
+        Image = "",
+        ZIndex = 6,
+    }, avatarWrap)
+    corner(avatarImg, 6)
 
-	local function makeStatRowWithLabel(parent, assetId, labelText, startVal)
-		local row = makeFrame({
-			Size = UDim2.fromScale(1, 0.28),
-			BackgroundColor3 = Color3.fromRGB(14, 16, 24),
-		}, parent)
-		addCorner(row, 6)
+    task.spawn(function()
+        local ok, img = pcall(function()
+            return Players:GetUserThumbnailAsync(
+                LocalPlayer.UserId,
+                Enum.ThumbnailType.HeadShot,
+                Enum.ThumbnailSize.Size100x100)
+        end)
+        if ok then avatarImg.Image = img end
+    end)
 
-		local iconContainer = makeFrame({
-			Name = "IconContainer",
-			Size = UDim2.fromScale(0.22, 1),
-			BackgroundTransparency = 1,
-		}, row)
+    label({
+        Size = UDim2.new(0, 160, 1, 0),
+        Position = UDim2.new(0, 50, 0, 0),
+        Text = LocalPlayer.Name,
+        TextColor3 = PALETTE.text,
+        Font = Enum.Font.GothamBold,
+        TextScaled = false,
+        TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 5,
+    }, header)
 
-		local iconImg = makeImageLabel({
-			Size = UDim2.fromScale(1, 0.7),
-			Position = UDim2.fromScale(0, 0.15),
-			Image = assetId,
-			ScaleType = Enum.ScaleType.Fit,
-		}, iconContainer)
-		make("UIAspectRatioConstraint", {
-			AspectRatio = 1,
-			AspectType = Enum.AspectType.ScaleWithParentSize,
-			DominantAxis = Enum.DominantAxis.Height,
-		}, iconImg)
+    local timerLabel = label({
+        Name = "Timer",
+        Size = UDim2.new(0, 90, 1, 0),
+        Position = UDim2.new(0.5, -45, 0, 0),
+        Text = "00:00",
+        TextColor3 = PALETTE.accent,
+        Font = Enum.Font.GothamBold,
+        TextScaled = false,
+        TextSize = 16,
+        ZIndex = 5,
+    }, header)
 
-		local textLabel = makeLabel({
-			Size = UDim2.fromScale(0.35, 0.8),
-			Position = UDim2.fromScale(0.24, 0.1),
-			Text = labelText,
-			TextColor3 = PALETTE.dim,
-			Font = Enum.Font.Gotham,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			TextScaled = true,
-		}, row)
+    local statusPill = frame({
+        Name = "StatusPill",
+        Size = UDim2.new(0, 140, 0, 24),
+        Position = UDim2.new(0.5, 50, 0.5, -12),
+        BackgroundColor3 = PALETTE.card,
+        ZIndex = 5,
+    }, header)
+    corner(statusPill, 12)
+    stroke(statusPill, PALETTE.border)
 
-		local valLbl = makeLabel({
-			Size = UDim2.fromScale(0.37, 0.8),
-			Position = UDim2.fromScale(0.61, 0.1),
-			Text = startVal or "0",
-			TextColor3 = PALETTE.text,
-			Font = Enum.Font.GothamBold,
-			TextXAlignment = Enum.TextXAlignment.Right,
-		}, row)
+    local statusDot = frame({
+        Size = UDim2.new(0, 7, 0, 7),
+        Position = UDim2.new(0, 9, 0.5, -3),
+        BackgroundColor3 = PALETTE.accent,
+        ZIndex = 6,
+    }, statusPill)
+    corner(statusDot, 4)
 
-		return row, valLbl
-	end
+    local statusText = label({
+        Name = "StatusText",
+        Size = UDim2.new(1, -24, 1, 0),
+        Position = UDim2.new(0, 22, 0, 0),
+        Text = "Idle",
+        TextColor3 = PALETTE.accent,
+        Font = Enum.Font.GothamBold,
+        TextScaled = false,
+        TextSize = 11,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 6,
+    }, statusPill)
 
-	local function makeStatRow(parent, assetId, startVal)
-		local row = makeFrame({
-			Size = UDim2.fromScale(1, 0.28),
-			BackgroundColor3 = Color3.fromRGB(14, 16, 24),
-		}, parent)
-		addCorner(row, 6)
+    local leftPanel = frame({
+        Name = "LeftPanel",
+        Size = UDim2.new(0, 210, 1, -56),
+        Position = UDim2.new(0, 10, 0, 50),
+        BackgroundColor3 = PALETTE.panel,
+        ZIndex = 3,
+    }, root)
+    corner(leftPanel, 10)
+    stroke(leftPanel, PALETTE.border)
 
-		local iconContainer = makeFrame({
-			Name = "IconContainer",
-			Size = UDim2.fromScale(0.22, 1),
-			BackgroundTransparency = 1,
-		}, row)
+    padding(leftPanel, 10, 10, 10, 10)
+    listLayout(leftPanel, {pad = UDim.new(0, 6)})
 
-		local iconImg = makeImageLabel({
-			Size = UDim2.fromScale(1, 0.7),
-			Position = UDim2.fromScale(0, 0.15),
-			Image = assetId,
-			ScaleType = Enum.ScaleType.Fit,
-		}, iconContainer)
-		make("UIAspectRatioConstraint", {
-			AspectRatio = 1,
-			AspectType = Enum.AspectType.ScaleWithParentSize,
-			DominantAxis = Enum.DominantAxis.Height,
-		}, iconImg)
+    sectionHeader(leftPanel, "RESOURCES", 1)
 
-		local valLbl = makeLabel({
-			Size = UDim2.fromScale(0.74, 0.8),
-			Position = UDim2.fromScale(0.24, 0.1),
-			Text = startVal or "0",
-			TextColor3 = PALETTE.text,
-			Font = Enum.Font.GothamBold,
-			TextXAlignment = Enum.TextXAlignment.Right,
-		}, row)
+    local _, rebirthVal = statRow(leftPanel, ASSETS.rebirth,  "Rebirths",  "0",   PALETTE.diamond, 2)
+    local _, goopVal    = statRow(leftPanel, ASSETS.goop,     "Goop",      "0",   PALETTE.green,   3)
+    local _, coinsVal   = statRow(leftPanel, ASSETS.coins,    "Coins",     "0",   PALETTE.gold,    4)
 
-		return row, valLbl
-	end
+    divider(leftPanel, 5)
+    sectionHeader(leftPanel, "COMBAT", 6)
 
-	local rebirthRow, rebirthVal = makeStatRowWithLabel(leftPanel, ASSET_IDS.rebirth, "Rebirths", "0")
-	local goopRow, goopVal = makeStatRow(leftPanel, ASSET_IDS.goop, "0")
-	local coinsRow, coinsVal = makeStatRow(leftPanel, ASSET_IDS.coins, "0")
+    local _, rollsVal = emojiStatRow(leftPanel, "ðŸŽ²", "Rolls",  "0", PALETTE.void,   7)
+    local _, killsVal = statRow(leftPanel,  ASSETS.kills,  "Kills",  "0", PALETTE.red,    8)
+    local _, zoneVal  = statRow(leftPanel,  ASSETS.zone,   "Zone",   "0", PALETTE.accent, 9)
 
-	local rightPanel = makeFrame({
-		Name = "RightPanel",
-		Size = UDim2.fromScale(0.18, 0.78),
-		Position = UDim2.fromScale(0.81, 0.11),
-		BackgroundColor3 = PALETTE.panel,
-	}, scaleContainer)
-	addCorner(rightPanel, 10)
-	addStroke(rightPanel, PALETTE.border)
+    local rightPanel = frame({
+        Name = "RightPanel",
+        Size = UDim2.new(0, 210, 0, 0),
+        Position = UDim2.new(1, -220, 0, 50),
+        BackgroundColor3 = PALETTE.panel,
+        AutomaticSize = Enum.AutomaticSize.Y,
+        ZIndex = 3,
+    }, root)
+    corner(rightPanel, 10)
+    stroke(rightPanel, PALETTE.border)
 
-	local rightPadding = make("UIPadding", {
-		PaddingTop = UDim.new(0.02, 0),
-		PaddingBottom = UDim.new(0.02, 0),
-		PaddingLeft = UDim.new(0.04, 0),
-		PaddingRight = UDim.new(0.04, 0),
-	}, rightPanel)
+    padding(rightPanel, 10, 10, 10, 10)
+    listLayout(rightPanel, {pad = UDim.new(0, 6)})
 
-	local rightLayout = addListLayout(rightPanel, {
-		Padding = UDim.new(0, 10),
-	})
+    sectionHeader(rightPanel, "NEXT SPECIAL ROLL", 1)
 
-	local function makeStatRowWithEmoji(parent, emoji, startVal)
-		local row = makeFrame({
-			Size = UDim2.fromScale(1, 0.28),
-			BackgroundColor3 = Color3.fromRGB(14, 16, 24),
-		}, parent)
-		addCorner(row, 6)
+    local _, goldenVal  = statRow(rightPanel, ASSETS.goldDice,    "Golden",  "-", PALETTE.gold,    2)
+    local _, diamondVal = statRow(rightPanel, ASSETS.diamondDice, "Diamond", "-", PALETTE.diamond, 3)
+    local _, voidVal    = statRow(rightPanel, ASSETS.voidDice,    "Void",    "-", PALETTE.void,    4)
 
-		local iconContainer = makeFrame({
-			Name = "IconContainer",
-			Size = UDim2.fromScale(0.22, 1),
-			BackgroundTransparency = 1,
-		}, row)
+    local notifContainer = frame({
+        Name = "NotifContainer",
+        Size = UDim2.new(0, 240, 1, -56),
+        Position = UDim2.new(1, -230, 0, 50),
+        BackgroundTransparency = 1,
+        ZIndex = 20,
+        ClipsDescendants = false,
+    }, root)
 
-		local emojiLabel = makeLabel({
-			Size = UDim2.fromScale(1, 0.7),
-			Position = UDim2.fromScale(0, 0.15),
-			Text = emoji,
-			TextColor3 = PALETTE.accent,
-			Font = Enum.Font.GothamBold,
-			TextScaled = true,
-		}, iconContainer)
+    listLayout(notifContainer, {
+        vAlign = Enum.VerticalAlignment.Top,
+        pad    = UDim.new(0, 5),
+    })
 
-		local valLbl = makeLabel({
-			Size = UDim2.fromScale(0.74, 0.8),
-			Position = UDim2.fromScale(0.24, 0.1),
-			Text = startVal or "0",
-			TextColor3 = PALETTE.text,
-			Font = Enum.Font.GothamBold,
-			TextXAlignment = Enum.TextXAlignment.Right,
-		}, row)
+    return {
+        sg            = sg,
+        timerLabel    = timerLabel,
+        statusText    = statusText,
+        statusDot     = statusDot,
+        rebirthVal    = rebirthVal,
+        goopVal       = goopVal,
+        coinsVal      = coinsVal,
+        rollsVal      = rollsVal,
+        killsVal      = killsVal,
+        zoneVal       = zoneVal,
+        goldenVal     = goldenVal,
+        diamondVal    = diamondVal,
+        voidVal       = voidVal,
+        notifContainer = notifContainer,
+    }
+end
 
-		return row, valLbl
-	end
+local function runStatusSystem(refs)
+    local lastStatus    = ""
+    local lastStatusTime = 0
+    local prevCoins     = safeGet("coins")
+    local prevRebirths  = safeGet("rebirths")
+    local prevGoop      = safeGet("goop")
+    local prevKills     = safeGet("stats", "kills")
+    local prevRolls     = safeGet("stats", "rolls")
+    local diceThread    = nil
+    local rollingActive = false
 
-	local function makeStatRowWithLabelRight(parent, assetId, labelText, startVal)
-		local row = makeFrame({
-			Size = UDim2.fromScale(1, 0.28),
-			BackgroundColor3 = Color3.fromRGB(14, 16, 24),
-		}, parent)
-		addCorner(row, 6)
+    local function setStatus(text, accentColor, force)
+        if not force and text == lastStatus then return end
+        lastStatus    = text
+        lastStatusTime = os.clock()
 
-		local iconContainer = makeFrame({
-			Name = "IconContainer",
-			Size = UDim2.fromScale(0.22, 1),
-			BackgroundTransparency = 1,
-		}, row)
+        if diceThread then task.cancel(diceThread) diceThread = nil rollingActive = false end
 
-		local iconImg = makeImageLabel({
-			Size = UDim2.fromScale(1, 0.7),
-			Position = UDim2.fromScale(0, 0.15),
-			Image = assetId,
-			ScaleType = Enum.ScaleType.Fit,
-		}, iconContainer)
-		make("UIAspectRatioConstraint", {
-			AspectRatio = 1,
-			AspectType = Enum.AspectType.ScaleWithParentSize,
-			DominantAxis = Enum.DominantAxis.Height,
-		}, iconImg)
+        local sl  = refs.statusText
+        local dot = refs.statusDot
+        tween(sl,  {TextTransparency = 1}, 0.1)
+        tween(dot, {BackgroundTransparency = 1}, 0.1)
+        task.delay(0.12, function()
+            sl.Text       = text
+            sl.TextColor3 = accentColor or PALETTE.accent
+            dot.BackgroundColor3 = accentColor or PALETTE.accent
+            tween(sl,  {TextTransparency = 0}, 0.18)
+            tween(dot, {BackgroundTransparency = 0}, 0.18)
+        end)
+    end
 
-		local textLabel = makeLabel({
-			Size = UDim2.fromScale(0.35, 0.8),
-			Position = UDim2.fromScale(0.24, 0.1),
-			Text = labelText,
-			TextColor3 = PALETTE.dim,
-			Font = Enum.Font.Gotham,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			TextScaled = true,
-		}, row)
+    local function startDice()
+        rollingActive = true
+        diceThread = task.spawn(function()
+            local i = 1
+            while rollingActive do
+                refs.statusText.Text = DICE_FRAMES[i] .. " Rolling"
+                i = (i % #DICE_FRAMES) + 1
+                task.wait(0.1)
+            end
+        end)
+    end
 
-		local valLbl = makeLabel({
-			Size = UDim2.fromScale(0.37, 0.8),
-			Position = UDim2.fromScale(0.61, 0.1),
-			Text = startVal or "0",
-			TextColor3 = PALETTE.text,
-			Font = Enum.Font.GothamBold,
-			TextXAlignment = Enum.TextXAlignment.Right,
-		}, row)
+    local function stopDice()
+        if rollingActive then
+            rollingActive = false
+            if diceThread then task.cancel(diceThread) diceThread = nil end
+        end
+    end
 
-		return row, valLbl
-	end
+    task.spawn(function()
+        while true do
+            pcall(function()
+                local coins    = safeGet("coins")
+                local rebirths = safeGet("rebirths")
+                local goop     = safeGet("goop")
+                local kills    = safeGet("stats", "kills")
+                local rolls    = safeGet("stats", "rolls")
 
-	local rollsRow, rollsVal = makeStatRowWithEmoji(rightPanel, "🎲", "0")
-	local killsRow, killsVal = makeStatRow(rightPanel, ASSET_IDS.kills, "0")
-	local zoneRow, zoneVal = makeStatRowWithLabelRight(rightPanel, ASSET_IDS.zone, "Zone", "0")
+                local best = nil
 
-	local statusPanel = makeFrame({
-		Name = "StatusPanel",
-		Size = UDim2.fromScale(0.28, 0.06),
-		Position = UDim2.fromScale(0.36, 0.7),
-		BackgroundColor3 = PALETTE.panel,
-	}, scaleContainer)
-	addCorner(statusPanel, 20)
-	addStroke(statusPanel, PALETTE.border)
+                if rolls > prevRolls then
+                    best = {priority=4, text="Rolling", color=PALETTE.void, dice=true}
+                end
+                if coins > prevCoins and (not best or best.priority < 3) then
+                    best = {priority=3, text="Farming Coins", color=PALETTE.gold}
+                end
+                if rebirths > prevRebirths and (not best or best.priority < 3) then
+                    best = {priority=3, text=("Rebirthed -> "..formatNum(rebirths)), color=PALETTE.diamond}
+                end
+                if goop > prevGoop and (not best or best.priority < 2) then
+                    best = {priority=2, text="Farming Goop", color=PALETTE.green}
+                end
+                if kills > prevKills and (not best or best.priority < 1) then
+                    best = {priority=1, text="Fighting Slimes", color=PALETTE.red}
+                end
 
-	local statusLabel = makeLabel({
-		Name = "StatusLabel",
-		Size = UDim2.fromScale(1, 1),
-		Text = "* Idle",
-		TextColor3 = PALETTE.accent,
-		Font = Enum.Font.GothamBold,
-	}, statusPanel)
+                prevCoins    = coins
+                prevRebirths = rebirths
+                prevGoop     = goop
+                prevKills    = kills
+                prevRolls    = rolls
 
-	for _, anchor in ipairs({UDim2.fromScale(0.01, 0.15), UDim2.fromScale(0.96, 0.15)}) do
-		makeFrame({
-			Size = UDim2.fromScale(0.012, 0.5),
-			Position = anchor,
-			BackgroundColor3 = PALETTE.accent,
-		}, statusPanel)
-	end
-
-	return {
-		screenGui = screenGui,
-		timerLabel = timerLabel,
-		rebirthVal = rebirthVal,
-		goopVal = goopVal,
-		coinsVal = coinsVal,
-		rollsVal = rollsVal,
-		killsVal = killsVal,
-		zoneVal = zoneVal,
-		goldenVal = goldenVal,
-		diamondVal = diamondVal,
-		voidVal = voidVal,
-		statusLabel = statusLabel,
-	}
+                if best then
+                    if best.dice then
+                        if not rollingActive then
+                            setStatus("Rolling", PALETTE.void, true)
+                            startDice()
+                        end
+                    else
+                        stopDice()
+                        setStatus(best.text, best.color)
+                    end
+                else
+                    stopDice()
+                    if os.clock() - lastStatusTime >= STATUS_INTERVAL then
+                        setStatus("Idle", PALETTE.dim)
+                    end
+                end
+            end)
+            task.wait(STATUS_INTERVAL)
+        end
+    end)
 end
 
 local sessionStart = os.clock()
 
-local function getTimerText()
-	local elapsed = os.clock() - sessionStart
-	local minutes = math.floor(elapsed / 60)
-	local seconds = math.floor(elapsed % 60)
-	return string.format("%02d:%02d", minutes, seconds)
-end
-
-local function safeGet(...)
-	local current = data
-	for _, key in ipairs({...}) do
-		if type(current) ~= "table" then return 0 end
-		current = current[key]
-		if current == nil then return 0 end
-	end
-	return tonumber(current) or 0
-end
-
-local function runStatusSystem(refs)
-	local lastStatus = ""
-	local lastStatusStartTime = 0
-	local prevCoins = safeGet("coins")
-	local prevRebirths = safeGet("rebirths")
-	local prevGoop = safeGet("goop")
-	local prevKills = safeGet("stats", "kills")
-	local prevRolls = safeGet("stats", "rolls")
-	local diceThread = nil
-	local rollingActive = false
-
-	local function setStatus(text, color, force)
-		if not force and text == lastStatus then return end
-		lastStatus = text
-		lastStatusStartTime = os.clock()
-
-		if diceThread then
-			task.cancel(diceThread)
-			diceThread = nil
-			rollingActive = false
-		end
-
-		local lbl = refs.statusLabel
-		tweenProp(lbl, {TextTransparency = 1}, 0.15)
-		task.delay(0.15, function()
-			lbl.Text = "* " .. text
-			lbl.TextColor3 = color or PALETTE.accent
-			tweenProp(lbl, {TextTransparency = 0}, 0.2)
-		end)
-	end
-
-	local function startDiceAnim()
-		rollingActive = true
-		diceThread = task.spawn(function()
-			local i = 1
-			while rollingActive do
-				refs.statusLabel.Text = DICE_FRAMES[i] .. " Rolling"
-				i = (i % #DICE_FRAMES) + 1
-				task.wait(0.1)
-			end
-		end)
-	end
-
-	local function getLatestActivity()
-		local coins = safeGet("coins")
-		local rebirths = safeGet("rebirths")
-		local goop = safeGet("goop")
-		local kills = safeGet("stats", "kills")
-		local rolls = safeGet("stats", "rolls")
-
-		local activities = {}
-
-		if rolls > prevRolls then
-			table.insert(activities, {priority = 4, text = "Rolling", color = PALETTE.void, isRolling = true, value = rolls})
-		end
-		if coins > prevCoins then
-			table.insert(activities, {priority = 3, text = "Farming Coins", color = PALETTE.gold, value = coins})
-		end
-		if rebirths > prevRebirths then
-			table.insert(activities, {priority = 3, text = string.format("Rebirthed %s -> %s", formatNum(prevRebirths), formatNum(rebirths)), color = PALETTE.diamond, value = rebirths})
-		end
-		if goop > prevGoop then
-			table.insert(activities, {priority = 2, text = "Farming Goop: " .. formatNum(goop), color = Color3.fromRGB(80, 220, 80), value = goop})
-		end
-		if kills > prevKills then
-			table.insert(activities, {priority = 1, text = "Fighting Slimes", color = Color3.fromRGB(255, 80, 80), value = kills})
-		end
-
-		prevCoins = coins
-		prevRebirths = rebirths
-		prevGoop = goop
-		prevKills = kills
-		prevRolls = rolls
-
-		if #activities > 0 then
-			table.sort(activities, function(a, b) return a.priority > b.priority end)
-			return activities[1]
-		end
-
-		return nil
-	end
-
-	local function pickStatus()
-		local activity = getLatestActivity()
-
-		if activity then
-			if activity.isRolling then
-				if not rollingActive then
-					setStatus("Rolling", PALETTE.void, true)
-					startDiceAnim()
-				end
-			else
-				if rollingActive then
-					rollingActive = false
-					if diceThread then
-						task.cancel(diceThread)
-						diceThread = nil
-					end
-				end
-				setStatus(activity.text, activity.color)
-			end
-		else
-			if rollingActive then
-				rollingActive = false
-				if diceThread then
-					task.cancel(diceThread)
-					diceThread = nil
-				end
-			end
-			if os.clock() - lastStatusStartTime >= STATUS_INTERVAL then
-				setStatus("Idle", PALETTE.dim)
-			end
-		end
-	end
-
-	task.spawn(function()
-		while true do
-			pcall(pickStatus)
-			task.wait(STATUS_INTERVAL)
-		end
-	end)
-end
-
 local function updateStats(refs)
-	local function updateLabel(lbl, newText)
-		if lbl.Text ~= newText then
-			lbl.Text = newText
-			pulse(lbl)
-		end
-	end
+    updateLabel(refs.rebirthVal, formatNum(safeGet("rebirths")))
+    updateLabel(refs.goopVal,    formatNum(safeGet("goop")))
+    updateLabel(refs.coinsVal,   formatNum(safeGet("coins")))
+    updateLabel(refs.rollsVal,   formatNum(safeGet("stats", "rolls")))
+    updateLabel(refs.killsVal,   formatNum(safeGet("stats", "kills")))
+    updateLabel(refs.zoneVal,    formatNum(safeGet("zone")))
 
-	updateLabel(refs.rebirthVal, formatNum(safeGet("rebirths")))
-	updateLabel(refs.goopVal, formatNum(safeGet("goop")))
-	updateLabel(refs.coinsVal, formatNum(safeGet("coins")))
-	updateLabel(refs.rollsVal, formatNum(safeGet("stats", "rolls")))
-	updateLabel(refs.killsVal, formatNum(safeGet("stats", "kills")))
-	updateLabel(refs.zoneVal, formatNum(safeGet("zone")))
+    local function progText(v)
+        local n = tonumber(v)
+        if not n then return "-" end
+        if n == 0 then return " Ready" end
+        return formatNum(n) .. " rolls"
+    end
 
-	local function getProgressionText(value)
-		local n = tonumber(value)
-		if n == nil then return "-" end
-		if n == 0 then return "Ready" end
-		return formatNum(n) .. " rolls"
-	end
+    updateLabel(refs.goldenVal,  progText(safeGet("specialRollProgression","golden","rollsUntilNext")))
+    updateLabel(refs.diamondVal, progText(safeGet("specialRollProgression","diamond","rollsUntilNext")))
+    updateLabel(refs.voidVal,    progText(safeGet("specialRollProgression","void","rollsUntilNext")))
 
-	updateLabel(refs.goldenVal, getProgressionText(safeGet("specialRollProgression", "golden", "rollsUntilNext")))
-	updateLabel(refs.diamondVal, getProgressionText(safeGet("specialRollProgression", "diamond", "rollsUntilNext")))
-	updateLabel(refs.voidVal, getProgressionText(safeGet("specialRollProgression", "void", "rollsUntilNext")))
+    local e = os.clock() - sessionStart
+    refs.timerLabel.Text = string.format("%02d:%02d", math.floor(e/60), math.floor(e%60))
+end
 
-	refs.timerLabel.Text = getTimerText()
+local NOTIF_COLORS = {
+    normal   = Color3.fromRGB(120, 220, 255),
+    big      = Color3.fromRGB(255, 180,  50),
+    huge     = Color3.fromRGB(255,  80,  80),
+    shiny    = Color3.fromRGB(255, 230,  50),
+    inverted = Color3.fromRGB(180,  80, 255),
+}
+
+local function getMutColor(mutations)
+    if not mutations         then return NOTIF_COLORS.normal   end
+    if mutations.inverted    then return NOTIF_COLORS.inverted  end
+    if mutations.huge        then return NOTIF_COLORS.huge      end
+    if mutations.shiny       then return NOTIF_COLORS.shiny     end
+    if mutations.big         then return NOTIF_COLORS.big       end
+    return NOTIF_COLORS.normal
+end
+
+local function getEnemyLabel(enemy)
+    local tier = "Lv." .. tostring(enemy.enemyId or 1)
+    local uid  = "#" .. tostring(enemy.uniqueId or "?")
+    if enemy.mutations then
+        local tags = {}
+        for mut in pairs(enemy.mutations) do
+            table.insert(tags, mut:sub(1,1):upper()..mut:sub(2))
+        end
+        if #tags > 0 then
+            return table.concat(tags," ").." Slime "..tier.." "..uid
+        end
+    end
+    return "Slime "..tier.." "..uid
+end
+
+local function buildNotifSystem(container)
+    local active = {}
+    local order  = 0
+
+    local function pruneOldest()
+        local count = 0
+        for _ in pairs(active) do count += 1 end
+        if count <= NOTIF_MAX then return end
+
+        local oldestUid, oldestOrder = nil, math.huge
+        for uid, p in pairs(active) do
+            if p.order < oldestOrder then
+                oldestOrder = p.order
+                oldestUid   = uid
+            end
+        end
+        if oldestUid then
+            local p = active[oldestUid]
+            active[oldestUid] = nil
+            if p.expireTask then task.cancel(p.expireTask) end
+            tween(p.frame, {BackgroundTransparency=1, Size=UDim2.new(1,0,0,0)}, 0.25, Enum.EasingStyle.Quint)
+            for _, l in ipairs(p.labels) do tween(l, {TextTransparency=1}, 0.25) end
+            tween(p.accentBar, {BackgroundTransparency=1}, 0.25)
+            task.delay(0.26, function() p.frame:Destroy() end)
+        end
+    end
+
+    local function dismiss(uid)
+        local p = active[uid]
+        if not p then return end
+        active[uid] = nil
+
+        tween(p.frame, {BackgroundTransparency=1, Size=UDim2.new(1,0,0,0)}, 0.3, Enum.EasingStyle.Quint)
+        for _, l in ipairs(p.labels) do tween(l, {TextTransparency=1}, 0.3) end
+        tween(p.accentBar, {BackgroundTransparency=1}, 0.3)
+        task.delay(0.31, function() if p.frame then p.frame:Destroy() end end)
+    end
+
+    local function scheduleExpiry(uid)
+        local p = active[uid]
+        if not p then return end
+        if p.expireTask then task.cancel(p.expireTask) end
+        p.expireTask = task.delay(NOTIF_LIFETIME, function() dismiss(uid) end)
+    end
+
+    local function createNotif(uid, enemyLabel, dmg, hpAfter, accentColor)
+        order += 1
+        pruneOldest()
+
+        local f = frame({
+            Size = UDim2.new(1, 0, 0, 52),
+            BackgroundColor3 = PALETTE.card,
+            BackgroundTransparency = 0.08,
+            ClipsDescendants = true,
+            LayoutOrder = order,
+            ZIndex = 21,
+        }, container)
+        corner(f, 9)
+        make("UIStroke", {
+            Color = accentColor,
+            Thickness = 1,
+            Transparency = 0.65,
+            ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+        }, f)
+
+        local abar = frame({
+            Name = "AccentBar",
+            Size = UDim2.new(0, 3, 0.7, 0),
+            Position = UDim2.new(0, 0, 0.15, 0),
+            BackgroundColor3 = accentColor,
+            ZIndex = 22,
+        }, f)
+        corner(abar, 2)
+
+        local nameL = label({
+            Position = UDim2.new(0, 12, 0, 5),
+            Size     = UDim2.new(1, -80, 0, 16),
+            Text     = enemyLabel,
+            TextColor3 = PALETTE.text,
+            Font     = Enum.Font.GothamBold,
+            TextScaled = false,
+            TextSize = 11,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 22,
+        }, f)
+
+        local hpL = label({
+            Position = UDim2.new(0, 12, 0, 23),
+            Size     = UDim2.new(1, -80, 0, 13),
+            Text     = "HP: "..tostring(math.max(0, math.floor(hpAfter))),
+            TextColor3 = PALETTE.subtext,
+            Font     = Enum.Font.Gotham,
+            TextScaled = false,
+            TextSize = 10,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 22,
+        }, f)
+
+        local hitsL = label({
+            Position = UDim2.new(0, 12, 0, 37),
+            Size     = UDim2.new(1, -80, 0, 11),
+            Text     = "1 hit  Â·  "..tostring(math.floor(dmg)).." dmg",
+            TextColor3 = PALETTE.dim,
+            Font     = Enum.Font.Gotham,
+            TextScaled = false,
+            TextSize = 9,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 22,
+        }, f)
+
+        local dmgL = label({
+            Position = UDim2.new(1, -72, 0, 0),
+            Size     = UDim2.new(0, 68, 1, 0),
+            Text     = "-"..tostring(math.floor(dmg)),
+            TextColor3 = accentColor,
+            Font     = Enum.Font.GothamBold,
+            TextScaled = false,
+            TextSize = 18,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            ZIndex = 22,
+        }, f)
+
+        f.Position = UDim2.new(1.1, 0, 0, 0)
+        tween(f, {Position = UDim2.new(0, 0, 0, 0)}, 0.22, Enum.EasingStyle.Quint)
+
+        active[uid] = {
+            frame     = f,
+            accentBar = abar,
+            labels    = {nameL, hpL, hitsL, dmgL},
+            hpL = hpL, hitsL = hitsL, dmgL = dmgL,
+            totalDmg  = dmg,
+            hits      = 1,
+            accentColor = accentColor,
+            order     = order,
+            expireTask = nil,
+        }
+        scheduleExpiry(uid)
+    end
+
+    local function updateNotif(uid, dmg, hpAfter)
+        local p = active[uid]
+        if not p then return end
+        p.totalDmg = p.totalDmg + dmg
+        p.hits     = p.hits + 1
+        p.hpL.Text    = "HP: "..tostring(math.max(0, math.floor(hpAfter)))
+        p.hitsL.Text  = p.hits.." hits  Â·  "..tostring(math.floor(p.totalDmg)).." dmg"
+        p.dmgL.Text   = "-"..tostring(math.floor(p.totalDmg))
+        tween(p.frame, {BackgroundColor3 = p.accentColor}, 0.05)
+        task.delay(0.05, function()
+            tween(p.frame, {BackgroundColor3 = PALETTE.card}, 0.15)
+        end)
+        scheduleExpiry(uid)
+    end
+
+    return {
+        create = createNotif,
+        update = updateNotif,
+        hasActive = function(uid) return active[uid] ~= nil end,
+    }
+end
+
+local function runSlimeGun(notifs)
+    task.spawn(function()
+        repeat task.wait() until game:IsLoaded()
+
+        local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+        local humanoid  = character:WaitForChild("Humanoid")
+        local rootPart  = character:WaitForChild("HumanoidRootPart")
+
+        local ok1, GameplaySvc = pcall(function()
+            return require(RepStorage.Source.Features.Gameplay.GameplayServiceClient)
+        end)
+        local ok2, GunClient  = pcall(function()
+            return require(RepStorage.Source.Features.GoopGun.GoopGunServiceClient)
+        end)
+        local ok3, GunUtils   = pcall(function()
+            return require(RepStorage.Source.Features.GoopGun.GoopGunServiceUtils)
+        end)
+        local ok4, DataSvc    = pcall(function()
+            return require(RepStorage.Packages.DataService).client
+        end)
+        if not (ok1 and ok2 and ok3 and ok4) then return end
+
+        local function ensureEquipped()
+            local gun = character:FindFirstChild("SlimeGun") or LocalPlayer.Backpack:FindFirstChild("SlimeGun")
+            if not gun then return false end
+            if gun.Parent ~= character then humanoid:EquipTool(gun) end
+            return true
+        end
+
+        LocalPlayer.Backpack.ChildAdded:Connect(function(item)
+            if item.Name == "SlimeGun" then
+                task.wait()
+                humanoid:EquipTool(item)
+            end
+        end)
+
+        local function selectTarget()
+            local gp = GameplaySvc.gameplay
+            if not gp then return nil end
+            local best, bestVal = nil, nil
+            for uid, enemy in gp.enemies do
+                if enemy.health and enemy.health > 0 then
+                    if TARGET_CLOSEST then
+                        local d = (enemy.pos - rootPart.Position).Magnitude
+                        if bestVal == nil or d < bestVal then bestVal = d; best = uid end
+                    elseif TARGET_LOWEST_HP then
+                        if bestVal == nil or enemy.health < bestVal then bestVal = enemy.health; best = uid end
+                    elseif TARGET_HIGHEST_HP then
+                        if bestVal == nil or enemy.health > bestVal then bestVal = enemy.health; best = uid end
+                    end
+                end
+            end
+            return best
+        end
+
+        repeat task.wait() until ensureEquipped()
+
+        while true do
+            if humanoid.Health <= 0 then break end
+            ensureEquipped()
+
+            local upgrades = DataSvc:get("upgrades") or {}
+            local fireRate = GunUtils.getFireRate(upgrades)
+
+            local uid = selectTarget()
+            if uid then
+                local gp     = GameplaySvc.gameplay
+                local enemy  = gp and gp.enemies[uid]
+                local hpBefore   = enemy and enemy.health or 0
+                local enemyLabel = enemy and getEnemyLabel(enemy) or "Slime"
+                local accentCol  = enemy and getMutColor(enemy.mutations) or NOTIF_COLORS.normal
+
+                local wrapper = GunClient.wrapper
+                if wrapper and wrapper.onEnemyHit then
+                    wrapper.onEnemyHit(uid)
+                end
+
+                task.wait()
+                local hpAfter = enemy and enemy.health or 0
+                local dmg     = hpBefore - hpAfter
+
+                if dmg > 0 then
+                    if notifs.hasActive(uid) then
+                        notifs.update(uid, dmg, hpAfter)
+                    else
+                        notifs.create(uid, enemyLabel, dmg, hpAfter, accentCol)
+                    end
+                end
+            end
+
+            task.wait(fireRate)
+        end
+    end)
 end
 
 local currentRefs = nil
 
-local function guardAndInit(playerGui)
-	currentRefs = buildHUD(playerGui)
-	runStatusSystem(currentRefs)
+local function init()
+    local refs = buildHUD()
+    currentRefs = refs
 
-	currentRefs.screenGui.AncestryChanged:Connect(function(_, parent)
-		if parent == nil then
-			task.defer(function()
-				guardAndInit(playerGui)
-			end)
-		end
-	end)
+    local notifs = buildNotifSystem(refs.notifContainer)
+    runStatusSystem(refs)
+    runSlimeGun(notifs)
+
+    refs.sg.AncestryChanged:Connect(function(_, parent)
+        if parent == nil then
+            task.defer(init)
+        end
+    end)
 end
 
-local playerGui = LocalPlayer:WaitForChild("PlayerGui")
-guardAndInit(playerGui)
+init()
 
 local elapsed = 0
 RunService.Heartbeat:Connect(function(dt)
-	elapsed += dt
-	if elapsed >= UPDATE_INTERVAL then
-		elapsed = 0
-		if currentRefs then
-			pcall(updateStats, currentRefs)
-		end
-	end
+    elapsed += dt
+    if elapsed >= UPDATE_INTERVAL then
+        elapsed = 0
+        if currentRefs then
+            pcall(updateStats, currentRefs)
+        end
+    end
 end)
