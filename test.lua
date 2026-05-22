@@ -1357,7 +1357,17 @@ _0x7d2c4a_tab:CreateToggle({
     Name = "Anti AFK",
     CurrentValue = true,
     Flag = "SettingsAntiAFK",
-    Callback = function(_0x3c4a2d) end,
+    Callback = function(Value)
+        if Value then
+            for _, x in pairs(getconnections(_0x9a4b7c.Idled)) do
+                x:Disable()
+            end
+        else
+            for _, x in pairs(getconnections(_0x9a4b7c.Idled)) do
+                x:Enable()
+            end
+        end
+    end,
 })
 
 _0x7d2c4a_tab:CreateToggle({
@@ -1409,7 +1419,9 @@ local function _optApplyInstance(v)
         v.CastShadow = false
         v.Reflectance = 0
         pcall(function() v.Material = CHEAP_MATERIAL end)
-        _optTryHidden(v, "RenderFidelity", 2)
+        if not v:IsA("TriangleMeshPart") then
+            _optTryHidden(v, "RenderFidelity", 2)
+        end
     end
 end
 
@@ -1487,7 +1499,7 @@ local function _optWorkspaceScan()
         end
     end
     table.insert(_optConnections, workspace.ChildAdded:Connect(function(obj)
-        if obj == Camera then return end
+        if obj == workspace.CurrentCamera then return end
         task.defer(function()
             for _, v in ipairs(obj:GetDescendants()) do
                 _optApplyInstance(v)
