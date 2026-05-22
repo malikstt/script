@@ -1299,45 +1299,47 @@ local function _0x4f2a8c_filter(_0x3c6a2d)
     end
     return false
 end
-
-task.spawn(function()
+    task.spawn(function()
     while true do
         task.wait(0.1)
 
         if not _0x2c5d8f.Flags.WebhookEnabled or not _0x2c5d8f.Flags.WebhookEnabled.CurrentValue then
-            
+
         elseif _0x1d3f6a ~= "" then
-            local _0x4f7a2c, _0x2c6d8a = pcall(_0x8d1f4a.rollResults)
-            if not _0x4f7a2c or type(_0x2c6d8a) ~= "table" or #_0x2c6d8a == 0 then
-                task.wait(0.5)
-                
+            if not _0x8d1f4a or type(_0x8d1f4a.rollResults) ~= "function" then
+                task.wait(1)
             else
-                local _0x1a6d4f = _0x9b2c4e(_0x2c6d8a)
-                if _0x1a6d4f ~= _0x7b2c4f then
-                    _0x7b2c4f = _0x1a6d4f
-                    
-                    local _0x7e2a4c     = _0x2c5d8f.Flags.WebhookSendAll and _0x2c5d8f.Flags.WebhookSendAll.CurrentValue
-                    local _0x1f4a3c     = _0x2c5d8f.Flags.WebhookSendNew and _0x2c5d8f.Flags.WebhookSendNew.CurrentValue
-                    local _0x3c8a2d = _0x2c5d8f.Flags.WebhookSendMutated and _0x2c5d8f.Flags.WebhookSendMutated.CurrentValue
+                local _0x4f7a2c, _0x2c6d8a = pcall(_0x8d1f4a.rollResults)
+                if not _0x4f7a2c or type(_0x2c6d8a) ~= "table" or #_0x2c6d8a == 0 then
+                    task.wait(0.5)
+                else
+                    local _0x1a6d4f = _0x9b2c4e(_0x2c6d8a)
+                    if _0x1a6d4f ~= _0x7b2c4f then
+                        _0x7b2c4f = _0x1a6d4f
 
-                    for _, _0x3f8c2a in ipairs(_0x2c6d8a) do
-                        local _0x2c4e7a = _0x7c5f2a(_0x3f8c2a)
-                        if _0x2c4e7a then
-                            local _0x1d4c8f = tostring(_0x2c4e7a.id or "")
-                            if _0x1d4c8f ~= "" then
-                                local _0x4d2c8f = type(_0x2c4e7a.mutations) == "table" and next(_0x2c4e7a.mutations) ~= nil and _0x2c4e7a.mutations or nil
-                                local _0x2a3b7c, _0x3e7a2c = pcall(_0x6f3a2c.getSlime, _0x1d4c8f)
-                                local _0x1d8f2a = _0x2a3b7c and _0x3e7a2c or nil
+                        local _0x7e2a4c = _0x2c5d8f.Flags.WebhookSendAll and _0x2c5d8f.Flags.WebhookSendAll.CurrentValue
+                        local _0x1f4a3c = _0x2c5d8f.Flags.WebhookSendNew and _0x2c5d8f.Flags.WebhookSendNew.CurrentValue
+                        local _0x3c8a2d = _0x2c5d8f.Flags.WebhookSendMutated and _0x2c5d8f.Flags.WebhookSendMutated.CurrentValue
 
-                                local _0x1b4c7d = _0x4d2c8f ~= nil
-                                local _0x7c3d2a = _0x1a7c4f(_0x1d4c8f, _0x4d2c8f)
+                        for _, _0x3f8c2a in ipairs(_0x2c6d8a) do
+                            local _0x2c4e7a = _0x7c5f2a(_0x3f8c2a)
+                            if _0x2c4e7a then
+                                local _0x1d4c8f = tostring(_0x2c4e7a.id or "")
+                                if _0x1d4c8f ~= "" then
+                                    local _0x4d2c8f = type(_0x2c4e7a.mutations) == "table" and next(_0x2c4e7a.mutations) ~= nil and _0x2c4e7a.mutations or nil
+                                    local _0x2a3b7c, _0x3e7a2c = pcall(_0x6f3a2c.getSlime, _0x1d4c8f)
+                                    local _0x1d8f2a = _0x2a3b7c and _0x3e7a2c or nil
 
-                                local _0x3e2c7a = _0x7e2a4c or (_0x1f4a3c and _0x7c3d2a) or (_0x3c8a2d and _0x1b4c7d and _0x4f2a8c_filter(_0x4d2c8f))
+                                    local _0x1b4c7d = _0x4d2c8f ~= nil
+                                    local _0x7c3d2a = _0x1a7c4f(_0x1d4c8f, _0x4d2c8f)
 
-                                if _0x3e2c7a then
-                                    local _0x2a6d4c = _0x2c5d8f.Flags.WebhookUserID.CurrentValue
-                                    local _0x1c6d4f = _0x1a6d4f .. "_" .. _0x1d4c8f .. "_" .. tostring(_0x4d2c8f and _0x1b7e4d.getIds(_0x4d2c8f) or "")
-                                    task.spawn(_0x4c7e2a, _0x1d4c8f, _0x1d8f2a, _0x4d2c8f, _0x1d3f6a, _0x2a6d4c, _0x1c6d4f)
+                                    local _0x3e2c7a = _0x7e2a4c or (_0x1f4a3c and _0x7c3d2a) or (_0x3c8a2d and _0x1b4c7d and _0x4f2a8c_filter(_0x4d2c8f))
+
+                                    if _0x3e2c7a then
+                                        local _0x2a6d4c = _0x2c5d8f.Flags.WebhookUserID.CurrentValue
+                                        local _0x1c6d4f = _0x1a6d4f .. "_" .. _0x1d4c8f .. "_" .. tostring(_0x4d2c8f and _0x1b7e4d.getIds(_0x4d2c8f) or "")
+                                        task.spawn(_0x4c7e2a, _0x1d4c8f, _0x1d8f2a, _0x4d2c8f, _0x1d3f6a, _0x2a6d4c, _0x1c6d4f)
+                                    end
                                 end
                             end
                         end
