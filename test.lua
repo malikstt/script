@@ -1349,7 +1349,6 @@ end
         end
     end
 end)
-
 local _0x7d2c4a_tab = _0x4f2a8c_window:CreateTab("Settings", 122930981612451)
 
 _0x7d2c4a_tab:CreateSection("System")
@@ -1377,135 +1376,193 @@ _0x7d2c4a_tab:CreateToggle({
 
 _0x7d2c4a_tab:CreateSection("Advanced Optimization")
 
+local _optConnections = {}
+local _optApplied = false
+
 local CHEAP_MATERIAL = Enum.Material.SmoothPlastic
-local VISUAL_TYPES = {
-    ParticleEmitter = true, Trail = true, Beam = true, Fire = true,
-    Smoke = true, Sparkles = true, SurfaceAppearance = true,
-    Highlight = true, SelectionBox = true, SelectionSphere = true,
-    Atmosphere = true,
+local OPT_VISUAL_TYPES = {
+    ParticleEmitter=true, Trail=true, Beam=true, Fire=true,
+    Smoke=true, Sparkles=true, SurfaceAppearance=true,
+    Highlight=true, SelectionBox=true, SelectionSphere=true, Atmosphere=true,
 }
-local LIGHTING_EFFECT_TYPES = {
-    BloomEffect = true, BlurEffect = true, ColorCorrectionEffect = true,
-    DepthOfFieldEffect = true, SunRaysEffect = true, PixelateEffect = true,
-    FilmGrainEffect = true, Atmosphere = true, Sky = true,
+local OPT_LIGHTING_TYPES = {
+    BloomEffect=true, BlurEffect=true, ColorCorrectionEffect=true,
+    DepthOfFieldEffect=true, SunRaysEffect=true, PixelateEffect=true,
+    FilmGrainEffect=true, Atmosphere=true, Sky=true,
 }
 
-local function safeDestroy(obj)
-    if obj and obj.Parent then
-        obj:Destroy()
-    end
+local function _optSafeDestroy(obj)
+    if obj and obj.Parent then obj:Destroy() end
 end
 
-local function tryHidden(obj, prop, val)
-    if sethiddenproperty then
-        pcall(sethiddenproperty, obj, prop, val)
-    end
+local function _optTryHidden(obj, prop, val)
+    if sethiddenproperty then pcall(sethiddenproperty, obj, prop, val) end
 end
 
-local function applyToInstance(v)
+local function _optApplyInstance(v)
     local cn = v.ClassName
-    if VISUAL_TYPES[cn] then
-        safeDestroy(v)
-        return
-    end
-    if cn == "Decal" or cn == "Texture" then
-        v.Transparency = 1
-        return
-    end
-    if cn == "SpecialMesh" then
-        v.TextureId = ""
-        return
-    end
-    if cn == "PointLight" or cn == "SpotLight" or cn == "SurfaceLight" then
-        v.Enabled = false
-        return
-    end
+    if OPT_VISUAL_TYPES[cn] then _optSafeDestroy(v) return end
+    if cn == "Decal" or cn == "Texture" then v.Transparency = 1 return end
+    if cn == "SpecialMesh" then v.TextureId = "" return end
+    if cn == "PointLight" or cn == "SpotLight" or cn == "SurfaceLight" then v.Enabled = false return end
     if v:IsA("BasePart") then
         v.CastShadow = false
         v.Reflectance = 0
         pcall(function() v.Material = CHEAP_MATERIAL end)
-        tryHidden(v, "RenderFidelity", 2)
+        _optTryHidden(v, "RenderFidelity", 2)
     end
 end
 
-local function optimizeLighting()
-    local Lighting = game:GetService("Lighting")
-    Lighting.GlobalShadows = false
-    Lighting.FogEnd = 100000
-    Lighting.FogStart = 100000
-    Lighting.Brightness = 1
-    Lighting.Ambient = Color3.fromRGB(180, 180, 180)
-    Lighting.OutdoorAmbient = Color3.fromRGB(180, 180, 180)
-    Lighting.ShadowSoftness = 0
-    Lighting.EnvironmentDiffuseScale = 0
-    Lighting.EnvironmentSpecularScale = 0
-    tryHidden(Lighting, "Technology", 0)
-    
-    for _, child in ipairs(Lighting:GetChildren()) do
-        if LIGHTING_EFFECT_TYPES[child.ClassName] then
-            child:Destroy()
-        end
+local function _optLighting()
+    local L = game:GetService("Lighting")
+    L.GlobalShadows = false
+    L.FogEnd = 100000
+    L.FogStart = 100000
+    L.Brightness = 1
+    L.Ambient = Color3.fromRGB(180, 180, 180)
+    L.OutdoorAmbient = Color3.fromRGB(180, 180, 180)
+    L.ShadowSoftness = 0
+    L.EnvironmentDiffuseScale = 0
+    L.EnvironmentSpecularScale = 0
+    _optTryHidden(L, "Technology", 0)
+    for _, c in ipairs(L:GetChildren()) do
+        if OPT_LIGHTING_TYPES[c.ClassName] then c:Destroy() end
     end
-    
     local terrain = workspace:FindFirstChildOfClass("Terrain")
     if terrain then
-        local clouds = terrain:FindFirstChildOfClass("Clouds")
-        if clouds then clouds:Destroy() end
-        terrain.WaterWaveSize = 0
-        terrain.WaterWaveSpeed = 0
-        terrain.WaterReflectance = 0
-        terrain.WaterTransparency = 1
+        pcall(function()
+            local clouds = terrain:FindFirstChildOfClass("Clouds")
+            if clouds then clouds:Destroy() end
+            terrain.WaterWaveSize = 0
+            terrain.WaterWaveSpeed = 0
+            terrain.WaterReflectance = 0
+            terrain.WaterTransparency = 1
+        end)
+    end
+    table.insert(_optConnections, L.ChildAdded:Connect(function(child)
+        if OPT_LIGHTING_TYPES[child.ClassName] then
+            task.defer(child.Destroy, child)
+        end
+    end))
+end
+
+local function _optCharacter(character)
+    if not character then return end
+    local hum = character:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+        hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+        hum.NameDisplayDistance = 0
+        hum.HealthDisplayDistance = 0
+    end
+    for _, v in ipairs(character:GetDescendants()) do
+        local cn = v.ClassName
+        if OPT_VISUAL_TYPES[cn] then
+            pcall(v.Destroy, v)
+        elseif v:IsA("BasePart") then
+            v.CastShadow = false
+            v.Reflectance = 0
+            pcall(function() v.Material = CHEAP_MATERIAL end)
+        elseif cn == "Decal" or cn == "Texture" then
+            v.Transparency = 1
+        elseif cn == "SpecialMesh" then
+            v.TextureId = ""
+        elseif cn == "Accessory" then
+            pcall(v.Destroy, v)
+        end
     end
 end
 
-local function optimizeCamera()
+local function _optWorkspaceScan()
     local Camera = workspace.CurrentCamera
-    if Camera then
-        Camera.FieldOfView = 70
-        for _, v in ipairs(Camera:GetChildren()) do
-            if LIGHTING_EFFECT_TYPES[v.ClassName] then
-                v:Destroy()
+    local charSet = {}
+    for _, p in ipairs(game:GetService("Players"):GetPlayers()) do
+        if p.Character then charSet[p.Character] = true end
+    end
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj ~= Camera and not charSet[obj] then
+            for _, v in ipairs(obj:GetDescendants()) do
+                _optApplyInstance(v)
             end
         end
     end
+    table.insert(_optConnections, workspace.ChildAdded:Connect(function(obj)
+        if obj == Camera then return end
+        task.defer(function()
+            for _, v in ipairs(obj:GetDescendants()) do
+                _optApplyInstance(v)
+            end
+        end)
+    end))
 end
 
-local function optimizeGUI()
+local function _optPlayers()
+    local Players = game:GetService("Players")
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Character then _optCharacter(p.Character) end
+        table.insert(_optConnections, p.CharacterAdded:Connect(function(char)
+            task.defer(_optCharacter, char)
+        end))
+    end
+    table.insert(_optConnections, Players.PlayerAdded:Connect(function(p)
+        table.insert(_optConnections, p.CharacterAdded:Connect(function(char)
+            task.defer(_optCharacter, char)
+        end))
+    end))
+end
+
+local function _optCamera()
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    cam.FieldOfView = 70
+    for _, v in ipairs(cam:GetChildren()) do
+        if OPT_LIGHTING_TYPES[v.ClassName] then v:Destroy() end
+    end
+end
+
+local function _optGUI()
     pcall(function()
-        local StarterGui = game:GetService("StarterGui")
-        StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
-        StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
-        StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.EmotesMenu, false)
+        local sg = game:GetService("StarterGui")
+        sg:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+        sg:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
+        sg:SetCoreGuiEnabled(Enum.CoreGuiType.EmotesMenu, false)
     end)
 end
 
+local function _optRenderQuality()
+    pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+    pcall(function()
+        UserSettings():GetService("UserGameSettings").SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel01
+    end)
+    pcall(function()
+        local rs = game:GetService("RunService")
+        rs:Set3dRenderingEnabled(false)
+        task.wait(0.1)
+        rs:Set3dRenderingEnabled(true)
+    end)
+end
+
+local function _cleanOptConnections()
+    for _, c in ipairs(_optConnections) do pcall(c.Disconnect, c) end
+    table.clear(_optConnections)
+end
+
 _0x7d2c4a_tab:CreateToggle({
-    Name = "Optimize All",
+    Name = "Optimize All (Full)",
     CurrentValue = false,
     Flag = "OptimizeAll",
     Callback = function(Value)
         if Value then
-            pcall(function()
-                settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-            end)
-            
-            optimizeLighting()
-            optimizeCamera()
-            optimizeGUI()
-            
-            for _, v in ipairs(game:GetDescendants()) do
-                applyToInstance(v)
-            end
-            
-            pcall(function()
-                game:GetService("RunService"):Set3dRenderingEnabled(false)
-                task.wait(0.1)
-                game:GetService("RunService"):Set3dRenderingEnabled(true)
-            end)
-            
-            collectgarbage("collect")
-            collectgarbage("setpause", 100)
-            collectgarbage("setstepmul", 500)
+            _cleanOptConnections()
+            _optRenderQuality()
+            _optLighting()
+            _optCamera()
+            _optGUI()
+            _optWorkspaceScan()
+            _optPlayers()
+            _optApplied = true
+        else
+            _cleanOptConnections()
         end
     end,
 })
@@ -1516,42 +1573,38 @@ _0x7d2c4a_tab:CreateToggle({
     Flag = "OptimizeGPU",
     Callback = function(Value)
         if Value then
-            pcall(function()
-                settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-            end)
-            
+            pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+            local L = game:GetService("Lighting")
+            L.GlobalShadows = false
+            L.EnvironmentDiffuseScale = 0
+            L.EnvironmentSpecularScale = 0
             for _, v in ipairs(workspace:GetDescendants()) do
                 if v:IsA("BasePart") then
-                    v.Material = CHEAP_MATERIAL
                     v.CastShadow = false
                     v.Reflectance = 0
+                    pcall(function() v.Material = CHEAP_MATERIAL end)
                 end
             end
-            
-            local Lighting = game:GetService("Lighting")
-            Lighting.GlobalShadows = false
-            Lighting.EnvironmentDiffuseScale = 0
-            Lighting.EnvironmentSpecularScale = 0
+            pcall(function()
+                local rs = game:GetService("RunService")
+                rs:Set3dRenderingEnabled(false)
+                task.wait(0.1)
+                rs:Set3dRenderingEnabled(true)
+            end)
         end
     end,
 })
 
 _0x7d2c4a_tab:CreateToggle({
-    Name = "Lua Memory Garbage Collector",
+    Name = "Remove All Particles & Effects",
     CurrentValue = false,
-    Flag = "LuaGC",
+    Flag = "OptimizeParticles",
     Callback = function(Value)
         if Value then
-            if _G.__memoryCleaner then
-                _G.__memoryCleaner:Disconnect()
-            end
-            _G.__memoryCleaner = game:GetService("RunService").Heartbeat:Connect(function()
-                collectgarbage("collect")
-            end)
-        else
-            if _G.__memoryCleaner then
-                _G.__memoryCleaner:Disconnect()
-                _G.__memoryCleaner = nil
+            for _, v in ipairs(game:GetDescendants()) do
+                if OPT_VISUAL_TYPES[v.ClassName] then
+                    pcall(v.Destroy, v)
+                end
             end
         end
     end,
@@ -1564,9 +1617,28 @@ _0x7d2c4a_tab:CreateToggle({
     Callback = function(Value)
         if Value then
             for _, v in ipairs(game:GetDescendants()) do
-                if v:IsA("Fire") then
-                    v:Destroy()
-                end
+                if v:IsA("Fire") then pcall(v.Destroy, v) end
+            end
+        end
+    end,
+})
+
+_0x7d2c4a_tab:CreateToggle({
+    Name = "Lua GC (Memory Cleaner)",
+    CurrentValue = false,
+    Flag = "LuaGC",
+    Callback = function(Value)
+        if Value then
+            if _G.__memoryCleaner then
+                pcall(_G.__memoryCleaner.Disconnect, _G.__memoryCleaner)
+            end
+            _G.__memoryCleaner = game:GetService("RunService").Heartbeat:Connect(function()
+                pcall(function() gcinfo() end)
+            end)
+        else
+            if _G.__memoryCleaner then
+                pcall(_G.__memoryCleaner.Disconnect, _G.__memoryCleaner)
+                _G.__memoryCleaner = nil
             end
         end
     end,
