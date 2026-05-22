@@ -1,802 +1,767 @@
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local HttpService = game:GetService("HttpService")
-local UserInputService = game:GetService("UserInputService")
-local Lighting = game:GetService("Lighting")
-local Workspace = game:GetService("Workspace")
-local StarterGui = game:GetService("StarterGui")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+pcall(function()
+	settings().Rendering.QualityLevel = 1
+end)
+pcall(function()
+	workspace:SetAttribute("3dRenderingEnabled", false)
+end)
+
+local DataClient = require(
+	ReplicatedStorage:WaitForChild("Packages"):WaitForChild("DataService")
+).client
+
+local data = DataClient._data._data
 
 local LocalPlayer = Players.LocalPlayer
-local Camera = Workspace.CurrentCamera
 
-local CHEAP_MATERIAL = Enum.Material.SmoothPlastic
-local VISUAL_TYPES = {
-    ParticleEmitter = true, Trail = true, Beam = true, Fire = true,
-    Smoke = true, Sparkles = true, SurfaceAppearance = true,
-    Highlight = true, SelectionBox = true, SelectionSphere = true,
-    Atmosphere = true,
-}
-local LIGHTING_EFFECT_TYPES = {
-    BloomEffect = true, BlurEffect = true, ColorCorrectionEffect = true,
-    DepthOfFieldEffect = true, SunRaysEffect = true, PixelateEffect = true,
-    FilmGrainEffect = true, Atmosphere = true, Sky = true,
-}
+local UPDATE_INTERVAL = 0.5
+local STATUS_INTERVAL = 5
+local TWEEN_TIME = 0.25
 
-local connections = {}
-local function addConnection(conn)
-    table.insert(connections, conn)
-    return conn
-end
-
-local function safeDestroy(obj)
-    if obj and obj.Parent then
-        task.defer(function()
-            if obj and obj.Parent then
-                pcall(function() obj:Destroy() end)
-            end
-        end)
-    end
-end
-
-local function optimizeLighting()
-    pcall(function()
-        Lighting.GlobalShadows = false
-        Lighting.FogEnd = 100000
-        Lighting.FogStart = 100000
-        Lighting.Brightness = 1
-        Lighting.Ambient = Color3.fromRGB(180, 180, 180)
-        Lighting.OutdoorAmbient = Color3.fromRGB(180, 180, 180)
-        Lighting.ShadowSoftness = 0
-        Lighting.EnvironmentDiffuseScale = 0
-        Lighting.EnvironmentSpecularScale = 0
-        if sethiddenproperty then
-            pcall(sethiddenproperty, Lighting, "Technology", 0)
-        end
-        
-        for _, child in ipairs(Lighting:GetChildren()) do
-            if LIGHTING_EFFECT_TYPES[child.ClassName] then
-                safeDestroy(child)
-            end
-        end
-        
-        local terrain = Workspace:FindFirstChildOfClass("Terrain")
-        if terrain then
-            local clouds = terrain:FindFirstChildOfClass("Clouds")
-            if clouds then safeDestroy(clouds) end
-            terrain.WaterWaveSize = 0
-            terrain.WaterWaveSpeed = 0
-            terrain.WaterReflectance = 0
-            terrain.WaterTransparency = 1
-        end
-    end)
-end
-
-local function setRenderQuality()
-    pcall(function()
-        settings().Rendering.QualityLevel = 1
-        UserSettings():GetService("UserGameSettings").SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel01
-    end)
-end
-
-local function optimizeGUI()
-    pcall(function()
-        StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
-        StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
-        StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.EmotesMenu, false)
-    end)
-end
-
-local function optimizeCamera()
-    pcall(function()
-        if Camera then
-            Camera.FieldOfView = 70
-            for _, v in ipairs(Camera:GetChildren()) do
-                if LIGHTING_EFFECT_TYPES[v.ClassName] then
-                    safeDestroy(v)
-                end
-            end
-        end
-    end)
-end
-
-local function stripVisualsFromObject(obj)
-    if obj == Camera then return end
-    pcall(function()
-        for _, v in ipairs(obj:GetDescendants()) do
-            local cn = v.ClassName
-            if VISUAL_TYPES[cn] then
-                safeDestroy(v)
-            elseif v:IsA("BasePart") then
-                v.CastShadow = false
-                v.Reflectance = 0
-                pcall(function() v.Material = CHEAP_MATERIAL end)
-            elseif cn == "Decal" or cn == "Texture" then
-                v.Transparency = 1
-            elseif cn == "SpecialMesh" then
-                v.TextureId = ""
-            elseif cn == "PointLight" or cn == "SpotLight" or cn == "SurfaceLight" then
-                v.Enabled = false
-            end
-        end
-    end)
-end
-
-local function workspaceCleanup()
-    pcall(function()
-        local mpView = Workspace:FindFirstChild("MultiplayerView")
-        if mpView then safeDestroy(mpView) end
-        
-        local zonesFolder = Workspace:FindFirstChild("Zones")
-        if zonesFolder then
-            for _, zone in ipairs(zonesFolder:GetChildren()) do
-                local decor = zone:FindFirstChild("decor")
-                if decor then safeDestroy(decor) end
-                local gate = zone:FindFirstChild("Gate")
-                if gate then safeDestroy(gate) end
-            end
-        end
-    end)
-end
-
-local function optimizeLocalCharacter()
-    local character = LocalPlayer.Character
-    if not character then
-        LocalPlayer.CharacterAdded:Connect(function(char)
-            task.wait(0.5)
-            optimizeLocalCharacter()
-        end)
-        return
-    end
-    
-    pcall(function()
-        stripVisualsFromObject(character)
-        local humanoid = character:FindFirstChildOfClass("Humanoid")
-        if humanoid then
-            local animator = humanoid:FindFirstChildOfClass("Animator")
-            if animator then
-                for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-                    pcall(track.Stop, track, 0)
-                end
-            end
-            humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
-            humanoid.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
-            humanoid.NameDisplayDistance = 0
-            humanoid.HealthDisplayDistance = 0
-        end
-        for _, child in ipairs(character:GetChildren()) do
-            if child:IsA("Accessory") then safeDestroy(child) end
-        end
-    end)
-end
-
-local nonSaveVars = LocalPlayer:FindFirstChild("NonSaveVars")
-local ownsPlot = nonSaveVars and nonSaveVars:FindFirstChild("OwnsPlot")
-local currentPlot = ownsPlot and ownsPlot:IsA("ValueBase") and ownsPlot.Value or "7"
-local canvas = workspace.Plots[tostring(currentPlot)].Interior.Shop1.Canvas
-
-local AuctionsFolder = workspace:WaitForChild("Debris"):WaitForChild("Auctions")
-local ItemsModule = require(ReplicatedStorage.Modules.Items)
-local RepLibrary = require(ReplicatedStorage.Modules.RepLibrary)
-
-local Auctions = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Auctions")
-local EnterQueue = Auctions:WaitForChild("EnterQueue")
-local Skip = Auctions:WaitForChild("Skip")
-local SkipCountdown = Auctions:WaitForChild("SkipCountdown")
-local UpdateCurrentBid = Auctions:WaitForChild("UpdateCurrentBid")
-local PlaceBid = Auctions:WaitForChild("PlaceBid")
-local DataEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Data"):WaitForChild("GetAll")
-local SellAllItems = Auctions:WaitForChild("SellAllItems")
-
-local Events = ReplicatedStorage:WaitForChild("Events")
-local Shop = Events:WaitForChild("Shop")
-
-local SCAN_DURATION = 1
-local GARAGE_ID = "85"
-local BID_CHECK_INTERVAL = 0.1
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1503019592258424942/58mydsCKdv3lieuUsebXNu2kLBT9aenLVZJ36y5zZ1uKFqNMRmnKn1ORgabStBrStYkg"
-local PET_SAFE_WEBHOOK_URL = "https://discord.com/api/webhooks/1503019592258424942/58mydsCKdv3lieuUsebXNu2kLBT9aenLVZJ36y5zZ1uKFqNMRmnKn1ORgabStBrStYkg"
-local targetItemIds = {"681","2294","1162"}
-
-local sessionStartTime = tick()
-local inAuction = false
-local obtainedTarget = false
-local auctionEnded = false
-local halted = false
-local currentNextBid = nil
-local currentBidder = nil
-local currentGarage = nil
-local targetGarage = nil
-local processingItemsWon = false
-local isBiddingActive = false
-
-local webhookSentForCurrentAuction = false
-local lastWebhookItemId = nil
-local lastWebhookGarageId = nil
-
-local lastSkipTime = 0
-local SKIP_COOLDOWN = 0.5
-
-local enterQueueLog = {}
-local MAX_ENTER_PER_MINUTE = 5
-local RATE_WINDOW = 60
-
-local function canEnterQueue()
-    local now = tick()
-    for i = #enterQueueLog, 1, -1 do
-        if now - enterQueueLog[i] >= RATE_WINDOW then
-            table.remove(enterQueueLog, i)
-        end
-    end
-    return #enterQueueLog < MAX_ENTER_PER_MINUTE
-end
-
-local function recordEnterQueue()
-    table.insert(enterQueueLog, tick())
-end
-
-local GRID_CONFIG = {
-    startPos = canvas.Position + Vector3.new(-canvas.Size.X/2 + 4, canvas.Size.Y/2 + 1, -canvas.Size.Z/2 + 4),
-    spacing = 6,
-    itemsPerRow = math.floor(canvas.Size.X / 6) - 1,
-    rowsPerFloor = math.floor(canvas.Size.Z / 6) - 1,
+local PALETTE = {
+	bg      = Color3.fromRGB(5, 5, 8),
+	panel   = Color3.fromRGB(10, 12, 18),
+	border  = Color3.fromRGB(30, 35, 50),
+	accent  = Color3.fromRGB(80, 160, 255),
+	gold    = Color3.fromRGB(255, 210, 60),
+	diamond = Color3.fromRGB(120, 230, 255),
+	void    = Color3.fromRGB(180, 80, 255),
+	text    = Color3.fromRGB(220, 228, 245),
+	dim     = Color3.fromRGB(100, 110, 135),
 }
 
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local ASSET_IDS = {
+	rebirth = "rbxassetid://132563621658654",
+	goop    = "rbxassetid://114367663524453",
+	coins   = "rbxassetid://103275559073812",
+	kills   = "rbxassetid://111148706433634",
+	zone    = "rbxassetid://96591575070730",
+	goldDice = "rbxassetid://133158717152423",
+	diamondDice = "rbxassetid://139581611167886",
+	voidDice = "rbxassetid://98779770728903",
+}
 
-local function debugPrint(...)
-    print("[AuctionBot]", ...)
+local DICE_FRAMES = {"|", "/", "-", "\\"}
+
+local SUFFIXES = {
+	{1e15, "Qd"},
+	{1e12, "T"},
+	{1e9,  "B"},
+	{1e6,  "M"},
+	{1e3,  "K"},
+}
+
+local function formatNum(n)
+	n = tonumber(n) or 0
+	for _, pair in ipairs(SUFFIXES) do
+		local threshold, suffix = pair[1], pair[2]
+		if n >= threshold then
+			local v = n / threshold
+			local s = string.format("%.2f", v)
+			s = s:gsub("%.?0+$", "")
+			return s .. suffix
+		end
+	end
+	return tostring(math.floor(n))
 end
 
-local function destroySpecificGuis()
-    pcall(function()
-        local items = PlayerGui:FindFirstChild("ItemsWon")
-        if items then safeDestroy(items) end
-        local circle = PlayerGui:FindFirstChild("CircleAnimationUI")
-        if circle then safeDestroy(circle) end
-    end)
+local function tweenProp(obj, props, t)
+	t = t or TWEEN_TIME
+	TweenService:Create(obj, TweenInfo.new(t, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props):Play()
 end
 
-destroySpecificGuis()
-
-addConnection(PlayerGui.ChildAdded:Connect(function(child)
-    if child.Name == "ItemsWon" or child.Name == "CircleAnimationUI" then
-        safeDestroy(child)
-    end
-end))
-
-local function tryClick(obj)
-    if obj and (obj:IsA("TextButton") or obj:IsA("ImageButton")) then
-        pcall(function() obj:Activate() end)
-        if getconnections then
-            for _, v in pairs(getconnections(obj.MouseButton1Click)) do
-                pcall(function() v:Fire() end)
-            end
-        end
-    end
+local function pulse(label)
+	tweenProp(label, {TextTransparency = 0.6}, 0.05)
+	task.delay(0.05, function()
+		tweenProp(label, {TextTransparency = 0}, 0.2)
+	end)
 end
 
-local function checkForButton()
-    pcall(function()
-        local itemsWon = PlayerGui:FindFirstChild("ItemsWon", true)
-        if itemsWon then
-            local button = itemsWon:FindFirstChild("Button", true)
-            if button then
-                tryClick(button)
-                safeDestroy(itemsWon)
-            end
-        end
-    end)
+local function make(class, props, parent)
+	local obj = Instance.new(class)
+	for k, v in pairs(props) do
+		obj[k] = v
+	end
+	if parent then obj.Parent = parent end
+	return obj
 end
 
-checkForButton()
+local function makeFrame(props, parent)
+	props.BackgroundTransparency = props.BackgroundTransparency or 0
+	return make("Frame", props, parent)
+end
 
-addConnection(PlayerGui.DescendantAdded:Connect(function(obj)
-    if obj.Name == "Button" then
-        task.wait(0.5)
-        tryClick(obj)
-        task.defer(function()
-            local parent = obj.Parent
-            if parent and parent.Name == "ItemsWon" then
-                safeDestroy(parent)
-            end
-        end)
-    end
-end))
+local function makeLabel(props, parent)
+	props.BackgroundTransparency = 1
+	props.Font = props.Font or Enum.Font.GothamBold
+	props.TextScaled = true
+	props.TextWrapped = false
+	return make("TextLabel", props, parent)
+end
 
-task.spawn(function()
-    while true do
-        task.wait(0.25)
-        pcall(checkForButton)
-    end
+local function makeImageLabel(props, parent)
+	props.BackgroundTransparency = 1
+	props.ScaleType = props.ScaleType or Enum.ScaleType.Fit
+	return make("ImageLabel", props, parent)
+end
+
+local function addCorner(parent, radius)
+	make("UICorner", {CornerRadius = UDim.new(0, radius or 6)}, parent)
+end
+
+local function addStroke(parent, color, thickness)
+	make("UIStroke", {
+		Color = color or PALETTE.border,
+		Thickness = thickness or 1,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+	}, parent)
+end
+
+local function addListLayout(parent, props)
+	local ul = Instance.new("UIListLayout")
+	ul.FillDirection = props.FillDirection or Enum.FillDirection.Vertical
+	ul.HorizontalAlignment = props.HAlign or Enum.HorizontalAlignment.Center
+	ul.VerticalAlignment = props.VAlign or Enum.VerticalAlignment.Top
+	ul.Padding = props.Padding or UDim.new(0, 12)
+	ul.SortOrder = Enum.SortOrder.LayoutOrder
+	ul.Parent = parent
+	return ul
+end
+
+local function getPlayerThumbnail(userId)
+	local ok, img = pcall(function()
+		return Players:GetUserThumbnailAsync(userId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+	end)
+	if ok then return img end
+	return ""
+end
+
+local function buildHUD(playerGui)
+	local existing = playerGui:FindFirstChild("__MAINHUD__")
+	if existing then existing:Destroy() end
+
+	local screenGui = make("ScreenGui", {
+		Name = "__MAINHUD__",
+		ResetOnSpawn = false,
+		IgnoreGuiInset = true,
+		DisplayOrder = 9999,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+		Parent = playerGui,
+	})
+
+	local scaleContainer = makeFrame({
+		Name = "ScaleContainer",
+		Size = UDim2.fromScale(1, 1),
+		Position = UDim2.fromScale(0, 0),
+		BackgroundColor3 = PALETTE.bg,
+		BackgroundTransparency = 0,
+	}, screenGui)
+
+	make("UIScale", {Scale = 1}, scaleContainer)
+
+	make("UIAspectRatioConstraint", {
+		AspectRatio = 16 / 9,
+		AspectType = Enum.AspectType.ScaleWithParentSize,
+		DominantAxis = Enum.DominantAxis.Width,
+	}, scaleContainer)
+
+	makeFrame({
+		Name = "Overlay",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 0.96,
+		ZIndex = 10,
+	}, scaleContainer)
+
+	local topCenter = makeFrame({
+		Name = "TopCenter",
+		Size = UDim2.fromScale(0.28, 0.09),
+		Position = UDim2.fromScale(0.36, 0.01),
+		BackgroundColor3 = PALETTE.panel,
+	}, scaleContainer)
+	addCorner(topCenter, 8)
+	addStroke(topCenter, PALETTE.accent, 1)
+
+	local avatarFrame = makeFrame({
+		Name = "AvatarFrame",
+		Size = UDim2.fromScale(0.18, 0.85),
+		Position = UDim2.fromScale(0.02, 0.075),
+		BackgroundColor3 = PALETTE.border,
+	}, topCenter)
+	addCorner(avatarFrame, 6)
+	make("UIAspectRatioConstraint", {
+		AspectRatio = 1,
+		AspectType = Enum.AspectType.ScaleWithParentSize,
+		DominantAxis = Enum.DominantAxis.Height,
+	}, avatarFrame)
+
+	local avatarImg = makeImageLabel({
+		Name = "Avatar",
+		Size = UDim2.fromScale(1, 1),
+		Position = UDim2.fromScale(0, 0),
+		Image = "",
+		ScaleType = Enum.ScaleType.Fit,
+	}, avatarFrame)
+	addCorner(avatarImg, 6)
+
+	local usernameLabel = makeLabel({
+		Name = "Username",
+		Size = UDim2.fromScale(0.77, 1),
+		Position = UDim2.fromScale(0.21, 0),
+		Text = LocalPlayer.Name,
+		TextColor3 = PALETTE.text,
+		Font = Enum.Font.GothamBold,
+		TextXAlignment = Enum.TextXAlignment.Center,
+	}, topCenter)
+
+	task.spawn(function()
+		local img = getPlayerThumbnail(LocalPlayer.UserId)
+		avatarImg.Image = img
+	end)
+
+	local centerProgressionPanel = makeFrame({
+		Name = "CenterProgressionPanel",
+		Size = UDim2.fromScale(0.28, 0.16),
+		Position = UDim2.fromScale(0.36, 0.12),
+		BackgroundColor3 = PALETTE.panel,
+	}, scaleContainer)
+	addCorner(centerProgressionPanel, 10)
+	addStroke(centerProgressionPanel, PALETTE.border)
+
+	local centerPadding = make("UIPadding", {
+		PaddingTop = UDim.new(0.02, 0),
+		PaddingBottom = UDim.new(0.02, 0),
+		PaddingLeft = UDim.new(0.04, 0),
+		PaddingRight = UDim.new(0.04, 0),
+	}, centerProgressionPanel)
+
+	local centerLayout = addListLayout(centerProgressionPanel, {
+		Padding = UDim.new(0, 6),
+	})
+
+	local function makeProgressionRow(parent, assetId, labelText, accentColor, startVal)
+		local row = makeFrame({
+			Size = UDim2.fromScale(1, 0.26),
+			BackgroundColor3 = Color3.fromRGB(14, 16, 24),
+		}, parent)
+		addCorner(row, 5)
+
+		local iconContainer = makeFrame({
+			Name = "IconContainer",
+			Size = UDim2.fromScale(0.22, 1),
+			BackgroundTransparency = 1,
+		}, row)
+
+		local iconImg = makeImageLabel({
+			Size = UDim2.fromScale(1, 0.7),
+			Position = UDim2.fromScale(0, 0.15),
+			Image = assetId,
+			ScaleType = Enum.ScaleType.Fit,
+		}, iconContainer)
+		make("UIAspectRatioConstraint", {
+			AspectRatio = 1,
+			AspectType = Enum.AspectType.ScaleWithParentSize,
+			DominantAxis = Enum.DominantAxis.Height,
+		}, iconImg)
+
+		local textLabel = makeLabel({
+			Size = UDim2.fromScale(0.52, 0.8),
+			Position = UDim2.fromScale(0.24, 0.1),
+			Text = labelText,
+			TextColor3 = PALETTE.dim,
+			Font = Enum.Font.Gotham,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextScaled = true,
+		}, row)
+
+		local valLbl = makeLabel({
+			Size = UDim2.fromScale(0.22, 0.8),
+			Position = UDim2.fromScale(0.76, 0.1),
+			Text = startVal or "-",
+			TextColor3 = accentColor,
+			Font = Enum.Font.GothamBold,
+			TextXAlignment = Enum.TextXAlignment.Right,
+		}, row)
+
+		return row, valLbl
+	end
+
+	local goldenRow, goldenVal = makeProgressionRow(centerProgressionPanel, ASSET_IDS.goldDice, "Next Golden", PALETTE.gold, "-")
+	local diamondRow, diamondVal = makeProgressionRow(centerProgressionPanel, ASSET_IDS.diamondDice, "Next Diamond", PALETTE.diamond, "-")
+	local voidRow, voidVal = makeProgressionRow(centerProgressionPanel, ASSET_IDS.voidDice, "Next Void", PALETTE.void, "-")
+
+	local timerContainer = makeFrame({
+		Name = "TimerContainer",
+		Size = UDim2.fromScale(0.18, 0.1),
+		Position = UDim2.fromScale(0.41, 0.45),
+		BackgroundColor3 = PALETTE.panel,
+	}, scaleContainer)
+	addCorner(timerContainer, 12)
+	addStroke(timerContainer, PALETTE.accent, 2)
+
+	local timerLabel = makeLabel({
+		Name = "Timer",
+		Size = UDim2.fromScale(1, 1),
+		Text = "00:00",
+		TextColor3 = PALETTE.accent,
+		Font = Enum.Font.GothamBold,
+		TextScaled = true,
+	}, timerContainer)
+
+	local leftPanel = makeFrame({
+		Name = "LeftPanel",
+		Size = UDim2.fromScale(0.18, 0.78),
+		Position = UDim2.fromScale(0.01, 0.11),
+		BackgroundColor3 = PALETTE.panel,
+	}, scaleContainer)
+	addCorner(leftPanel, 10)
+	addStroke(leftPanel, PALETTE.border)
+
+	local leftPadding = make("UIPadding", {
+		PaddingTop = UDim.new(0.02, 0),
+		PaddingBottom = UDim.new(0.02, 0),
+		PaddingLeft = UDim.new(0.04, 0),
+		PaddingRight = UDim.new(0.04, 0),
+	}, leftPanel)
+
+	local leftLayout = addListLayout(leftPanel, {
+		Padding = UDim.new(0, 10),
+	})
+
+	local function makeStatRowWithLabel(parent, assetId, labelText, startVal)
+		local row = makeFrame({
+			Size = UDim2.fromScale(1, 0.28),
+			BackgroundColor3 = Color3.fromRGB(14, 16, 24),
+		}, parent)
+		addCorner(row, 6)
+
+		local iconContainer = makeFrame({
+			Name = "IconContainer",
+			Size = UDim2.fromScale(0.22, 1),
+			BackgroundTransparency = 1,
+		}, row)
+
+		local iconImg = makeImageLabel({
+			Size = UDim2.fromScale(1, 0.7),
+			Position = UDim2.fromScale(0, 0.15),
+			Image = assetId,
+			ScaleType = Enum.ScaleType.Fit,
+		}, iconContainer)
+		make("UIAspectRatioConstraint", {
+			AspectRatio = 1,
+			AspectType = Enum.AspectType.ScaleWithParentSize,
+			DominantAxis = Enum.DominantAxis.Height,
+		}, iconImg)
+
+		local textLabel = makeLabel({
+			Size = UDim2.fromScale(0.35, 0.8),
+			Position = UDim2.fromScale(0.24, 0.1),
+			Text = labelText,
+			TextColor3 = PALETTE.dim,
+			Font = Enum.Font.Gotham,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextScaled = true,
+		}, row)
+
+		local valLbl = makeLabel({
+			Size = UDim2.fromScale(0.37, 0.8),
+			Position = UDim2.fromScale(0.61, 0.1),
+			Text = startVal or "0",
+			TextColor3 = PALETTE.text,
+			Font = Enum.Font.GothamBold,
+			TextXAlignment = Enum.TextXAlignment.Right,
+		}, row)
+
+		return row, valLbl
+	end
+
+	local function makeStatRow(parent, assetId, startVal)
+		local row = makeFrame({
+			Size = UDim2.fromScale(1, 0.28),
+			BackgroundColor3 = Color3.fromRGB(14, 16, 24),
+		}, parent)
+		addCorner(row, 6)
+
+		local iconContainer = makeFrame({
+			Name = "IconContainer",
+			Size = UDim2.fromScale(0.22, 1),
+			BackgroundTransparency = 1,
+		}, row)
+
+		local iconImg = makeImageLabel({
+			Size = UDim2.fromScale(1, 0.7),
+			Position = UDim2.fromScale(0, 0.15),
+			Image = assetId,
+			ScaleType = Enum.ScaleType.Fit,
+		}, iconContainer)
+		make("UIAspectRatioConstraint", {
+			AspectRatio = 1,
+			AspectType = Enum.AspectType.ScaleWithParentSize,
+			DominantAxis = Enum.DominantAxis.Height,
+		}, iconImg)
+
+		local valLbl = makeLabel({
+			Size = UDim2.fromScale(0.74, 0.8),
+			Position = UDim2.fromScale(0.24, 0.1),
+			Text = startVal or "0",
+			TextColor3 = PALETTE.text,
+			Font = Enum.Font.GothamBold,
+			TextXAlignment = Enum.TextXAlignment.Right,
+		}, row)
+
+		return row, valLbl
+	end
+
+	local rebirthRow, rebirthVal = makeStatRowWithLabel(leftPanel, ASSET_IDS.rebirth, "Rebirths", "0")
+	local goopRow, goopVal = makeStatRow(leftPanel, ASSET_IDS.goop, "0")
+	local coinsRow, coinsVal = makeStatRow(leftPanel, ASSET_IDS.coins, "0")
+
+	local rightPanel = makeFrame({
+		Name = "RightPanel",
+		Size = UDim2.fromScale(0.18, 0.78),
+		Position = UDim2.fromScale(0.81, 0.11),
+		BackgroundColor3 = PALETTE.panel,
+	}, scaleContainer)
+	addCorner(rightPanel, 10)
+	addStroke(rightPanel, PALETTE.border)
+
+	local rightPadding = make("UIPadding", {
+		PaddingTop = UDim.new(0.02, 0),
+		PaddingBottom = UDim.new(0.02, 0),
+		PaddingLeft = UDim.new(0.04, 0),
+		PaddingRight = UDim.new(0.04, 0),
+	}, rightPanel)
+
+	local rightLayout = addListLayout(rightPanel, {
+		Padding = UDim.new(0, 10),
+	})
+
+	local function makeStatRowWithEmoji(parent, emoji, startVal)
+		local row = makeFrame({
+			Size = UDim2.fromScale(1, 0.28),
+			BackgroundColor3 = Color3.fromRGB(14, 16, 24),
+		}, parent)
+		addCorner(row, 6)
+
+		local iconContainer = makeFrame({
+			Name = "IconContainer",
+			Size = UDim2.fromScale(0.22, 1),
+			BackgroundTransparency = 1,
+		}, row)
+
+		local emojiLabel = makeLabel({
+			Size = UDim2.fromScale(1, 0.7),
+			Position = UDim2.fromScale(0, 0.15),
+			Text = emoji,
+			TextColor3 = PALETTE.accent,
+			Font = Enum.Font.GothamBold,
+			TextScaled = true,
+		}, iconContainer)
+
+		local valLbl = makeLabel({
+			Size = UDim2.fromScale(0.74, 0.8),
+			Position = UDim2.fromScale(0.24, 0.1),
+			Text = startVal or "0",
+			TextColor3 = PALETTE.text,
+			Font = Enum.Font.GothamBold,
+			TextXAlignment = Enum.TextXAlignment.Right,
+		}, row)
+
+		return row, valLbl
+	end
+
+	local function makeStatRowWithLabelRight(parent, assetId, labelText, startVal)
+		local row = makeFrame({
+			Size = UDim2.fromScale(1, 0.28),
+			BackgroundColor3 = Color3.fromRGB(14, 16, 24),
+		}, parent)
+		addCorner(row, 6)
+
+		local iconContainer = makeFrame({
+			Name = "IconContainer",
+			Size = UDim2.fromScale(0.22, 1),
+			BackgroundTransparency = 1,
+		}, row)
+
+		local iconImg = makeImageLabel({
+			Size = UDim2.fromScale(1, 0.7),
+			Position = UDim2.fromScale(0, 0.15),
+			Image = assetId,
+			ScaleType = Enum.ScaleType.Fit,
+		}, iconContainer)
+		make("UIAspectRatioConstraint", {
+			AspectRatio = 1,
+			AspectType = Enum.AspectType.ScaleWithParentSize,
+			DominantAxis = Enum.DominantAxis.Height,
+		}, iconImg)
+
+		local textLabel = makeLabel({
+			Size = UDim2.fromScale(0.35, 0.8),
+			Position = UDim2.fromScale(0.24, 0.1),
+			Text = labelText,
+			TextColor3 = PALETTE.dim,
+			Font = Enum.Font.Gotham,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextScaled = true,
+		}, row)
+
+		local valLbl = makeLabel({
+			Size = UDim2.fromScale(0.37, 0.8),
+			Position = UDim2.fromScale(0.61, 0.1),
+			Text = startVal or "0",
+			TextColor3 = PALETTE.text,
+			Font = Enum.Font.GothamBold,
+			TextXAlignment = Enum.TextXAlignment.Right,
+		}, row)
+
+		return row, valLbl
+	end
+
+	local rollsRow, rollsVal = makeStatRowWithEmoji(rightPanel, "🎲", "0")
+	local killsRow, killsVal = makeStatRow(rightPanel, ASSET_IDS.kills, "0")
+	local zoneRow, zoneVal = makeStatRowWithLabelRight(rightPanel, ASSET_IDS.zone, "Zone", "0")
+
+	local statusPanel = makeFrame({
+		Name = "StatusPanel",
+		Size = UDim2.fromScale(0.28, 0.06),
+		Position = UDim2.fromScale(0.36, 0.7),
+		BackgroundColor3 = PALETTE.panel,
+	}, scaleContainer)
+	addCorner(statusPanel, 20)
+	addStroke(statusPanel, PALETTE.border)
+
+	local statusLabel = makeLabel({
+		Name = "StatusLabel",
+		Size = UDim2.fromScale(1, 1),
+		Text = "* Idle",
+		TextColor3 = PALETTE.accent,
+		Font = Enum.Font.GothamBold,
+	}, statusPanel)
+
+	for _, anchor in ipairs({UDim2.fromScale(0.01, 0.15), UDim2.fromScale(0.96, 0.15)}) do
+		makeFrame({
+			Size = UDim2.fromScale(0.012, 0.5),
+			Position = anchor,
+			BackgroundColor3 = PALETTE.accent,
+		}, statusPanel)
+	end
+
+	return {
+		screenGui = screenGui,
+		timerLabel = timerLabel,
+		rebirthVal = rebirthVal,
+		goopVal = goopVal,
+		coinsVal = coinsVal,
+		rollsVal = rollsVal,
+		killsVal = killsVal,
+		zoneVal = zoneVal,
+		goldenVal = goldenVal,
+		diamondVal = diamondVal,
+		voidVal = voidVal,
+		statusLabel = statusLabel,
+	}
+end
+
+local sessionStart = os.clock()
+
+local function getTimerText()
+	local elapsed = os.clock() - sessionStart
+	local minutes = math.floor(elapsed / 60)
+	local seconds = math.floor(elapsed % 60)
+	return string.format("%02d:%02d", minutes, seconds)
+end
+
+local function safeGet(...)
+	local current = data
+	for _, key in ipairs({...}) do
+		if type(current) ~= "table" then return 0 end
+		current = current[key]
+		if current == nil then return 0 end
+	end
+	return tonumber(current) or 0
+end
+
+local function runStatusSystem(refs)
+	local lastStatus = ""
+	local lastStatusStartTime = 0
+	local prevCoins = safeGet("coins")
+	local prevRebirths = safeGet("rebirths")
+	local prevGoop = safeGet("goop")
+	local prevKills = safeGet("stats", "kills")
+	local prevRolls = safeGet("stats", "rolls")
+	local diceThread = nil
+	local rollingActive = false
+
+	local function setStatus(text, color, force)
+		if not force and text == lastStatus then return end
+		lastStatus = text
+		lastStatusStartTime = os.clock()
+
+		if diceThread then
+			task.cancel(diceThread)
+			diceThread = nil
+			rollingActive = false
+		end
+
+		local lbl = refs.statusLabel
+		tweenProp(lbl, {TextTransparency = 1}, 0.15)
+		task.delay(0.15, function()
+			lbl.Text = "* " .. text
+			lbl.TextColor3 = color or PALETTE.accent
+			tweenProp(lbl, {TextTransparency = 0}, 0.2)
+		end)
+	end
+
+	local function startDiceAnim()
+		rollingActive = true
+		diceThread = task.spawn(function()
+			local i = 1
+			while rollingActive do
+				refs.statusLabel.Text = DICE_FRAMES[i] .. " Rolling"
+				i = (i % #DICE_FRAMES) + 1
+				task.wait(0.1)
+			end
+		end)
+	end
+
+	local function getLatestActivity()
+		local coins = safeGet("coins")
+		local rebirths = safeGet("rebirths")
+		local goop = safeGet("goop")
+		local kills = safeGet("stats", "kills")
+		local rolls = safeGet("stats", "rolls")
+
+		local activities = {}
+
+		if rolls > prevRolls then
+			table.insert(activities, {priority = 4, text = "Rolling", color = PALETTE.void, isRolling = true, value = rolls})
+		end
+		if coins > prevCoins then
+			table.insert(activities, {priority = 3, text = "Farming Coins", color = PALETTE.gold, value = coins})
+		end
+		if rebirths > prevRebirths then
+			table.insert(activities, {priority = 3, text = string.format("Rebirthed %s -> %s", formatNum(prevRebirths), formatNum(rebirths)), color = PALETTE.diamond, value = rebirths})
+		end
+		if goop > prevGoop then
+			table.insert(activities, {priority = 2, text = "Farming Goop: " .. formatNum(goop), color = Color3.fromRGB(80, 220, 80), value = goop})
+		end
+		if kills > prevKills then
+			table.insert(activities, {priority = 1, text = "Fighting Slimes", color = Color3.fromRGB(255, 80, 80), value = kills})
+		end
+
+		prevCoins = coins
+		prevRebirths = rebirths
+		prevGoop = goop
+		prevKills = kills
+		prevRolls = rolls
+
+		if #activities > 0 then
+			table.sort(activities, function(a, b) return a.priority > b.priority end)
+			return activities[1]
+		end
+
+		return nil
+	end
+
+	local function pickStatus()
+		local activity = getLatestActivity()
+
+		if activity then
+			if activity.isRolling then
+				if not rollingActive then
+					setStatus("Rolling", PALETTE.void, true)
+					startDiceAnim()
+				end
+			else
+				if rollingActive then
+					rollingActive = false
+					if diceThread then
+						task.cancel(diceThread)
+						diceThread = nil
+					end
+				end
+				setStatus(activity.text, activity.color)
+			end
+		else
+			if rollingActive then
+				rollingActive = false
+				if diceThread then
+					task.cancel(diceThread)
+					diceThread = nil
+				end
+			end
+			if os.clock() - lastStatusStartTime >= STATUS_INTERVAL then
+				setStatus("Idle", PALETTE.dim)
+			end
+		end
+	end
+
+	task.spawn(function()
+		while true do
+			pcall(pickStatus)
+			task.wait(STATUS_INTERVAL)
+		end
+	end)
+end
+
+local function updateStats(refs)
+	local function updateLabel(lbl, newText)
+		if lbl.Text ~= newText then
+			lbl.Text = newText
+			pulse(lbl)
+		end
+	end
+
+	updateLabel(refs.rebirthVal, formatNum(safeGet("rebirths")))
+	updateLabel(refs.goopVal, formatNum(safeGet("goop")))
+	updateLabel(refs.coinsVal, formatNum(safeGet("coins")))
+	updateLabel(refs.rollsVal, formatNum(safeGet("stats", "rolls")))
+	updateLabel(refs.killsVal, formatNum(safeGet("stats", "kills")))
+	updateLabel(refs.zoneVal, formatNum(safeGet("zone")))
+
+	local function getProgressionText(value)
+		local n = tonumber(value)
+		if n == nil then return "-" end
+		if n == 0 then return "Ready" end
+		return formatNum(n) .. " rolls"
+	end
+
+	updateLabel(refs.goldenVal, getProgressionText(safeGet("specialRollProgression", "golden", "rollsUntilNext")))
+	updateLabel(refs.diamondVal, getProgressionText(safeGet("specialRollProgression", "diamond", "rollsUntilNext")))
+	updateLabel(refs.voidVal, getProgressionText(safeGet("specialRollProgression", "void", "rollsUntilNext")))
+
+	refs.timerLabel.Text = getTimerText()
+end
+
+local currentRefs = nil
+
+local function guardAndInit(playerGui)
+	currentRefs = buildHUD(playerGui)
+	runStatusSystem(currentRefs)
+
+	currentRefs.screenGui.AncestryChanged:Connect(function(_, parent)
+		if parent == nil then
+			task.defer(function()
+				guardAndInit(playerGui)
+			end)
+		end
+	end)
+end
+
+local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+guardAndInit(playerGui)
+
+local elapsed = 0
+RunService.Heartbeat:Connect(function(dt)
+	elapsed += dt
+	if elapsed >= UPDATE_INTERVAL then
+		elapsed = 0
+		if currentRefs then
+			pcall(updateStats, currentRefs)
+		end
+	end
 end)
-
-local function isTargetItem(itemId)
-    local itemData = ItemsModule[itemId]
-    if not itemData then return false end
-    for _, targetId in ipairs(targetItemIds) do
-        if tostring(itemId) == tostring(targetId) then
-            return true, itemData
-        end
-    end
-    return false, itemData
-end
-
-local function getEmbedColor(itemId)
-    itemId = tostring(itemId)
-    if itemId == "681" then return 8388736
-    elseif itemId == "2294" then return 16753920
-    elseif itemId == "1162" then return 255
-    else return 65280 end
-end
-
-local function formatTimePlayed(seconds)
-    local days = math.floor(seconds / 86400)
-    local hours = math.floor((seconds % 86400) / 3600)
-    local minutes = math.floor((seconds % 3600) / 60)
-    if days > 0 then
-        return string.format("%dD %dH %dM", days, hours, minutes)
-    elseif hours > 0 then
-        return string.format("%dH %dM", hours, minutes)
-    else
-        return string.format("%dM", minutes)
-    end
-end
-
-local function formatNumber(n)
-    if n >= 1e9 then return string.format("%.1fB", n/1e9)
-    elseif n >= 1e6 then return string.format("%.1fM", n/1e6)
-    elseif n >= 1e3 then return string.format("%.1fK", n/1e3)
-    else return tostring(n) end
-end
-
-local function sendWebhook(itemId, itemData, playerName)
-    if webhookSentForCurrentAuction then return end
-    if lastWebhookItemId == itemId and lastWebhookGarageId == GARAGE_ID then return end
-
-    local playerData
-    pcall(function() playerData = DataEvent:InvokeServer() end)
-
-    local cash, gems, count = 0, 0, 0
-    local totalAuctions, garageAuctions, timePlayed = 0, 0, 0
-
-    if playerData then
-        cash = playerData.Cash or 0
-        gems = playerData.Gems or 0
-        if playerData.PlayerStats then
-            totalAuctions = playerData.PlayerStats.AuctionsPlayed or 0
-            timePlayed = playerData.PlayerStats.TimePlayed or 0
-            if playerData.PlayerStats.Auctions then
-                garageAuctions = playerData.PlayerStats.Auctions[GARAGE_ID] or 0
-            end
-        end
-        local function countItems(container)
-            if not container then return end
-            for _, item in pairs(container) do
-                if tostring(item.Id) == tostring(itemId) then
-                    count = count + 1
-                end
-            end
-        end
-        countItems(playerData.Furniture)
-        countItems(playerData.Inventory)
-    end
-    count = count + 1
-
-    local GaragesModule = require(ReplicatedStorage.Modules.Garages)
-    local garageName = "Unknown"
-    local garageData = GaragesModule[GARAGE_ID]
-    if garageData and garageData.Name then garageName = garageData.Name end
-
-    local emoji_cash = "<:cash:1480932250060329141>"
-    local emoji_gems = "<:gems:1480932306628907080>"
-    local emoji_gs = "<:gs:1480932184402428105>"
-    local emoji_mgs = "<:mgs:1480930779314913393>"
-    local emoji_1 = "<:emoji_1:1480930651342508142>"
-
-    local fields = {
-        {name="Item", value=itemData.Name or "Unknown", inline=false},
-        {name="⭐ Rarity", value=itemData.Rarity or "Unknown", inline=false},
-        {name=emoji_cash .. " Cash", value=formatNumber(cash), inline=true},
-        {name=emoji_gems .. " Gems", value=formatNumber(gems), inline=true},
-        {name="Total Auctions", value=formatNumber(totalAuctions), inline=true},
-        {name=garageName .. " Auctions", value=formatNumber(garageAuctions), inline=true},
-        {name="Time Played", value=formatTimePlayed(timePlayed), inline=true},
-    }
-
-    if tostring(itemId) == "681" then
-        local upgrading, remaining
-        pcall(function()
-            upgrading, remaining = ReplicatedStorage.Events.UI.GetUpgradingItem:InvokeServer("UpgradingItem")
-        end)
-        local craftTimerText = ""
-        if upgrading and remaining and remaining > 0 then
-            craftTimerText = " (⏳ " .. string.format("%dM %dS", math.floor(remaining/60), remaining%60) .. ")"
-        end
-        local megaGemSafeCount, gemSafeCount = 0, 0
-        if playerData then
-            local function countSpecial(container)
-                if not container then return end
-                for _, item in pairs(container) do
-                    local id = tostring(item.Id)
-                    if id == "1162" then megaGemSafeCount = megaGemSafeCount + 1 end
-                    if id == "681" then gemSafeCount = gemSafeCount + 1 end
-                end
-            end
-            countSpecial(playerData.Furniture)
-            countSpecial(playerData.Inventory)
-        end
-        gemSafeCount = gemSafeCount + 1
-        table.insert(fields, {
-            name="Total Owned",
-            value=emoji_mgs .. " MGS: " .. tostring(megaGemSafeCount) .. craftTimerText .. " | " .. emoji_gs .. " GS: " .. tostring(gemSafeCount),
-            inline=false
-        })
-    elseif tostring(itemId) == "2294" then
-        local petSafeCount = 0
-        if playerData then
-            for _, item in pairs(playerData.Furniture or {}) do
-                if tostring(item.Id) == "2294" then petSafeCount = petSafeCount + 1 end
-            end
-            for _, item in pairs(playerData.Inventory or {}) do
-                if tostring(item.Id) == "2294" then petSafeCount = petSafeCount + 1 end
-            end
-        end
-        petSafeCount = petSafeCount + 1
-        table.insert(fields, {name="Total Owned", value=emoji_1 .. " " .. tostring(petSafeCount), inline=false})
-    else
-        table.insert(fields, {name="Total Owned", value=tostring(count), inline=false})
-    end
-
-    local webhookUrl = tostring(itemId) == "2294" and PET_SAFE_WEBHOOK_URL or WEBHOOK_URL
-    pcall(function()
-        HttpService:RequestAsync({
-            Url = webhookUrl,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = HttpService:JSONEncode({
-                embeds = {{
-                    title = playerName .. " Got an Item",
-                    color = getEmbedColor(itemId),
-                    fields = fields
-                }}
-            })
-        })
-    end)
-
-    webhookSentForCurrentAuction = true
-    lastWebhookItemId = itemId
-    lastWebhookGarageId = GARAGE_ID
-end
-
-local function getFurnitureCount(playerData)
-    local count = 0
-    if playerData and playerData.Furniture then
-        for _ in pairs(playerData.Furniture) do count = count + 1 end
-    end
-    return count
-end
-
-local function findTargetItemsInInventory(playerData)
-    local items = {}
-    if playerData and playerData.Inventory then
-        for guid, itemData in pairs(playerData.Inventory) do
-            local isTarget, _ = isTargetItem(tostring(itemData.Id))
-            if isTarget then
-                table.insert(items, {GUID=guid, Id=itemData.Id, Data=itemData})
-            end
-        end
-    end
-    return items
-end
-
-local function verifyItemRemoved(guid)
-    local playerData = DataEvent:InvokeServer()
-    if playerData and playerData.Inventory then
-        return playerData.Inventory[guid] == nil
-    end
-    return false
-end
-
-local function generateAirPosition()
-    local cx, cy, cz = canvas.Position.X, canvas.Position.Y, canvas.Position.Z
-    local sx, sy, sz = canvas.Size.X/2, canvas.Size.Y/2, canvas.Size.Z/2
-    local rx = cx + math.random(-sx*100, sx*100)/100
-    local rz = cz + math.random(-sz*100, sz*100)/100
-    local ry = cy + sy + math.random(5,40)
-    return Vector3.new(rx, ry, rz)
-end
-
-local function PlaceTargetInventoryItems()
-    pcall(function()
-        local playerData = DataEvent:InvokeServer()
-        if not playerData then return end
-        local itemsToPlace = findTargetItemsInInventory(playerData)
-        if #itemsToPlace == 0 then return end
-
-        local currentFurniture = getFurnitureCount(playerData)
-        local maxShopSpace = playerData.ShopSpace or 100
-        local availableSpace = maxShopSpace - currentFurniture
-        local maxPositions = GRID_CONFIG.itemsPerRow * GRID_CONFIG.rowsPerFloor
-        local canPlaceCount = math.min(availableSpace, maxPositions, #itemsToPlace)
-        if canPlaceCount == 0 then return end
-
-        local placedCount = 0
-        for _, item in ipairs(itemsToPlace) do
-            if placedCount >= canPlaceCount then break end
-            local placed = false
-            local retryCount = 0
-            local maxRetries = 5
-            while not placed and retryCount < maxRetries do
-                local itemPos = generateAirPosition()
-                if not itemPos then break end
-                local args = {{
-                    GUID = item.GUID,
-                    Type = "Decor",
-                    Floor = 1,
-                    Id = item.Id,
-                    CFrame = CFrame.new(itemPos)
-                }}
-                local success = pcall(function()
-                    return Shop.InsertFurniture:InvokeServer(unpack(args))
-                end)
-                if success and verifyItemRemoved(item.GUID) then
-                    placed = true
-                    placedCount = placedCount + 1
-                else
-                    retryCount = retryCount + 1
-                end
-                task.wait(0.1)
-            end
-        end
-    end)
-end
-
-addConnection(UpdateCurrentBid.OnClientEvent:Connect(function(data)
-    if data then
-        currentNextBid = data.nextBid
-        currentBidder = data.player
-    end
-end))
-
-addConnection(AuctionsFolder.ChildAdded:Connect(function(garage)
-    inAuction = true
-    auctionEnded = false
-    currentGarage = garage
-    targetGarage = nil
-    isBiddingActive = false
-    webhookSentForCurrentAuction = false
-end))
-
-addConnection(AuctionsFolder.ChildRemoved:Connect(function(child)
-    if child == currentGarage then
-        auctionEnded = true
-        isBiddingActive = false
-    end
-    if #AuctionsFolder:GetChildren() == 0 then
-        inAuction = false
-        currentGarage = nil
-        targetGarage = nil
-        obtainedTarget = false
-    end
-end))
-
-local function storageFull()
-    local success, data = pcall(function() return DataEvent:InvokeServer() end)
-    if not success or not data then return false end
-    local inv = data.Inventory or {}
-    local invLevel = data.InventoryLevel
-    local carryLevel = data.CarryLevel
-    local carrySpace = RepLibrary:GetCarrySpace(LocalPlayer, carryLevel)
-    local invSpace = RepLibrary:GetInventorySpace(LocalPlayer, invLevel)
-    local invCount = RepLibrary:GetLengthOfInventory(inv)
-    return invCount >= invSpace and carrySpace <= 0
-end
-
-local function scanCurrentGarageForTarget()
-    if not currentGarage then return false end
-    local itemsFolder = currentGarage:FindFirstChild("Items")
-    if not itemsFolder then return false end
-
-    local startTime = tick()
-    while tick() - startTime < SCAN_DURATION and currentGarage and currentGarage.Parent do
-        for _, itemInstance in pairs(itemsFolder:GetChildren()) do
-            local itemId = itemInstance.Name
-            local isTarget, itemData = isTargetItem(itemId)
-            if isTarget then
-                targetGarage = currentGarage
-                sendWebhook(itemId, itemData, LocalPlayer.Name)
-                return true, itemId, itemData
-            end
-        end
-        task.wait(0.1)
-    end
-    return false
-end
-
-local function handleItemsWon()
-    processingItemsWon = true
-    pcall(function()
-        local success, data = pcall(function() return DataEvent:InvokeServer() end)
-        if not success or not data or not data.ItemsWon then return end
-
-        local itemsWon = data.ItemsWon
-        local keepGuids = {}
-
-        for guid, itemData in pairs(itemsWon) do
-            local itemId = tostring(itemData.itemId)
-            local isTarget, _ = isTargetItem(itemId)
-            if isTarget then
-                table.insert(keepGuids, guid)
-            end
-        end
-
-        if #keepGuids > 0 then
-            SellAllItems:InvokeServer("Default", keepGuids)
-        end
-    end)
-    processingItemsWon = false
-    collectgarbage()
-end
-
-local function waitForCondition(condition, timeout, checkInterval)
-    local start = tick()
-    while tick() - start < timeout do
-        if condition() then return true end
-        task.wait(checkInterval or 0.1)
-    end
-    return false
-end
-
-task.spawn(function()
-    while true do
-        pcall(PlaceTargetInventoryItems)
-        task.wait(300)
-        collectgarbage()
-    end
-end)
-
-if _G.__auctionBotConnections then
-    for _, c in ipairs(_G.__auctionBotConnections) do
-        pcall(c.Disconnect, c)
-    end
-end
-_G.__auctionBotConnections = connections
-
-pcall(setRenderQuality)
-optimizeLighting()
-workspaceCleanup()
-optimizeCamera()
-optimizeGUI()
-optimizeLocalCharacter()
-
-local function stripNonCharacterObjects()
-    pcall(function()
-        local charSet = {}
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p.Character then charSet[p.Character] = true end
-        end
-        for _, obj in ipairs(Workspace:GetChildren()) do
-            if obj ~= Camera and not charSet[obj] then
-                stripVisualsFromObject(obj)
-            end
-        end
-    end)
-end
-stripNonCharacterObjects()
-
-addConnection(Workspace.ChildAdded:Connect(function(obj)
-    if obj == Camera then return end
-    local isCharacter = false
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p.Character == obj then isCharacter = true; break end
-    end
-    if not isCharacter then
-        task.defer(stripVisualsFromObject, obj)
-    end
-end))
-
-addConnection(Lighting.ChildAdded:Connect(function(child)
-    if LIGHTING_EFFECT_TYPES[child.ClassName] then
-        safeDestroy(child)
-    end
-end))
-
-local lastGCTime = tick()
-local GC_INTERVAL = 120
-local errorCount = 0
-local lastErrorTime = 0
-
-while true do
-    pcall(function()
-        while processingItemsWon do
-            task.wait(0.25)
-        end
-
-        if not canEnterQueue() then
-            local now = tick()
-            local oldest = enterQueueLog[1]
-            local waitTime = RATE_WINDOW - (now - oldest)
-            if waitTime > 0 then
-                task.wait(waitTime + 0.1)
-            end
-        end
-
-        local success, err = pcall(function()
-            EnterQueue:InvokeServer(GARAGE_ID)
-            recordEnterQueue()
-        end)
-        
-        if not success then
-            task.wait(5)
-            return
-        end
-
-        local entered = waitForCondition(function() return inAuction end, 10, 0.05)
-        if not entered then
-            return
-        end
-
-        obtainedTarget = false
-        local targetFound = false
-
-        while inAuction and not auctionEnded do
-            if not targetGarage or targetGarage == currentGarage then
-                local found = scanCurrentGarageForTarget()
-                if found and not targetFound then
-                    targetFound = true
-                    isBiddingActive = true
-
-                    local bidStartTime = tick()
-                    while not obtainedTarget and inAuction and currentGarage == targetGarage and not auctionEnded do
-                        if currentNextBid and currentBidder ~= LocalPlayer then
-                            pcall(function() PlaceBid:InvokeServer(currentNextBid) end)
-                        end
-                        if currentBidder == LocalPlayer then
-                            obtainedTarget = true
-                            break
-                        end
-                        if tick() - bidStartTime > 30 then
-                            break
-                        end
-                        task.wait(BID_CHECK_INTERVAL)
-                    end
-                    isBiddingActive = false
-                elseif not targetGarage then
-                    if currentGarage and tick() - lastSkipTime > SKIP_COOLDOWN then
-                        pcall(function() SkipCountdown:InvokeServer() end)
-                        task.wait(0.05)
-                        pcall(function() Skip:InvokeServer() end)
-                        lastSkipTime = tick()
-                    end
-                end
-            end
-            task.wait(0.25)
-        end
-
-        if targetFound then
-            pcall(handleItemsWon)
-        end
-
-        if tick() - lastGCTime >= GC_INTERVAL then
-            collectgarbage()
-            lastGCTime = tick()
-        end
-
-        task.wait(1.5)
-    end)
-    
-    local now = tick()
-    if now - lastErrorTime < 5 then
-        errorCount = errorCount + 1
-    else
-        errorCount = 1
-    end
-    lastErrorTime = now
-    
-    if errorCount > 10 then
-        task.wait(30)
-        errorCount = 0
-    else
-        task.wait(2)
-    end
-end
