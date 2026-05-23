@@ -756,27 +756,41 @@ _0x1b6d4a_main:CreateToggle({
     _0x8c1d4a:CreateSection("Loot")
 
     _0x8c1d4a:CreateToggle({
-        Name = "Auto Collect Loot",
-        CurrentValue = false,
-        Flag = "FarmingCollectLoot",
-        Callback = function(_0x3a8c2d)
-            if _0x3a8c2d then
-                task.spawn(function()
-                    while _0x2c5d8f.Flags.FarmingCollectLoot and _0x2c5d8f.Flags.FarmingCollectLoot.CurrentValue do
-                        task.wait(30)
-                        local _0x2b7c4e = workspace:FindFirstChild("Loot")
-                        if _0x2b7c4e then
-                            for _, _0x4d2f8a in ipairs(_0x2b7c4e:GetChildren()) do
-                                pcall(function()
-                                    _0x4c2a7e:InvokeServer("requestCollect", _0x4d2f8a.Name)
-                                end)
+    Name = "Auto Collect Loot",
+    CurrentValue = false,
+    Flag = "FarmingCollectLoot",
+    Callback = function(_0x3a8c2d)
+        if _0x3a8c2d then
+            task.spawn(function()
+                print("[CactusHub] Auto Collect Loot started")
+                while _0x2c5d8f.Flags.FarmingCollectLoot and _0x2c5d8f.Flags.FarmingCollectLoot.CurrentValue do
+                    for _, folder in ipairs({"Loot", "Debris"}) do
+                        local container = workspace:FindFirstChild(folder)
+                        if container then
+                            for _, item in ipairs(container:GetChildren()) do
+                                local id = item:GetAttribute("uniqueId") or item:GetAttribute("id") or item.Name
+                                if id then
+                                    pcall(function()
+                                        local success = _0x4c2a7e:InvokeServer("requestCollect", id)
+                                        if success then
+                                            print("[CactusHub] Collected: " .. tostring(item.Name) .. " | ID: " .. tostring(id))
+                                        else
+                                            print("[CactusHub] Failed to collect: " .. tostring(item.Name))
+                                        end
+                                    end)
+                                end
                             end
                         end
                     end
-                end)
-            end
-        end,
-    })
+                    task.wait(0.5)
+                end
+                print("[CactusHub] Auto Collect Loot stopped")
+            end)
+        else
+            print("[CactusHub] Auto Collect Loot disabled")
+        end
+    end,
+})
 
     local _0x3e2c7a_tab = _0x4f2a8c_window:CreateTab("Game", 82493603309814)
 
