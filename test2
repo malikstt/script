@@ -1,236 +1,906 @@
-local TARGET_CLOSEST    = true
-local TARGET_LOWEST_HP  = false
-local TARGET_HIGHEST_HP = false
+local rayfieldLoaded, Rayfield = pcall(function()
+	return loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+end)
+if not rayfieldLoaded or not Rayfield then
+	warn("CactusHub: Rayfield failed to load")
+	return
+end
+task.wait(0.25)
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TeleportService = game:GetService("TeleportService")
+local LocalPlayer = Players.LocalPlayer
+
+local Character, Humanoid, HRP
+local function refreshCharacter(newChar)
+	local ok, err = pcall(function()
+		Character = newChar or LocalPlayer.Character
+		if Character then
+			Humanoid = Character:FindFirstChildOfClass("Humanoid")
+			HRP = Character:FindFirstChild("HumanoidRootPart")
+		else
+			Humanoid = nil
+			HRP = nil
+		end
+	end)
+	if not ok then warn("[CactusHub] refreshCharacter: " .. tostring(err)) end
+end
+LocalPlayer.CharacterAdded:Connect(refreshCharacter)
+refreshCharacter()
+
+local Remotes
+pcall(function() Remotes = ReplicatedStorage:WaitForChild("Remotes", 5) end)
+
+local function getRemote(name)
+	if not Remotes then return nil end
+	return Remotes:FindFirstChild(name)
+end
+
+local function safeFireServer(remote, ...)
+	if not remote then return end
+	local ok, err = pcall(function(...) remote:FireServer(...) end, ...)
+	if not ok then warn("[CactusHub] FireServer " .. tostring(remote and remote.Name) .. ": " .. tostring(err)) end
+end
+
+local function safeInvokeServer(remote, ...)
+	if not remote then return nil end
+	local ok, res = pcall(function(...) return remote:InvokeServer(...) end, ...)
+	if not ok then warn("[CactusHub] InvokeServer " .. tostring(remote and remote.Name) .. ": " .. tostring(res)) return nil end
+	return res
+end
+
+local ClientState, Config
+pcall(function() ClientState = require(ReplicatedStorage:WaitForChild("ClientState", 5)) end)
+pcall(function() Config = require(ReplicatedStorage:WaitForChild("Config", 5)) end)
+
+local function safeGetState()
+	if not ClientState then return {} end
+	local ok, data = pcall(function() return ClientState:Get() end)
+	if ok and type(data) == "table" then return data end
+	return {}
+end
+
+local function getRebirthTiers()
+	if Config and Config.REBIRTH_TIERS then return Config.REBIRTH_TIERS end
+	return {}
+end
+
+local function fmtNum(n)
+	local S = {
+		{1e63,"Vg"},{1e60,"Nd"},{1e57,"Od"},{1e54,"Spd"},{1e51,"Sxd"},
+		{1e48,"Qid"},{1e45,"Qad"},{1e42,"Td"},{1e39,"Dd"},{1e36,"Ud"},
+		{1e33,"Dc"},{1e30,"No"},{1e27,"Oc"},{1e24,"Sp"},{1e21,"Sx"},
+		{1e18,"Qi"},{1e15,"Qa"},{1e12,"T"},{1e9,"B"},{1e6,"M"},{1e3,"K"}
+	}
+	n = tonumber(n) or 0
+	for _, v in ipairs(S) do
+		if v[1] <= n then
+			return string.format("%.2f", n / v[1]):gsub("%.?0+$", "") .. v[2]
+		end
+	end
+	if n ~= math.floor(n) then
+		return string.format("%.2f", n):gsub("0+$", ""):gsub("%.$", "")
+	end
+	return tostring(math.floor(n))
+end
+
+local Flags = {
+	TreadmillAuto = false,
+	SmartRebirth = false,
+	Noclip = false,
+	InfiniteJump = false,
+	ESPEnabled = false,
+	WalkSpeed = 16,
+	JumpPower = 50,
+	AutoWin = false,
+	Fly = false,
+	AntiAFK = false,
+	BrightMode = false,
+	AutoEquipBestAura = false,
+}
+
+local selectedTreadmillType = "Treadmill"
+local FLY_SPEED = 50
+
+local espHighlights = {}
+local espConnections = {}
+local ESP_FILL = Color3.fromRGB(0, 120, 255)
+local ESP_OUTLINE = Color3.fromRGB(255, 255, 255)
+
+local function applyESP(player)
+	local ok, err = pcall(function()
+		if player == LocalPlayer then return end
+		local char = player.Character
+		if not char or espHighlights[player] then return end
+		local hl = Instance.new("Highlight")
+		hl.FillColor = ESP_FILL
+		hl.OutlineColor = ESP_OUTLINE
+		hl.FillTransparency = 0.5
+		hl.OutlineTransparency = 0
+		hl.Adornee = char
+		hl.Parent = char
+		espHighlights[player] = hl
+		espConnections[player] = player.CharacterAdded:Connect(function()
+			espHighlights[player] = nil
+			if Flags.ESPEnabled then
+				task.wait(0.5)
+				applyESP(player)
+			end
+		end)
+	end)
+	if not ok then warn("[CactusHub] applyESP: " .. tostring(err)) end
+end
+
+local function removeESP(player)
+	pcall(function()
+		if espHighlights[player] then espHighlights[player]:Destroy() espHighlights[player] = nil end
+		if espConnections[player] then espConnections[player]:Disconnect() espConnections[player] = nil end
+	end)
+end
+
+local function enableAllESP()
+	for _, plr in ipairs(Players:GetPlayers()) do applyESP(plr) end
+end
+
+local function disableAllESP()
+	for _, plr in ipairs(Players:GetPlayers()) do removeESP(plr) end
+end
+
+local flyBody = {}
+
+local function enableFly()
+	local ok, err = pcall(function()
+		if not HRP then error("HRP nil") end
+		local bv = Instance.new("BodyVelocity")
+		bv.Velocity = Vector3.zero
+		bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+		bv.Parent = HRP
+		flyBody.bv = bv
+		local bg = Instance.new("BodyGyro")
+		bg.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
+		bg.D = 50
+		bg.Parent = HRP
+		flyBody.bg = bg
+	end)
+	if not ok then warn("[CactusHub] enableFly: " .. tostring(err)) end
+end
+
+local function disableFly()
+	pcall(function()
+		if flyBody.bv then flyBody.bv:Destroy() flyBody.bv = nil end
+		if flyBody.bg then flyBody.bg:Destroy() flyBody.bg = nil end
+		if Humanoid then Humanoid:ChangeState(Enum.HumanoidStateType.Landed) end
+	end)
+end
+
+RunService.RenderStepped:Connect(function()
+	if not Flags.Fly then return end
+	pcall(function()
+		if not HRP or not flyBody.bv or not flyBody.bg then return end
+		local cam = workspace.CurrentCamera
+		local dir = Vector3.zero
+		if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir = dir + cam.CFrame.LookVector end
+		if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir = dir - cam.CFrame.LookVector end
+		if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir = dir - cam.CFrame.RightVector end
+		if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir = dir + cam.CFrame.RightVector end
+		if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.new(0, 1, 0) end
+		if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then dir = dir - Vector3.new(0, 1, 0) end
+		if dir.Magnitude > 0 then dir = dir.Unit end
+		flyBody.bv.Velocity = dir * FLY_SPEED
+		flyBody.bg.CFrame = cam.CFrame
+	end)
+end)
+
+local TREADMILL_TYPES = {
+	{label = "Normal",        remote = "Treadmill",          stateKey = nil},
+	{label = "Gold",          remote = "GoldTreadmill",       stateKey = "GoldTreadmillActive"},
+	{label = "Diamond",       remote = "DiamondTreadmill",    stateKey = "DiamondTreadmillActive"},
+	{label = "Candy",         remote = "CandyTreadmill",      stateKey = "CandyTreadmillActive"},
+	{label = "Admin",         remote = "AdminTreadmill",      stateKey = "AdminTreadmillActive"},
+	{label = "Admin Abuse",   remote = "AdminAbuseTreadmill", stateKey = nil},
+}
+
+local function getTreadmillLabels()
+	local out = {}
+	local state = safeGetState()
+	for _, t in ipairs(TREADMILL_TYPES) do
+		if t.stateKey == nil or state[t.stateKey] then
+			table.insert(out, "Unlocked - " .. t.label)
+		else
+			table.insert(out, "Locked - " .. t.label)
+		end
+	end
+	return out
+end
+
+local function getTreadmillRemoteFromLabel(label)
+	for _, t in ipairs(TREADMILL_TYPES) do
+		if label:find(t.label, 1, true) then return t.remote end
+	end
+	return "Treadmill"
+end
+
+local function getBestWinBlock()
+	local ok, result = pcall(function()
+		local structure = workspace:FindFirstChild("Structure")
+		if not structure then return nil end
+		local bestStage, bestStageNum = nil, -1
+		for _, child in ipairs(structure:GetChildren()) do
+			local num = tonumber(child.Name:match("^Stage(%d+)$"))
+			if num and num > bestStageNum then bestStageNum = num bestStage = child end
+		end
+		if not bestStage then return nil end
+		local bestBlock, bestBlockNum = nil, -1
+		for _, child in ipairs(bestStage:GetChildren()) do
+			local num = tonumber(child.Name:match("^WinBlock(%d+)$"))
+			if num and num > bestBlockNum then bestBlockNum = num bestBlock = child end
+		end
+		return bestBlock
+	end)
+	if ok then return result end
+	warn("[CactusHub] getBestWinBlock: " .. tostring(result))
+	return nil
+end
+
+local Window = Rayfield:CreateWindow({
+	Name = "CACTUS HUB PRO",
+	LoadingTitle = "CACTUS HUB",
+	LoadingSubtitle = "Loading...",
+	Theme = "Default",
+	ConfigurationSaving = {Enabled = true, FolderName = "CactusHub", FileName = "Config"},
+	KeySystem = false
+})
+
+local TabMain     = Window:CreateTab("Main",     76000123934453)
+local TabFarming  = Window:CreateTab("Farming",  76000123934453)
+local TabVisuals  = Window:CreateTab("Visuals",  76000123934453)
+local TabSettings = Window:CreateTab("Settings", 76000123934453)
+
+local function safeSection(tab, name)
+	pcall(function() tab:CreateSection(name) end)
+end
+
+safeSection(TabMain, "Stats")
+local LabelLevel  = TabMain:CreateLabel("Level: --")
+local LabelWins   = TabMain:CreateLabel("Wins: --")
+local LabelMult   = TabMain:CreateLabel("Multiplier: --")
+local LabelReb    = TabMain:CreateLabel("Rebirths: --")
+local LabelXP     = TabMain:CreateLabel("XP: --")
+local LabelSpeed  = TabMain:CreateLabel("Speed: --")
+local LabelBoost  = TabMain:CreateLabel("Speed Boost: --")
+local LabelTrail  = TabMain:CreateLabel("Trail: --")
+local LabelAura   = TabMain:CreateLabel("Aura: --")
+local LabelStep   = TabMain:CreateLabel("Step Bonus: --")
+local LabelFPS    = TabMain:CreateLabel("FPS: --")
+
+local frameCount, lastFPSTime = 0, os.clock()
+RunService.RenderStepped:Connect(function()
+	frameCount = frameCount + 1
+	if os.clock() - lastFPSTime >= 1 then
+		pcall(function() LabelFPS:Set("FPS: " .. frameCount) end)
+		frameCount = 0
+		lastFPSTime = os.clock()
+	end
+end)
 
 task.spawn(function()
-    repeat task.wait() until game:IsLoaded()
-
-    local Players      = game:GetService("Players")
-    local RepStorage   = game:GetService("ReplicatedStorage")
-    local TweenService = game:GetService("TweenService")
-
-    local player    = Players.LocalPlayer
-    local character = player.Character or player.CharacterAdded:Wait()
-    local humanoid  = character:WaitForChild("Humanoid")
-    local rootPart  = character:WaitForChild("HumanoidRootPart")
-
-    local GameplayServiceClient = require(RepStorage.Source.Features.Gameplay.GameplayServiceClient)
-    local GoopGunServiceClient  = require(RepStorage.Source.Features.GoopGun.GoopGunServiceClient)
-    local GoopGunServiceUtils   = require(RepStorage.Source.Features.GoopGun.GoopGunServiceUtils)
-    local DataService           = require(RepStorage.Packages.DataService).client
-
-    -- UI Setup
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "SlimeGunHUD"
-    screenGui.ResetOnSpawn = false
-    screenGui.IgnoreGuiInset = true
-    screenGui.DisplayOrder = 999
-    screenGui.Parent = player.PlayerGui
-
-    local container = Instance.new("Frame")
-    container.Name = "PopupContainer"
-    container.Position = UDim2.new(0, 16, 0, 16)
-    container.Size = UDim2.new(0, 260, 1, -32)
-    container.BackgroundTransparency = 1
-    container.Parent = screenGui
-
-    local layout = Instance.new("UIListLayout")
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.VerticalAlignment = Enum.VerticalAlignment.Top
-    layout.Padding = UDim.new(0, 6)
-    layout.Parent = container
-
-    local popupCount = 0
-
-    local COLORS = {
-        normal  = Color3.fromRGB(120, 220, 255),
-        big     = Color3.fromRGB(255, 180, 50),
-        huge    = Color3.fromRGB(255, 80, 80),
-        shiny   = Color3.fromRGB(255, 230, 50),
-        inverted = Color3.fromRGB(180, 80, 255),
-    }
-
-    local function getMutationColor(mutations)
-        if not mutations then return COLORS.normal end
-        if mutations.inverted then return COLORS.inverted end
-        if mutations.huge     then return COLORS.huge end
-        if mutations.shiny    then return COLORS.shiny end
-        if mutations.big      then return COLORS.big end
-        return COLORS.normal
-    end
-
-    local function getEnemyLabel(enemy)
-        local tier = "Lv." .. tostring(enemy.enemyId or 1)
-        if enemy.mutations then
-            local tags = {}
-            for mut in pairs(enemy.mutations) do
-                table.insert(tags, mut:sub(1,1):upper() .. mut:sub(2))
-            end
-            if #tags > 0 then
-                return table.concat(tags, " ") .. " Slime " .. tier
-            end
-        end
-        return "Slime " .. tier
-    end
-
-    local function showPopup(enemyLabel, dmg, hpAfter, accentColor)
-        popupCount += 1
-
-        local frame = Instance.new("Frame")
-        frame.Name = "Popup_" .. popupCount
-        frame.Size = UDim2.new(1, 0, 0, 52)
-        frame.BackgroundColor3 = Color3.fromRGB(10, 10, 18)
-        frame.BackgroundTransparency = 0.1
-        frame.BorderSizePixel = 0
-        frame.ClipsDescendants = true
-        frame.LayoutOrder = popupCount
-        frame.Parent = container
-
-        local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, 10)
-        corner.Parent = frame
-
-        local accent = Instance.new("Frame")
-        accent.Size = UDim2.new(0, 3, 1, 0)
-        accent.Position = UDim2.new(0, 0, 0, 0)
-        accent.BackgroundColor3 = accentColor
-        accent.BorderSizePixel = 0
-        accent.Parent = frame
-
-        local accentCorner = Instance.new("UICorner")
-        accentCorner.CornerRadius = UDim.new(0, 10)
-        accentCorner.Parent = accent
-
-        local nameLabel = Instance.new("TextLabel")
-        nameLabel.Position = UDim2.new(0, 14, 0, 6)
-        nameLabel.Size = UDim2.new(1, -90, 0, 20)
-        nameLabel.BackgroundTransparency = 1
-        nameLabel.Text = enemyLabel
-        nameLabel.TextColor3 = Color3.fromRGB(220, 220, 230)
-        nameLabel.TextXAlignment = Enum.TextXAlignment.Left
-        nameLabel.Font = Enum.Font.GothamBold
-        nameLabel.TextSize = 13
-        nameLabel.Parent = frame
-
-        local hpLabel = Instance.new("TextLabel")
-        hpLabel.Position = UDim2.new(0, 14, 0, 28)
-        hpLabel.Size = UDim2.new(1, -90, 0, 16)
-        hpLabel.BackgroundTransparency = 1
-        hpLabel.Text = "HP remaining: " .. tostring(math.max(0, math.floor(hpAfter)))
-        hpLabel.TextColor3 = Color3.fromRGB(130, 130, 150)
-        hpLabel.TextXAlignment = Enum.TextXAlignment.Left
-        hpLabel.Font = Enum.Font.Gotham
-        hpLabel.TextSize = 11
-        hpLabel.Parent = frame
-
-        local dmgLabel = Instance.new("TextLabel")
-        dmgLabel.Position = UDim2.new(1, -80, 0, 0)
-        dmgLabel.Size = UDim2.new(0, 72, 1, 0)
-        dmgLabel.BackgroundTransparency = 1
-        dmgLabel.Text = "-" .. tostring(math.floor(dmg))
-        dmgLabel.TextColor3 = accentColor
-        dmgLabel.TextXAlignment = Enum.TextXAlignment.Right
-        dmgLabel.Font = Enum.Font.GothamBold
-        dmgLabel.TextSize = 20
-        dmgLabel.Parent = frame
-
-        -- slide in
-        frame.Position = UDim2.new(-1, 0, 0, 0)
-        TweenService:Create(frame, TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-            Position = UDim2.new(0, 0, 0, 0)
-        }):Play()
-
-        task.delay(2.2, function()
-            TweenService:Create(frame, TweenInfo.new(0.35, Enum.EasingStyle.Quint), {
-                BackgroundTransparency = 1,
-                Size = UDim2.new(1, 0, 0, 0)
-            }):Play()
-            TweenService:Create(nameLabel, TweenInfo.new(0.35), { TextTransparency = 1 }):Play()
-            TweenService:Create(hpLabel,   TweenInfo.new(0.35), { TextTransparency = 1 }):Play()
-            TweenService:Create(dmgLabel,  TweenInfo.new(0.35), { TextTransparency = 1 }):Play()
-            TweenService:Create(accent,    TweenInfo.new(0.35), { BackgroundTransparency = 1 }):Play()
-            task.wait(0.35)
-            frame:Destroy()
-        end)
-    end
-
-    local function ensureEquipped()
-        local gun = character:FindFirstChild("SlimeGun") or player.Backpack:FindFirstChild("SlimeGun")
-        if not gun then return false end
-        if gun.Parent ~= character then
-            humanoid:EquipTool(gun)
-        end
-        return true
-    end
-
-    player.Backpack.ChildAdded:Connect(function(item)
-        if item.Name == "SlimeGun" then
-            task.wait()
-            humanoid:EquipTool(item)
-        end
-    end)
-
-    local function selectTarget()
-        local gameplay = GameplayServiceClient.gameplay
-        if not gameplay then return nil end
-
-        local best, bestVal = nil, nil
-
-        for uniqueId, enemy in gameplay.enemies do
-            if enemy.health and enemy.health > 0 then
-                if TARGET_CLOSEST then
-                    local dist = (enemy.pos - rootPart.Position).Magnitude
-                    if bestVal == nil or dist < bestVal then
-                        bestVal = dist
-                        best = uniqueId
-                    end
-                elseif TARGET_LOWEST_HP then
-                    if bestVal == nil or enemy.health < bestVal then
-                        bestVal = enemy.health
-                        best = uniqueId
-                    end
-                elseif TARGET_HIGHEST_HP then
-                    if bestVal == nil or enemy.health > bestVal then
-                        bestVal = enemy.health
-                        best = uniqueId
-                    end
-                end
-            end
-        end
-
-        return best
-    end
-
-    repeat task.wait() until ensureEquipped()
-
-    while true do
-        if humanoid.Health <= 0 then break end
-        ensureEquipped()
-
-        local upgrades = DataService:get("upgrades") or {}
-        local fireRate = GoopGunServiceUtils.getFireRate(upgrades)
-
-        local uniqueId = selectTarget()
-        if uniqueId then
-            local gameplay = GameplayServiceClient.gameplay
-            local enemy = gameplay and gameplay.enemies[uniqueId]
-            local hpBefore = enemy and enemy.health or 0
-            local enemyLabel = enemy and getEnemyLabel(enemy) or "Slime"
-            local accentColor = enemy and getMutationColor(enemy.mutations) or COLORS.normal
-
-            local wrapper = GoopGunServiceClient.wrapper
-            if wrapper and wrapper.onEnemyHit then
-                wrapper.onEnemyHit(uniqueId)
-            end
-
-            task.wait()
-            local hpAfter = enemy and enemy.health or 0
-            local dmg = hpBefore - hpAfter
-            if dmg > 0 then
-                showPopup(enemyLabel, dmg, hpAfter, accentColor)
-            end
-        end
-
-        task.wait(fireRate)
-    end
+	while true do
+		pcall(function()
+			local d = safeGetState()
+			LabelLevel:Set("Level: " .. tostring(d.Level or 0))
+			LabelWins:Set("Wins: " .. fmtNum(d.Wins or 0))
+			LabelMult:Set("Rebirth Multiplier: x" .. fmtNum(d.Multiplier or 1))
+			LabelReb:Set("Rebirths: " .. tostring(d.Rebirths or 0))
+			LabelXP:Set("XP: " .. fmtNum(d.XP or 0) .. " / " .. fmtNum(d.XPRequired or 100))
+			LabelSpeed:Set("Total XP (Speed): " .. fmtNum(d.TotalXP or 0))
+			LabelBoost:Set("Speed Boost Mult: x" .. fmtNum(d.SpeedBoostMultiplier or 1))
+			LabelTrail:Set("Trail: " .. tostring(d.EquippedTrail or "None"))
+			LabelAura:Set("Aura: " .. tostring(d.EquippedAura or "None"))
+			LabelStep:Set("Step Bonus: " .. tostring(d.StepBonus or 1))
+		end)
+		task.wait(1)
+	end
 end)
+
+safeSection(TabMain, "Rewards")
+TabMain:CreateButton({
+	Name = "Claim Group Gift",
+	Callback = function()
+		local verify = getRemote("VerifyGroup")
+		local claim = getRemote("ClaimGift")
+		if verify and claim then
+			task.spawn(function()
+				local inGroup = safeInvokeServer(verify)
+				if inGroup then
+					safeFireServer(claim)
+					Rayfield:Notify({Title = "Claimed", Content = "Group gift claimed!", Duration = 3})
+				else
+					Rayfield:Notify({Title = "Not In Group", Content = "Join the group first.", Duration = 3})
+				end
+			end)
+		else
+			Rayfield:Notify({Title = "Error", Content = "Gift remotes not found.", Duration = 3})
+		end
+	end
+})
+
+TabMain:CreateButton({
+	Name = "Equip Best Step Award",
+	Callback = function()
+		local remote = getRemote("EquipStepAward")
+		if not remote then
+			Rayfield:Notify({Title = "Error", Content = "EquipStepAward remote not found.", Duration = 3})
+			return
+		end
+		local state = safeGetState()
+		local wins = state.Wins or 0
+		if Config and Config.STEP_AWARDS then
+			local bestAwardId = nil
+			local bestBonus = 0
+			for id, award in pairs(Config.STEP_AWARDS) do
+				local req = tonumber(award.ReqWins) or 0
+				if wins >= req and (award.Bonus or 0) > bestBonus then
+					bestBonus = award.Bonus
+					bestAwardId = id
+				end
+			end
+			if bestAwardId then
+				safeFireServer(remote, bestAwardId)
+				Rayfield:Notify({Title = "Equipped", Content = "Best award: " .. bestAwardId .. " (+" .. bestBonus .. "/step)", Duration = 3})
+			else
+				Rayfield:Notify({Title = "None Available", Content = "No awards unlocked yet.", Duration = 3})
+			end
+		else
+			safeFireServer(remote, "Best")
+			Rayfield:Notify({Title = "Equipped", Content = "Fired equip award.", Duration = 3})
+		end
+	end
+})
+
+safeSection(TabMain, "Quick Teleport")
+TabMain:CreateButton({
+	Name = "Teleport to Treadmill",
+	Callback = function()
+		pcall(function()
+			local folder = workspace:FindFirstChild("Treadmill")
+			if folder then
+				local children = folder:GetChildren()
+				local part = children[16] or children[1]
+				if part and HRP then
+					HRP.CFrame = CFrame.new(part.Position + Vector3.new(0, 3, 0))
+					Rayfield:Notify({Title = "Teleported", Content = "At treadmill.", Duration = 2})
+				end
+			end
+		end)
+	end
+})
+
+TabMain:CreateButton({
+	Name = "Teleport to Win Block",
+	Callback = function()
+		local block = getBestWinBlock()
+		if block and HRP then
+			pcall(function() HRP.CFrame = CFrame.new(block.Position + Vector3.new(0, 3, 0)) end)
+			Rayfield:Notify({Title = "Teleported", Content = "At best win block.", Duration = 2})
+		else
+			Rayfield:Notify({Title = "Error", Content = "Win block not found.", Duration = 3})
+		end
+	end
+})
+
+safeSection(TabFarming, "Treadmill")
+
+local treadmillLabels = getTreadmillLabels()
+TabFarming:CreateDropdown({
+	Name = "Treadmill Type",
+	Options = treadmillLabels,
+	CurrentOption = treadmillLabels[1],
+	Flag = "TreadmillType",
+	Callback = function(selected)
+		selectedTreadmillType = getTreadmillRemoteFromLabel(selected)
+	end
+})
+
+TabFarming:CreateToggle({
+	Name = "Treadmill Auto-Run",
+	CurrentValue = false,
+	Flag = "TreadmillAuto",
+	Callback = function(v)
+		Flags.TreadmillAuto = v
+		local treadSignal = getRemote("TreadmillSignal")
+		local updateSpeed = getRemote("UpdateSpeed")
+		if v then
+			pcall(function()
+				local folder = workspace:FindFirstChild("Treadmill")
+				if folder then
+					local children = folder:GetChildren()
+					local part = children[16] or children[1]
+					if part and HRP then
+						HRP.CFrame = CFrame.new(part.Position + Vector3.new(0, 3, 0))
+					end
+				end
+			end)
+			if treadSignal then pcall(function() treadSignal:FireServer(true) end) end
+			task.spawn(function()
+				while Flags.TreadmillAuto do
+					if updateSpeed then
+						local ok, err = pcall(function() updateSpeed:FireServer(selectedTreadmillType) end)
+						if not ok then warn("[CactusHub] UpdateSpeed: " .. tostring(err)) end
+					end
+					task.wait(0.15)
+				end
+				if treadSignal then pcall(function() treadSignal:FireServer(false) end) end
+			end)
+		else
+			if treadSignal then pcall(function() treadSignal:FireServer(false) end) end
+		end
+	end
+})
+
+safeSection(TabFarming, "Auto Win")
+TabFarming:CreateToggle({
+	Name = "Auto Win",
+	CurrentValue = false,
+	Flag = "AutoWin",
+	Callback = function(v)
+		Flags.AutoWin = v
+		if v then
+			task.spawn(function()
+				while Flags.AutoWin do
+					pcall(function()
+						local block = getBestWinBlock()
+						if block and HRP then
+							HRP.CFrame = CFrame.new(block.Position + Vector3.new(0, 3, 0))
+						end
+					end)
+					task.wait(0.5)
+				end
+			end)
+		end
+	end
+})
+
+safeSection(TabFarming, "Rebirth")
+TabFarming:CreateToggle({
+	Name = "Auto Rebirth (Smart)",
+	CurrentValue = false,
+	Flag = "SmartRebirth",
+	Callback = function(v)
+		Flags.SmartRebirth = v
+		local remote = getRemote("Rebirth")
+		if v and remote then
+			task.spawn(function()
+				while Flags.SmartRebirth do
+					pcall(function()
+						local data = safeGetState()
+						local tiers = getRebirthTiers()
+						local nextIdx = (data.Rebirths or 0) + 1
+						if nextIdx <= #tiers then
+							local tier = tiers[nextIdx]
+							if (data.Level or 0) >= (tier.level or math.huge) then
+								safeFireServer(remote)
+								task.wait(2)
+							end
+						end
+					end)
+					task.wait(2)
+				end
+			end)
+		end
+	end
+})
+TabFarming:CreateButton({
+	Name = "Manual Rebirth",
+	Callback = function()
+		safeFireServer(getRemote("Rebirth"))
+		Rayfield:Notify({Title = "Rebirth", Content = "Rebirth fired.", Duration = 3})
+	end
+})
+
+safeSection(TabFarming, "Custom Speed")
+TabFarming:CreateButton({
+	Name = "Set Max Speed for Level",
+	Callback = function()
+		pcall(function()
+			local data = safeGetState()
+			local maxSpeed = nil
+			if Config and Config.CalculateMaxSpeed then
+				maxSpeed = Config.CalculateMaxSpeed(data.Level or 0)
+			end
+			if maxSpeed and maxSpeed > 0 then
+				local remote = getRemote("SetCustomSpeed")
+				if remote then
+					safeFireServer(remote, maxSpeed)
+					if Humanoid then Humanoid.WalkSpeed = maxSpeed end
+					Rayfield:Notify({Title = "Speed Set", Content = "Max speed: " .. math.floor(maxSpeed), Duration = 3})
+				else
+					Rayfield:Notify({Title = "Error", Content = "SetCustomSpeed remote not found.", Duration = 3})
+				end
+			else
+				Rayfield:Notify({Title = "Error", Content = "Could not calculate max speed.", Duration = 3})
+			end
+		end)
+	end
+})
+
+safeSection(TabFarming, "Auras")
+TabFarming:CreateToggle({
+	Name = "Auto Equip Best Owned Aura",
+	CurrentValue = false,
+	Flag = "AutoEquipBestAura",
+	Callback = function(v)
+		Flags.AutoEquipBestAura = v
+		if v then
+			task.spawn(function()
+				while Flags.AutoEquipBestAura do
+					pcall(function()
+						local data = safeGetState()
+						local owned = data.OwnedAuras or {}
+						local equipped = data.EquippedAura or "None"
+						if #owned > 0 and Config and Config.FeatureConfigs then
+							local AurasCfg = require(ReplicatedStorage:WaitForChild("FeatureConfigs"):WaitForChild("Auras"))
+							local bestAura = nil
+							local bestMult = 0
+							for _, auraId in ipairs(owned) do
+								local aura = AurasCfg.AURAS and AurasCfg.AURAS[auraId]
+								if aura and (aura.multiplier or 1) > bestMult then
+									bestMult = aura.multiplier
+									bestAura = auraId
+								end
+							end
+							if bestAura and bestAura ~= equipped then
+								safeFireServer(getRemote("EquipAura"), bestAura)
+							end
+						elseif #owned > 0 and owned[1] ~= equipped then
+							safeFireServer(getRemote("EquipAura"), owned[1])
+						end
+					end)
+					task.wait(5)
+				end
+			end)
+		end
+	end
+})
+
+TabFarming:CreateButton({
+	Name = "List Owned Auras (Console)",
+	Callback = function()
+		local data = safeGetState()
+		local owned = data.OwnedAuras or {}
+		if #owned == 0 then
+			Rayfield:Notify({Title = "Auras", Content = "No auras owned.", Duration = 3})
+		else
+			print("[CactusHub] Owned Auras:")
+			for i, v in ipairs(owned) do print("  " .. i .. ". " .. tostring(v)) end
+			Rayfield:Notify({Title = "Auras", Content = "Check console (F9). Owned: " .. #owned, Duration = 3})
+		end
+	end
+})
+
+TabFarming:CreateButton({
+	Name = "List Owned Trails (Console)",
+	Callback = function()
+		local data = safeGetState()
+		local owned = data.OwnedTrails or {}
+		if #owned == 0 then
+			Rayfield:Notify({Title = "Trails", Content = "No trails owned.", Duration = 3})
+		else
+			print("[CactusHub] Owned Trails:")
+			for i, v in ipairs(owned) do print("  " .. i .. ". " .. tostring(v)) end
+			Rayfield:Notify({Title = "Trails", Content = "Check console (F9). Owned: " .. #owned, Duration = 3})
+		end
+	end
+})
+
+safeSection(TabFarming, "Character")
+TabFarming:CreateSlider({
+	Name = "WalkSpeed",
+	Range = {16, 250},
+	Increment = 1,
+	Suffix = "studs/s",
+	CurrentValue = 16,
+	Flag = "WalkSpeed",
+	Callback = function(v)
+		Flags.WalkSpeed = v
+		pcall(function() if Humanoid then Humanoid.WalkSpeed = v end end)
+	end
+})
+TabFarming:CreateSlider({
+	Name = "JumpPower",
+	Range = {16, 200},
+	Increment = 1,
+	Suffix = "power",
+	CurrentValue = 50,
+	Flag = "JumpPower",
+	Callback = function(v)
+		Flags.JumpPower = v
+		pcall(function() if Humanoid then Humanoid.JumpPower = v end end)
+	end
+})
+
+safeSection(TabFarming, "Movement")
+TabFarming:CreateToggle({
+	Name = "Noclip",
+	CurrentValue = false,
+	Flag = "Noclip",
+	Callback = function(v) Flags.Noclip = v end
+})
+TabFarming:CreateToggle({
+	Name = "Infinite Jump",
+	CurrentValue = false,
+	Flag = "InfiniteJump",
+	Callback = function(v) Flags.InfiniteJump = v end
+})
+TabFarming:CreateToggle({
+	Name = "Fly",
+	CurrentValue = false,
+	Flag = "Fly",
+	Callback = function(v)
+		Flags.Fly = v
+		if v then enableFly() else disableFly() end
+	end
+})
+TabFarming:CreateSlider({
+	Name = "Fly Speed",
+	Range = {10, 500},
+	Increment = 5,
+	Suffix = "studs/s",
+	CurrentValue = 50,
+	Flag = "FlySpeed",
+	Callback = function(v) FLY_SPEED = v end
+})
+
+RunService.Stepped:Connect(function()
+	if not Flags.Noclip or not Character then return end
+	pcall(function()
+		for _, part in ipairs(Character:GetDescendants()) do
+			if part:IsA("BasePart") then part.CanCollide = false end
+		end
+	end)
+end)
+
+UserInputService.JumpRequest:Connect(function()
+	if Flags.InfiniteJump then
+		pcall(function()
+			if Humanoid then Humanoid:ChangeState(Enum.HumanoidStateType.Jumping) end
+		end)
+	end
+end)
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+	task.wait(0.5)
+	refreshCharacter(char)
+	if Flags.Fly then disableFly() task.wait(0.1) enableFly() end
+	pcall(function()
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		if hum then
+			hum.WalkSpeed = Flags.WalkSpeed
+			hum.JumpPower = Flags.JumpPower
+		end
+	end)
+end)
+
+safeSection(TabVisuals, "Player ESP")
+TabVisuals:CreateToggle({
+	Name = "Player ESP",
+	CurrentValue = false,
+	Flag = "ESPEnabled",
+	Callback = function(v)
+		Flags.ESPEnabled = v
+		if v then
+			enableAllESP()
+			Players.PlayerAdded:Connect(function(plr)
+				plr.CharacterAdded:Connect(function()
+					task.wait(0.5)
+					if Flags.ESPEnabled then applyESP(plr) end
+				end)
+			end)
+		else
+			disableAllESP()
+		end
+	end
+})
+Players.PlayerRemoving:Connect(removeESP)
+
+TabVisuals:CreateColorPicker({
+	Name = "ESP Fill Color",
+	Color = ESP_FILL,
+	Flag = "ESPFillColor",
+	Callback = function(c)
+		ESP_FILL = c
+		for _, hl in pairs(espHighlights) do pcall(function() hl.FillColor = c end) end
+	end
+})
+
+TabVisuals:CreateColorPicker({
+	Name = "ESP Outline Color",
+	Color = ESP_OUTLINE,
+	Flag = "ESPOutlineColor",
+	Callback = function(c)
+		ESP_OUTLINE = c
+		for _, hl in pairs(espHighlights) do pcall(function() hl.OutlineColor = c end) end
+	end
+})
+
+safeSection(TabVisuals, "World")
+TabVisuals:CreateToggle({
+	Name = "Fullbright",
+	CurrentValue = false,
+	Flag = "BrightMode",
+	Callback = function(v)
+		Flags.BrightMode = v
+		pcall(function()
+			local L = game:GetService("Lighting")
+			if v then
+				L.Brightness = 10
+				L.ClockTime = 14
+				L.FogEnd = 1e6
+				L.GlobalShadows = false
+				L.Ambient = Color3.fromRGB(255, 255, 255)
+				L.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+			else
+				L.Brightness = 1
+				L.FogEnd = 100000
+				L.GlobalShadows = true
+				L.Ambient = Color3.fromRGB(127, 127, 127)
+				L.OutdoorAmbient = Color3.fromRGB(127, 127, 127)
+			end
+		end)
+	end
+})
+
+safeSection(TabSettings, "Server")
+TabSettings:CreateButton({
+	Name = "Rejoin Server",
+	Callback = function()
+		local ok, err = pcall(function()
+			TeleportService:Teleport(game.PlaceId, LocalPlayer)
+		end)
+		if not ok then
+			warn("[CactusHub] Rejoin: " .. tostring(err))
+			Rayfield:Notify({Title = "Error", Content = "Rejoin failed.", Duration = 3})
+		end
+	end
+})
+
+TabSettings:CreateButton({
+	Name = "Server Hop",
+	Callback = function()
+		task.spawn(function()
+			local ok, err = pcall(function()
+				local http = game:GetService("HttpService")
+				local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?limit=100"
+				local raw = game:HttpGet(url)
+				local data = http:JSONDecode(raw)
+				local servers = {}
+				for _, s in ipairs(data.data or {}) do
+					if s.id ~= game.JobId and s.playing < s.maxPlayers then
+						table.insert(servers, s.id)
+					end
+				end
+				if #servers > 0 then
+					local pick = servers[math.random(1, #servers)]
+					TeleportService:TeleportToPlaceInstance(game.PlaceId, pick, LocalPlayer)
+					Rayfield:Notify({Title = "Server Hop", Content = "Joining new server...", Duration = 3})
+				else
+					Rayfield:Notify({Title = "Server Hop", Content = "No open servers found.", Duration = 3})
+				end
+			end)
+			if not ok then
+				warn("[CactusHub] ServerHop: " .. tostring(err))
+				Rayfield:Notify({Title = "Error", Content = "Server hop failed.", Duration = 3})
+			end
+		end)
+	end
+})
+
+safeSection(TabSettings, "Anti-AFK")
+TabSettings:CreateToggle({
+	Name = "Anti-AFK",
+	CurrentValue = false,
+	Flag = "AntiAFK",
+	Callback = function(v)
+		Flags.AntiAFK = v
+		if v then
+			task.spawn(function()
+				while Flags.AntiAFK do
+					pcall(function()
+						local vrs = LocalPlayer:FindFirstChild("VirtualUser")
+						if not vrs then
+							vrs = Instance.new("VirtualUser")
+							vrs.Parent = LocalPlayer
+						end
+						vrs:CaptureController()
+						vrs:ClickButton2(Vector2.new())
+					end)
+					task.wait(60)
+				end
+			end)
+		end
+	end
+})
+
+safeSection(TabSettings, "Player Info")
+TabSettings:CreateButton({
+	Name = "Copy UserId",
+	Callback = function()
+		pcall(function() setclipboard(tostring(LocalPlayer.UserId)) end)
+		Rayfield:Notify({Title = "Copied", Content = "UserId: " .. tostring(LocalPlayer.UserId), Duration = 3})
+	end
+})
+TabSettings:CreateButton({
+	Name = "Copy Username",
+	Callback = function()
+		pcall(function() setclipboard(LocalPlayer.Name) end)
+		Rayfield:Notify({Title = "Copied", Content = LocalPlayer.Name, Duration = 3})
+	end
+})
+TabSettings:CreateButton({
+	Name = "Print All State Keys (Console)",
+	Callback = function()
+		local data = safeGetState()
+		print("[CactusHub] ClientState:")
+		for k, v in pairs(data) do
+			if type(v) == "table" then
+				print("  " .. tostring(k) .. ": [table len=" .. #v .. "]")
+			else
+				print("  " .. tostring(k) .. ": " .. tostring(v))
+			end
+		end
+		Rayfield:Notify({Title = "Printed", Content = "Check console (F9).", Duration = 3})
+	end
+})
+
+safeSection(TabSettings, "Config")
+TabSettings:CreateButton({
+	Name = "Save Config",
+	Callback = function()
+		local ok, err = pcall(function() Rayfield:SaveConfiguration() end)
+		if ok then
+			Rayfield:Notify({Title = "Saved", Content = "Configuration saved.", Duration = 3})
+		else
+			warn("[CactusHub] SaveConfig: " .. tostring(err))
+			Rayfield:Notify({Title = "Error", Content = "Save failed.", Duration = 3})
+		end
+	end
+})
+
+TabSettings:CreateButton({
+	Name = "Reset All Toggles",
+	Callback = function()
+		pcall(function()
+			Flags.TreadmillAuto = false
+			Flags.SmartRebirth = false
+			Flags.Noclip = false
+			Flags.InfiniteJump = false
+			Flags.ESPEnabled = false
+			Flags.WalkSpeed = 16
+			Flags.JumpPower = 50
+			Flags.AutoWin = false
+			Flags.Fly = false
+			Flags.AntiAFK = false
+			Flags.BrightMode = false
+			Flags.AutoEquipBestAura = false
+			FLY_SPEED = 50
+			if Humanoid then
+				Humanoid.WalkSpeed = 16
+				Humanoid.JumpPower = 50
+			end
+			disableFly()
+			disableAllESP()
+			local L = game:GetService("Lighting")
+			L.Brightness = 1
+			L.FogEnd = 100000
+			L.GlobalShadows = true
+			L.Ambient = Color3.fromRGB(127, 127, 127)
+			L.OutdoorAmbient = Color3.fromRGB(127, 127, 127)
+		end)
+		Rayfield:Notify({Title = "Reset", Content = "All settings reset to default.", Duration = 3})
+	end
+})
+
+pcall(function() Rayfield:LoadConfiguration() end)
+Rayfield:Notify({Title = "Cactus Hub Pro", Content = "Loaded.", Duration = 4})
