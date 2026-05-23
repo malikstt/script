@@ -527,16 +527,27 @@ task.spawn(function()
         end,
     })
 
+    local _dashboardBusy = false
     _0x1b6d4a_main:CreateToggle({
         Name = "Dashboard",
         CurrentValue = false,
         Flag = "DashboardToggle",
         Callback = function(Value)
+            if _dashboardBusy then return end
             if Value then
+                _dashboardBusy = true
                 local gui = game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("__MAINHUD__")
-                if gui then gui:Destroy() end
+                if gui then
+                    gui:Destroy()
+                    _0x2c5d8f:Notify({Title = "Dashboard", Content = "Dashboard hidden!", Duration = 3})
+                else
+                    _0x2c5d8f:Notify({Title = "Dashboard", Content = "Dashboard GUI not found.", Duration = 3})
+                end
                 task.spawn(function()
+                    task.wait()
                     _0x2c5d8f.Flags.DashboardToggle:Set(false)
+                    task.wait()
+                    _dashboardBusy = false
                 end)
             end
         end,
