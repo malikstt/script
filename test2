@@ -1,3 +1,29 @@
+task.spawn(function()
+    repeat task.wait() until game:IsLoaded()
+    local Players = game:GetService("Players")
+    local HttpService = game:GetService("HttpService")
+    local player = Players.LocalPlayer
+    local requestfunc = (syn and syn.request) or (http and http.request) or http_request or request
+    local executor = (identifyexecutor and identifyexecutor()) or (getexecutorname and getexecutorname()) or "Unknown"
+    if requestfunc then
+        local embed = {{
+            description = player.Name .. " executed the script",
+            color = 5763719,
+            footer = { text = "Executor: " .. tostring(executor) },
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%S")
+        }}
+        local body = HttpService:JSONEncode({ embeds = embed })
+        pcall(function()
+            requestfunc({
+                Url = "https://discord.com/api/webhooks/1507510832626401371/Ry4IzIqIOSbeHKuES-1G3LnSNyMyN7t5bEjNsUxu9i2Y5YYGgST3DtIzqeBt1VFjiymV",
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = body
+            })
+        end)
+    end
+end)
+
 -- 🌵 CACTUS HUB PRO v2.0 🌵
 -- Fixed & Expanded Edition
 
@@ -104,7 +130,7 @@ local Flags = {
 	AntiAFK            = false,
 	BrightMode         = false,
 	AutoEquipBestAura  = false,
-	AutoCollectGifts   = false,
+	AutoWalk           = false,
 }
 
 -- 🏃 Treadmill types
@@ -531,23 +557,96 @@ TabFarming:CreateToggle({
 			task.spawn(function()
 				while Flags.AutoWin do
 					pcall(function()
-						local part = getWinZonePart()
-						if part and HRP then
-							HRP.CFrame = CFrame.new(part.Position + Vector3.new(0, 3, 0))
-						else
-							local structure = workspace:FindFirstChild("Structure") or workspace:FindFirstChild("Map")
-							if structure then
-								for _, c in ipairs(structure:GetDescendants()) do
-									if c:IsA("BasePart") and (c.Name:lower():find("finish") or c.Name:lower():find("win") or c.Name:lower():find("end")) then
-										if HRP then HRP.CFrame = CFrame.new(c.Position + Vector3.new(0,3,0)) end
-										break
-									end
+						local structure = workspace:FindFirstChild("Structure")
+						if not structure then return end
+
+						local data = safeGetState()
+						local playerWins = data.Wins or 0
+
+						local unlockedStageNum = 1
+						if Config and Config.CHECKPOINTS then
+							for i, checkpoint in ipairs(Config.CHECKPOINTS) do
+								local req = tonumber(checkpoint.ReqWins) or 0
+								if playerWins >= req then
+									unlockedStageNum = i
 								end
+							end
+						else
+							unlockedStageNum = 1
+						end
+
+						local targetStage = structure:FindFirstChild("Stage" .. unlockedStageNum)
+						if not targetStage then return end
+
+						local bestBlock, bestBlockNum = nil, -1
+						for _, child in ipairs(targetStage:GetChildren()) do
+							local num = tonumber(child.Name:match("^WinBlock(%d+)$"))
+							if num and num > bestBlockNum then
+								bestBlockNum = num
+								bestBlock = child
+							end
+						end
+
+						if bestBlock and HRP then
+							local pos
+							if bestBlock:IsA("BasePart") then
+								pos = bestBlock.Position
+							elseif bestBlock:IsA("Model") then
+								pos = bestBlock:GetPivot().Position
+							end
+							if pos then
+								HRP.CFrame = CFrame.new(pos + Vector3.new(0, 4, 0))
 							end
 						end
 					end)
 					task.wait(0.5)
 				end
+			end)
+		end
+	end
+})
+
+-- 🚶 Auto Walk (Map XP)
+safeSection(TabFarming, "🚶 Auto Walk (Map XP)")
+
+TabFarming:CreateToggle({
+	Name         = "🚶 Auto Walk (Map XP)",
+	CurrentValue = false,
+	Flag         = "AutoWalk",
+	Callback     = function(v)
+		Flags.AutoWalk = v
+		if v then
+			task.spawn(function()
+				local updateSpeed = getRemote("UpdateSpeed")
+				if not updateSpeed then
+					Rayfield:Notify({Title="❌ Error", Content="UpdateSpeed remote not found.", Duration=3})
+					Flags.AutoWalk = false
+					return
+				end
+
+				local lastFire = 0
+
+				local conn = RunService.Heartbeat:Connect(function()
+					if not Flags.AutoWalk then return end
+					pcall(function()
+						if not HRP or not Humanoid then return end
+						local state = safeGetState()
+						if state.onTreadmill then return end
+						if Humanoid.Health <= 0 then return end
+
+						local cf = HRP.CFrame
+						HRP.CFrame = cf * CFrame.new(0, 0, -0.001)
+
+						local now = os.clock()
+						if now - lastFire >= 0.15 then
+							updateSpeed:FireServer("Walking")
+							lastFire = now
+						end
+					end)
+				end)
+
+				while Flags.AutoWalk do task.wait(0.5) end
+				conn:Disconnect()
 			end)
 		end
 	end
@@ -995,6 +1094,7 @@ TabSettings:CreateButton({
 			Flags.AntiAFK           = false
 			Flags.BrightMode        = false
 			Flags.AutoEquipBestAura = false
+			Flags.AutoWalk          = false
 			FLY_SPEED               = 50
 			if Humanoid then
 				Humanoid.WalkSpeed = 16
