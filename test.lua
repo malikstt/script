@@ -528,30 +528,31 @@ task.spawn(function()
     })
 
     local _dashboardBusy = false
-    _0x1b6d4a_main:CreateToggle({
-        Name = "Dashboard",
-        CurrentValue = false,
-        Flag = "DashboardToggle",
-        Callback = function(Value)
-            if _dashboardBusy then return end
-            if Value then
-                _dashboardBusy = true
-                local gui = game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("__MAINHUD__")
-                if gui then
-                    gui:Destroy()
-                    _0x2c5d8f:Notify({Title = "Dashboard", Content = "Dashboard hidden!", Duration = 3})
-                else
-                    _0x2c5d8f:Notify({Title = "Dashboard", Content = "Dashboard GUI not found.", Duration = 3})
-                end
-                task.spawn(function()
-                    task.wait()
-                    _0x2c5d8f.Flags.DashboardToggle:Set(false)
-                    task.wait()
-                    _dashboardBusy = false
+_0x1b6d4a_main:CreateToggle({
+    Name = "Dashboard",
+    CurrentValue = false,
+    Flag = "DashboardToggle",
+    Callback = function(Value)
+        if _dashboardBusy then return end
+        _dashboardBusy = true
+        if Value then
+            task.spawn(function()
+                pcall(function()
+                    loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))()
                 end)
+                _0x2c5d8f:Notify({Title = "Dashboard", Content = "Dashboard enabled!", Duration = 3})
+                _dashboardBusy = false
+            end)
+        else
+            local gui = game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("__MAINHUD__")
+            if gui then
+                gui:Destroy()
             end
-        end,
-    })
+            _0x2c5d8f:Notify({Title = "Dashboard", Content = "Dashboard closed!", Duration = 3})
+            _dashboardBusy = false
+        end
+    end,
+})
 
     local _0x8c1d4a = _0x4f2a8c_window:CreateTab("Farming", 138602335586757)
 
