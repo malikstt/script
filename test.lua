@@ -504,7 +504,7 @@ task.spawn(function()
 
     _0x1b6d4a_main:CreateParagraph({
         Title = "Latest Update",
-        Content = "[+] Fixed Upgrade System (Recursive)\n[+] Fixed Slime Gun\n[+] Added Advanced Optimization\n[+] Fixed All Variable Collisions\n[+] Bug Fixes"
+        Content = "[+] Dynamic Zone Farming\n[+] Improved XP Transfer (Whole Team / All Slimes)\n[+] Dashboard Fix\n[+] Advanced Stats Tab\n[+] Webhook Minimum Chance Filter\n[+] Crafting System (Auto Craft & Recipe Selection)\n[+] Fixed All Variable Collisions\n[+] Bug Fixes"
     })
 
     _0x1b6d4a_main:CreateButton({
@@ -533,9 +533,8 @@ task.spawn(function()
         Flag = "DashboardToggle",
         Callback = function(Value)
             if Value then
-                pcall(function()
-                    loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))()
-                end)
+                local gui = game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("__MAINHUD__")
+                if gui then gui:Destroy() end
                 task.spawn(function()
                     _0x2c5d8f.Flags.DashboardToggle:Set(false)
                 end)
@@ -547,21 +546,51 @@ task.spawn(function()
 
     _0x8c1d4a:CreateSection("Zones")
 
+    local ZonesModule = require(_0x3f7a2b:WaitForChild("Source").Game.Items.Zones)
+    local totalZones = ZonesModule.getMaxZone()
+    local zoneOptions = { "Best Unlocked" }
+    for i = 1, totalZones do
+        local zone = ZonesModule.getZone(i)
+        if zone and zone.name then
+            table.insert(zoneOptions, zone.name .. " (Zone " .. i .. ")")
+        else
+            table.insert(zoneOptions, "Zone " .. i)
+        end
+    end
+
+    _0x8c1d4a:CreateDropdown({
+        Name = "Zone Target",
+        Options = zoneOptions,
+        CurrentOption = { "Best Unlocked" },
+        MultipleOptions = false,
+        Flag = "FarmingZoneTarget",
+        Callback = function(option)
+        end,
+    })
+
     _0x8c1d4a:CreateToggle({
-        Name = "Auto Stay In Best Unlocked Zone",
+        Name = "Auto Farm Zone",
         CurrentValue = false,
         Flag = "FarmingStayInBestZone",
         Callback = function(_0x2c4e7a)
             if _0x2c4e7a then
                 task.spawn(function()
                     while _0x2c5d8f.Flags.FarmingStayInBestZone and _0x2c5d8f.Flags.FarmingStayInBestZone.CurrentValue do
-                        local _0x3a7c2e = 33
-                        for _0x2e4c7a = _0x3a7c2e, 1, -1 do
-                            if not (_0x2c5d8f.Flags.FarmingStayInBestZone and _0x2c5d8f.Flags.FarmingStayInBestZone.CurrentValue) then break end
-                            local _0x4b8d2a = pcall(_0x2a7e4c.InvokeServer, _0x2a7e4c, "requestTeleportZone", _0x2e4c7a)
-                            if _0x4b8d2a then
-                                task.wait(1)
-                                if (_0x7b3f5a:get("zone") or 1) == _0x2e4c7a then break end
+                        local targetOption = _0x2c5d8f.Flags.FarmingZoneTarget.CurrentOption[1]
+                        if targetOption == "Best Unlocked" then
+                            local maxZone = 33
+                            for _0x2e4c7a = maxZone, 1, -1 do
+                                if not (_0x2c5d8f.Flags.FarmingStayInBestZone and _0x2c5d8f.Flags.FarmingStayInBestZone.CurrentValue) then break end
+                                local _0x4b8d2a = pcall(_0x2a7e4c.InvokeServer, _0x2a7e4c, "requestTeleportZone", _0x2e4c7a)
+                                if _0x4b8d2a then
+                                    task.wait(1)
+                                    if (_0x7b3f5a:get("zone") or 1) == _0x2e4c7a then break end
+                                end
+                            end
+                        else
+                            local zoneNum = tonumber(targetOption:match("Zone (%d+)"))
+                            if zoneNum then
+                                pcall(_0x2a7e4c.InvokeServer, _0x2a7e4c, "requestTeleportZone", zoneNum)
                             end
                         end
                         task.wait(10)
@@ -632,22 +661,56 @@ task.spawn(function()
     end)
 
     _0x8c1d4a:CreateToggle({
-        Name = "Auto Transfer XP To Best Slime",
+        Name = "Auto Transfer XP",
         CurrentValue = false,
         Flag = "FarmingTransferXP",
         Callback = function(_0x2c4f7a) end,
     })
 
+    _0x8c1d4a:CreateDropdown({
+        Name = "Transfer To",
+        Options = { "Best Slime", "Whole Team" },
+        CurrentOption = { "Best Slime" },
+        MultipleOptions = false,
+        Flag = "FarmingTransferTarget",
+        Callback = function(_0x3c6a2d) end,
+    })
+
+    _0x8c1d4a:CreateDropdown({
+        Name = "Transfer From",
+        Options = { "Unequipped With XP", "All Slimes" },
+        CurrentOption = { "Unequipped With XP" },
+        MultipleOptions = false,
+        Flag = "FarmingTransferSource",
+        Callback = function(_0x1c6f4a) end,
+    })
+
     task.spawn(function()
         while task.wait(30) do
             if _0x2c5d8f.Flags.FarmingTransferXP and _0x2c5d8f.Flags.FarmingTransferXP.CurrentValue then
-                local _0x4d8f1a = _0x2f8c4a()
-                local _0x6e2a4c = _0x7b3f5a:get("inventory") or {}
-                if _0x4d8f1a then
-                    for _0x1c7e3b, _0x9a2d4f in pairs(_0x6e2a4c) do
-                        if type(_0x9a2d4f) == "table" and _0x9a2d4f.id and _0x1c7e3b ~= _0x4d8f1a then
-                            if (_0x9a2d4f.xp or 0) > 0 or (_0x9a2d4f.level or 1) > 1 then
-                                pcall(_0x4e7b2c.fetch, _0x4e7b2c, "requestTransferXp", _0x1c7e3b, _0x4d8f1a)
+                local inventory = _0x7b3f5a:get("inventory") or {}
+                local equipped = _0x7b3f5a:get("equipped") or {}
+                local teamSet = {}
+                for _, uid in ipairs(equipped) do teamSet[uid] = true end
+                local targetOption = _0x2c5d8f.Flags.FarmingTransferTarget.CurrentOption[1]
+                local sourceOption = _0x2c5d8f.Flags.FarmingTransferSource.CurrentOption[1]
+                local targets = {}
+                if targetOption == "Best Slime" then
+                    local best = _0x2f8c4a()
+                    if best then targets = { best } end
+                else
+                    for _, uid in ipairs(equipped) do table.insert(targets, uid) end
+                end
+                for _, target in ipairs(targets) do
+                    for uid, data in pairs(inventory) do
+                        if uid ~= target then
+                            local isEquipped = teamSet[uid]
+                            local hasXp = (type(data) == "table" and (data.xp or 0) > 0) or (type(data) == "number" and data > 0)
+                            if sourceOption == "Unequipped With XP" and not isEquipped and hasXp then
+                                pcall(_0x4e7b2c.fetch, _0x4e7b2c, "requestTransferXp", uid, target)
+                                task.wait(0.5)
+                            elseif sourceOption == "All Slimes" and hasXp then
+                                pcall(_0x4e7b2c.fetch, _0x4e7b2c, "requestTransferXp", uid, target)
                                 task.wait(0.5)
                             end
                         end
@@ -1563,6 +1626,39 @@ task.spawn(function()
         Callback = function(_0x1d4f8a) end,
     })
 
+    _0x2a7b4c_tab:CreateInput({
+        Name = "Minimum Chance To Send",
+        CurrentValue = "",
+        PlaceholderText = "e.g. 1B or 1000000000",
+        RemoveTextAfterFocusLost = false,
+        Flag = "WebhookMinChance",
+        Callback = function(_0x3c2e7a) end,
+    })
+
+    local function parseChanceString(str)
+        if not str or str == "" then return nil end
+        str = str:upper():gsub(",", "")
+        local num, suffix = str:match("^(%d+%.?%d*)([KMBTQ]?)$")
+        if not num then
+            num = str:match("^(%d+%.?%d*)$")
+            if not num then return nil end
+            suffix = ""
+        end
+        local value = tonumber(num)
+        if not value then return nil end
+        if suffix == "K" then value = value * 1e3
+        elseif suffix == "M" then value = value * 1e6
+        elseif suffix == "B" then value = value * 1e9
+        elseif suffix == "T" then value = value * 1e12
+        elseif suffix == "Q" then
+            if str:find("QD") or str:find("Qd") then value = value * 1e15
+            elseif str:find("QN") or str:find("Qn") then value = value * 1e18
+            else value = value * 1e15
+            end
+        end
+        return value
+    end
+
     _0x2a7b4c_tab:CreateButton({
         Name = "Test Webhook",
         Callback = function()
@@ -1667,6 +1763,7 @@ task.spawn(function()
         end
         return false
     end
+
     task.spawn(function()
         while true do
             task.wait(0.1)
@@ -1688,6 +1785,8 @@ task.spawn(function()
                             local _0x7e2a4c = _0x2c5d8f.Flags.WebhookSendAll and _0x2c5d8f.Flags.WebhookSendAll.CurrentValue
                             local _0x1f4a3c = _0x2c5d8f.Flags.WebhookSendNew and _0x2c5d8f.Flags.WebhookSendNew.CurrentValue
                             local _0x3c8a2d = _0x2c5d8f.Flags.WebhookSendMutated and _0x2c5d8f.Flags.WebhookSendMutated.CurrentValue
+                            local minChanceStr = _0x2c5d8f.Flags.WebhookMinChance.CurrentValue
+                            local minChanceNum = parseChanceString(minChanceStr)
 
                             for _, _0x3f8c2a in ipairs(_0x2c6d8a) do
                                 local _0x2c4e7a = _0x7c5f2a(_0x3f8c2a)
@@ -1702,6 +1801,14 @@ task.spawn(function()
                                         local _0x7c3d2a = _0x1a7c4f(_0x1d4c8f, _0x4d2c8f)
 
                                         local _0x3e2c7a = _0x7e2a4c or (_0x1f4a3c and _0x7c3d2a) or (_0x3c8a2d and _0x1b4c7d and _0x4f2a8c_filter(_0x4d2c8f))
+
+                                        if _0x3e2c7a and minChanceNum then
+                                            local odds = _0x1d8f2a and _0x1d8f2a.odds or 0
+                                            local chanceValue = odds > 0 and (1 / odds) or 0
+                                            if chanceValue > minChanceNum then
+                                                _0x3e2c7a = false
+                                            end
+                                        end
 
                                         if _0x3e2c7a then
                                             local _0x2a6d4c = _0x2c5d8f.Flags.WebhookUserID.CurrentValue
@@ -2029,6 +2136,620 @@ task.spawn(function()
                 end
             end
         end,
+    })
+
+    local statsTab = _0x4f2a8c_window:CreateTab("Stats", 4483362458)
+
+    local DataClient = _0x7b3f5a
+    local function safeGet(...)
+        local data = DataClient._data._data
+        local cur = data
+        for _, k in ipairs({...}) do
+            if type(cur) ~= "table" then return 0 end
+            cur = cur[k]
+            if cur == nil then return 0 end
+        end
+        return cur
+    end
+
+    local function safeNum(...)
+        return tonumber(safeGet(...)) or 0
+    end
+
+    local SUFFIXES = {
+        {1e24,"Sp"},{1e21,"Sx"},{1e18,"Qn"},{1e15,"Qd"},
+        {1e12,"T"},{1e9,"B"},{1e6,"M"},{1e3,"K"},
+    }
+
+    local function fmt(n)
+        n = tonumber(n) or 0
+        for _, p in ipairs(SUFFIXES) do
+            if n >= p[1] then
+                local s = string.format("%.2f", n / p[1]):gsub("%.?0+$","")
+                return s .. p[2]
+            end
+        end
+        return tostring(math.floor(n))
+    end
+
+    local function fmtTime(s)
+        s = math.floor(tonumber(s) or 0)
+        local d = math.floor(s/86400)
+        local h = math.floor((s%86400)/3600)
+        local m = math.floor((s%3600)/60)
+        if d > 0 then return d.."d "..h.."h "..m.."m"
+        elseif h > 0 then return h.."h "..m.."m"
+        elseif m > 0 then return m.."m "..math.floor(s%60).."s"
+        else return math.floor(s%60).."s" end
+    end
+
+    local function countKeys(t)
+        if type(t) ~= "table" then return 0 end
+        local c = 0; for _ in pairs(t) do c = c + 1 end; return c
+    end
+
+    local function getBestRoll()
+        local rd = safeGet("stats","rarestRoll","slimeData")
+        if type(rd) ~= "table" then return "None", "N/A" end
+        local id = tostring(rd.id or "?")
+        local muts = rd.mutations
+        local prefix = ""
+        if type(muts) == "table" then
+            if muts.inverted then prefix = "Inverted "
+            elseif muts.shiny and muts.huge then prefix = "Shiny Huge "
+            elseif muts.shiny and muts.big then prefix = "Shiny Big "
+            elseif muts.huge then prefix = "Huge "
+            elseif muts.shiny then prefix = "Shiny "
+            elseif muts.big then prefix = "Big "
+            end
+        end
+        local name = prefix .. id:sub(1,1):upper()..id:sub(2)
+        local odds = safeNum("stats","rarestRoll","odds")
+        return name, odds > 0 and ("1 in "..fmt(math.floor(odds))) or "N/A"
+    end
+
+    local function getEquipped()
+        local eq = safeGet("equipped")
+        if type(eq) ~= "table" then return "None" end
+        local names = {}
+        for i = 1, 7 do
+            local v = eq[i]
+            if v and type(v) == "string" then
+                local clean = v:match("%-(.+)$") or v:gsub("^%.","")
+                table.insert(names, clean:sub(1,1):upper()..clean:sub(2))
+            end
+        end
+        return #names > 0 and table.concat(names, ", ") or "None"
+    end
+
+    local function getIndexCounts()
+        local cats = safeGet("index","categories")
+        if type(cats) ~= "table" then return 0,0,0,0,0 end
+        local function c(cat)
+            local t = cats[cat]
+            return type(t)=="table" and countKeys(t.unlocked or {}) or 0
+        end
+        return c("basic"), c("big"), c("shiny"), c("huge"), c("inverted")
+    end
+
+    local function getTotalInv()
+        local inv = safeGet("inventory")
+        if type(inv) ~= "table" then return 0 end
+        local t = 0
+        for _, v in pairs(inv) do if type(v)=="number" then t = t + v end end
+        return t
+    end
+
+    local function getUniqueSpecies()
+        local inv = safeGet("inventory")
+        if type(inv) ~= "table" then return 0 end
+        local seen = {}; local c = 0
+        for k in pairs(inv) do
+            if type(k)=="string" and not k:match("^%.") then
+                local base = k:match("%-(.+)$") or k
+                if not seen[base] then seen[base]=true; c = c + 1 end
+            end
+        end
+        return c
+    end
+
+    local sessionStart = os.clock()
+    local startRolls   = safeNum("stats","rolls")
+    local startKills   = safeNum("stats","kills")
+    local startCoins   = safeNum("coins")
+    local startGoop    = safeNum("goop")
+
+    local prevRolls = startRolls
+    local prevCoins = startCoins
+    local prevGoop  = startGoop
+    local lastWin   = os.clock()
+
+    local windowRPS, windowCPS, windowGPS = nil, nil, nil
+    local lastRollMove = os.clock()
+    local lastCoinMove = os.clock()
+    local lastGoopMove = os.clock()
+    local STALE = 60
+
+    task.spawn(function()
+        while true do
+            task.wait(10)
+            local now = os.clock()
+            local dt  = math.max(1, now - lastWin)
+            lastWin   = now
+            local r = safeNum("stats","rolls")
+            local c = safeNum("coins")
+            local g = safeNum("goop")
+            local dr = math.max(0, r - prevRolls)
+            local dc = math.max(0, c - prevCoins)
+            local dg = math.max(0, g - prevGoop)
+            if dr > 0 then windowRPS = dr/dt;    lastRollMove = now end
+            if dc > 0 then windowCPS = dc/dt;    lastCoinMove = now end
+            if dg > 0 then windowGPS = dg/dt;    lastGoopMove = now end
+            prevRolls = r; prevCoins = c; prevGoop = g
+        end
+    end)
+
+    local function getRate(windowVal, lastMove, startVal, curVal)
+        local now     = os.clock()
+        local elapsed = math.max(1, now - sessionStart)
+        if (now - lastMove) > STALE then return 0 end
+        if windowVal and windowVal > 0 then return windowVal end
+        local gain = math.max(0, curVal - startVal)
+        return gain > 0 and (gain / elapsed) or 0
+    end
+
+    local L = {}
+    local function lbl(key, text) L[key] = statsTab:CreateLabel(text) end
+
+    lbl("sess",        "Session: --  |  Played: --  |  Rebirths: --")
+    lbl("rolls1",      "Rolls/sec: --  |  Rolls/min: --  |  Rolls/hr: --")
+    lbl("rolls2",      "Session Rolls: --  |  Lifetime: --")
+    lbl("coins1",      "Coins/min: --  |  Coins/hr: --")
+    lbl("coins2",      "Session Coins: --  |  Total Ever: --")
+    lbl("goop1",       "Goop/min: --  |  Goop/hr: --")
+    lbl("goop2",       "Session Goop: --  |  Balance: --")
+    lbl("kills",       "Session Kills: --  |  Lifetime Kills: --")
+    lbl("best",        "Best Ever: --  |  Odds: --")
+    lbl("daily",       "Best Today Odds: --")
+    lbl("prog",        "Zone: --  |  Max Zone: --  |  Roll Currency: --")
+    lbl("idx1",        "Basic: --  |  Big: --  |  Shiny: --  |  Huge: --  |  Inverted: --")
+    lbl("inv",         "Total Slimes: --  |  Species: --  |  Crafting: --")
+    lbl("equipped",    "Equipped: --")
+
+    local function updateAll()
+        local now     = os.clock()
+        local elapsed = math.max(1, now - sessionStart)
+
+        local rolls    = safeNum("stats","rolls")
+        local kills    = safeNum("stats","kills")
+        local coins    = safeNum("coins")
+        local goop     = safeNum("goop")
+        local timePl   = safeNum("stats","timePlayed")
+        local totCoins = safeNum("stats","totalCoins")
+        local rebirths = safeNum("rebirths")
+        local zone     = safeNum("zone")
+        local maxZone  = safeNum("furthestZone")
+        local rollCur  = safeNum("rollCurrency")
+
+        local sessRolls = math.max(0, rolls - startRolls)
+        local sessKills = math.max(0, kills - startKills)
+        local sessCoins = math.max(0, coins - startCoins)
+        local sessGoop  = math.max(0, goop  - startGoop)
+
+        local sessH = math.floor(elapsed/3600)
+        local sessM = math.floor((elapsed%3600)/60)
+        local sessS = math.floor(elapsed%60)
+
+        local rps = getRate(windowRPS, lastRollMove, startRolls, rolls)
+        local cps = getRate(windowCPS, lastCoinMove, startCoins, coins)
+        local gps = getRate(windowGPS, lastGoopMove, startGoop,  goop)
+
+        local bestName, bestOdds = getBestRoll()
+        local dailyOdds = safeNum("stats","dailyRarestRoll","odds")
+        local dailyStr  = dailyOdds > 0 and ("1 in "..fmt(math.floor(dailyOdds))) or "N/A"
+        local basic, big, shiny, huge, inverted = getIndexCounts()
+        local crafting = countKeys(safeGet("craftingRecipes") or {})
+
+        L.sess:Set(string.format("Session: %dh%dm%ds  |  Played: %s  |  Rebirths: %s", sessH, sessM, sessS, fmtTime(timePl), fmt(rebirths)))
+        L.rolls1:Set(string.format("Rolls/sec: %.2f  |  Rolls/min: %s  |  Rolls/hr: %s", rps, fmt(rps*60), fmt(rps*3600)))
+        L.rolls2:Set("Session Rolls: "..fmt(sessRolls).."  |  Lifetime: "..fmt(rolls))
+        L.coins1:Set("Coins/min: "..fmt(cps*60).."  |  Coins/hr: "..fmt(cps*3600))
+        L.coins2:Set("Session Coins: "..fmt(sessCoins).."  |  Total Ever: "..fmt(totCoins))
+        L.goop1:Set("Goop/min: "..fmt(gps*60).."  |  Goop/hr: "..fmt(gps*3600))
+        L.goop2:Set("Session Goop: "..fmt(sessGoop).."  |  Balance: "..fmt(goop))
+        L.kills:Set("Session Kills: "..fmt(sessKills).."  |  Lifetime Kills: "..fmt(kills))
+        L.best:Set("Best Ever: "..bestName.."  |  Odds: "..bestOdds)
+        L.daily:Set("Best Today Odds: "..dailyStr)
+        L.prog:Set("Zone: "..fmt(zone).."  |  Max Zone: "..fmt(maxZone).."  |  Roll Currency: "..fmt(rollCur))
+        L.idx1:Set("Basic: "..basic.."  |  Big: "..big.."  |  Shiny: "..shiny.."  |  Huge: "..huge.."  |  Inverted: "..inverted)
+        L.inv:Set("Total Slimes: "..fmt(getTotalInv()).."  |  Species: "..getUniqueSpecies().."  |  Crafting: "..crafting)
+        L.equipped:Set("Equipped: "..getEquipped())
+    end
+
+    task.spawn(function()
+        while true do
+            pcall(updateAll)
+            task.wait(2)
+        end
+    end)
+
+    local craftingTab = _0x3e2c7a_tab
+
+    local RS = game:GetService("ReplicatedStorage")
+    local function getCraftingRemote()
+        return RS
+            :WaitForChild("Packages")
+            :WaitForChild("_Index")
+            :WaitForChild("leifstout_networker@0.3.1")
+            :WaitForChild("networker")
+            :WaitForChild("_remotes")
+            :WaitForChild("CraftingService")
+            :WaitForChild("RemoteFunction")
+    end
+
+    local function getCraftingData(key)
+        return _0x7b3f5a:get(key)
+    end
+
+    local MutationsModule = _0x1b7e4d
+    local RecipesModule
+    pcall(function() RecipesModule = require(RS.Source.Features.Crafting.Recipes) end)
+
+    local function getMutationValue(mutId)
+        if not MutationsModule then return 0 end
+        local ok, data = pcall(function() return MutationsModule.get(mutId) end)
+        return ok and data and data.value or 0
+    end
+
+    local function getSizeMutations()
+        return MutationsModule and MutationsModule.sizeMutations or {}
+    end
+
+    local function getModifierMutations()
+        return MutationsModule and MutationsModule.modifierMutations or {}
+    end
+
+    local function parseUniqueId(uid)
+        local base, sizeMut, modMut = uid, nil, nil
+        for _, sId in ipairs(getSizeMutations()) do
+            local prefix = sId .. "_"
+            if base:sub(1, #prefix) == prefix then
+                sizeMut = sId
+                base = base:sub(#prefix + 1)
+                break
+            end
+        end
+        if base:sub(1, 1) == "-" then base = base:sub(2) end
+        for _, mId in ipairs(getModifierMutations()) do
+            local suffix = "_" .. mId
+            if base:sub(-#suffix) == suffix then
+                modMut = mId
+                base = base:sub(1, -#suffix - 1)
+                break
+            end
+        end
+        return base, sizeMut, modMut
+    end
+
+    local function scoreUniqueId(uid)
+        local _, sizeMut, modMut = parseUniqueId(uid)
+        local score = 0
+        if sizeMut then score = score + getMutationValue(sizeMut) * 1000 end
+        if modMut then score = score + getMutationValue(modMut) * 100 end
+        return score
+    end
+
+    local function getOwnedAmount(data)
+        if type(data) == "number" then return math.max(data, 0) end
+        if type(data) == "table" then return 1 end
+        return 0
+    end
+
+    local function isXpSlime(data)
+        return type(data) == "table"
+    end
+
+    local function getEquippedSet()
+        local equipped = getCraftingData("equipped") or {}
+        local set = {}
+        for _, uid in pairs(equipped) do set[uid] = true end
+        return set
+    end
+
+    local function getBestSlimeSet()
+        local inventory = getCraftingData("inventory") or {}
+        local best = nil
+        local bestScore = -1
+        for uid, data in pairs(inventory) do
+            if not isXpSlime(data) then
+                local s = scoreUniqueId(uid)
+                if s > bestScore then
+                    bestScore = s
+                    best = uid
+                end
+            end
+        end
+        local set = {}
+        if best then set[best] = true end
+        return set
+    end
+
+    local function getXpSlimeSet()
+        local inventory = getCraftingData("inventory") or {}
+        local set = {}
+        for uid, data in pairs(inventory) do
+            if isXpSlime(data) then set[uid] = true end
+        end
+        return set
+    end
+
+    local function buildProtectedSet(categories)
+        local catSet = {}
+        for _, c in ipairs(categories) do catSet[c] = true end
+        local protected = {}
+        if catSet["Equipped Slimes"] then
+            for uid in pairs(getEquippedSet()) do protected[uid] = true end
+        end
+        if catSet["Best Slime"] then
+            for uid in pairs(getBestSlimeSet()) do protected[uid] = true end
+        end
+        if catSet["Xp Slimes"] then
+            for uid in pairs(getXpSlimeSet()) do protected[uid] = true end
+        end
+        return protected
+    end
+
+    local function getUnlockedRecipeIds()
+        if not RecipesModule then return {} end
+        local unlocked = getCraftingData("craftingRecipes") or {}
+        local all = RecipesModule.getRecipes() or {}
+        local result = {}
+        for _, recipe in ipairs(all) do
+            if unlocked[recipe.id] then
+                table.insert(result, recipe.id)
+            end
+        end
+        return result
+    end
+
+    local function getRecipe(id)
+        if not RecipesModule then return nil end
+        local ok, r = pcall(function() return RecipesModule.getRecipe(id) end)
+        return ok and r or nil
+    end
+
+    local function findBestIngredient(baseId, usedCounts, protectedPets)
+        local inventory = getCraftingData("inventory") or {}
+        local bestUid, bestScore = nil, -1
+        for uid, data in pairs(inventory) do
+            if not protectedPets[uid] then
+                local parsedBase = parseUniqueId(uid)
+                if parsedBase == baseId then
+                    local owned = getOwnedAmount(data)
+                    local used = usedCounts[uid] or 0
+                    if owned - used > 0 then
+                        local s = scoreUniqueId(uid)
+                        if s > bestScore then
+                            bestScore = s
+                            bestUid = uid
+                        end
+                    end
+                end
+            end
+        end
+        return bestUid
+    end
+
+    local craftingState = {
+        selectedRecipeIds = {},
+        craftAmount = 1,
+        autoCraftEnabled = false,
+        autoCraftAmount = 1,
+        autoCraftThread = nil,
+        protectCategories = { "Best Slime", "Equipped Slimes", "Xp Slimes" },
+        protectedPets = {},
+    }
+
+    craftingState.protectedPets = buildProtectedSet(craftingState.protectCategories)
+
+    local function getMaxCraftsForRecipe(recipeId)
+        local recipe = getRecipe(recipeId)
+        if not recipe then return 0 end
+        
+        local inventory = getCraftingData("inventory") or {}
+        local usedCounts = {}
+        local maxCrafts = math.huge
+        
+        for _, inp in ipairs(recipe.inputs) do
+            local bestUid = findBestIngredient(inp.id, usedCounts, craftingState.protectedPets)
+            if not bestUid then
+                return 0
+            end
+            usedCounts[bestUid] = (usedCounts[bestUid] or 0) + 1
+            local owned = getOwnedAmount(inventory[bestUid])
+            local used = usedCounts[bestUid]
+            local available = owned - used + 1
+            if available < maxCrafts then
+                maxCrafts = available
+            end
+        end
+        
+        return maxCrafts == math.huge and 0 or maxCrafts
+    end
+
+    local function buildCraftArgsForRecipe(recipeId, amount)
+        local recipe = getRecipe(recipeId)
+        if not recipe then return nil end
+        local ingredientIds = {}
+        local usedCounts = {}
+        for i, inp in ipairs(recipe.inputs) do
+            local uid = findBestIngredient(inp.id, usedCounts, craftingState.protectedPets) or ("-" .. inp.id)
+            usedCounts[uid] = (usedCounts[uid] or 0) + 1
+            table.insert(ingredientIds, uid)
+        end
+        return { "requestCraftRecipe", recipeId, ingredientIds, tostring(amount) }
+    end
+
+    local function doCraftAll(amount)
+        local results = {}
+        for _, recipeId in ipairs(craftingState.selectedRecipeIds) do
+            local args = buildCraftArgsForRecipe(recipeId, amount)
+            if args then
+                local ok, result = pcall(function()
+                    return getCraftingRemote():InvokeServer(table.unpack(args))
+                end)
+                if not ok then warn("[CactusHub]", result) end
+                results[recipeId] = ok and result ~= false
+            end
+        end
+        return results
+    end
+
+    local recipeIdsList = getUnlockedRecipeIds()
+    if #recipeIdsList > 0 then
+        craftingState.selectedRecipeIds = { recipeIdsList[1] }
+    end
+
+    craftingTab:CreateSection("Recipes")
+
+    craftingTab:CreateDropdown({
+        Name = "Select Recipes to Craft",
+        Options = recipeIdsList,
+        CurrentOption = { recipeIdsList[1] or "" },
+        MultipleOptions = true,
+        Flag = "CraftingSelectedRecipes",
+        Callback = function(options)
+            craftingState.selectedRecipeIds = options
+        end,
+    })
+
+    craftingTab:CreateSection("Craft")
+
+    craftingTab:CreateSlider({
+        Name = "Craft Amount",
+        Range = { 1, 99 },
+        Increment = 1,
+        Suffix = "x",
+        CurrentValue = 1,
+        Flag = "CraftingAmount",
+        Callback = function(val)
+            craftingState.craftAmount = val
+        end,
+    })
+
+    craftingTab:CreateButton({
+        Name = "Craft Now",
+        Callback = function()
+            local results = doCraftAll(craftingState.craftAmount)
+            local succeeded, failed = 0, 0
+            for _, ok in pairs(results) do
+                if ok then succeeded = succeeded + 1 else failed = failed + 1 end
+            end
+            _0x2c5d8f:Notify({
+                Title = "Cactus Hub",
+                Content = succeeded .. " crafts succeeded" .. (failed > 0 and (", " .. failed .. " failed") or ""),
+                Duration = 3,
+                Image = 4483362458,
+            })
+        end,
+    })
+
+    craftingTab:CreateSection("Auto Craft")
+
+    local autoCraftMax = 1
+
+    local function updateAutoCraftMax()
+        local minMax = math.huge
+        for _, recipeId in ipairs(craftingState.selectedRecipeIds) do
+            local maxCrafts = getMaxCraftsForRecipe(recipeId)
+            if maxCrafts < minMax then
+                minMax = maxCrafts
+            end
+        end
+        if minMax == math.huge then
+            autoCraftMax = 1
+        else
+            autoCraftMax = math.max(1, minMax)
+        end
+    end
+
+    updateAutoCraftMax()
+
+    craftingTab:CreateSlider({
+        Name = "Auto Craft Amount",
+        Range = { 1, 99 },
+        Increment = 1,
+        Suffix = "x",
+        CurrentValue = 1,
+        Flag = "CraftingAutoAmount",
+        Callback = function(val)
+            craftingState.autoCraftAmount = val
+        end,
+    })
+
+    craftingTab:CreateToggle({
+        Name = "Enable Auto Craft",
+        CurrentValue = false,
+        Flag = "CraftingAutoToggle",
+        Callback = function(enabled)
+            craftingState.autoCraftEnabled = enabled
+            if enabled then
+                updateAutoCraftMax()
+                local maxAmount = autoCraftMax
+                if craftingState.autoCraftAmount > maxAmount then
+                    craftingState.autoCraftAmount = maxAmount
+                end
+                if craftingState.autoCraftThread then task.cancel(craftingState.autoCraftThread) end
+                craftingState.autoCraftThread = task.spawn(function()
+                    while craftingState.autoCraftEnabled do
+                        updateAutoCraftMax()
+                        local craftAmount = math.min(craftingState.autoCraftAmount, autoCraftMax)
+                        if craftAmount > 0 then
+                            doCraftAll(craftAmount)
+                        end
+                        task.wait(5)
+                    end
+                end)
+                _0x2c5d8f:Notify({
+                    Title = "Auto Craft",
+                    Content = "Started - " .. craftingState.autoCraftAmount .. "x per recipe (max " .. autoCraftMax .. ")",
+                    Duration = 3,
+                    Image = 4483362458,
+                })
+            else
+                if craftingState.autoCraftThread then
+                    task.cancel(craftingState.autoCraftThread)
+                    craftingState.autoCraftThread = nil
+                end
+                _0x2c5d8f:Notify({
+                    Title = "Auto Craft",
+                    Content = "Stopped.",
+                    Duration = 3,
+                    Image = 4483362458,
+                })
+            end
+        end,
+    })
+
+    craftingTab:CreateSection("Protected Pets")
+
+    craftingTab:CreateDropdown({
+        Name = "Protect Categories",
+        Options = { "Best Slime", "Equipped Slimes", "Xp Slimes" },
+        CurrentOption = { "Best Slime", "Equipped Slimes", "Xp Slimes" },
+        MultipleOptions = true,
+        Flag = "CraftingProtectCategories",
+        Callback = function(options)
+            craftingState.protectCategories = options
+            craftingState.protectedPets = buildProtectedSet(options)
+        end,
+    })
+
+    _0x2c5d8f:Notify({
+        Title = "Cactus Hub",
+        Content = "Loaded - " .. #recipeIdsList .. " unlocked recipes ready.",
+        Duration = 5,
+        Image = 4483362458,
     })
 
     _0x9a4b7c.Idled:Connect(function()
