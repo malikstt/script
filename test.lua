@@ -585,8 +585,7 @@ task.spawn(function()
 
     _0x1b6d4a_main:CreateParagraph({
         Title = "Latest Update",
-        Content = "[+] Dynamic Zone Farming\n[+] Improved XP Transfer (Whole Team / All Slimes)\n[+] Dashboard Fix\n[+] Advanced Stats Tab\n[+] Webhook Minimum Chance Filter\n[+] Crafting System (Auto Craft & Recipe Selection)\n[+] Fixed All Variable Collisions\n[+] Bug Fixes"
-    })
+        Content = "[+] Auto Send & Accept Friend Requests\n[+] Fixed Auto Collect Loot\n[+] Fixed Settings (Optimization Toggles)\n[+] Added Public Webhook in Discord\n[+] Hide Attack & Damage UI\n[+] Bug Fixes"
 
     _0x1b6d4a_main:CreateButton({
         Name = "Copy Discord Invite",
