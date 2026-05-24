@@ -2333,35 +2333,6 @@ task.spawn(function()
         end,
     })
 
-    _0x7d2c4a_tab:CreateToggle({
-        Name = "Optimize All (Full)",
-        CurrentValue = false,
-        Flag = "OptimizeAllFull",
-        Callback = function(Value)
-            if updatingOptimizations then return end
-            if Value then
-                _cleanOptConnections()
-                _optRenderQuality()
-                _optLighting()
-                _optCamera()
-                _optGUI()
-                _optWorkspaceScan()
-                _optPlayers()
-                _optApplied = true
-                if optGPUToggle then optGPUToggle:Set(true) end
-                if optParticlesToggle then optParticlesToggle:Set(true) end
-                if optFireToggle then optFireToggle:Set(true) end
-                if optGCToggle then optGCToggle:Set(true) end
-            else
-                _cleanOptConnections()
-                if optGPUToggle then optGPUToggle:Set(false) end
-                if optParticlesToggle then optParticlesToggle:Set(false) end
-                if optFireToggle then optFireToggle:Set(false) end
-                if optGCToggle then optGCToggle:Set(false) end
-            end
-        end,
-    })
-
     local statsTab = _0x4f2a8c_window:CreateTab("Stats", 4483362458)
 
     local DataClient = _0x7b3f5a
