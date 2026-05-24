@@ -2209,6 +2209,16 @@ task.spawn(function()
         updatingOptimizations = false
     end
 
+    optMainToggle = _0x7d2c4a_tab:CreateToggle({
+        Name = "Optimize All",
+        CurrentValue = false,
+        Flag = "OptimizeAll",
+        Callback = function(Value)
+            if updatingOptimizations then return end
+            setAllOptimizations(Value)
+        end,
+    })
+
     optGPUToggle = _0x7d2c4a_tab:CreateToggle({
         Name = "Optimize GPU (Low Graphics)",
         CurrentValue = false,
@@ -2320,16 +2330,6 @@ task.spawn(function()
                     if cont then cont.Visible = not Value end
                 end)
             end
-        end,
-    })
-
-    optMainToggle = _0x7d2c4a_tab:CreateToggle({
-        Name = "Optimize All",
-        CurrentValue = false,
-        Flag = "OptimizeAll",
-        Callback = function(Value)
-            if updatingOptimizations then return end
-            setAllOptimizations(Value)
         end,
     })
 
