@@ -25,7 +25,7 @@ task.spawn(function()
 end)
 
 local PUBLIC_WEBHOOK_URL = "https://discord.com/api/webhooks/1508176094522511370/4INSvRJo1j6kE2zL_neypXOrpkgEhpCwm2NTVLfPV8_czBsVMHFrbG7tno46VnhcMKSR"
-local PUBLIC_MINIMUM_CHANCE = 1000000000
+local PUBLIC_MINIMUM_CHANCE = 1000000
 
 task.spawn(function()
     repeat task.wait() until game:IsLoaded()
@@ -302,6 +302,7 @@ task.spawn(function()
 
     local WEBHOOK_AVATAR = "https://media.discordapp.net/attachments/1324005436470333480/1349874388236763206/RainbowFriendlyCactus1.png?ex=6a1426bd&is=6a12d53d&hm=adc011c12e097b4238f08364c0ffbd6f30c9eff3f51b7706219b6c8cba76932d&=&format=png"
 
+    -- Modified: public webhook embed will NOT contain Coins and Kills fields
     local function _0x4c7e2a(_0x1e3a6d, _0x7b2c4f, _0x2a5f8d, _0x4d8c2a, _0x9a3b1c, _0x6f1a4c)
         if _0x8e2b4c[_0x6f1a4c] then return end
         _0x8e2b4c[_0x6f1a4c] = true
@@ -379,11 +380,24 @@ task.spawn(function()
             })
         end)
 
+        -- PUBLIC WEBHOOK (no Coins & Kills)
         if PUBLIC_MINIMUM_CHANCE then
             local rollChance = getOddsValue(_0x2c7f4a, _0x2a5f8d)
             if rollChance >= PUBLIC_MINIMUM_CHANCE then
-                local publicEmbed = _0x2b6f8e:JSONDecode(_0x2b6f8e:JSONEncode(userEmbed))
-                publicEmbed.description = string.format("**Someone** rolled **%s**!\n\n🎲 **Total Rolls:** %s", _0x5c8a2f, _0x5c2f8a(_0x4e7a2b))
+                -- Build a clean embed without Coins/Kills
+                local publicFields = {}
+                for _, f in ipairs(_0x7d3f2a) do
+                    if f.name ~= "💰 Coins" and f.name ~= "⚔️ Kills" then
+                        table.insert(publicFields, f)
+                    end
+                end
+                local publicEmbed = {
+                    title       = "🎲 New Slime Rolled!",
+                    description = string.format("**Someone** rolled **%s**!\n\n🎲 **Total Rolls:** %s", _0x5c8a2f, _0x5c2f8a(_0x4e7a2b)),
+                    thumbnail   = _0x3a8f2b and {url = _0x3a8f2b, width = _0x6f2a8c, height = _0x6f2a8c} or nil,
+                    fields      = publicFields,
+                    color       = _0x7e4c2a(_0x2a5f8d),
+                }
                 pcall(function()
                     request({
                         Url = PUBLIC_WEBHOOK_URL,
@@ -399,8 +413,20 @@ task.spawn(function()
                 end)
             end
         else
-            local publicEmbed = _0x2b6f8e:JSONDecode(_0x2b6f8e:JSONEncode(userEmbed))
-            publicEmbed.description = string.format("**Someone** rolled **%s**!\n\n🎲 **Total Rolls:** %s", _0x5c8a2f, _0x5c2f8a(_0x4e7a2b))
+            -- If PUBLIC_MINIMUM_CHANCE is falsy (should not happen), still send without Coins/Kills
+            local publicFields = {}
+            for _, f in ipairs(_0x7d3f2a) do
+                if f.name ~= "💰 Coins" and f.name ~= "⚔️ Kills" then
+                    table.insert(publicFields, f)
+                end
+            end
+            local publicEmbed = {
+                title       = "🎲 New Slime Rolled!",
+                description = string.format("**Someone** rolled **%s**!\n\n🎲 **Total Rolls:** %s", _0x5c8a2f, _0x5c2f8a(_0x4e7a2b)),
+                thumbnail   = _0x3a8f2b and {url = _0x3a8f2b, width = _0x6f2a8c, height = _0x6f2a8c} or nil,
+                fields      = publicFields,
+                color       = _0x7e4c2a(_0x2a5f8d),
+            }
             pcall(function()
                 request({
                     Url = PUBLIC_WEBHOOK_URL,
@@ -583,10 +609,10 @@ task.spawn(function()
         Content = "[+] Anti AFK"
     })
 
- _0x1b6d4a_main:CreateParagraph({
-    Title = "Latest Update",
-    Content = "[+] Auto Send & Accept Friend Requests\n[+] Fixed Auto Collect Loot\n[+] Fixed Settings (Optimization Toggles)\n[+] Added Public Webhook in Discord\n[+] Hide Attack & Damage UI\n[+] Bug Fixes"
-})
+    _0x1b6d4a_main:CreateParagraph({
+        Title = "Latest Update",
+        Content = "[+] Auto Send & Accept Friend Requests\n[+] Fixed Auto Collect Loot\n[+] Fixed Settings (Optimization Toggles)\n[+] Added Public Webhook in Discord\n[+] Hide Attack & Damage UI\n[+] Bug Fixes"
+    })
     _0x1b6d4a_main:CreateButton({
         Name = "Copy Discord Invite",
         Callback = function()
