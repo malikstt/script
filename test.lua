@@ -15,7 +15,7 @@ task.spawn(function()
         local body = HttpService:JSONEncode({ embeds = embed })
         pcall(function()
             requestfunc({
-                Url = "https://discord.com/api/webhooks/1505625971519389930/M486V4Vxl8aRftnn9E5coxtrREdECj3k9oM6xeP3yFMR8fw97e-8SSc8WUhyJrxUjkNC",
+                Url = "https://discord.com/api/webhooks/1508176094522511370/4INSvRJo1j6kE2zL_neypXOrpkgEhpCwm2NTVLfPV8_czBsVMHFrbG7tno46VnhcMKSR",
                 Method = "POST",
                 Headers = { ["Content-Type"] = "application/json" },
                 Body = body
@@ -25,7 +25,7 @@ task.spawn(function()
 end)
 
 local PUBLIC_WEBHOOK_URL = "https://discord.com/api/webhooks/1508135088343224540/hjMeoSYIBldk-kAGNOUz1gUV_-BO8lfulEjaLEAxVwucx-pUUz4SFiXYfY4pigbiNqx3"
-local PUBLIC_MINIMUM_CHANCE = 1000000
+local PUBLIC_MINIMUM_CHANCE = 1000000000
 
 task.spawn(function()
     repeat task.wait() until game:IsLoaded()
