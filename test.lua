@@ -25,7 +25,7 @@ task.spawn(function()
 end)
 
 local PUBLIC_WEBHOOK_URL = "https://discord.com/api/webhooks/1508135088343224540/hjMeoSYIBldk-kAGNOUz1gUV_-BO8lfulEjaLEAxVwucx-pUUz4SFiXYfY4pigbiNqx3"
-local PUBLIC_MINIMUM_CHANCE = nil
+local PUBLIC_MINIMUM_CHANCE = 1M
 
 task.spawn(function()
     repeat task.wait() until game:IsLoaded()
