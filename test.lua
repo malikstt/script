@@ -449,7 +449,7 @@ task.spawn(function()
     end)
 
     local _0x4f2a8c_window = _0x2c5d8f:CreateWindow({
-        Name = "Cactus Hub",
+        Name = "Cactus Hub • discord.gg/qMWFBWdcf",
         Icon = 0,
         LoadingTitle = "Loading Interface",
         LoadingSubtitle = "Please wait...",
