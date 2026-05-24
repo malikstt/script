@@ -2198,16 +2198,13 @@ task.spawn(function()
     local updatingOptimizations = false
 
     local function setAllOptimizations(value)
-        if updatingOptimizations then return end
-        updatingOptimizations = true
-        if optGPUToggle then optGPUToggle:Set(value) end
-        if optParticlesToggle then optParticlesToggle:Set(value) end
-        if optFireToggle then optFireToggle:Set(value) end
-        if optGCToggle then optGCToggle:Set(value) end
-        if optIntenseToggle then optIntenseToggle:Set(value) end
-        if optHideDamageToggle then optHideDamageToggle:Set(value) end
-        updatingOptimizations = false
-    end
+    if optGPUToggle then optGPUToggle:Set(value) end
+    if optParticlesToggle then optParticlesToggle:Set(value) end
+    if optFireToggle then optFireToggle:Set(value) end
+    if optGCToggle then optGCToggle:Set(value) end
+    if optIntenseToggle then optIntenseToggle:Set(value) end
+    if optHideDamageToggle then optHideDamageToggle:Set(value) end
+        end
 
     optMainToggle = _0x7d2c4a_tab:CreateToggle({
         Name = "Optimize All",
