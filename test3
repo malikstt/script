@@ -13,6 +13,9 @@ local function disableIdleConnections()
         for _, con in ipairs(connections) do
             pcall(function() con:Disable() end)
         end
+        print("[Anti-AFK] Disabled", #connections, "connections")
+    else
+        print("[Anti-AFK] Failed to get connections:", tostring(connections))
     end
 end
 disableIdleConnections()
@@ -55,12 +58,23 @@ for _, w in ipairs(weightsList) do table.insert(weights_with_all, w) end
 
 local function FireRemote(name, ...)
     local r = Network:FindFirstChild(name)
-    if r then r:FireServer(...) end
+    if r then
+        r:FireServer(...)
+        print("[Remote] Fired", name)
+    else
+        print("[Remote] Not found:", name)
+    end
 end
 
 local function InvokeRemote(name, ...)
     local r = Network:FindFirstChild(name)
-    if r then return r:InvokeServer(...) end
+    if r then
+        local result = r:InvokeServer(...)
+        print("[Remote] Invoked", name)
+        return result
+    else
+        print("[Remote] Invoke not found:", name)
+    end
 end
 
 local function expandAll(selected, fullList)
@@ -75,17 +89,25 @@ local function parseShortNumber(str)
     str = tostring(str):lower():gsub(",", ""):gsub("%s+", "")
     local suffixes = {k = 1e3, m = 1e6, b = 1e9, t = 1e12}
     local num, suf = str:match("^([%d%.]+)([kmbt]?)$")
-    if not num then return nil end
+    if not num then
+        print("[Parse] Invalid number format:", str)
+        return nil
+    end
     local val = tonumber(num)
     if not val then return nil end
     if suf and suffixes[suf] then val = val * suffixes[suf] end
+    print("[Parse]", str, "->", val)
     return val
 end
 
 local function GetPlot()
     for _, plot in ipairs(workspace.Plots:GetChildren()) do
-        if plot:GetAttribute("Owner") == lp.Name then return plot end
+        if plot:GetAttribute("Owner") == lp.Name then
+            print("[Plot] Found:", plot.Name)
+            return plot
+        end
     end
+    print("[Plot] Not found for", lp.Name)
 end
 
 local function GetSlots(plot)
@@ -99,6 +121,7 @@ local function GetSlots(plot)
         end
     end
     table.sort(slots, function(a, b) return a.num < b.num end)
+    print("[Slots] Found", #slots, "slots")
     return slots
 end
 
@@ -109,6 +132,7 @@ local function GetEmptySlots(plot)
             table.insert(empty, s.num)
         end
     end
+    print("[EmptySlots]", #empty, "empty slots")
     return empty
 end
 
@@ -119,10 +143,11 @@ local function GetBackpackTools()
     for _, t in ipairs(bp:GetChildren()) do
         if t:IsA("Tool") then table.insert(tools, t.Name) end
     end
+    print("[Backpack]", #tools, "tools")
     return tools
 end
 
--- Local config tables (runtime source of truth)
+-- Local config tables
 local collectConfig = {enabled = false, delay = 1, loop = nil}
 local slotCollect = {selected = {}, map = {}, dropdown = nil, auto = false, delay = 1, loop = nil}
 local rarityCollect = {rarities = {}, auto = false, delay = 1, loop = nil}
@@ -168,6 +193,7 @@ local function refreshSlotMaps()
     if upgradeSlots.dropdown then upgradeSlots.dropdown:Refresh(vals) end
     slotCollect.map = slotMap
     upgradeSlots.map = upgradeMap
+    print("[SlotMaps] Refreshed,", #vals, "slots")
 end
 
 local function collectFromSlot(slotNum)
@@ -186,6 +212,7 @@ local function collectFromSlot(slotNum)
         end
     end
     FireRemote("rev_B_Collect", slotNum)
+    print("[Collect] Slot", slotNum)
 end
 
 local function autoCollectLoop()
@@ -200,6 +227,7 @@ local function autoCollectLoop()
         end
         task.wait(collectConfig.delay)
     end
+    print("[AutoCollect] Loop ended")
 end
 
 local function autoSlotCollectLoop()
@@ -207,6 +235,7 @@ local function autoSlotCollectLoop()
         for _, n in ipairs(slotCollect.selected) do collectFromSlot(n) end
         task.wait(slotCollect.delay)
     end
+    print("[SlotCollect] Loop ended")
 end
 
 local function autoRarityCollectLoop()
@@ -228,6 +257,7 @@ local function autoRarityCollectLoop()
         end
         task.wait(rarityCollect.delay)
     end
+    print("[RarityCollect] Loop ended")
 end
 
 local function autoPlaceLoop()
@@ -255,12 +285,14 @@ local function autoPlaceLoop()
                         task.wait(0.2)
                         FireRemote("rev_Shop_Buy", "WeightShop", toolName)
                         task.wait(placeConfig.delay)
+                        print("[AutoPlace] Placed", toolName)
                     end
                 end
             end
         end
         task.wait(1)
     end
+    print("[AutoPlace] Loop ended")
 end
 
 local function autoRemoveLoop()
@@ -286,12 +318,14 @@ local function autoRemoveLoop()
                     if matched then
                         FireRemote("rev_S_Interact", slot.num)
                         task.wait(removeConfig.delay)
+                        print("[AutoRemove] Removed from slot", slot.num, "ID:", id)
                     end
                 end
             end
         end
         task.wait(1)
     end
+    print("[AutoRemove] Loop ended")
 end
 
 local function autoKickLoop()
@@ -308,9 +342,16 @@ local function autoKickLoop()
         local level = 1
         local ls = lp:FindFirstChild("leaderstats")
         if ls and ls:FindFirstChild("KickLevel") then level = ls.KickLevel.Value end
-        pcall(function() Network:WaitForChild("rev_KickEvent"):FireServer(scale, level) end)
+        print("[AutoKick] scale=", scale, "level=", level)
+        local success, err = pcall(function()
+            Network:WaitForChild("rev_KickEvent"):FireServer(scale, level)
+        end)
+        if success then print("[AutoKick] rev_KickEvent fired") else print("[AutoKick] rev_KickEvent error:", err) end
         task.wait(0.3)
-        pcall(function() Network:WaitForChild("rev_Transformed"):FireServer() end)
+        success, err = pcall(function()
+            Network:WaitForChild("rev_Transformed"):FireServer()
+        end)
+        if success then print("[AutoKick] rev_Transformed fired") else print("[AutoKick] rev_Transformed error:", err) end
         task.wait(0.1)
         local char = lp.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -319,9 +360,10 @@ local function autoKickLoop()
             hum.WalkSpeed = 80
             hum:MoveTo(safe.Position)
             hum.MoveToFinished:Wait()
+            print("[AutoKick] Moved to Safe")
         end
-        task.wait(0.5)
     end
+    print("[AutoKick] Loop ended")
 end
 
 local function sellByRarityLoop()
@@ -338,6 +380,7 @@ local function sellByRarityLoop()
                                 hum:EquipTool(tool) task.wait(0.2)
                                 InvokeRemote("ref_B_Sell") task.wait(0.2)
                                 hum:UnequipTools()
+                                print("[SellRarity] Sold", toolName)
                             end
                             break
                         end
@@ -347,6 +390,7 @@ local function sellByRarityLoop()
         end
         task.wait(sellRarity.delay)
     end
+    print("[SellRarity] Loop ended")
 end
 
 local function sellSpecificLoop()
@@ -362,6 +406,7 @@ local function sellSpecificLoop()
                             hum:EquipTool(tool) task.wait(0.2)
                             InvokeRemote("ref_B_Sell") task.wait(0.2)
                             hum:UnequipTools()
+                            print("[SellSpecific] Sold", toolName)
                         end
                         break
                     end
@@ -370,6 +415,7 @@ local function sellSpecificLoop()
         end
         task.wait(sellSpecific.delay)
     end
+    print("[SellSpecific] Loop ended")
 end
 
 local function sellByMutationLoop()
@@ -387,6 +433,7 @@ local function sellByMutationLoop()
                                 hum:EquipTool(tool) task.wait(0.2)
                                 InvokeRemote("ref_B_Sell") task.wait(0.2)
                                 hum:UnequipTools()
+                                print("[SellMutation] Sold", toolName, "mutation:", mut)
                             end
                             break
                         end
@@ -396,12 +443,14 @@ local function sellByMutationLoop()
         end
         task.wait(sellMutation.delay)
     end
+    print("[SellMutation] Loop ended")
 end
 
 local function upgradeSelectedSlots()
     for _, n in ipairs(upgradeSlots.selected) do
         FireRemote("rev_B_Upgrade", n)
         task.wait(0.1)
+        print("[UpgradeSlots] Upgraded slot", n)
     end
 end
 
@@ -419,7 +468,9 @@ local function upgradeRarityLoop()
                             for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
                                 if id == bname then
                                     FireRemote("rev_B_Upgrade", slot.num)
-                                    task.wait(0.1) break
+                                    task.wait(0.1)
+                                    print("[UpgradeRarity] Upgraded slot", slot.num, "ID:", id)
+                                    break
                                 end
                             end
                         end
@@ -429,6 +480,7 @@ local function upgradeRarityLoop()
         end
         task.wait(0.15)
     end
+    print("[UpgradeRarity] Loop ended")
 end
 
 local requestFunc
@@ -436,6 +488,7 @@ if syn and syn.request then requestFunc = syn.request
 elseif http and http.request then requestFunc = http.request
 elseif http_request then requestFunc = http_request
 else requestFunc = nil end
+print("[HTTP] Request function:", requestFunc and "available" or "nil")
 
 local function formatChance(chancePercent)
     if not chancePercent or chancePercent <= 0 then return "Unknown" end
@@ -448,14 +501,19 @@ local function formatChance(chancePercent)
 end
 
 local function findRarityFromName(itemName)
-    if not RarityData.BrainrotPool then return "Unknown" end
+    if not RarityData.BrainrotPool then
+        print("[Rarity] No BrainrotPool")
+        return "Unknown"
+    end
     for rarity, pool in pairs(RarityData.BrainrotPool) do
         for _, entry in ipairs(pool) do
             if entry.Name == itemName then
+                print("[Rarity] Found", itemName, "->", rarity)
                 return rarity
             end
         end
     end
+    print("[Rarity] Not found:", itemName, "-> Unknown")
     return "Unknown"
 end
 
@@ -493,31 +551,60 @@ local function getBrainrotInfo(bname, forcedRarity)
         if type(img) == "string" then assetId = tonumber(img:match("rbxassetid://(%d+)")) end
     end
 
+    print("[BrainrotInfo]", bname, "rarity=", rarity, "chance=", chance, "speed=", speed)
     return {rarity = rarity, chance = chance, chanceFormatted = formatChance(chance), color = color, speed = speed, assetId = assetId}
 end
 
 local function getThumbnail(assetId)
-    if not assetId or not requestFunc then return nil end
+    if not assetId or not requestFunc then
+        print("[Thumbnail] Skipped, no assetId or requestFunc")
+        return nil
+    end
+    local url = ("https://thumbnails.roblox.com/v1/assets?assetIds=%d&size=420x420&format=Png"):format(assetId)
+    print("[Thumbnail] Fetching", url)
     local ok, res = pcall(requestFunc, {
-        Url = ("https://thumbnails.roblox.com/v1/assets?assetIds=%d&size=420x420&format=Png"):format(assetId),
+        Url = url,
         Method = "GET",
     })
     if ok and res and res.Success then
         local ok2, data = pcall(function() return HttpSvc:JSONDecode(res.Body) end)
         if ok2 and data and data.data and data.data[1] then
-            return data.data[1].imageUrl
+            local imgUrl = data.data[1].imageUrl
+            print("[Thumbnail] Success:", imgUrl)
+            return imgUrl
+        else
+            print("[Thumbnail] Failed to decode response")
         end
+    else
+        print("[Thumbnail] Request failed:", ok, res)
     end
+    return nil
 end
 
 local function sendWebhook(bname, mutation, earnedValue, forcedRarity)
-    if not WH.enabled or WH.url == "" then return end
-    if not requestFunc then return end
+    print("[Webhook] Called for", bname, "mutation:", mutation, "earned:", earnedValue, "forcedRarity:", forcedRarity)
+    if not WH.enabled then
+        print("[Webhook] Skipped: not enabled")
+        return
+    end
+    if WH.url == "" then
+        print("[Webhook] Skipped: no URL")
+        return
+    end
+    if not requestFunc then
+        print("[Webhook] Skipped: no requestFunc")
+        return
+    end
 
     mutation = mutation or "None"
-
-    if WH.mode == "MutatedOnly" and (mutation == "None" or mutation == "") then return end
-    if WH.minEarn and earnedValue and earnedValue < WH.minEarn then return end
+    if WH.mode == "MutatedOnly" and (mutation == "None" or mutation == "") then
+        print("[Webhook] Skipped: MutatedOnly filter, mutation=", mutation)
+        return
+    end
+    if WH.minEarn and earnedValue and earnedValue < WH.minEarn then
+        print("[Webhook] Skipped: minEarn filter, earned=", earnedValue, "min=", WH.minEarn)
+        return
+    end
 
     local info = getBrainrotInfo(bname, forcedRarity)
 
@@ -525,19 +612,28 @@ local function sendWebhook(bname, mutation, earnedValue, forcedRarity)
         local rars = expandAll(WH.rarities, raritiesList)
         local ok = false
         for _, r in ipairs(rars) do if r == info.rarity then ok = true break end end
-        if not ok then return end
+        if not ok then
+            print("[Webhook] Skipped: RarityOnly filter, rarity=", info.rarity)
+            return
+        end
     end
     if #WH.mutations > 0 then
         local muts = expandAll(WH.mutations, mutationsList)
         local ok = false
         for _, m in ipairs(muts) do if m == mutation then ok = true break end end
-        if not ok then return end
+        if not ok then
+            print("[Webhook] Skipped: Mutation filter, mutation=", mutation)
+            return
+        end
     end
     if #WH.specifics > 0 then
         local specs = expandAll(WH.specifics, allBrainrots)
         local ok = false
         for _, s in ipairs(specs) do if s == bname then ok = true break end end
-        if not ok then return end
+        if not ok then
+            print("[Webhook] Skipped: Specific filter, brainrot=", bname)
+            return
+        end
     end
 
     local mutationText = ""
@@ -572,21 +668,29 @@ local function sendWebhook(bname, mutation, earnedValue, forcedRarity)
     if WH.pingUID ~= "" then payload.content = "<@" .. WH.pingUID .. ">" end
 
     task.spawn(function()
-        pcall(requestFunc, {
+        local ok, res = pcall(requestFunc, {
             Url = WH.url,
             Method = "POST",
             Headers = {["Content-Type"] = "application/json"},
             Body = HttpSvc:JSONEncode(payload),
         })
+        if ok then
+            print("[Webhook] Sent successfully, response body:", res and res.Body or "nil")
+        else
+            print("[Webhook] Failed to send:", res)
+        end
     end)
 end
 
 local function sendTestWebhook()
+    print("[TestWebhook] Called")
     if not WH.enabled or WH.url == "" then
+        print("[TestWebhook] Not enabled or no URL")
         Rayfield:Notify({Title = "Webhook", Content = "Enable webhook and enter a URL first.", Duration = 3})
         return
     end
     if not requestFunc then
+        print("[TestWebhook] No HTTP function")
         Rayfield:Notify({Title = "Webhook", Content = "No HTTP function available.", Duration = 4})
         return
     end
@@ -603,14 +707,19 @@ local function sendTestWebhook()
     }
     if WH.pingUID ~= "" then payload.content = "<@" .. WH.pingUID .. ">" end
     task.spawn(function()
-        local ok, err = pcall(requestFunc, {
+        local ok, res = pcall(requestFunc, {
             Url = WH.url,
             Method = "POST",
             Headers = {["Content-Type"] = "application/json"},
             Body = HttpSvc:JSONEncode(payload),
         })
-        if ok then Rayfield:Notify({Title = "Webhook", Content = "Test ping sent!", Duration = 3})
-        else Rayfield:Notify({Title = "Error", Content = tostring(err), Duration = 5}) end
+        if ok then
+            print("[TestWebhook] Sent, response:", res and res.Body or "nil")
+            Rayfield:Notify({Title = "Webhook", Content = "Test ping sent!", Duration = 3})
+        else
+            print("[TestWebhook] Error:", res)
+            Rayfield:Notify({Title = "Error", Content = tostring(res), Duration = 5})
+        end
     end)
 end
 
@@ -620,6 +729,7 @@ lp.Backpack.ChildAdded:Connect(function(tool)
     local mutation = tool:GetAttribute("Mutation") or "None"
     local brainrotName = tool.Name
     local webhookRarity = findRarityFromName(brainrotName)
+    print("[Backpack] New tool:", brainrotName, "mutation:", mutation, "rarity:", webhookRarity)
     sendWebhook(brainrotName, mutation, nil, webhookRarity)
 end)
 
@@ -689,13 +799,13 @@ farmingTab:CreateDropdown({
     Options = {"custom", "50-60", "60-70", "70-80", "80-90", "90-100"},
     CurrentOption = "custom",
     Flag = "KickMode",
-    Callback = function(opt) kickConfig.mode = opt end,
+    Callback = function(opt) kickConfig.mode = opt print("[KickMode] Set to", opt) end,
 })
 farmingTab:CreateSlider({
     Name = "Custom Kick Accuracy", Range = {0, 100}, Increment = 1, Suffix = "%",
     CurrentValue = 99,
     Flag = "CustomKickAccuracy",
-    Callback = function(v) kickConfig.scale = v / 100 end,
+    Callback = function(v) kickConfig.scale = v / 100 print("[CustomKick] Set to", v, "%") end,
 })
 farmingTab:CreateParagraph({
     Title = "⚠️ WARNING",
@@ -706,6 +816,7 @@ farmingTab:CreateToggle({
     Flag = "AutoFarm",
     Callback = function(v)
         kickConfig.running = v
+        print("[AutoFarm] Toggled", v)
         if v then
             if kickConfig.loop then task.cancel(kickConfig.loop) end
             kickConfig.loop = task.spawn(autoKickLoop)
@@ -719,24 +830,25 @@ farmingTab:CreateSection("Auto Place")
 farmingTab:CreateDropdown({
     Name = "Specific Brainrots", Options = brainrots_with_all, Multi = true,
     Flag = "PlaceSpecificBrainrots",
-    Callback = function(sel) placeConfig.specifics = sel end,
+    Callback = function(sel) placeConfig.specifics = sel print("[PlaceSpecific] Selected", #sel, "items") end,
 })
 farmingTab:CreateDropdown({
     Name = "Rarities", Options = rarities_with_all, Multi = true,
     Flag = "PlaceRarities",
-    Callback = function(sel) placeConfig.rarities = sel end,
+    Callback = function(sel) placeConfig.rarities = sel print("[PlaceRarities] Selected", #sel, "rarities") end,
 })
 farmingTab:CreateSlider({
     Name = "Place Delay", Range = {0.1, 5}, Increment = 0.1, Suffix = "s",
     CurrentValue = 0.5,
     Flag = "PlaceDelay",
-    Callback = function(v) placeConfig.delay = v end,
+    Callback = function(v) placeConfig.delay = v print("[PlaceDelay] Set to", v) end,
 })
 farmingTab:CreateToggle({
     Name = "Auto Place", CurrentValue = false,
     Flag = "AutoPlace",
     Callback = function(v)
         placeConfig.auto = v
+        print("[AutoPlace] Toggled", v)
         if v then
             if placeConfig.loop then task.cancel(placeConfig.loop) end
             placeConfig.loop = task.spawn(autoPlaceLoop)
@@ -750,24 +862,25 @@ farmingTab:CreateSection("Auto Remove")
 farmingTab:CreateDropdown({
     Name = "Specific Brainrots", Options = brainrots_with_all, Multi = true,
     Flag = "RemoveSpecificBrainrots",
-    Callback = function(sel) removeConfig.specifics = sel end,
+    Callback = function(sel) removeConfig.specifics = sel print("[RemoveSpecific] Selected", #sel, "items") end,
 })
 farmingTab:CreateDropdown({
     Name = "Rarities", Options = rarities_with_all, Multi = true,
     Flag = "RemoveRarities",
-    Callback = function(sel) removeConfig.rarities = sel end,
+    Callback = function(sel) removeConfig.rarities = sel print("[RemoveRarities] Selected", #sel, "rarities") end,
 })
 farmingTab:CreateSlider({
     Name = "Remove Delay", Range = {0.1, 5}, Increment = 0.1, Suffix = "s",
     CurrentValue = 0.5,
     Flag = "RemoveDelay",
-    Callback = function(v) removeConfig.delay = v end,
+    Callback = function(v) removeConfig.delay = v print("[RemoveDelay] Set to", v) end,
 })
 farmingTab:CreateToggle({
     Name = "Auto Remove", CurrentValue = false,
     Flag = "AutoRemove",
     Callback = function(v)
         removeConfig.auto = v
+        print("[AutoRemove] Toggled", v)
         if v then
             if removeConfig.loop then task.cancel(removeConfig.loop) end
             removeConfig.loop = task.spawn(autoRemoveLoop)
@@ -785,6 +898,7 @@ bcTab:CreateToggle({
     Flag = "AutoCollectAllSlots",
     Callback = function(v)
         collectConfig.enabled = v
+        print("[AutoCollectAll] Toggled", v)
         if v then
             if collectConfig.loop then task.cancel(collectConfig.loop) end
             collectConfig.loop = task.spawn(autoCollectLoop)
@@ -797,7 +911,7 @@ bcTab:CreateSlider({
     Name = "Collect Interval", Range = {0.1, 10}, Increment = 0.1, Suffix = "s",
     CurrentValue = 1,
     Flag = "CollectInterval",
-    Callback = function(v) collectConfig.delay = v end,
+    Callback = function(v) collectConfig.delay = v print("[CollectInterval] Set to", v) end,
 })
 
 bcTab:CreateSection("Collect by Slot")
@@ -815,6 +929,7 @@ slotCollect.dropdown = bcTab:CreateDropdown({
             if slotCollect.map[lbl] then table.insert(nums, slotCollect.map[lbl]) end
         end
         slotCollect.selected = nums
+        print("[SlotCollectSelected] Selected", #nums, "slots")
     end,
 })
 bcTab:CreateToggle({
@@ -822,6 +937,7 @@ bcTab:CreateToggle({
     Flag = "AutoCollectSelectedSlots",
     Callback = function(v)
         slotCollect.auto = v
+        print("[AutoCollectSelected] Toggled", v)
         if v then
             if slotCollect.loop then task.cancel(slotCollect.loop) end
             slotCollect.loop = task.spawn(autoSlotCollectLoop)
@@ -834,20 +950,21 @@ bcTab:CreateSlider({
     Name = "Slot Collect Interval", Range = {0.1, 10}, Increment = 0.1, Suffix = "s",
     CurrentValue = 1,
     Flag = "SlotCollectInterval",
-    Callback = function(v) slotCollect.delay = v end,
+    Callback = function(v) slotCollect.delay = v print("[SlotCollectInterval] Set to", v) end,
 })
 
 bcTab:CreateSection("Collect by Rarity")
 bcTab:CreateDropdown({
     Name = "Select Rarities", Options = rarities_with_all, Multi = true,
     Flag = "CollectRarities",
-    Callback = function(sel) rarityCollect.rarities = sel end,
+    Callback = function(sel) rarityCollect.rarities = sel print("[CollectRarities] Selected", #sel, "rarities") end,
 })
 bcTab:CreateToggle({
     Name = "Auto Collect by Rarity", CurrentValue = false,
     Flag = "AutoCollectByRarity",
     Callback = function(v)
         rarityCollect.auto = v
+        print("[AutoCollectByRarity] Toggled", v)
         if v then
             if rarityCollect.loop then task.cancel(rarityCollect.loop) end
             rarityCollect.loop = task.spawn(autoRarityCollectLoop)
@@ -860,7 +977,7 @@ bcTab:CreateSlider({
     Name = "Rarity Collect Interval", Range = {0.1, 10}, Increment = 0.1, Suffix = "s",
     CurrentValue = 1,
     Flag = "RarityCollectInterval",
-    Callback = function(v) rarityCollect.delay = v end,
+    Callback = function(v) rarityCollect.delay = v print("[RarityCollectInterval] Set to", v) end,
 })
 
 bcTab:CreateSection("Quick Sell")
@@ -870,26 +987,34 @@ bcTab:CreateButton({
     Callback = function()
         local char = lp.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if hum then hum:UnequipTools() task.wait(0.2) FireRemote("rev_S_Interact", 1) end
+        if hum then
+            hum:UnequipTools() task.wait(0.2)
+            FireRemote("rev_S_Interact", 1)
+            print("[SellEquipped] Executed")
+        end
     end,
 })
 bcTab:CreateButton({
     Name = "Sell All Brainrots",
     Flag = "SellAllBrainrots",
-    Callback = function() InvokeRemote("ref_B_SellAll") end,
+    Callback = function()
+        InvokeRemote("ref_B_SellAll")
+        print("[SellAll] Executed")
+    end,
 })
 
 bcTab:CreateSection("Sell by Rarity")
 bcTab:CreateDropdown({
     Name = "Select Rarities", Options = rarities_with_all, Multi = true,
     Flag = "SellRarities",
-    Callback = function(sel) sellRarity.rarities = sel end,
+    Callback = function(sel) sellRarity.rarities = sel print("[SellRarities] Selected", #sel, "rarities") end,
 })
 bcTab:CreateToggle({
     Name = "Auto Sell by Rarity", CurrentValue = false,
     Flag = "AutoSellByRarity",
     Callback = function(v)
         sellRarity.auto = v
+        print("[AutoSellByRarity] Toggled", v)
         if v then
             if sellRarity.loop then task.cancel(sellRarity.loop) end
             sellRarity.loop = task.spawn(sellByRarityLoop)
@@ -902,20 +1027,21 @@ bcTab:CreateSlider({
     Name = "Sell Interval", Range = {1, 60}, Increment = 1, Suffix = "s",
     CurrentValue = 5,
     Flag = "SellRarityInterval",
-    Callback = function(v) sellRarity.delay = v end,
+    Callback = function(v) sellRarity.delay = v print("[SellRarityInterval] Set to", v) end,
 })
 
 bcTab:CreateSection("Sell Specific")
 bcTab:CreateDropdown({
     Name = "Select Brainrots", Options = brainrots_with_all, Multi = true,
     Flag = "SellSpecificBrainrots",
-    Callback = function(sel) sellSpecific.targets = sel end,
+    Callback = function(sel) sellSpecific.targets = sel print("[SellSpecific] Selected", #sel, "brainrots") end,
 })
 bcTab:CreateToggle({
     Name = "Auto Sell Specific", CurrentValue = false,
     Flag = "AutoSellSpecific",
     Callback = function(v)
         sellSpecific.auto = v
+        print("[AutoSellSpecific] Toggled", v)
         if v then
             if sellSpecific.loop then task.cancel(sellSpecific.loop) end
             sellSpecific.loop = task.spawn(sellSpecificLoop)
@@ -928,20 +1054,21 @@ bcTab:CreateSlider({
     Name = "Sell Interval", Range = {1, 60}, Increment = 1, Suffix = "s",
     CurrentValue = 5,
     Flag = "SellSpecificInterval",
-    Callback = function(v) sellSpecific.delay = v end,
+    Callback = function(v) sellSpecific.delay = v print("[SellSpecificInterval] Set to", v) end,
 })
 
 bcTab:CreateSection("Sell by Mutation")
 bcTab:CreateDropdown({
     Name = "Select Mutations", Options = mutations_with_all, Multi = true,
     Flag = "SellMutations",
-    Callback = function(sel) sellMutation.mutations = sel end,
+    Callback = function(sel) sellMutation.mutations = sel print("[SellMutations] Selected", #sel, "mutations") end,
 })
 bcTab:CreateToggle({
     Name = "Auto Sell by Mutation", CurrentValue = false,
     Flag = "AutoSellByMutation",
     Callback = function(v)
         sellMutation.auto = v
+        print("[AutoSellByMutation] Toggled", v)
         if v then
             if sellMutation.loop then task.cancel(sellMutation.loop) end
             sellMutation.loop = task.spawn(sellByMutationLoop)
@@ -954,7 +1081,7 @@ bcTab:CreateSlider({
     Name = "Sell Interval", Range = {1, 60}, Increment = 1, Suffix = "s",
     CurrentValue = 5,
     Flag = "SellMutationInterval",
-    Callback = function(v) sellMutation.delay = v end,
+    Callback = function(v) sellMutation.delay = v print("[SellMutationInterval] Set to", v) end,
 })
 
 local miscTab = Window:CreateTab("Misc", 135748283315148)
@@ -964,17 +1091,21 @@ miscTab:CreateSlider({
     Name = "Amount to Buy", Range = {1, 50}, Increment = 1, Suffix = "x",
     CurrentValue = 1,
     Flag = "SpeedAmount",
-    Callback = function(v) shopSpeed.amount = v end,
+    Callback = function(v) shopSpeed.amount = v print("[SpeedAmount] Set to", v) end,
 })
 miscTab:CreateToggle({
     Name = "Auto Buy Speed", CurrentValue = false,
     Flag = "AutoBuySpeed",
     Callback = function(v)
         shopSpeed.auto = v
+        print("[AutoBuySpeed] Toggled", v)
         if v then
             if shopSpeed.loop then task.cancel(shopSpeed.loop) end
             shopSpeed.loop = task.spawn(function()
-                while shopSpeed.auto do FireRemote("rev_SPEED_UPGRADE", shopSpeed.amount) task.wait(1) end
+                while shopSpeed.auto do
+                    FireRemote("rev_SPEED_UPGRADE", shopSpeed.amount)
+                    task.wait(1)
+                end
             end)
         else
             if shopSpeed.loop then task.cancel(shopSpeed.loop) shopSpeed.loop = nil end
@@ -986,19 +1117,21 @@ miscTab:CreateSection("Shop - Weights")
 miscTab:CreateDropdown({
     Name = "Select Weights", Options = weights_with_all, Multi = true,
     Flag = "AutoBuyWeightsList",
-    Callback = function(sel) shopWeights.selected = sel end,
+    Callback = function(sel) shopWeights.selected = sel print("[AutoBuyWeightsList] Selected", #sel, "weights") end,
 })
 miscTab:CreateToggle({
     Name = "Auto Buy Weights", CurrentValue = false,
     Flag = "AutoBuyWeights",
     Callback = function(v)
         shopWeights.auto = v
+        print("[AutoBuyWeights] Toggled", v)
         if v then
             if shopWeights.loop then task.cancel(shopWeights.loop) end
             shopWeights.loop = task.spawn(function()
                 while shopWeights.auto do
                     for _, w in ipairs(expandAll(shopWeights.selected, weightsList)) do
-                        FireRemote("rev_Shop_Buy", "WeightShop", w) task.wait(0.1)
+                        FireRemote("rev_Shop_Buy", "WeightShop", w)
+                        task.wait(0.1)
                     end
                     task.wait(1)
                 end
@@ -1015,10 +1148,14 @@ miscTab:CreateToggle({
     Flag = "AutoBuySlots",
     Callback = function(v)
         shopSlots.auto = v
+        print("[AutoBuySlots] Toggled", v)
         if v then
             if shopSlots.loop then task.cancel(shopSlots.loop) end
             shopSlots.loop = task.spawn(function()
-                while shopSlots.auto do FireRemote("rev_bs_upgrade") task.wait(1) end
+                while shopSlots.auto do
+                    FireRemote("rev_bs_upgrade")
+                    task.wait(1)
+                end
             end)
         else
             if shopSlots.loop then task.cancel(shopSlots.loop) shopSlots.loop = nil end
@@ -1030,10 +1167,14 @@ miscTab:CreateToggle({
     Flag = "AutoRebirth",
     Callback = function(v)
         shopRebirth.auto = v
+        print("[AutoRebirth] Toggled", v)
         if v then
             if shopRebirth.loop then task.cancel(shopRebirth.loop) end
             shopRebirth.loop = task.spawn(function()
-                while shopRebirth.auto do FireRemote("rev_RebirthRequest") task.wait(1) end
+                while shopRebirth.auto do
+                    FireRemote("rev_RebirthRequest")
+                    task.wait(1)
+                end
             end)
         else
             if shopRebirth.loop then task.cancel(shopRebirth.loop) shopRebirth.loop = nil end
@@ -1056,6 +1197,7 @@ upgradeSlots.dropdown = miscTab:CreateDropdown({
             if upgradeSlots.map[lbl] then table.insert(nums, upgradeSlots.map[lbl]) end
         end
         upgradeSlots.selected = nums
+        print("[UpgradeSlotsSelected] Selected", #nums, "slots")
     end,
 })
 miscTab:CreateToggle({
@@ -1063,10 +1205,14 @@ miscTab:CreateToggle({
     Flag = "AutoUpgradeSelectedSlots",
     Callback = function(v)
         upgradeSlots.auto = v
+        print("[AutoUpgradeSelected] Toggled", v)
         if v then
             if upgradeSlots.loop then task.cancel(upgradeSlots.loop) end
             upgradeSlots.loop = task.spawn(function()
-                while upgradeSlots.auto do upgradeSelectedSlots() task.wait(0.15) end
+                while upgradeSlots.auto do
+                    upgradeSelectedSlots()
+                    task.wait(0.15)
+                end
             end)
         else
             if upgradeSlots.loop then task.cancel(upgradeSlots.loop) upgradeSlots.loop = nil end
@@ -1076,13 +1222,14 @@ miscTab:CreateToggle({
 miscTab:CreateDropdown({
     Name = "Upgrade by Rarity", Options = rarities_with_all, Multi = true,
     Flag = "UpgradeRarities",
-    Callback = function(sel) upgradeRarity.rarities = sel end,
+    Callback = function(sel) upgradeRarity.rarities = sel print("[UpgradeRarities] Selected", #sel, "rarities") end,
 })
 miscTab:CreateToggle({
     Name = "Auto Upgrade by Rarity", CurrentValue = false,
     Flag = "AutoUpgradeByRarity",
     Callback = function(v)
         upgradeRarity.auto = v
+        print("[AutoUpgradeByRarity] Toggled", v)
         if v then
             if upgradeRarity.loop then task.cancel(upgradeRarity.loop) end
             upgradeRarity.loop = task.spawn(upgradeRarityLoop)
@@ -1100,14 +1247,14 @@ webhookTab:CreateInput({
     CurrentValue = "",
     PlaceholderText = "https://discord.com/api/webhooks/...",
     Flag = "WebhookURL",
-    Callback = function(text) WH.url = text end,
+    Callback = function(text) WH.url = text print("[WebhookURL] Set") end,
 })
 webhookTab:CreateInput({
     Name = "Ping User ID",
     CurrentValue = "",
     PlaceholderText = "e.g. 123456789012345678",
     Flag = "PingUserID",
-    Callback = function(text) WH.pingUID = text or "" end,
+    Callback = function(text) WH.pingUID = text or "" print("[PingUserID] Set") end,
 })
 webhookTab:CreateInput({
     Name = "Min Earn",
@@ -1115,12 +1262,17 @@ webhookTab:CreateInput({
     PlaceholderText = "1m, 500k, 1b, blank = off",
     Flag = "MinEarn",
     Callback = function(text)
-        if text == nil or text == "" then WH.minEarn = nil
+        if text == nil or text == "" then
+            WH.minEarn = nil
+            print("[MinEarn] Disabled")
         else
             local val = parseShortNumber(text)
             WH.minEarn = val
             if not val then
                 Rayfield:Notify({Title = "Webhook", Content = "Invalid number format", Duration = 3})
+                print("[MinEarn] Invalid format:", text)
+            else
+                print("[MinEarn] Set to", val)
             end
         end
     end,
@@ -1129,7 +1281,7 @@ webhookTab:CreateToggle({
     Name = "Enable Discord Webhook",
     CurrentValue = false,
     Flag = "EnableDiscordWebhook",
-    Callback = function(v) WH.enabled = v end,
+    Callback = function(v) WH.enabled = v print("[WebhookEnabled] Set to", v) end,
 })
 webhookTab:CreateButton({
     Name = "Send Test Ping",
@@ -1143,29 +1295,30 @@ webhookTab:CreateDropdown({
     Options = {"All", "MutatedOnly", "RarityOnly"},
     CurrentOption = "All",
     Flag = "SendMode",
-    Callback = function(opt) WH.mode = opt end,
+    Callback = function(opt) WH.mode = opt print("[SendMode] Set to", opt) end,
 })
 webhookTab:CreateDropdown({
     Name = "Rarity Filter",
     Options = rarities_with_all,
     Multi = true,
     Flag = "RarityFilter",
-    Callback = function(sel) WH.rarities = sel end,
+    Callback = function(sel) WH.rarities = sel print("[RarityFilter] Selected", #sel, "rarities") end,
 })
 webhookTab:CreateDropdown({
     Name = "Mutation Filter",
     Options = mutations_with_all,
     Multi = true,
     Flag = "MutationFilter",
-    Callback = function(sel) WH.mutations = sel end,
+    Callback = function(sel) WH.mutations = sel print("[MutationFilter] Selected", #sel, "mutations") end,
 })
 webhookTab:CreateDropdown({
     Name = "Specific Brainrot Filter",
     Options = brainrots_with_all,
     Multi = true,
     Flag = "SpecificBrainrotFilter",
-    Callback = function(sel) WH.specifics = sel end,
+    Callback = function(sel) WH.specifics = sel print("[SpecificFilter] Selected", #sel, "brainrots") end,
 })
 
 refreshSlotMaps()
 Rayfield:Notify({Title = "Cactus Hub", Content = "Loaded! Join discord.gg/qMWFBWdcf", Duration = 4})
+print("[Cactus Hub] Script fully loaded")
