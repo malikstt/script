@@ -14,34 +14,38 @@ local RarityData = require(RS.Shared.Data.RarityData)
 local EntitiesData = require(RS.Shared.Data.EntitiesData)
 local MutationData = require(RS.Shared.Data.MutationData)
 local WeightsData = require(RS.Shared.Data.WeightsData)
+local WaveData = require(RS.Shared.Data.WaveData).Waves
 
 local raritiesList = RarityData.Order
+local rarities_with_all = {"All"}
+for _, r in ipairs(raritiesList) do table.insert(rarities_with_all, r) end
 
 local mutationsList = {"None"}
 for _, mut in ipairs(MutationData.ValidMutations) do
     table.insert(mutationsList, mut)
 end
+local mutations_with_all = {"All"}
+for _, m in ipairs(mutationsList) do table.insert(mutations_with_all, m) end
 
 local brainrotsByRarity = {}
 local allBrainrots = {}
 for name, data in pairs(EntitiesData.Brainrots) do
     local rarity = data.Rarity
     if not brainrotsByRarity[rarity] then
-        brainrotsByRarity[rarity] = {}
-    end
+        brainrotsByRarity[rarity] = {} end
     table.insert(brainrotsByRarity[rarity], name)
     table.insert(allBrainrots, name)
 end
-for _, list in pairs(brainrotsByRarity) do
-    table.sort(list)
-end
+for _, list in pairs(brainrotsByRarity) do table.sort(list) end
 table.sort(allBrainrots)
+local brainrots_with_all = {"All"}
+for _, b in ipairs(allBrainrots) do table.insert(brainrots_with_all, b) end
 
 local weightsList = {}
-for name in pairs(WeightsData.Weights) do
-    table.insert(weightsList, name)
-end
+for name in pairs(WeightsData.Weights) do table.insert(weightsList, name) end
 table.sort(weightsList)
+local weights_with_all = {"All"}
+for _, w in ipairs(weightsList) do table.insert(weights_with_all, w) end
 
 local function FireRemote(name, ...)
     local remote = Network:FindFirstChild(name)
@@ -95,6 +99,25 @@ local function GetBackpackTools()
     return tools
 end
 
+local function expandAll(selected, fullList)
+    for _, v in ipairs(selected) do
+        if v == "All" then return fullList end
+    end
+    return selected
+end
+
+local function parseShortNumber(str)
+    if not str or str == "" then return nil end
+    str = tostring(str):lower():gsub(",", ""):gsub("%s", "")
+    local suffixes = {k=1e3, m=1e6, b=1e9, t=1e12}
+    local num, suffix = str:match("^([%d%.]+)([kmbt]?)$")
+    if not num then return nil end
+    local val = tonumber(num)
+    if not val then return nil end
+    if suffix and suffixes[suffix] then val = val * suffixes[suffix] end
+    return val
+end
+
 local collectConfig = { enabled = false, delay = 1, loop = nil }
 local slotCollect = { selected = {}, map = {}, dropdown = nil, auto = false, delay = 1, loop = nil }
 local rarityCollect = { rarities = {}, auto = false, delay = 1, loop = nil }
@@ -111,17 +134,18 @@ local shopSpeed = { amount = 1, auto = false, loop = nil }
 local shopWeights = { selected = {}, auto = false, loop = nil }
 local shopSlots = { auto = false, loop = nil }
 local shopRebirth = { auto = false, loop = nil }
+
 _G.NX_WebhookURL = ""
 _G.NX_WebhookOn = false
+_G.NX_WH_Mode = "All"
 _G.NX_WH_Rarities = {}
 _G.NX_WH_Mutations = {}
 _G.NX_WH_Specifics = {}
+_G.NX_WH_MinChange = nil
+_G.NX_WH_PingUID = ""
 
 local enabledFeatures = {}
-
-local function setFeature(name, state)
-    enabledFeatures[name] = state
-end
+local function setFeature(name, state) enabledFeatures[name] = state end
 
 local function refreshSlotMaps()
     local plot = GetPlot()
@@ -176,9 +200,7 @@ end
 
 local function autoSlotCollectLoop()
     while slotCollect.auto do
-        for _, slotNum in ipairs(slotCollect.selected) do
-            collectFromSlot(slotNum)
-        end
+        for _, slotNum in ipairs(slotCollect.selected) do collectFromSlot(slotNum) end
         task.wait(slotCollect.delay)
     end
 end
@@ -187,16 +209,14 @@ local function autoRarityCollectLoop()
     while rarityCollect.auto do
         local plot = GetPlot()
         if plot and #rarityCollect.rarities > 0 then
+            local rar = expandAll(rarityCollect.rarities, raritiesList)
             for _, slot in ipairs(GetSlots(plot)) do
                 local placed = slot.part:FindFirstChild("PlacedPart")
                 if placed then
                     local id = placed:GetAttribute("ID")
-                    for _, rarity in ipairs(rarityCollect.rarities) do
+                    for _, rarity in ipairs(rar) do
                         for _, name in ipairs(brainrotsByRarity[rarity] or {}) do
-                            if id == name then
-                                collectFromSlot(slot.num)
-                                break
-                            end
+                            if id == name then collectFromSlot(slot.num) break end
                         end
                     end
                 end
@@ -210,16 +230,20 @@ local function autoPlaceLoop()
     while placeConfig.auto do
         local plot = GetPlot()
         if plot and #GetEmptySlots(plot) > 0 then
+            local specs = expandAll(placeConfig.specifics, allBrainrots)
+            local rars = expandAll(placeConfig.rarities, raritiesList)
             for _, tool in ipairs(GetBackpackTools()) do
                 local matched = #placeConfig.specifics == 0 and #placeConfig.rarities == 0
-                for _, spec in ipairs(placeConfig.specifics) do
+                for _, spec in ipairs(specs) do
                     if tool == spec then matched = true break end
                 end
-                for _, rar in ipairs(placeConfig.rarities) do
-                    for _, name in ipairs(brainrotsByRarity[rar] or {}) do
-                        if tool == name then matched = true break end
+                if not matched then
+                    for _, rar in ipairs(rars) do
+                        for _, name in ipairs(brainrotsByRarity[rar] or {}) do
+                            if tool == name then matched = true break end
+                        end
+                        if matched then break end
                     end
-                    if matched then break end
                 end
                 if matched then
                     local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
@@ -241,19 +265,23 @@ local function autoRemoveLoop()
     while removeConfig.auto do
         local plot = GetPlot()
         if plot then
+            local specs = expandAll(removeConfig.specifics, allBrainrots)
+            local rars = expandAll(removeConfig.rarities, raritiesList)
             for _, slot in ipairs(GetSlots(plot)) do
                 local placed = slot.part:FindFirstChild("PlacedPart")
                 if placed then
                     local id = placed:GetAttribute("ID")
                     local matched = #removeConfig.specifics == 0 and #removeConfig.rarities == 0
-                    for _, spec in ipairs(removeConfig.specifics) do
+                    for _, spec in ipairs(specs) do
                         if id == spec then matched = true break end
                     end
-                    for _, rar in ipairs(removeConfig.rarities) do
-                        for _, name in ipairs(brainrotsByRarity[rar] or {}) do
-                            if id == name then matched = true break end
+                    if not matched then
+                        for _, rar in ipairs(rars) do
+                            for _, name in ipairs(brainrotsByRarity[rar] or {}) do
+                                if id == name then matched = true break end
+                            end
+                            if matched then break end
                         end
-                        if matched then break end
                     end
                     if matched then
                         FireRemote("rev_S_Interact", slot.num)
@@ -292,17 +320,16 @@ end
 local function sellByRarityLoop()
     while sellRarity.auto do
         if #sellRarity.rarities > 0 then
+            local rars = expandAll(sellRarity.rarities, raritiesList)
             for _, toolName in ipairs(GetBackpackTools()) do
-                for _, rar in ipairs(sellRarity.rarities) do
+                for _, rar in ipairs(rars) do
                     for _, name in ipairs(brainrotsByRarity[rar] or {}) do
                         if toolName == name then
                             local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
                             local tool = lp.Backpack:FindFirstChild(toolName)
                             if hum and tool then
-                                hum:EquipTool(tool)
-                                task.wait(0.2)
-                                InvokeRemote("ref_B_Sell")
-                                task.wait(0.2)
+                                hum:EquipTool(tool) task.wait(0.2)
+                                InvokeRemote("ref_B_Sell") task.wait(0.2)
                                 hum:UnequipTools()
                             end
                             break
@@ -318,16 +345,15 @@ end
 local function sellSpecificLoop()
     while sellSpecific.auto do
         if #sellSpecific.targets > 0 then
+            local targets = expandAll(sellSpecific.targets, allBrainrots)
             for _, toolName in ipairs(GetBackpackTools()) do
-                for _, target in ipairs(sellSpecific.targets) do
+                for _, target in ipairs(targets) do
                     if toolName == target then
                         local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
                         local tool = lp.Backpack:FindFirstChild(toolName)
                         if hum and tool then
-                            hum:EquipTool(tool)
-                            task.wait(0.2)
-                            InvokeRemote("ref_B_Sell")
-                            task.wait(0.2)
+                            hum:EquipTool(tool) task.wait(0.2)
+                            InvokeRemote("ref_B_Sell") task.wait(0.2)
                             hum:UnequipTools()
                         end
                         break
@@ -342,18 +368,17 @@ end
 local function sellByMutationLoop()
     while sellMutation.auto do
         if #sellMutation.mutations > 0 then
+            local muts = expandAll(sellMutation.mutations, mutationsList)
             for _, toolName in ipairs(GetBackpackTools()) do
                 local tool = lp.Backpack:FindFirstChild(toolName)
                 if tool then
                     local mutation = tool:GetAttribute("MutationType") or "None"
-                    for _, mut in ipairs(sellMutation.mutations) do
+                    for _, mut in ipairs(muts) do
                         if mutation == mut then
                             local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
                             if hum then
-                                hum:EquipTool(tool)
-                                task.wait(0.2)
-                                InvokeRemote("ref_B_Sell")
-                                task.wait(0.2)
+                                hum:EquipTool(tool) task.wait(0.2)
+                                InvokeRemote("ref_B_Sell") task.wait(0.2)
                                 hum:UnequipTools()
                             end
                             break
@@ -376,18 +401,18 @@ end
 local function upgradeRarityLoop()
     while upgradeRarity.auto do
         if #upgradeRarity.rarities > 0 then
+            local rars = expandAll(upgradeRarity.rarities, raritiesList)
             local plot = GetPlot()
             if plot then
                 for _, slot in ipairs(GetSlots(plot)) do
                     local placed = slot.part:FindFirstChild("PlacedPart")
                     if placed then
                         local id = placed:GetAttribute("ID")
-                        for _, rar in ipairs(upgradeRarity.rarities) do
+                        for _, rar in ipairs(rars) do
                             for _, name in ipairs(brainrotsByRarity[rar] or {}) do
                                 if id == name then
                                     FireRemote("rev_B_Upgrade", slot.num)
-                                    task.wait(0.1)
-                                    break
+                                    task.wait(0.1) break
                                 end
                             end
                         end
@@ -399,33 +424,219 @@ local function upgradeRarityLoop()
     end
 end
 
-local function sendWebhook(title, description, color, fields)
+local requestFunc = (syn and syn.request) or (http and http.request) or http_request
+
+local function getThumbnailUrl(assetId)
+    if not assetId or not requestFunc then return nil end
+    local ok, res = pcall(requestFunc, {
+        Url = string.format("https://thumbnails.roblox.com/v1/assets?assetIds=%d&size=420x420&format=Png", assetId),
+        Method = "GET"
+    })
+    if ok and res and res.Success then
+        local ok2, data = pcall(function() return HttpService:JSONDecode(res.Body) end)
+        if ok2 and data and data.data and data.data[1] then
+            return data.data[1].imageUrl
+        end
+    end
+    return nil
+end
+
+local function getBrainrotInfo(brainrotName)
+    local currentRarity = "Unknown"
+    local chancePercent = 0
+    if RarityData.BrainrotPool then
+        for rarity, pool in pairs(RarityData.BrainrotPool) do
+            for _, item in ipairs(pool) do
+                if item.Name == brainrotName then
+                    currentRarity = rarity
+                    chancePercent = item.Chance
+                    break
+                end
+            end
+            if currentRarity ~= "Unknown" then break end
+        end
+    end
+    if currentRarity == "Unknown" and EntitiesData.Brainrots and EntitiesData.Brainrots[brainrotName] then
+        currentRarity = EntitiesData.Brainrots[brainrotName].Rarity or "Unknown"
+    end
+
+    local chanceFormatted = "Unknown"
+    if chancePercent > 0 then
+        local inverse = 100 / chancePercent
+        if inverse >= 1000000 then
+            chanceFormatted = string.format("1 in %.1fM", inverse / 1000000)
+        elseif inverse >= 1000 then
+            chanceFormatted = string.format("1 in %.1fK", inverse / 1000)
+        else
+            chanceFormatted = string.format("1 in %d", math.floor(inverse))
+        end
+    end
+
+    local rarityColor = RarityData.Colors and RarityData.Colors[currentRarity]
+    local colorHex = 0x00BFFF
+    if rarityColor then
+        colorHex = math.floor(rarityColor.R * 255) * 65536 + math.floor(rarityColor.G * 255) * 256 + math.floor(rarityColor.B * 255)
+    end
+
+    local speed = WaveData[currentRarity] and WaveData[currentRarity].Speed or "?"
+
+    local assetId = nil
+    if EntitiesData.Brainrots and EntitiesData.Brainrots[brainrotName] then
+        local image = EntitiesData.Brainrots[brainrotName].Image
+        if image and type(image) == "string" then
+            assetId = tonumber(image:match("rbxassetid://(%d+)"))
+        end
+    end
+
+    return {
+        rarity = currentRarity,
+        chance = chanceFormatted,
+        color = colorHex,
+        speed = speed,
+        assetId = assetId,
+    }
+end
+
+local function sendWebhook(brainrotName, mutation, changeValue)
     if not _G.NX_WebhookOn or _G.NX_WebhookURL == "" then return end
-    local data = {
-        username = "Cactus Hub",
+    if not requestFunc then return end
+
+    local mode = _G.NX_WH_Mode or "All"
+    if mode == "MutatedOnly" then
+        if not mutation or mutation == "None" or mutation == "" then return end
+    end
+
+    if _G.NX_WH_MinChange and changeValue then
+        if changeValue < _G.NX_WH_MinChange then return end
+    end
+
+    local info = getBrainrotInfo(brainrotName)
+
+    if mode == "RarityOnly" and #_G.NX_WH_Rarities > 0 then
+        local rars = expandAll(_G.NX_WH_Rarities, raritiesList)
+        local found = false
+        for _, r in ipairs(rars) do
+            if r == info.rarity then found = true break end
+        end
+        if not found then return end
+    end
+
+    if #_G.NX_WH_Mutations > 0 then
+        local muts = expandAll(_G.NX_WH_Mutations, mutationsList)
+        local found = false
+        local mut = mutation or "None"
+        for _, m in ipairs(muts) do
+            if m == mut then found = true break end
+        end
+        if not found then return end
+    end
+
+    if #_G.NX_WH_Specifics > 0 then
+        local specs = expandAll(_G.NX_WH_Specifics, allBrainrots)
+        local found = false
+        for _, s in ipairs(specs) do
+            if s == brainrotName then found = true break end
+        end
+        if not found then return end
+    end
+
+    local mutationText = ""
+    local mutDisplay = mutation or "None"
+    if mutDisplay ~= "None" and mutDisplay ~= "" then
+        local mutData = MutationData.Buffs and MutationData.Buffs[mutDisplay]
+        local mutValue = mutData and mutData.Value or 1
+        mutationText = string.format("\n✨ Mutation: **%s** (x%.1f)", mutDisplay, mutValue)
+    end
+
+    local changeText = ""
+    if changeValue then
+        if changeValue >= 1e12 then
+            changeText = string.format("\n💰 Earned: **%.2fT**", changeValue / 1e12)
+        elseif changeValue >= 1e9 then
+            changeText = string.format("\n💰 Earned: **%.2fB**", changeValue / 1e9)
+        elseif changeValue >= 1e6 then
+            changeText = string.format("\n💰 Earned: **%.2fM**", changeValue / 1e6)
+        elseif changeValue >= 1e3 then
+            changeText = string.format("\n💰 Earned: **%.2fK**", changeValue / 1e3)
+        else
+            changeText = string.format("\n💰 Earned: **%d**", changeValue)
+        end
+    end
+
+    local pingText = ""
+    if _G.NX_WH_PingUID and _G.NX_WH_PingUID ~= "" then
+        pingText = "<@" .. _G.NX_WH_PingUID .. ">"
+    end
+
+    local thumbnailUrl = getThumbnailUrl(info.assetId)
+
+    local embed = {
+        title = "🎲 NEW BRAINROT CAPTURED",
+        description = string.format("**%s** got a **%s %s**!%s%s",
+            lp.Name, info.rarity, brainrotName, mutationText, changeText),
+        color = info.color,
+        fields = {
+            {name = "🌐 Rarity", value = info.rarity, inline = true},
+            {name = "🍀 Chance", value = info.chance, inline = true},
+            {name = "⚡ Speed", value = tostring(info.speed), inline = true},
+        },
+        footer = { text = "Cactus Hub • " .. lp.Name },
+        timestamp = DateTime.now():ToIsoDate()
+    }
+
+    if thumbnailUrl then
+        embed.thumbnail = {url = thumbnailUrl}
+    end
+
+    local payload = { embeds = {embed} }
+    if pingText ~= "" then payload.content = pingText end
+
+    task.spawn(function()
+        pcall(requestFunc, {
+            Url = _G.NX_WebhookURL,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = HttpService:JSONEncode(payload)
+        })
+    end)
+end
+
+local function sendTestWebhook()
+    if not _G.NX_WebhookOn or _G.NX_WebhookURL == "" then
+        Rayfield:Notify({ Title = "Webhook", Content = "Enable webhook and enter a URL first.", Duration = 3 })
+        return
+    end
+    if not requestFunc then
+        Rayfield:Notify({ Title = "Webhook", Content = "No HTTP function available.", Duration = 3 })
+        return
+    end
+    local pingText = ""
+    if _G.NX_WH_PingUID and _G.NX_WH_PingUID ~= "" then
+        pingText = "<@" .. _G.NX_WH_PingUID .. ">"
+    end
+    local payload = {
         embeds = {{
-            title = title,
-            description = description,
-            color = color,
-            fields = fields,
-            footer = { text = lp.Name },
-            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+            title = "✅ Cactus Hub — Test Ping",
+            description = string.format("Webhook is working for **%s**!", lp.Name),
+            color = 0x57F287,
+            footer = { text = "Cactus Hub" },
+            timestamp = DateTime.now():ToIsoDate()
         }}
     }
-    local body = HttpService:JSONEncode(data)
-    local requestFunc = syn and syn.request or (http_request or request)
-    if requestFunc then
-        task.spawn(function()
-            pcall(function()
-                requestFunc({
-                    Url = _G.NX_WebhookURL,
-                    Method = "POST",
-                    Headers = { ["Content-Type"] = "application/json" },
-                    Body = body
-                })
-            end)
-        end)
-    end
+    if pingText ~= "" then payload.content = pingText end
+    task.spawn(function()
+        local ok, err = pcall(requestFunc, {
+            Url = _G.NX_WebhookURL,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = HttpService:JSONEncode(payload)
+        })
+        if ok then
+            Rayfield:Notify({ Title = "Webhook", Content = "Test ping sent!", Duration = 3 })
+        else
+            Rayfield:Notify({ Title = "Webhook Error", Content = tostring(err), Duration = 5 })
+        end
+    end)
 end
 
 local Window = Rayfield:CreateWindow({
@@ -440,7 +651,6 @@ local Window = Rayfield:CreateWindow({
 local mainTab = Window:CreateTab("Main", 94483582151513)
 
 mainTab:CreateSection("Status")
-
 local fpsLabel = mainTab:CreateLabel("FPS: --")
 local pingLabel = mainTab:CreateLabel("Ping: --")
 
@@ -471,7 +681,7 @@ mainTab:CreateSection("Info")
 
 mainTab:CreateParagraph({
     Title = "Latest Update",
-    Content = "v1.0 - Cactus Hub launched. Auto collect, farm, sell, upgrade, shop and webhook all included."
+    Content = "v1.1 — Webhook fully rewritten. Minimum change filter, mutated-only mode, rarity-only mode, user ping, thumbnail support and rich embeds added. All dropdowns now support 'All' option."
 })
 
 mainTab:CreateParagraph({
@@ -479,8 +689,12 @@ mainTab:CreateParagraph({
     Content = "Anti-AFK is active by default. You will not be kicked for inactivity."
 })
 
-local antiAfkConn
-antiAfkConn = lp.Idled:Connect(function()
+mainTab:CreateParagraph({
+    Title = "Discord Server",
+    Content = "Join our Discord for updates, support and announcements:\nhttps://discord.gg/qMWFBWdcf"
+})
+
+lp.Idled:Connect(function()
     FireRemote("AntiAFK")
     task.wait(0.5)
 end)
@@ -488,9 +702,9 @@ end)
 mainTab:CreateSection("Utilities")
 
 mainTab:CreateButton({
-    Name = "Copy Discord",
+    Name = "Copy Discord Invite",
     Callback = function()
-        setclipboard("https://discord.com/invite/99UuEwM9sX")
+        setclipboard("https://discord.gg/qMWFBWdcf")
         Rayfield:Notify({ Title = "Copied", Content = "Discord invite link copied.", Duration = 3 })
     end
 })
@@ -505,11 +719,8 @@ mainTab:CreateButton({
 local collectTab = Window:CreateTab("Collect", 96942169425973)
 
 collectTab:CreateSection("Auto Collect All")
-
 collectTab:CreateToggle({
-    Name = "Auto Collect All Slots",
-    CurrentValue = false,
-    Flag = "CoinAuto",
+    Name = "Auto Collect All Slots", CurrentValue = false, Flag = "CoinAuto",
     Callback = function(val)
         collectConfig.enabled = val
         setFeature("Auto Collect All", val)
@@ -521,40 +732,25 @@ collectTab:CreateToggle({
         end
     end
 })
-
 collectTab:CreateSlider({
-    Name = "Collect Interval",
-    Range = { 0.1, 10 },
-    Increment = 0.1,
-    Suffix = "s",
-    CurrentValue = 1,
-    Flag = "CoinDelay",
+    Name = "Collect Interval", Range = {0.1, 10}, Increment = 0.1, Suffix = "s",
+    CurrentValue = 1, Flag = "CoinDelay",
     Callback = function(val) collectConfig.delay = val end
 })
 
 collectTab:CreateSection("Collect by Slot")
-
 collectTab:CreateButton({ Name = "Refresh Slots", Callback = refreshSlotMaps })
-
 slotCollect.dropdown = collectTab:CreateDropdown({
-    Name = "Select Slots",
-    Options = { "Press Refresh first" },
-    Multi = true,
-    Flag = "SlotSelect",
+    Name = "Select Slots", Options = {"Press Refresh first"}, Multi = true, Flag = "SlotSelect",
     Callback = function(selected)
         slotCollect.selected = {}
         for _, label in ipairs(selected) do
-            if slotCollect.map[label] then
-                table.insert(slotCollect.selected, slotCollect.map[label])
-            end
+            if slotCollect.map[label] then table.insert(slotCollect.selected, slotCollect.map[label]) end
         end
     end
 })
-
 collectTab:CreateToggle({
-    Name = "Auto Collect Selected Slots",
-    CurrentValue = false,
-    Flag = "SlotAuto",
+    Name = "Auto Collect Selected Slots", CurrentValue = false, Flag = "SlotAuto",
     Callback = function(val)
         slotCollect.auto = val
         setFeature("Auto Collect Slots", val)
@@ -566,31 +762,19 @@ collectTab:CreateToggle({
         end
     end
 })
-
 collectTab:CreateSlider({
-    Name = "Slot Collect Interval",
-    Range = { 0.1, 10 },
-    Increment = 0.1,
-    Suffix = "s",
-    CurrentValue = 1,
-    Flag = "SlotDelay",
+    Name = "Slot Collect Interval", Range = {0.1, 10}, Increment = 0.1, Suffix = "s",
+    CurrentValue = 1, Flag = "SlotDelay",
     Callback = function(val) slotCollect.delay = val end
 })
 
 collectTab:CreateSection("Collect by Rarity")
-
 collectTab:CreateDropdown({
-    Name = "Select Rarities",
-    Options = raritiesList,
-    Multi = true,
-    Flag = "RarityCollectSelect",
+    Name = "Select Rarities", Options = rarities_with_all, Multi = true, Flag = "RarityCollectSelect",
     Callback = function(selected) rarityCollect.rarities = selected end
 })
-
 collectTab:CreateToggle({
-    Name = "Auto Collect by Rarity",
-    CurrentValue = false,
-    Flag = "RarityCollectAuto",
+    Name = "Auto Collect by Rarity", CurrentValue = false, Flag = "RarityCollectAuto",
     Callback = function(val)
         rarityCollect.auto = val
         setFeature("Auto Collect Rarity", val)
@@ -602,59 +786,36 @@ collectTab:CreateToggle({
         end
     end
 })
-
 collectTab:CreateSlider({
-    Name = "Rarity Collect Interval",
-    Range = { 0.1, 10 },
-    Increment = 0.1,
-    Suffix = "s",
-    CurrentValue = 1,
-    Flag = "RarityCollectDelay",
+    Name = "Rarity Collect Interval", Range = {0.1, 10}, Increment = 0.1, Suffix = "s",
+    CurrentValue = 1, Flag = "RarityCollectDelay",
     Callback = function(val) rarityCollect.delay = val end
 })
 
 local farmTab = Window:CreateTab("Farm", 123674526631914)
 
 farmTab:CreateSection("Kick Settings")
-
 farmTab:CreateDropdown({
-    Name = "Kick Strength",
-    Options = { "Perfect", "Excellent", "Great", "Mid", "Bad" },
-    CurrentOption = "Perfect",
-    Flag = "KickStrength",
+    Name = "Kick Strength", Options = {"Perfect","Excellent","Great","Mid","Bad"},
+    CurrentOption = "Perfect", Flag = "KickStrength",
     Callback = function(opt) kickConfig.kickStrength = opt end
 })
 
 farmTab:CreateSection("Brainrot Filters")
-
 farmTab:CreateDropdown({
-    Name = "Target Rarities",
-    Options = raritiesList,
-    Multi = true,
-    Flag = "FarmRarity",
+    Name = "Target Rarities", Options = rarities_with_all, Multi = true, Flag = "FarmRarity",
     Callback = function(selected) kickConfig.rarities = selected end
 })
-
 farmTab:CreateDropdown({
-    Name = "Target Mutations",
-    Options = mutationsList,
-    Multi = true,
-    Flag = "FarmMutation",
+    Name = "Target Mutations", Options = mutations_with_all, Multi = true, Flag = "FarmMutation",
     Callback = function(selected) kickConfig.mutations = selected end
 })
-
 farmTab:CreateDropdown({
-    Name = "Specific Brainrots",
-    Options = allBrainrots,
-    Multi = true,
-    Flag = "FarmSpecific",
+    Name = "Specific Brainrots", Options = brainrots_with_all, Multi = true, Flag = "FarmSpecific",
     Callback = function(selected) kickConfig.specifics = selected end
 })
-
 farmTab:CreateToggle({
-    Name = "Start Auto Farm",
-    CurrentValue = false,
-    Flag = "FarmToggle",
+    Name = "Start Auto Farm", CurrentValue = false, Flag = "FarmToggle",
     Callback = function(val)
         kickConfig.running = val
         setFeature("Auto Farm", val)
@@ -670,37 +831,21 @@ farmTab:CreateToggle({
 local placeTab = Window:CreateTab("Place", 130504418378865)
 
 placeTab:CreateSection("Auto Place")
-
 placeTab:CreateDropdown({
-    Name = "Specific Brainrots",
-    Options = allBrainrots,
-    Multi = true,
-    Flag = "PlaceSpecific",
+    Name = "Specific Brainrots", Options = brainrots_with_all, Multi = true, Flag = "PlaceSpecific",
     Callback = function(selected) placeConfig.specifics = selected end
 })
-
 placeTab:CreateDropdown({
-    Name = "Rarities",
-    Options = raritiesList,
-    Multi = true,
-    Flag = "PlaceRarity",
+    Name = "Rarities", Options = rarities_with_all, Multi = true, Flag = "PlaceRarity",
     Callback = function(selected) placeConfig.rarities = selected end
 })
-
 placeTab:CreateSlider({
-    Name = "Place Delay",
-    Range = { 0.1, 5 },
-    Increment = 0.1,
-    Suffix = "s",
-    CurrentValue = 0.5,
-    Flag = "PlaceDelay",
+    Name = "Place Delay", Range = {0.1, 5}, Increment = 0.1, Suffix = "s",
+    CurrentValue = 0.5, Flag = "PlaceDelay",
     Callback = function(val) placeConfig.delay = val end
 })
-
 placeTab:CreateToggle({
-    Name = "Auto Place",
-    CurrentValue = false,
-    Flag = "PlaceAuto",
+    Name = "Auto Place", CurrentValue = false, Flag = "PlaceAuto",
     Callback = function(val)
         placeConfig.auto = val
         setFeature("Auto Place", val)
@@ -714,37 +859,21 @@ placeTab:CreateToggle({
 })
 
 placeTab:CreateSection("Auto Remove")
-
 placeTab:CreateDropdown({
-    Name = "Specific Brainrots",
-    Options = allBrainrots,
-    Multi = true,
-    Flag = "RemoveSpecific",
+    Name = "Specific Brainrots", Options = brainrots_with_all, Multi = true, Flag = "RemoveSpecific",
     Callback = function(selected) removeConfig.specifics = selected end
 })
-
 placeTab:CreateDropdown({
-    Name = "Rarities",
-    Options = raritiesList,
-    Multi = true,
-    Flag = "RemoveRarity",
+    Name = "Rarities", Options = rarities_with_all, Multi = true, Flag = "RemoveRarity",
     Callback = function(selected) removeConfig.rarities = selected end
 })
-
 placeTab:CreateSlider({
-    Name = "Remove Delay",
-    Range = { 0.1, 5 },
-    Increment = 0.1,
-    Suffix = "s",
-    CurrentValue = 0.5,
-    Flag = "RemoveDelay",
+    Name = "Remove Delay", Range = {0.1, 5}, Increment = 0.1, Suffix = "s",
+    CurrentValue = 0.5, Flag = "RemoveDelay",
     Callback = function(val) removeConfig.delay = val end
 })
-
 placeTab:CreateToggle({
-    Name = "Auto Remove",
-    CurrentValue = false,
-    Flag = "RemoveAuto",
+    Name = "Auto Remove", CurrentValue = false, Flag = "RemoveAuto",
     Callback = function(val)
         removeConfig.auto = val
         setFeature("Auto Remove", val)
@@ -760,7 +889,6 @@ placeTab:CreateToggle({
 local sellTab = Window:CreateTab("Sell", 75227072663667)
 
 sellTab:CreateSection("Quick Sell")
-
 sellTab:CreateButton({
     Name = "Sell Equipped",
     Callback = function()
@@ -768,35 +896,21 @@ sellTab:CreateButton({
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         if not hum then return end
         local tool = char:FindFirstChildWhichIsA("Tool")
-        if tool then
-            hum:UnequipTools()
-            task.wait(0.2)
-            FireRemote("rev_S_Interact", 1)
-        end
+        if tool then hum:UnequipTools() task.wait(0.2) FireRemote("rev_S_Interact", 1) end
     end
 })
-
 sellTab:CreateButton({
     Name = "Sell All Brainrots",
-    Callback = function()
-        InvokeRemote("ref_B_SellAll")
-    end
+    Callback = function() InvokeRemote("ref_B_SellAll") end
 })
 
 sellTab:CreateSection("Sell by Rarity")
-
 sellTab:CreateDropdown({
-    Name = "Select Rarities",
-    Options = raritiesList,
-    Multi = true,
-    Flag = "SellRaritySelect",
+    Name = "Select Rarities", Options = rarities_with_all, Multi = true, Flag = "SellRaritySelect",
     Callback = function(selected) sellRarity.rarities = selected end
 })
-
 sellTab:CreateToggle({
-    Name = "Auto Sell by Rarity",
-    CurrentValue = false,
-    Flag = "SellRarityAuto",
+    Name = "Auto Sell by Rarity", CurrentValue = false, Flag = "SellRarityAuto",
     Callback = function(val)
         sellRarity.auto = val
         setFeature("Auto Sell Rarity", val)
@@ -808,31 +922,19 @@ sellTab:CreateToggle({
         end
     end
 })
-
 sellTab:CreateSlider({
-    Name = "Auto Sell Interval",
-    Range = { 1, 60 },
-    Increment = 1,
-    Suffix = "s",
-    CurrentValue = 5,
-    Flag = "SellRarityDelay",
+    Name = "Auto Sell Interval", Range = {1, 60}, Increment = 1, Suffix = "s",
+    CurrentValue = 5, Flag = "SellRarityDelay",
     Callback = function(val) sellRarity.delay = val end
 })
 
 sellTab:CreateSection("Sell Specific")
-
 sellTab:CreateDropdown({
-    Name = "Select Brainrots",
-    Options = allBrainrots,
-    Multi = true,
-    Flag = "SellSpecificSelect",
+    Name = "Select Brainrots", Options = brainrots_with_all, Multi = true, Flag = "SellSpecificSelect",
     Callback = function(selected) sellSpecific.targets = selected end
 })
-
 sellTab:CreateToggle({
-    Name = "Auto Sell Specific",
-    CurrentValue = false,
-    Flag = "SellSpecificAuto",
+    Name = "Auto Sell Specific", CurrentValue = false, Flag = "SellSpecificAuto",
     Callback = function(val)
         sellSpecific.auto = val
         setFeature("Auto Sell Specific", val)
@@ -844,31 +946,19 @@ sellTab:CreateToggle({
         end
     end
 })
-
 sellTab:CreateSlider({
-    Name = "Auto Sell Interval",
-    Range = { 1, 60 },
-    Increment = 1,
-    Suffix = "s",
-    CurrentValue = 5,
-    Flag = "SellSpecificDelay",
+    Name = "Auto Sell Interval", Range = {1, 60}, Increment = 1, Suffix = "s",
+    CurrentValue = 5, Flag = "SellSpecificDelay",
     Callback = function(val) sellSpecific.delay = val end
 })
 
 sellTab:CreateSection("Sell by Mutation")
-
 sellTab:CreateDropdown({
-    Name = "Select Mutations",
-    Options = mutationsList,
-    Multi = true,
-    Flag = "SellMutationSelect",
+    Name = "Select Mutations", Options = mutations_with_all, Multi = true, Flag = "SellMutationSelect",
     Callback = function(selected) sellMutation.mutations = selected end
 })
-
 sellTab:CreateToggle({
-    Name = "Auto Sell by Mutation",
-    CurrentValue = false,
-    Flag = "SellMutationAuto",
+    Name = "Auto Sell by Mutation", CurrentValue = false, Flag = "SellMutationAuto",
     Callback = function(val)
         sellMutation.auto = val
         setFeature("Auto Sell Mutation", val)
@@ -880,42 +970,27 @@ sellTab:CreateToggle({
         end
     end
 })
-
 sellTab:CreateSlider({
-    Name = "Auto Sell Interval",
-    Range = { 1, 60 },
-    Increment = 1,
-    Suffix = "s",
-    CurrentValue = 5,
-    Flag = "SellMutationDelay",
+    Name = "Auto Sell Interval", Range = {1, 60}, Increment = 1, Suffix = "s",
+    CurrentValue = 5, Flag = "SellMutationDelay",
     Callback = function(val) sellMutation.delay = val end
 })
 
 local upgradeTab = Window:CreateTab("Upgrade", 135723754991512)
 
 upgradeTab:CreateSection("Upgrade by Slot")
-
 upgradeTab:CreateButton({ Name = "Refresh Slots", Callback = refreshSlotMaps })
-
 upgradeSlots.dropdown = upgradeTab:CreateDropdown({
-    Name = "Select Slots",
-    Options = { "Press Refresh first" },
-    Multi = true,
-    Flag = "UpgSlotSelect",
+    Name = "Select Slots", Options = {"Press Refresh first"}, Multi = true, Flag = "UpgSlotSelect",
     Callback = function(selected)
         upgradeSlots.selected = {}
         for _, label in ipairs(selected) do
-            if upgradeSlots.map[label] then
-                table.insert(upgradeSlots.selected, upgradeSlots.map[label])
-            end
+            if upgradeSlots.map[label] then table.insert(upgradeSlots.selected, upgradeSlots.map[label]) end
         end
     end
 })
-
 upgradeTab:CreateToggle({
-    Name = "Auto Upgrade Selected Slots",
-    CurrentValue = false,
-    Flag = "UpgSlotAuto",
+    Name = "Auto Upgrade Selected Slots", CurrentValue = false, Flag = "UpgSlotAuto",
     Callback = function(val)
         upgradeSlots.auto = val
         setFeature("Auto Upgrade Slots", val)
@@ -934,19 +1009,12 @@ upgradeTab:CreateToggle({
 })
 
 upgradeTab:CreateSection("Upgrade by Rarity")
-
 upgradeTab:CreateDropdown({
-    Name = "Select Rarities",
-    Options = raritiesList,
-    Multi = true,
-    Flag = "UpgRaritySelect",
+    Name = "Select Rarities", Options = rarities_with_all, Multi = true, Flag = "UpgRaritySelect",
     Callback = function(selected) upgradeRarity.rarities = selected end
 })
-
 upgradeTab:CreateToggle({
-    Name = "Auto Upgrade by Rarity",
-    CurrentValue = false,
-    Flag = "UpgRarityAuto",
+    Name = "Auto Upgrade by Rarity", CurrentValue = false, Flag = "UpgRarityAuto",
     Callback = function(val)
         upgradeRarity.auto = val
         setFeature("Auto Upgrade Rarity", val)
@@ -962,21 +1030,13 @@ upgradeTab:CreateToggle({
 local shopTab = Window:CreateTab("Shop", 135748283315148)
 
 shopTab:CreateSection("Speed")
-
 shopTab:CreateSlider({
-    Name = "Amount to Buy",
-    Range = { 1, 50 },
-    Increment = 1,
-    Suffix = "x",
-    CurrentValue = 1,
-    Flag = "SpeedAmount",
+    Name = "Amount to Buy", Range = {1, 50}, Increment = 1, Suffix = "x",
+    CurrentValue = 1, Flag = "SpeedAmount",
     Callback = function(val) shopSpeed.amount = val end
 })
-
 shopTab:CreateToggle({
-    Name = "Auto Buy Speed",
-    CurrentValue = false,
-    Flag = "SpeedAuto",
+    Name = "Auto Buy Speed", CurrentValue = false, Flag = "SpeedAuto",
     Callback = function(val)
         shopSpeed.auto = val
         setFeature("Auto Buy Speed", val)
@@ -995,19 +1055,12 @@ shopTab:CreateToggle({
 })
 
 shopTab:CreateSection("Weights")
-
 shopTab:CreateDropdown({
-    Name = "Select Weights",
-    Options = weightsList,
-    Multi = true,
-    Flag = "WeightSelect",
+    Name = "Select Weights", Options = weights_with_all, Multi = true, Flag = "WeightSelect",
     Callback = function(selected) shopWeights.selected = selected end
 })
-
 shopTab:CreateToggle({
-    Name = "Auto Buy Weights",
-    CurrentValue = false,
-    Flag = "WeightAuto",
+    Name = "Auto Buy Weights", CurrentValue = false, Flag = "WeightAuto",
     Callback = function(val)
         shopWeights.auto = val
         setFeature("Auto Buy Weights", val)
@@ -1015,7 +1068,8 @@ shopTab:CreateToggle({
             if shopWeights.loop then task.cancel(shopWeights.loop) end
             shopWeights.loop = task.spawn(function()
                 while shopWeights.auto do
-                    for _, weight in ipairs(shopWeights.selected) do
+                    local ws = expandAll(shopWeights.selected, weightsList)
+                    for _, weight in ipairs(ws) do
                         FireRemote("rev_Shop_Buy", "WeightShop", weight)
                         task.wait(0.1)
                     end
@@ -1029,11 +1083,8 @@ shopTab:CreateToggle({
 })
 
 shopTab:CreateSection("Slots and Rebirth")
-
 shopTab:CreateToggle({
-    Name = "Auto Buy Slots",
-    CurrentValue = false,
-    Flag = "SlotsAuto",
+    Name = "Auto Buy Slots", CurrentValue = false, Flag = "SlotsAuto",
     Callback = function(val)
         shopSlots.auto = val
         setFeature("Auto Buy Slots", val)
@@ -1050,11 +1101,8 @@ shopTab:CreateToggle({
         end
     end
 })
-
 shopTab:CreateToggle({
-    Name = "Auto Rebirth",
-    CurrentValue = false,
-    Flag = "RebirthAuto",
+    Name = "Auto Rebirth", CurrentValue = false, Flag = "RebirthAuto",
     Callback = function(val)
         shopRebirth.auto = val
         setFeature("Auto Rebirth", val)
@@ -1090,11 +1138,49 @@ webhookTab:CreateToggle({
     Callback = function(val) _G.NX_WebhookOn = val end
 })
 
+webhookTab:CreateInput({
+    Name = "Ping User ID",
+    Placeholder = "Discord User ID (e.g. 123456789012345678)",
+    Flag = "WebhookPingUID",
+    Callback = function(text) _G.NX_WH_PingUID = text end
+})
+
 webhookTab:CreateButton({
     Name = "Send Test Ping",
-    Callback = function()
-        sendWebhook("Test Ping", lp.Name .. " - Cactus Hub webhook is working.", 5763719, nil)
-        Rayfield:Notify({ Title = "Webhook", Content = "Test ping sent.", Duration = 3 })
+    Callback = sendTestWebhook
+})
+
+webhookTab:CreateSection("Send Mode")
+
+webhookTab:CreateDropdown({
+    Name = "Notification Mode",
+    Options = {"All", "MutatedOnly", "RarityOnly"},
+    CurrentOption = "All",
+    Flag = "WHMode",
+    Callback = function(opt) _G.NX_WH_Mode = opt end
+})
+
+webhookTab:CreateParagraph({
+    Title = "Mode Info",
+    Content = "All — send every capture.\nMutatedOnly — only send if the brainrot has a mutation.\nRarityOnly — only send for selected rarities below.\nMinimum Change overrides all: if set, only sends when earn ≥ that value."
+})
+
+webhookTab:CreateSection("Minimum Change Filter")
+
+webhookTab:CreateInput({
+    Name = "Minimum Earn to Notify",
+    Placeholder = "e.g. 1b, 500m, 1000000 (leave blank to disable)",
+    Flag = "WHMinChange",
+    Callback = function(text)
+        local val = parseShortNumber(text)
+        _G.NX_WH_MinChange = val
+        if text == "" then
+            Rayfield:Notify({ Title = "Webhook", Content = "Minimum change filter disabled.", Duration = 2 })
+        elseif val then
+            Rayfield:Notify({ Title = "Webhook", Content = "Min change set to " .. tostring(val), Duration = 2 })
+        else
+            Rayfield:Notify({ Title = "Webhook", Content = "Invalid number format.", Duration = 3 })
+        end
     end
 })
 
@@ -1102,7 +1188,7 @@ webhookTab:CreateSection("Notify Filters")
 
 webhookTab:CreateDropdown({
     Name = "Rarity Filter",
-    Options = raritiesList,
+    Options = rarities_with_all,
     Multi = true,
     Flag = "WHRarity",
     Callback = function(selected) _G.NX_WH_Rarities = selected end
@@ -1110,7 +1196,7 @@ webhookTab:CreateDropdown({
 
 webhookTab:CreateDropdown({
     Name = "Mutation Filter",
-    Options = mutationsList,
+    Options = mutations_with_all,
     Multi = true,
     Flag = "WHMutation",
     Callback = function(selected) _G.NX_WH_Mutations = selected end
@@ -1118,12 +1204,11 @@ webhookTab:CreateDropdown({
 
 webhookTab:CreateDropdown({
     Name = "Specific Brainrot Filter",
-    Options = allBrainrots,
+    Options = brainrots_with_all,
     Multi = true,
     Flag = "WHSpecific",
     Callback = function(selected) _G.NX_WH_Specifics = selected end
 })
 
 refreshSlotMaps()
-
-Rayfield:Notify({ Title = "Cactus Hub", Content = "Loaded successfully.", Duration = 4 })
+Rayfield:Notify({ Title = "Cactus Hub", Content = "Loaded successfully. v1.1", Duration = 4 })
