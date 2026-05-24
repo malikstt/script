@@ -28,6 +28,10 @@ local MutationData = require(RS.Shared.Data.MutationData)
 local WeightsData = require(RS.Shared.Data.WeightsData)
 local WaveData = require(RS.Shared.Data.WaveData).Waves
 
+-- NEW: Event data
+local VolcanicShopData = require(RS.Shared.Data.VolcanicShopData)
+local VolcanoUpgradesData = require(RS.Shared.Data.VolcanoUpgradesData)
+
 local raritiesList = RarityData.Order
 local rarities_with_all = {"All"}
 for _, r in ipairs(raritiesList) do table.insert(rarities_with_all, r) end
@@ -55,6 +59,21 @@ for wname in pairs(WeightsData.Weights) do table.insert(weightsList, wname) end
 table.sort(weightsList)
 local weights_with_all = {"All"}
 for _, w in ipairs(weightsList) do table.insert(weights_with_all, w) end
+
+-- NEW: Event lists
+local volcanoShopItemsList = {}
+for itemName in pairs(VolcanicShopData.Items) do
+    table.insert(volcanoShopItemsList, itemName)
+end
+table.sort(volcanoShopItemsList)
+
+local volcanoUpgradeTypesList = {}
+local volcanoUpgradeLevels = {}
+for upgradeType, levels in pairs(VolcanoUpgradesData.Upgrades) do
+    table.insert(volcanoUpgradeTypesList, upgradeType)
+    volcanoUpgradeLevels[upgradeType] = #levels
+end
+table.sort(volcanoUpgradeTypesList)
 
 local function FireRemote(name, ...)
     local r = Network:FindFirstChild(name)
@@ -163,6 +182,10 @@ local shopSpeed = {amount = 1, auto = false, loop = nil}
 local shopWeights = {selected = {}, auto = false, loop = nil}
 local shopSlots = {auto = false, loop = nil}
 local shopRebirth = {auto = false, loop = nil}
+
+-- NEW: Event configs
+local volcanoShop = {selected = {}, auto = false, loop = nil, delay = 5}
+local volcanoUpgrade = {upgradeType = volcanoUpgradeTypesList[1] or "OreMultipliers", level = 1, auto = false, loop = nil}
 
 local WH = {
     url = "",
@@ -1319,6 +1342,169 @@ webhookTab:CreateDropdown({
     Callback = function(sel) WH.specifics = sel print("[SpecificFilter] Selected", #sel, "brainrots") end,
 })
 
+-- 🌋 EVENT TAB (NEW)
+local eventTab = Window:CreateTab("🌋 Event", 94483582151513)
+
+eventTab:CreateSection("🛒 Volcano Shop")
+
+eventTab:CreateDropdown({
+    Name = "📦 Select Items to Buy",
+    Options = volcanoShopItemsList,
+    Multi = true,
+    Flag = "VolcanoShopItems",
+    Callback = function(sel)
+        volcanoShop.selected = sel
+    end,
+})
+
+eventTab:CreateButton({
+    Name = "⚡ Buy Selected Once",
+    Flag = "VolcanoBuyOnce",
+    Callback = function()
+        if #volcanoShop.selected == 0 then
+            Rayfield:Notify({Title = "🌋 Volcano Shop", Content = "No items selected!", Duration = 3})
+            return
+        end
+        for _, item in ipairs(volcanoShop.selected) do
+            Network:WaitForChild("rev_VolcanicShop_Buy"):FireServer(item)
+            task.wait(0.2)
+        end
+        Rayfield:Notify({Title = "🌋 Volcano Shop", Content = "Bought " .. #volcanoShop.selected .. " item(s)!", Duration = 3})
+    end,
+})
+
+eventTab:CreateSlider({
+    Name = "⏱️ Buy Interval",
+    Range = {1, 60},
+    Increment = 1,
+    Suffix = "s",
+    CurrentValue = 5,
+    Flag = "VolcanoShopDelay",
+    Callback = function(v)
+        volcanoShop.delay = v
+    end,
+})
+
+eventTab:CreateToggle({
+    Name = "🔁 Auto Buy Selected Items",
+    CurrentValue = false,
+    Flag = "AutoVolcanoShop",
+    Callback = function(v)
+        volcanoShop.auto = v
+        if v then
+            if volcanoShop.loop then task.cancel(volcanoShop.loop) end
+            volcanoShop.loop = task.spawn(function()
+                while volcanoShop.auto do
+                    for _, item in ipairs(volcanoShop.selected) do
+                        Network:WaitForChild("rev_VolcanicShop_Buy"):FireServer(item)
+                        task.wait(0.2)
+                    end
+                    task.wait(volcanoShop.delay)
+                end
+            end)
+        else
+            if volcanoShop.loop then task.cancel(volcanoShop.loop) volcanoShop.loop = nil end
+        end
+    end,
+})
+
+eventTab:CreateSection("⬆️ Volcano Upgrades")
+
+-- Dynamic max level for upgrade slider
+local upgradeLevelSliderRef = nil
+local function updateUpgradeLevelMax()
+    if not upgradeLevelSliderRef then return end
+    local maxLvl = volcanoUpgradeLevels[volcanoUpgrade.upgradeType] or 1
+    upgradeLevelSliderRef:SetRange(1, maxLvl)
+    if volcanoUpgrade.level > maxLvl then
+        volcanoUpgrade.level = maxLvl
+        upgradeLevelSliderRef:SetValue(maxLvl)
+    end
+end
+
+eventTab:CreateDropdown({
+    Name = "🔧 Upgrade Type",
+    Options = volcanoUpgradeTypesList,
+    CurrentOption = volcanoUpgradeTypesList[1],
+    Flag = "VolcanoUpgradeType",
+    Callback = function(sel)
+        volcanoUpgrade.upgradeType = sel
+        updateUpgradeLevelMax()
+    end,
+})
+
+upgradeLevelSliderRef = eventTab:CreateSlider({
+    Name = "📈 Upgrade Level",
+    Range = {1, 4}, -- will be updated dynamically
+    Increment = 1,
+    Suffix = "",
+    CurrentValue = 1,
+    Flag = "VolcanoUpgradeLevel",
+    Callback = function(v)
+        volcanoUpgrade.level = v
+    end,
+})
+-- set initial max based on first upgrade type
+updateUpgradeLevelMax()
+
+eventTab:CreateButton({
+    Name = "💥 Buy Upgrade Once",
+    Flag = "VolcanoBuyUpgradeOnce",
+    Callback = function()
+        Network:WaitForChild("rev_volcanoUpgrade"):FireServer(volcanoUpgrade.upgradeType, volcanoUpgrade.level)
+        Rayfield:Notify({Title = "⬆️ Upgraded", Content = volcanoUpgrade.upgradeType .. " Lv" .. volcanoUpgrade.level, Duration = 3})
+    end,
+})
+
+eventTab:CreateButton({
+    Name = "🚀 Max Selected Upgrade Type",
+    Flag = "VolcanoMaxUpgrade",
+    Callback = function()
+        local maxLevel = volcanoUpgradeLevels[volcanoUpgrade.upgradeType] or 1
+        for i = 1, maxLevel do
+            Network:WaitForChild("rev_volcanoUpgrade"):FireServer(volcanoUpgrade.upgradeType, i)
+            task.wait(0.2)
+        end
+        Rayfield:Notify({Title = "🚀 Maxed!", Content = volcanoUpgrade.upgradeType .. " fully upgraded!", Duration = 3})
+    end,
+})
+
+eventTab:CreateButton({
+    Name = "🌟 Max ALL Upgrades",
+    Flag = "VolcanoMaxAllUpgrades",
+    Callback = function()
+        for _, upgradeType in ipairs(volcanoUpgradeTypesList) do
+            local maxLevel = volcanoUpgradeLevels[upgradeType] or 1
+            for i = 1, maxLevel do
+                Network:WaitForChild("rev_volcanoUpgrade"):FireServer(upgradeType, i)
+                task.wait(0.2)
+            end
+        end
+        Rayfield:Notify({Title = "🌋 ALL MAXED!", Content = "Every volcano upgrade purchased!", Duration = 4})
+    end,
+})
+
+eventTab:CreateToggle({
+    Name = "🔄 Auto Upgrade (Selected Type & Level)",
+    CurrentValue = false,
+    Flag = "AutoVolcanoUpgrade",
+    Callback = function(v)
+        volcanoUpgrade.auto = v
+        if v then
+            if volcanoUpgrade.loop then task.cancel(volcanoUpgrade.loop) end
+            volcanoUpgrade.loop = task.spawn(function()
+                while volcanoUpgrade.auto do
+                    Network:WaitForChild("rev_volcanoUpgrade"):FireServer(volcanoUpgrade.upgradeType, volcanoUpgrade.level)
+                    task.wait(1)
+                end
+            end)
+        else
+            if volcanoUpgrade.loop then task.cancel(volcanoUpgrade.loop) volcanoUpgrade.loop = nil end
+        end
+    end,
+})
+
+-- Final initialization
 refreshSlotMaps()
 Rayfield:Notify({Title = "Cactus Hub", Content = "Loaded! Join discord.gg/qMWFBWdcf", Duration = 4})
 print("[Cactus Hub] Script fully loaded")
