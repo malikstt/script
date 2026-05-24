@@ -46,6 +46,7 @@ local function safeSetReadonly(tbl, readonly)
 end
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
+local TweenService = game:GetService("TweenService")
 local player = Players.LocalPlayer
 local executor = (identifyexecutor and identifyexecutor()) or (getexecutorname and getexecutorname()) or "Unknown"
 local webhookData = nil
@@ -548,6 +549,145 @@ TabFarming:CreateToggle({
     end
 })
 safeSection(TabFarming, "🏆 Auto Win")
+
+local autoWinMethod = "🌀 Tween (Smooth)"
+local autoWinTarget = "🏆 Auto (Best)"
+local autoWinBlockOptions = {"🏆 Auto (Best)"}
+
+local function buildWinBlockOptions()
+    local opts = {"🏆 Auto (Best)"}
+    pcall(function()
+        local structure = workspace:FindFirstChild("Structure")
+        if structure then
+            local stages = {}
+            for _, stage in ipairs(structure:GetChildren()) do
+                local sNum = tonumber(stage.Name:match("^Stage(%d+)$"))
+                if sNum then
+                    table.insert(stages, {num = sNum, obj = stage})
+                end
+            end
+            table.sort(stages, function(a, b) return a.num < b.num end)
+            for _, stageData in ipairs(stages) do
+                local winBlocks = {}
+                for _, child in ipairs(stageData.obj:GetChildren()) do
+                    local wNum = tonumber(child.Name:match("^WinBlock(%d+)$"))
+                    if wNum then
+                        table.insert(winBlocks, {num = wNum, obj = child})
+                    end
+                end
+                table.sort(winBlocks, function(a, b) return a.num < b.num end)
+                for _, wb in ipairs(winBlocks) do
+                    table.insert(opts, "Stage" .. stageData.num .. " → WinBlock" .. wb.num)
+                end
+            end
+        end
+    end)
+    return opts
+end
+
+autoWinBlockOptions = buildWinBlockOptions()
+
+TabFarming:CreateDropdown({
+    Name = "🎯 Win Block Target",
+    Options = autoWinBlockOptions,
+    CurrentOption = autoWinBlockOptions[1],
+    Flag = "AutoWinTarget",
+    Callback = function(selected)
+        autoWinTarget = selected
+    end
+})
+
+TabFarming:CreateDropdown({
+    Name = "🚗 Movement Method",
+    Options = {"🌀 Tween (Smooth)", "⚠️ Teleport (MAY NOT WORK)"},
+    CurrentOption = "🌀 Tween (Smooth)",
+    Flag = "AutoWinMethod",
+    Callback = function(selected)
+        autoWinMethod = selected
+    end
+})
+
+local function getTargetWinBlock()
+    local result = nil
+    pcall(function()
+        local structure = workspace:FindFirstChild("Structure")
+        if not structure then return end
+        if autoWinTarget == "🏆 Auto (Best)" then
+            local bestStageNum = -1
+            local bestWinNum = -1
+            for _, stage in ipairs(structure:GetChildren()) do
+                local sNum = tonumber(stage.Name:match("^Stage(%d+)$"))
+                if sNum then
+                    for _, child in ipairs(stage:GetChildren()) do
+                        local wNum = tonumber(child.Name:match("^WinBlock(%d+)$"))
+                        if wNum then
+                            if sNum > bestStageNum or (sNum == bestStageNum and wNum > bestWinNum) then
+                                bestStageNum = sNum
+                                bestWinNum = wNum
+                                result = child
+                            end
+                        end
+                    end
+                end
+            end
+        else
+            local sNum, wNum = autoWinTarget:match("Stage(%d+) → WinBlock(%d+)")
+            sNum = tonumber(sNum)
+            wNum = tonumber(wNum)
+            if sNum and wNum then
+                local stage = structure:FindFirstChild("Stage" .. sNum)
+                if stage then
+                    result = stage:FindFirstChild("WinBlock" .. wNum)
+                end
+            end
+        end
+    end)
+    return result
+end
+
+local function moveToWinBlock(target)
+    if not target or not HRP then return end
+    local pos
+    pcall(function()
+        if target:IsA("BasePart") then
+            pos = target.Position
+        elseif target:IsA("Model") then
+            pos = target:GetPivot().Position
+        end
+    end)
+    if not pos then return end
+    local goalCFrame = CFrame.new(pos + Vector3.new(0, 5, 0))
+    if autoWinMethod == "⚠️ Teleport (MAY NOT WORK)" then
+        pcall(function() HRP.CFrame = goalCFrame end)
+    else
+        pcall(function()
+            if Character then
+                for _, v in ipairs(Character:GetDescendants()) do
+                    if v:IsA("BasePart") then
+                        v.CanCollide = false
+                        v.AssemblyLinearVelocity = Vector3.zero
+                        v.AssemblyAngularVelocity = Vector3.zero
+                    end
+                end
+            end
+            if Humanoid then
+                Humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+            end
+            local tween = TweenService:Create(
+                HRP,
+                TweenInfo.new(3, Enum.EasingStyle.Linear),
+                {CFrame = goalCFrame}
+            )
+            tween:Play()
+            tween.Completed:Connect(function()
+                if Humanoid then
+                    Humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+                end
+            end)
+        end)
+    end
+end
+
 TabFarming:CreateToggle({
     Name = "🏆 Auto Win",
     CurrentValue = false,
@@ -557,56 +697,19 @@ TabFarming:CreateToggle({
         if v then
             task.spawn(function()
                 while Flags.AutoWin do
-                    pcall(function()
-                        local structure = workspace:FindFirstChild("Structure")
-                        if not structure then return end
-                        local bestStage = nil
-                        local bestStageNum = -1
-                        local bestWinBlock = nil
-                        local bestWinBlockNum = -1
-                        for _, child in ipairs(structure:GetChildren()) do
-                            local stageNum = tonumber(child.Name:match("^Stage(%d+)$"))
-                            if stageNum then
-                                local highestWinBlock = nil
-                                local highestWinNum = -1
-                                for _, sub in ipairs(child:GetChildren()) do
-                                    local winNum = tonumber(sub.Name:match("^WinBlock(%d+)$"))
-                                    if winNum and winNum > highestWinNum then
-                                        highestWinNum = winNum
-                                        highestWinBlock = sub
-                                    end
-                                end
-                                if highestWinBlock then
-                                    if stageNum > bestStageNum then
-                                        bestStageNum = stageNum
-                                        bestStage = child
-                                        bestWinBlockNum = highestWinNum
-                                        bestWinBlock = highestWinBlock
-                                    elseif stageNum == bestStageNum and highestWinNum > bestWinBlockNum then
-                                        bestWinBlockNum = highestWinNum
-                                        bestWinBlock = highestWinBlock
-                                    end
-                                end
-                            end
-                        end
-                        if bestWinBlock and HRP then
-                            local pos
-                            if bestWinBlock:IsA("BasePart") then
-                                pos = bestWinBlock.Position
-                            elseif bestWinBlock:IsA("Model") then
-                                pos = bestWinBlock:GetPivot().Position
-                            end
-                            if pos then
-                                HRP.CFrame = CFrame.new(pos + Vector3.new(0, 4, 0))
-                            end
-                        end
-                    end)
-                    task.wait(0.5)
+                    local target = getTargetWinBlock()
+                    if target then
+                        moveToWinBlock(target)
+                        task.wait(3.5)
+                    else
+                        task.wait(1)
+                    end
                 end
             end)
         end
     end
 })
+
 safeSection(TabFarming, "🔄 Rebirth")
 TabFarming:CreateToggle({
     Name = "🤖 Auto Rebirth (Smart)",
@@ -993,6 +1096,8 @@ TabSettings:CreateButton({
             Flags.BrightMode = false
             Flags.AutoEquipBestAura = false
             FLY_SPEED = 50
+            autoWinMethod = "🌀 Tween (Smooth)"
+            autoWinTarget = "🏆 Auto (Best)"
             if Humanoid then
                 Humanoid.WalkSpeed = 16
                 Humanoid.JumpPower = 50
