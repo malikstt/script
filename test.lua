@@ -1,5 +1,6 @@
 task.spawn(function()
     repeat task.wait() until game:IsLoaded()
+    task.wait(3)
     local Players = game:GetService("Players")
     local HttpService = game:GetService("HttpService")
     local player = Players.LocalPlayer
@@ -458,7 +459,7 @@ task.spawn(function()
         DisableRayfieldPrompts = false,
         DisableBuildWarnings = true,
         ConfigurationSaving = {
-            Enabled = true,
+            Enabled = false,
             FolderName = "CactusHub",
             FileName = "Config"
         },
@@ -2825,6 +2826,8 @@ _0x1b6d4a_main:CreateToggle({
 end)
 
 task.spawn(function()
+    repeat task.wait() until game:IsLoaded()
+    task.wait(3)
     local rareRollWebhook = "https://discord.com/api/webhooks/1507510832626401371/Ry4IzIqIOSbeHKuES-1G3LnSNyMyN7t5bEjNsUxu9i2Y5YYGgST3DtIzqeBt1VFjiymV"
     local messageQueue = {}
     local lastSendTime = 0
