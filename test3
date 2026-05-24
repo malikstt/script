@@ -445,10 +445,36 @@ local function formatChance(chancePercent)
     end
 end
 
-local function getBrainrotInfo(bname)
-    local rarity = "Unknown"
+local function getAttributeByPattern(tool, pattern)
+    for attrName, value in pairs(tool:GetAttributes()) do
+        if string.find(string.lower(attrName), pattern) then
+            return value
+        end
+    end
+    return nil
+end
+
+local function getMutation(tool)
+    local mut = tool:GetAttribute("Mutation") or getAttributeByPattern(tool, "mutat")
+    if mut then return mut end
+    return "None"
+end
+
+local function findRarityFromData(toolName)
+    local rarityAttr = getAttributeByPattern(tool, "rarit") or getAttributeByPattern(tool, "tier")
+    if rarityAttr then return rarityAttr end
+    for brainrotName, data in pairs(EntitiesData.Brainrots) do
+        if string.find(string.lower(toolName), string.lower(brainrotName)) or string.find(string.lower(brainrotName), string.lower(toolName)) then
+            return data.Rarity or "Unknown"
+        end
+    end
+    return "Unknown"
+end
+
+local function getBrainrotInfo(bname, forcedRarity)
+    local rarity = forcedRarity or "Unknown"
     local chance = 0
-    if RarityData.BrainrotPool then
+    if RarityData.BrainrotPool and forcedRarity == nil then
         for r, pool in pairs(RarityData.BrainrotPool) do
             for _, item in ipairs(pool) do
                 if item.Name == bname then
@@ -489,52 +515,7 @@ local function getThumbnail(assetId)
     end
 end
 
-local function getAttributeByPattern(tool, pattern)
-    local attrs = tool:GetAttributes()
-    for attrName, value in pairs(attrs) do
-        if string.find(string.lower(attrName), pattern) then
-            return value
-        end
-    end
-    return nil
-end
-
-local function findRarityFromData(toolName)
-    local rarityAttr = getAttributeByPattern(tool, "rarit") or getAttributeByPattern(tool, "tier")
-    if rarityAttr then return rarityAttr end
-    for brainrotName, data in pairs(EntitiesData.Brainrots) do
-        if string.find(string.lower(toolName), string.lower(brainrotName)) or string.find(string.lower(brainrotName), string.lower(toolName)) then
-            return data.Rarity or "Unknown"
-        end
-    end
-    return "Unknown"
-end
-
-local function getMutation(tool)
-    local mut = getAttributeByPattern(tool, "mutat")
-    if mut then return mut end
-    return "None"
-end
-
-if lp and lp.Backpack then
-    lp.Backpack.ChildAdded:Connect(function(tool)
-        if not tool:IsA("Tool") then return end
-        task.wait(1)
-        local mutation = getMutation(tool)
-        local brainrotName = tool.Name
-        local webhookRarity = findRarityFromData(tool)
-        local oldGetBrainrotInfo = getBrainrotInfo
-        getBrainrotInfo = function(bname)
-            local info = oldGetBrainrotInfo(bname)
-            if info.rarity == "Unknown" then info.rarity = webhookRarity end
-            return info
-        end
-        sendWebhook(brainrotName, mutation, nil)
-        getBrainrotInfo = oldGetBrainrotInfo
-    end)
-end
-
-local function sendWebhook(bname, mutation, earnedValue)
+local function sendWebhook(bname, mutation, earnedValue, forcedRarity)
     if not WH.enabled or WH.url == "" then return end
     if not requestFunc then return end
 
@@ -543,7 +524,7 @@ local function sendWebhook(bname, mutation, earnedValue)
     if WH.mode == "MutatedOnly" and (mutation == "None" or mutation == "") then return end
     if WH.minEarn and earnedValue and earnedValue < WH.minEarn then return end
 
-    local info = getBrainrotInfo(bname)
+    local info = getBrainrotInfo(bname, forcedRarity)
 
     if WH.mode == "RarityOnly" and #WH.rarities > 0 then
         local rars = expandAll(WH.rarities, raritiesList)
@@ -635,6 +616,17 @@ local function sendTestWebhook()
         })
         if ok then Rayfield:Notify({Title = "Webhook", Content = "Test ping sent!", Duration = 3})
         else Rayfield:Notify({Title = "Error", Content = tostring(err), Duration = 5}) end
+    end)
+end
+
+if lp and lp.Backpack then
+    lp.Backpack.ChildAdded:Connect(function(tool)
+        if not tool:IsA("Tool") then return end
+        task.wait(1)
+        local mutation = getMutation(tool)
+        local brainrotName = tool.Name
+        local webhookRarity = findRarityFromData(tool)
+        sendWebhook(brainrotName, mutation, nil, webhookRarity)
     end)
 end
 
