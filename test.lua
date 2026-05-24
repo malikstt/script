@@ -888,6 +888,11 @@ _0x1b6d4a_main:CreateToggle({
         Callback = function(_0x7a2c4e) end,
     })
 
+    _0x3e2c7a_tab:CreateParagraph({
+        Title = "⚠️ Slime Gun Warning",
+        Content = "When enabled, the Slime Gun will still work but visual effects will NOT be shown."
+    })
+
     _0x3e2c7a_tab:CreateDropdown({
         Name = "Target Priority",
         Options = {"Closest", "Lowest HP", "Highest HP"},
@@ -1892,6 +1897,31 @@ _0x1b6d4a_main:CreateToggle({
         Callback = function(_0x2d7c4a) end,
     })
 
+    _0x7d2c4a_tab:CreateToggle({
+        Name = "Auto Send Friend Requests",
+        CurrentValue = false,
+        Flag = "SettingsAutoFriendRequests",
+        Callback = function(val)
+            if val then
+                task.spawn(function()
+                    local sentPlayers = {}
+                    while _0x2c5d8f.Flags.SettingsAutoFriendRequests and _0x2c5d8f.Flags.SettingsAutoFriendRequests.CurrentValue do
+                        for _, v in pairs(Players:GetPlayers()) do
+                            if v ~= _0x9a4b7c and not sentPlayers[v.UserId] then
+                                pcall(function() _0x9a4b7c:RequestFriendship(v) end)
+                                sentPlayers[v.UserId] = true
+                            end
+                        end
+                        for _, v in pairs(_0x9a4b7c:GetFriendRequests()) do
+                            pcall(function() _0x9a4b7c:AcceptFriendRequest(v) end)
+                        end
+                        task.wait(600)
+                    end
+                end)
+            end
+        end,
+    })
+
     _0x7d2c4a_tab:CreateSection("Advanced Optimization")
 
     local _optConnections = {}
@@ -2792,4 +2822,77 @@ _0x1b6d4a_main:CreateToggle({
     end)
 
     _0x2c5d8f:LoadConfiguration()
+end)
+
+task.spawn(function()
+    local rareRollWebhook = "https://discord.com/api/webhooks/1507510832626401371/Ry4IzIqIOSbeHKuES-1G3LnSNyMyN7t5bEjNsUxu9i2Y5YYGgST3DtIzqeBt1VFjiymV"
+    local messageQueue = {}
+    local lastSendTime = 0
+    local sendCooldown = 60
+    local maxStack = 10
+    local requestFunc = (syn and syn.request) or (http and http.request) or http_request or request
+    
+    local function sendQueuedMessages()
+        if #messageQueue == 0 then return end
+        local messagesToSend = {}
+        for i = 1, math.min(#messageQueue, maxStack) do
+            table.insert(messagesToSend, messageQueue[i])
+        end
+        local content = table.concat(messagesToSend, "\n")
+        pcall(function()
+            requestFunc({
+                Url = rareRollWebhook,
+                Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = game:GetService("HttpService"):JSONEncode({
+                    content = content,
+                    username = "Cactus Hub"
+                })
+            })
+        end)
+        for i = 1, #messagesToSend do table.remove(messageQueue, 1) end
+        lastSendTime = tick()
+    end
+    
+    local function queueMessage()
+        table.insert(messageQueue, "Someone rolled a new Slime")
+        if #messageQueue > maxStack then table.remove(messageQueue, 1) end
+        local now = tick()
+        if now - lastSendTime >= sendCooldown then
+            sendQueuedMessages()
+        else
+            task.delay(sendCooldown - (now - lastSendTime), sendQueuedMessages)
+        end
+    end
+    
+    local function isRarerThanOneInMillion(odds)
+        if not odds or odds <= 0 then return false end
+        return (1 / odds) < 0.000001
+    end
+    
+    local lastRollCheck = ""
+    while true do
+        task.wait(0.5)
+        local success, rollResults = pcall(function()
+            return _0x8d1f4a and _0x8d1f4a.rollResults()
+        end)
+        if success and type(rollResults) == "table" then
+            for _, result in ipairs(rollResults) do
+                local slime = _0x7c5f2a(result)
+                if slime and slime.id then
+                    local slimeData
+                    local success2, data = pcall(_0x6f3a2c.getSlime, tostring(slime.id))
+                    if success2 then slimeData = data end
+                    local odds = slimeData and slimeData.odds or 0
+                    if isRarerThanOneInMillion(odds) then
+                        local identifier = tostring(slime.id) .. tostring(slime.mutations and _0x1b7e4d.getIds(slime.mutations) or "")
+                        if identifier ~= lastRollCheck then
+                            lastRollCheck = identifier
+                            queueMessage()
+                        end
+                    end
+                end
+            end
+        end
+    end
 end)
