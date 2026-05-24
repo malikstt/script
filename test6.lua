@@ -891,7 +891,7 @@ _0x1b6d4a_main:CreateToggle({
     -- Added warning paragraph for Slime Gun
     _0x3e2c7a_tab:CreateParagraph({
         Title = "⚠️ Slime Gun Notice",
-        Content = "Auto Shoot Enemies has no visual/actual effect (cosmetic only). It may not deal real damage."
+        Content = "Auto Shoot Enemies has no visual/actual effect."
     })
 
     _0x3e2c7a_tab:CreateToggle({
