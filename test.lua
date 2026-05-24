@@ -583,10 +583,10 @@ task.spawn(function()
         Content = "[+] Anti AFK"
     })
 
-    _0x1b6d4a_main:CreateParagraph({
-        Title = "Latest Update",
-        Content = "[+] Auto Send & Accept Friend Requests\n[+] Fixed Auto Collect Loot\n[+] Fixed Settings (Optimization Toggles)\n[+] Added Public Webhook in Discord\n[+] Hide Attack & Damage UI\n[+] Bug Fixes"
-
+ _0x1b6d4a_main:CreateParagraph({
+    Title = "Latest Update",
+    Content = "[+] Auto Send & Accept Friend Requests\n[+] Fixed Auto Collect Loot\n[+] Fixed Settings (Optimization Toggles)\n[+] Added Public Webhook in Discord\n[+] Hide Attack & Damage UI\n[+] Bug Fixes"
+})
     _0x1b6d4a_main:CreateButton({
         Name = "Copy Discord Invite",
         Callback = function()
