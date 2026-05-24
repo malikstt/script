@@ -122,49 +122,24 @@ local function GetBackpackTools()
     return tools
 end
 
-local collectConfig = {enabled = false, delay = 1, loop = nil}
-local slotCollect = {selected = {}, map = {}, dropdown = nil, auto = false, delay = 1, loop = nil}
-local rarityCollect = {rarities = {}, auto = false, delay = 1, loop = nil}
-local placeConfig = {specifics = {}, rarities = {}, auto = false, delay = 0.5, loop = nil}
-local removeConfig = {specifics = {}, rarities = {}, auto = false, delay = 0.5, loop = nil}
-local kickConfig = {running = false, loop = nil, scale = 0.99, mode = "custom"}
-local sellRarity = {rarities = {}, auto = false, delay = 5, loop = nil}
-local sellSpecific = {targets = {}, auto = false, delay = 5, loop = nil}
-local sellMutation = {mutations = {}, auto = false, delay = 5, loop = nil}
-local upgradeSlots = {selected = {}, map = {}, dropdown = nil, auto = false, loop = nil}
-local upgradeRarity = {rarities = {}, auto = false, loop = nil}
-local shopSpeed = {amount = 1, auto = false, loop = nil}
-local shopWeights = {selected = {}, auto = false, loop = nil}
-local shopSlots = {auto = false, loop = nil}
-local shopRebirth = {auto = false, loop = nil}
-
-local WH = {
-    url = "",
-    enabled = false,
-    mode = "All",
-    minEarn = nil,
-    pingUID = "",
-    rarities = {},
-    mutations = {},
-    specifics = {},
-}
-
 local function refreshSlotMaps()
     local plot = GetPlot()
     if not plot then return end
-    slotCollect.map = {}
-    upgradeSlots.map = {}
+    local slotMap = {}
+    local upgradeMap = {}
     for _, s in ipairs(GetSlots(plot)) do
         local placed = s.part:FindFirstChild("PlacedPart")
         local label = "Slot " .. s.num .. " - " .. (placed and placed:GetAttribute("ID") or "Empty")
-        slotCollect.map[label] = s.num
-        upgradeSlots.map[label] = s.num
+        slotMap[label] = s.num
+        upgradeMap[label] = s.num
     end
     local vals = {}
-    for k in pairs(slotCollect.map) do table.insert(vals, k) end
+    for k in pairs(slotMap) do table.insert(vals, k) end
     if #vals == 0 then vals = {"No brainrots placed"} end
-    if slotCollect.dropdown then slotCollect.dropdown:Refresh(vals) end
-    if upgradeSlots.dropdown then upgradeSlots.dropdown:Refresh(vals) end
+    if _G.slotCollectDropdown then _G.slotCollectDropdown:Refresh(vals) end
+    if _G.upgradeSlotsDropdown then _G.upgradeSlotsDropdown:Refresh(vals) end
+    _G.slotMap = slotMap
+    _G.upgradeMap = upgradeMap
 end
 
 local function collectFromSlot(slotNum)
@@ -186,7 +161,7 @@ local function collectFromSlot(slotNum)
 end
 
 local function autoCollectLoop()
-    while collectConfig.enabled do
+    while Rayfield.Flags.AutoCollectAllSlots.Value do
         local plot = GetPlot()
         if plot then
             for _, slot in ipairs(GetSlots(plot)) do
@@ -195,22 +170,28 @@ local function autoCollectLoop()
                 end
             end
         end
-        task.wait(collectConfig.delay)
+        task.wait(Rayfield.Flags.CollectInterval.Value)
     end
 end
 
 local function autoSlotCollectLoop()
-    while slotCollect.auto do
-        for _, n in ipairs(slotCollect.selected) do collectFromSlot(n) end
-        task.wait(slotCollect.delay)
+    while Rayfield.Flags.AutoCollectSelectedSlots.Value do
+        local selected = Rayfield.Flags.SlotCollectSelected.Value
+        if selected and selected ~= "" then
+            for _, num in ipairs(selected) do
+                collectFromSlot(num)
+            end
+        end
+        task.wait(Rayfield.Flags.SlotCollectInterval.Value)
     end
 end
 
 local function autoRarityCollectLoop()
-    while rarityCollect.auto do
+    while Rayfield.Flags.AutoCollectByRarity.Value do
         local plot = GetPlot()
-        if plot and #rarityCollect.rarities > 0 then
-            local rars = expandAll(rarityCollect.rarities, raritiesList)
+        local rarities = Rayfield.Flags.CollectRarities.Value
+        if plot and rarities and rarities ~= "" then
+            local rars = expandAll(rarities, raritiesList)
             for _, slot in ipairs(GetSlots(plot)) do
                 local placed = slot.part:FindFirstChild("PlacedPart")
                 if placed then
@@ -223,18 +204,20 @@ local function autoRarityCollectLoop()
                 end
             end
         end
-        task.wait(rarityCollect.delay)
+        task.wait(Rayfield.Flags.RarityCollectInterval.Value)
     end
 end
 
 local function autoPlaceLoop()
-    while placeConfig.auto do
+    while Rayfield.Flags.AutoPlace.Value do
         local plot = GetPlot()
         if plot and #GetEmptySlots(plot) > 0 then
-            local specs = expandAll(placeConfig.specifics, allBrainrots)
-            local rars = expandAll(placeConfig.rarities, raritiesList)
+            local specs = Rayfield.Flags.PlaceSpecificBrainrots.Value
+            if specs == "" then specs = {} else specs = expandAll(specs, allBrainrots) end
+            local rars = Rayfield.Flags.PlaceRarities.Value
+            if rars == "" then rars = {} else rars = expandAll(rars, raritiesList) end
             for _, toolName in ipairs(GetBackpackTools()) do
-                local matched = #placeConfig.specifics == 0 and #placeConfig.rarities == 0
+                local matched = (#specs == 0 and #rars == 0)
                 for _, s in ipairs(specs) do if toolName == s then matched = true break end end
                 if not matched then
                     for _, rar in ipairs(rars) do
@@ -251,7 +234,7 @@ local function autoPlaceLoop()
                         hum:EquipTool(tObj)
                         task.wait(0.2)
                         FireRemote("rev_Shop_Buy", "WeightShop", toolName)
-                        task.wait(placeConfig.delay)
+                        task.wait(Rayfield.Flags.PlaceDelay.Value)
                     end
                 end
             end
@@ -261,16 +244,18 @@ local function autoPlaceLoop()
 end
 
 local function autoRemoveLoop()
-    while removeConfig.auto do
+    while Rayfield.Flags.AutoRemove.Value do
         local plot = GetPlot()
         if plot then
-            local specs = expandAll(removeConfig.specifics, allBrainrots)
-            local rars = expandAll(removeConfig.rarities, raritiesList)
+            local specs = Rayfield.Flags.RemoveSpecificBrainrots.Value
+            if specs == "" then specs = {} else specs = expandAll(specs, allBrainrots) end
+            local rars = Rayfield.Flags.RemoveRarities.Value
+            if rars == "" then rars = {} else rars = expandAll(rars, raritiesList) end
             for _, slot in ipairs(GetSlots(plot)) do
                 local placed = slot.part:FindFirstChild("PlacedPart")
                 if placed then
                     local id = placed:GetAttribute("ID")
-                    local matched = #removeConfig.specifics == 0 and #removeConfig.rarities == 0
+                    local matched = (#specs == 0 and #rars == 0)
                     for _, s in ipairs(specs) do if id == s then matched = true break end end
                     if not matched then
                         for _, rar in ipairs(rars) do
@@ -282,7 +267,7 @@ local function autoRemoveLoop()
                     end
                     if matched then
                         FireRemote("rev_S_Interact", slot.num)
-                        task.wait(removeConfig.delay)
+                        task.wait(Rayfield.Flags.RemoveDelay.Value)
                     end
                 end
             end
@@ -292,17 +277,17 @@ local function autoRemoveLoop()
 end
 
 local function autoKickLoop()
-    while kickConfig.running do
-        local scale
-        if kickConfig.mode == "custom" then
-            scale = kickConfig.scale
-        elseif kickConfig.mode == "50-60" then scale = math.random(50, 60) / 100
-        elseif kickConfig.mode == "60-70" then scale = math.random(60, 70) / 100
-        elseif kickConfig.mode == "70-80" then scale = math.random(70, 80) / 100
-        elseif kickConfig.mode == "80-90" then scale = math.random(80, 90) / 100
-        elseif kickConfig.mode == "90-100" then scale = math.random(90, 100) / 100
-        else scale = kickConfig.scale
-        end
+    local modeMap = {
+        custom = function() return Rayfield.Flags.CustomKickAccuracy.Value / 100 end,
+        ["50-60"] = function() return math.random(50, 60) / 100 end,
+        ["60-70"] = function() return math.random(60, 70) / 100 end,
+        ["70-80"] = function() return math.random(70, 80) / 100 end,
+        ["80-90"] = function() return math.random(80, 90) / 100 end,
+        ["90-100"] = function() return math.random(90, 100) / 100 end,
+    }
+    while Rayfield.Flags.AutoFarm.Value do
+        local mode = Rayfield.Flags.KickMode.Value
+        local scale = modeMap[mode] and modeMap[mode]() or 0.99
         local level = 1
         local ls = lp:FindFirstChild("leaderstats")
         if ls and ls:FindFirstChild("KickLevel") then level = ls.KickLevel.Value end
@@ -323,9 +308,10 @@ local function autoKickLoop()
 end
 
 local function sellByRarityLoop()
-    while sellRarity.auto do
-        if #sellRarity.rarities > 0 then
-            local rars = expandAll(sellRarity.rarities, raritiesList)
+    while Rayfield.Flags.AutoSellByRarity.Value do
+        local rars = Rayfield.Flags.SellRarities.Value
+        if rars and rars ~= "" then
+            rars = expandAll(rars, raritiesList)
             for _, toolName in ipairs(GetBackpackTools()) do
                 for _, rar in ipairs(rars) do
                     for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
@@ -343,14 +329,15 @@ local function sellByRarityLoop()
                 end
             end
         end
-        task.wait(sellRarity.delay)
+        task.wait(Rayfield.Flags.SellRarityInterval.Value)
     end
 end
 
 local function sellSpecificLoop()
-    while sellSpecific.auto do
-        if #sellSpecific.targets > 0 then
-            local targets = expandAll(sellSpecific.targets, allBrainrots)
+    while Rayfield.Flags.AutoSellSpecific.Value do
+        local targets = Rayfield.Flags.SellSpecificBrainrots.Value
+        if targets and targets ~= "" then
+            targets = expandAll(targets, allBrainrots)
             for _, toolName in ipairs(GetBackpackTools()) do
                 for _, target in ipairs(targets) do
                     if toolName == target then
@@ -366,14 +353,15 @@ local function sellSpecificLoop()
                 end
             end
         end
-        task.wait(sellSpecific.delay)
+        task.wait(Rayfield.Flags.SellSpecificInterval.Value)
     end
 end
 
 local function sellByMutationLoop()
-    while sellMutation.auto do
-        if #sellMutation.mutations > 0 then
-            local muts = expandAll(sellMutation.mutations, mutationsList)
+    while Rayfield.Flags.AutoSellByMutation.Value do
+        local muts = Rayfield.Flags.SellMutations.Value
+        if muts and muts ~= "" then
+            muts = expandAll(muts, mutationsList)
             for _, toolName in ipairs(GetBackpackTools()) do
                 local tool = lp.Backpack:FindFirstChild(toolName)
                 if tool then
@@ -392,21 +380,25 @@ local function sellByMutationLoop()
                 end
             end
         end
-        task.wait(sellMutation.delay)
+        task.wait(Rayfield.Flags.SellMutationInterval.Value)
     end
 end
 
 local function upgradeSelectedSlots()
-    for _, n in ipairs(upgradeSlots.selected) do
-        FireRemote("rev_B_Upgrade", n)
-        task.wait(0.1)
+    local selected = Rayfield.Flags.UpgradeSlotsSelected.Value
+    if selected and selected ~= "" then
+        for _, n in ipairs(selected) do
+            FireRemote("rev_B_Upgrade", n)
+            task.wait(0.1)
+        end
     end
 end
 
 local function upgradeRarityLoop()
-    while upgradeRarity.auto do
-        if #upgradeRarity.rarities > 0 then
-            local rars = expandAll(upgradeRarity.rarities, raritiesList)
+    while Rayfield.Flags.AutoUpgradeByRarity.Value do
+        local rars = Rayfield.Flags.UpgradeRarities.Value
+        if rars and rars ~= "" then
+            rars = expandAll(rars, raritiesList)
             local plot = GetPlot()
             if plot then
                 for _, slot in ipairs(GetSlots(plot)) do
@@ -509,30 +501,44 @@ local function getThumbnail(assetId)
 end
 
 local function sendWebhook(bname, mutation, earnedValue, forcedRarity)
-    if not WH.enabled or WH.url == "" then return end
+    local enabled = Rayfield.Flags.EnableDiscordWebhook.Value
+    local url = Rayfield.Flags.WebhookURL.Value
+    if not enabled or url == "" then return end
     if not requestFunc then return end
 
     mutation = mutation or "None"
+    local mode = Rayfield.Flags.SendMode.Value
 
-    if WH.mode == "MutatedOnly" and (mutation == "None" or mutation == "") then return end
-    if WH.minEarn and earnedValue and earnedValue < WH.minEarn then return end
+    if mode == "MutatedOnly" and (mutation == "None" or mutation == "") then return end
+    local minEarn = Rayfield.Flags.MinEarn.Value
+    if minEarn and minEarn ~= "" then
+        local num = parseShortNumber(minEarn)
+        if num and earnedValue and earnedValue < num then return end
+    end
 
     local info = getBrainrotInfo(bname, forcedRarity)
 
-    if WH.mode == "RarityOnly" and #WH.rarities > 0 then
-        local rars = expandAll(WH.rarities, raritiesList)
-        local ok = false
-        for _, r in ipairs(rars) do if r == info.rarity then ok = true break end end
-        if not ok then return end
+    if mode == "RarityOnly" then
+        local rars = Rayfield.Flags.RarityFilter.Value
+        if rars and rars ~= "" then
+            rars = expandAll(rars, raritiesList)
+            local ok = false
+            for _, r in ipairs(rars) do if r == info.rarity then ok = true break end end
+            if not ok then return end
+        end
     end
-    if #WH.mutations > 0 then
-        local muts = expandAll(WH.mutations, mutationsList)
+
+    local mutFilter = Rayfield.Flags.MutationFilter.Value
+    if mutFilter and mutFilter ~= "" then
+        local muts = expandAll(mutFilter, mutationsList)
         local ok = false
         for _, m in ipairs(muts) do if m == mutation then ok = true break end end
         if not ok then return end
     end
-    if #WH.specifics > 0 then
-        local specs = expandAll(WH.specifics, allBrainrots)
+
+    local specFilter = Rayfield.Flags.SpecificBrainrotFilter.Value
+    if specFilter and specFilter ~= "" then
+        local specs = expandAll(specFilter, allBrainrots)
         local ok = false
         for _, s in ipairs(specs) do if s == bname then ok = true break end end
         if not ok then return end
@@ -567,11 +573,12 @@ local function sendWebhook(bname, mutation, earnedValue, forcedRarity)
         avatar_url = "https://media.discordapp.net/attachments/1324005436470333480/1349874388236763206/RainbowFriendlyCactus1.png?ex=6a1426bd&is=6a12d53d&hm=adc011c12e097b4238f08364c0ffbd6f30c9eff3f51b7706219b6c8cba76932d&=&format=png",
         embeds = {embed},
     }
-    if WH.pingUID ~= "" then payload.content = "<@" .. WH.pingUID .. ">" end
+    local pingID = Rayfield.Flags.PingUserID.Value
+    if pingID and pingID ~= "" then payload.content = "<@" .. pingID .. ">" end
 
     task.spawn(function()
         pcall(requestFunc, {
-            Url = WH.url,
+            Url = url,
             Method = "POST",
             Headers = {["Content-Type"] = "application/json"},
             Body = HttpSvc:JSONEncode(payload),
@@ -580,7 +587,9 @@ local function sendWebhook(bname, mutation, earnedValue, forcedRarity)
 end
 
 local function sendTestWebhook()
-    if not WH.enabled or WH.url == "" then
+    local enabled = Rayfield.Flags.EnableDiscordWebhook.Value
+    local url = Rayfield.Flags.WebhookURL.Value
+    if not enabled or url == "" then
         Rayfield:Notify({Title = "Webhook", Content = "Enable webhook and enter a URL first.", Duration = 3})
         return
     end
@@ -599,10 +608,11 @@ local function sendTestWebhook()
             timestamp = DateTime.now():ToIsoDate(),
         }}
     }
-    if WH.pingUID ~= "" then payload.content = "<@" .. WH.pingUID .. ">" end
+    local pingID = Rayfield.Flags.PingUserID.Value
+    if pingID and pingID ~= "" then payload.content = "<@" .. pingID .. ">" end
     task.spawn(function()
         local ok, err = pcall(requestFunc, {
-            Url = WH.url,
+            Url = url,
             Method = "POST",
             Headers = {["Content-Type"] = "application/json"},
             Body = HttpSvc:JSONEncode(payload),
@@ -628,7 +638,7 @@ local Window = Rayfield:CreateWindow({
     LoadingTitle = "Cactus Hub",
     LoadingSubtitle = "by Cactus",
     Theme = "Default",
-    ConfigurationSaving = {Enabled = false},
+    ConfigurationSaving = {Enabled = true, FolderName = "CactusHub", FileName = "Config"},
     KeySystem = false,
 })
 
@@ -664,6 +674,7 @@ mainTab:CreateParagraph({Title = "🛡️ Anti-AFK", Content = "Permanently disa
 mainTab:CreateSection("Utilities")
 mainTab:CreateButton({
     Name = "Copy Discord Invite",
+    Flag = "CopyDiscordInvite",
     Callback = function()
         local success, err = pcall(function()
             if setclipboard then setclipboard("https://discord.gg/qMWFBWdcf")
@@ -683,12 +694,14 @@ farmingTab:CreateDropdown({
     Name = "Kick Accuracy Mode",
     Options = {"custom", "50-60", "60-70", "70-80", "80-90", "90-100"},
     CurrentOption = "custom",
-    Callback = function(opt) kickConfig.mode = opt end,
+    Flag = "KickMode",
+    Callback = function(opt) end,
 })
 farmingTab:CreateSlider({
     Name = "Custom Kick Accuracy", Range = {0, 100}, Increment = 1, Suffix = "%",
     CurrentValue = 99,
-    Callback = function(v) kickConfig.scale = v / 100 end,
+    Flag = "CustomKickAccuracy",
+    Callback = function(v) end,
 })
 farmingTab:CreateParagraph({
     Title = "⚠️ WARNING",
@@ -696,67 +709,73 @@ farmingTab:CreateParagraph({
 })
 farmingTab:CreateToggle({
     Name = "Start Auto Farm", CurrentValue = false,
+    Flag = "AutoFarm",
     Callback = function(v)
-        kickConfig.running = v
         if v then
-            if kickConfig.loop then task.cancel(kickConfig.loop) end
-            kickConfig.loop = task.spawn(autoKickLoop)
+            if _G.autoFarmLoop then task.cancel(_G.autoFarmLoop) end
+            _G.autoFarmLoop = task.spawn(autoKickLoop)
         else
-            if kickConfig.loop then task.cancel(kickConfig.loop) kickConfig.loop = nil end
+            if _G.autoFarmLoop then task.cancel(_G.autoFarmLoop) _G.autoFarmLoop = nil end
         end
     end,
 })
 
 farmingTab:CreateSection("Auto Place")
-farmingTab:CreateDropdown({
+local placeSpecific = farmingTab:CreateDropdown({
     Name = "Specific Brainrots", Options = brainrots_with_all, Multi = true,
-    Callback = function(sel) placeConfig.specifics = sel end,
+    Flag = "PlaceSpecificBrainrots",
+    Callback = function(sel) end,
 })
-farmingTab:CreateDropdown({
+local placeRarities = farmingTab:CreateDropdown({
     Name = "Rarities", Options = rarities_with_all, Multi = true,
-    Callback = function(sel) placeConfig.rarities = sel end,
+    Flag = "PlaceRarities",
+    Callback = function(sel) end,
 })
 farmingTab:CreateSlider({
     Name = "Place Delay", Range = {0.1, 5}, Increment = 0.1, Suffix = "s",
     CurrentValue = 0.5,
-    Callback = function(v) placeConfig.delay = v end,
+    Flag = "PlaceDelay",
+    Callback = function(v) end,
 })
 farmingTab:CreateToggle({
     Name = "Auto Place", CurrentValue = false,
+    Flag = "AutoPlace",
     Callback = function(v)
-        placeConfig.auto = v
         if v then
-            if placeConfig.loop then task.cancel(placeConfig.loop) end
-            placeConfig.loop = task.spawn(autoPlaceLoop)
+            if _G.autoPlaceLoop then task.cancel(_G.autoPlaceLoop) end
+            _G.autoPlaceLoop = task.spawn(autoPlaceLoop)
         else
-            if placeConfig.loop then task.cancel(placeConfig.loop) placeConfig.loop = nil end
+            if _G.autoPlaceLoop then task.cancel(_G.autoPlaceLoop) _G.autoPlaceLoop = nil end
         end
     end,
 })
 
 farmingTab:CreateSection("Auto Remove")
-farmingTab:CreateDropdown({
+local removeSpecific = farmingTab:CreateDropdown({
     Name = "Specific Brainrots", Options = brainrots_with_all, Multi = true,
-    Callback = function(sel) removeConfig.specifics = sel end,
+    Flag = "RemoveSpecificBrainrots",
+    Callback = function(sel) end,
 })
-farmingTab:CreateDropdown({
+local removeRarities = farmingTab:CreateDropdown({
     Name = "Rarities", Options = rarities_with_all, Multi = true,
-    Callback = function(sel) removeConfig.rarities = sel end,
+    Flag = "RemoveRarities",
+    Callback = function(sel) end,
 })
 farmingTab:CreateSlider({
     Name = "Remove Delay", Range = {0.1, 5}, Increment = 0.1, Suffix = "s",
     CurrentValue = 0.5,
-    Callback = function(v) removeConfig.delay = v end,
+    Flag = "RemoveDelay",
+    Callback = function(v) end,
 })
 farmingTab:CreateToggle({
     Name = "Auto Remove", CurrentValue = false,
+    Flag = "AutoRemove",
     Callback = function(v)
-        removeConfig.auto = v
         if v then
-            if removeConfig.loop then task.cancel(removeConfig.loop) end
-            removeConfig.loop = task.spawn(autoRemoveLoop)
+            if _G.autoRemoveLoop then task.cancel(_G.autoRemoveLoop) end
+            _G.autoRemoveLoop = task.spawn(autoRemoveLoop)
         else
-            if removeConfig.loop then task.cancel(removeConfig.loop) removeConfig.loop = nil end
+            if _G.autoRemoveLoop then task.cancel(_G.autoRemoveLoop) _G.autoRemoveLoop = nil end
         end
     end,
 })
@@ -766,77 +785,88 @@ local bcTab = Window:CreateTab("Brainrots & Cash", 96942169425973)
 bcTab:CreateSection("Auto Collect All")
 bcTab:CreateToggle({
     Name = "Auto Collect All Slots", CurrentValue = false,
+    Flag = "AutoCollectAllSlots",
     Callback = function(v)
-        collectConfig.enabled = v
         if v then
-            if collectConfig.loop then task.cancel(collectConfig.loop) end
-            collectConfig.loop = task.spawn(autoCollectLoop)
+            if _G.autoCollectLoop then task.cancel(_G.autoCollectLoop) end
+            _G.autoCollectLoop = task.spawn(autoCollectLoop)
         else
-            if collectConfig.loop then task.cancel(collectConfig.loop) collectConfig.loop = nil end
+            if _G.autoCollectLoop then task.cancel(_G.autoCollectLoop) _G.autoCollectLoop = nil end
         end
     end,
 })
 bcTab:CreateSlider({
     Name = "Collect Interval", Range = {0.1, 10}, Increment = 0.1, Suffix = "s",
     CurrentValue = 1,
-    Callback = function(v) collectConfig.delay = v end,
+    Flag = "CollectInterval",
+    Callback = function(v) end,
 })
 
 bcTab:CreateSection("Collect by Slot")
-bcTab:CreateButton({Name = "Refresh Slots", Callback = refreshSlotMaps})
-slotCollect.dropdown = bcTab:CreateDropdown({
+bcTab:CreateButton({
+    Name = "Refresh Slots",
+    Flag = "RefreshSlots",
+    Callback = refreshSlotMaps,
+})
+_G.slotCollectDropdown = bcTab:CreateDropdown({
     Name = "Select Slots", Options = {"Press Refresh first"}, Multi = true,
+    Flag = "SlotCollectSelected",
     Callback = function(sel)
-        slotCollect.selected = {}
+        local nums = {}
         for _, lbl in ipairs(sel) do
-            if slotCollect.map[lbl] then table.insert(slotCollect.selected, slotCollect.map[lbl]) end
+            if _G.slotMap and _G.slotMap[lbl] then table.insert(nums, _G.slotMap[lbl]) end
         end
+        Rayfield.Flags.SlotCollectSelected.Value = nums
     end,
 })
 bcTab:CreateToggle({
     Name = "Auto Collect Selected Slots", CurrentValue = false,
+    Flag = "AutoCollectSelectedSlots",
     Callback = function(v)
-        slotCollect.auto = v
         if v then
-            if slotCollect.loop then task.cancel(slotCollect.loop) end
-            slotCollect.loop = task.spawn(autoSlotCollectLoop)
+            if _G.autoSlotCollectLoop then task.cancel(_G.autoSlotCollectLoop) end
+            _G.autoSlotCollectLoop = task.spawn(autoSlotCollectLoop)
         else
-            if slotCollect.loop then task.cancel(slotCollect.loop) slotCollect.loop = nil end
+            if _G.autoSlotCollectLoop then task.cancel(_G.autoSlotCollectLoop) _G.autoSlotCollectLoop = nil end
         end
     end,
 })
 bcTab:CreateSlider({
     Name = "Slot Collect Interval", Range = {0.1, 10}, Increment = 0.1, Suffix = "s",
     CurrentValue = 1,
-    Callback = function(v) slotCollect.delay = v end,
+    Flag = "SlotCollectInterval",
+    Callback = function(v) end,
 })
 
 bcTab:CreateSection("Collect by Rarity")
 bcTab:CreateDropdown({
     Name = "Select Rarities", Options = rarities_with_all, Multi = true,
-    Callback = function(sel) rarityCollect.rarities = sel end,
+    Flag = "CollectRarities",
+    Callback = function(sel) end,
 })
 bcTab:CreateToggle({
     Name = "Auto Collect by Rarity", CurrentValue = false,
+    Flag = "AutoCollectByRarity",
     Callback = function(v)
-        rarityCollect.auto = v
         if v then
-            if rarityCollect.loop then task.cancel(rarityCollect.loop) end
-            rarityCollect.loop = task.spawn(autoRarityCollectLoop)
+            if _G.autoRarityCollectLoop then task.cancel(_G.autoRarityCollectLoop) end
+            _G.autoRarityCollectLoop = task.spawn(autoRarityCollectLoop)
         else
-            if rarityCollect.loop then task.cancel(rarityCollect.loop) rarityCollect.loop = nil end
+            if _G.autoRarityCollectLoop then task.cancel(_G.autoRarityCollectLoop) _G.autoRarityCollectLoop = nil end
         end
     end,
 })
 bcTab:CreateSlider({
     Name = "Rarity Collect Interval", Range = {0.1, 10}, Increment = 0.1, Suffix = "s",
     CurrentValue = 1,
-    Callback = function(v) rarityCollect.delay = v end,
+    Flag = "RarityCollectInterval",
+    Callback = function(v) end,
 })
 
 bcTab:CreateSection("Quick Sell")
 bcTab:CreateButton({
     Name = "Sell Equipped",
+    Flag = "SellEquipped",
     Callback = function()
         local char = lp.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -845,76 +875,83 @@ bcTab:CreateButton({
 })
 bcTab:CreateButton({
     Name = "Sell All Brainrots",
+    Flag = "SellAllBrainrots",
     Callback = function() InvokeRemote("ref_B_SellAll") end,
 })
 
 bcTab:CreateSection("Sell by Rarity")
 bcTab:CreateDropdown({
     Name = "Select Rarities", Options = rarities_with_all, Multi = true,
-    Callback = function(sel) sellRarity.rarities = sel end,
+    Flag = "SellRarities",
+    Callback = function(sel) end,
 })
 bcTab:CreateToggle({
     Name = "Auto Sell by Rarity", CurrentValue = false,
+    Flag = "AutoSellByRarity",
     Callback = function(v)
-        sellRarity.auto = v
         if v then
-            if sellRarity.loop then task.cancel(sellRarity.loop) end
-            sellRarity.loop = task.spawn(sellByRarityLoop)
+            if _G.sellRarityLoop then task.cancel(_G.sellRarityLoop) end
+            _G.sellRarityLoop = task.spawn(sellByRarityLoop)
         else
-            if sellRarity.loop then task.cancel(sellRarity.loop) sellRarity.loop = nil end
+            if _G.sellRarityLoop then task.cancel(_G.sellRarityLoop) _G.sellRarityLoop = nil end
         end
     end,
 })
 bcTab:CreateSlider({
     Name = "Sell Interval", Range = {1, 60}, Increment = 1, Suffix = "s",
     CurrentValue = 5,
-    Callback = function(v) sellRarity.delay = v end,
+    Flag = "SellRarityInterval",
+    Callback = function(v) end,
 })
 
 bcTab:CreateSection("Sell Specific")
 bcTab:CreateDropdown({
     Name = "Select Brainrots", Options = brainrots_with_all, Multi = true,
-    Callback = function(sel) sellSpecific.targets = sel end,
+    Flag = "SellSpecificBrainrots",
+    Callback = function(sel) end,
 })
 bcTab:CreateToggle({
     Name = "Auto Sell Specific", CurrentValue = false,
+    Flag = "AutoSellSpecific",
     Callback = function(v)
-        sellSpecific.auto = v
         if v then
-            if sellSpecific.loop then task.cancel(sellSpecific.loop) end
-            sellSpecific.loop = task.spawn(sellSpecificLoop)
+            if _G.sellSpecificLoop then task.cancel(_G.sellSpecificLoop) end
+            _G.sellSpecificLoop = task.spawn(sellSpecificLoop)
         else
-            if sellSpecific.loop then task.cancel(sellSpecific.loop) sellSpecific.loop = nil end
+            if _G.sellSpecificLoop then task.cancel(_G.sellSpecificLoop) _G.sellSpecificLoop = nil end
         end
     end,
 })
 bcTab:CreateSlider({
     Name = "Sell Interval", Range = {1, 60}, Increment = 1, Suffix = "s",
     CurrentValue = 5,
-    Callback = function(v) sellSpecific.delay = v end,
+    Flag = "SellSpecificInterval",
+    Callback = function(v) end,
 })
 
 bcTab:CreateSection("Sell by Mutation")
 bcTab:CreateDropdown({
     Name = "Select Mutations", Options = mutations_with_all, Multi = true,
-    Callback = function(sel) sellMutation.mutations = sel end,
+    Flag = "SellMutations",
+    Callback = function(sel) end,
 })
 bcTab:CreateToggle({
     Name = "Auto Sell by Mutation", CurrentValue = false,
+    Flag = "AutoSellByMutation",
     Callback = function(v)
-        sellMutation.auto = v
         if v then
-            if sellMutation.loop then task.cancel(sellMutation.loop) end
-            sellMutation.loop = task.spawn(sellByMutationLoop)
+            if _G.sellMutationLoop then task.cancel(_G.sellMutationLoop) end
+            _G.sellMutationLoop = task.spawn(sellByMutationLoop)
         else
-            if sellMutation.loop then task.cancel(sellMutation.loop) sellMutation.loop = nil end
+            if _G.sellMutationLoop then task.cancel(_G.sellMutationLoop) _G.sellMutationLoop = nil end
         end
     end,
 })
 bcTab:CreateSlider({
     Name = "Sell Interval", Range = {1, 60}, Increment = 1, Suffix = "s",
     CurrentValue = 5,
-    Callback = function(v) sellMutation.delay = v end,
+    Flag = "SellMutationInterval",
+    Callback = function(v) end,
 })
 
 local miscTab = Window:CreateTab("Misc", 135748283315148)
@@ -923,44 +960,53 @@ miscTab:CreateSection("Shop - Speed")
 miscTab:CreateSlider({
     Name = "Amount to Buy", Range = {1, 50}, Increment = 1, Suffix = "x",
     CurrentValue = 1,
-    Callback = function(v) shopSpeed.amount = v end,
+    Flag = "SpeedAmount",
+    Callback = function(v) end,
 })
 miscTab:CreateToggle({
     Name = "Auto Buy Speed", CurrentValue = false,
+    Flag = "AutoBuySpeed",
     Callback = function(v)
-        shopSpeed.auto = v
         if v then
-            if shopSpeed.loop then task.cancel(shopSpeed.loop) end
-            shopSpeed.loop = task.spawn(function()
-                while shopSpeed.auto do FireRemote("rev_SPEED_UPGRADE", shopSpeed.amount) task.wait(1) end
+            if _G.autoSpeedLoop then task.cancel(_G.autoSpeedLoop) end
+            _G.autoSpeedLoop = task.spawn(function()
+                while Rayfield.Flags.AutoBuySpeed.Value do
+                    FireRemote("rev_SPEED_UPGRADE", Rayfield.Flags.SpeedAmount.Value)
+                    task.wait(1)
+                end
             end)
         else
-            if shopSpeed.loop then task.cancel(shopSpeed.loop) shopSpeed.loop = nil end
+            if _G.autoSpeedLoop then task.cancel(_G.autoSpeedLoop) _G.autoSpeedLoop = nil end
         end
     end,
 })
 
 miscTab:CreateSection("Shop - Weights")
-miscTab:CreateDropdown({
+local weightsDropdown = miscTab:CreateDropdown({
     Name = "Select Weights", Options = weights_with_all, Multi = true,
-    Callback = function(sel) shopWeights.selected = sel end,
+    Flag = "AutoBuyWeightsList",
+    Callback = function(sel) end,
 })
 miscTab:CreateToggle({
     Name = "Auto Buy Weights", CurrentValue = false,
+    Flag = "AutoBuyWeights",
     Callback = function(v)
-        shopWeights.auto = v
         if v then
-            if shopWeights.loop then task.cancel(shopWeights.loop) end
-            shopWeights.loop = task.spawn(function()
-                while shopWeights.auto do
-                    for _, w in ipairs(expandAll(shopWeights.selected, weightsList)) do
-                        FireRemote("rev_Shop_Buy", "WeightShop", w) task.wait(0.1)
+            if _G.autoWeightsLoop then task.cancel(_G.autoWeightsLoop) end
+            _G.autoWeightsLoop = task.spawn(function()
+                while Rayfield.Flags.AutoBuyWeights.Value do
+                    local selected = Rayfield.Flags.AutoBuyWeightsList.Value
+                    if selected and selected ~= "" then
+                        for _, w in ipairs(expandAll(selected, weightsList)) do
+                            FireRemote("rev_Shop_Buy", "WeightShop", w)
+                            task.wait(0.1)
+                        end
                     end
                     task.wait(1)
                 end
             end)
         else
-            if shopWeights.loop then task.cancel(shopWeights.loop) shopWeights.loop = nil end
+            if _G.autoWeightsLoop then task.cancel(_G.autoWeightsLoop) _G.autoWeightsLoop = nil end
         end
     end,
 })
@@ -968,71 +1014,87 @@ miscTab:CreateToggle({
 miscTab:CreateSection("Shop - Slots & Rebirth")
 miscTab:CreateToggle({
     Name = "Auto Buy Slots", CurrentValue = false,
+    Flag = "AutoBuySlots",
     Callback = function(v)
-        shopSlots.auto = v
         if v then
-            if shopSlots.loop then task.cancel(shopSlots.loop) end
-            shopSlots.loop = task.spawn(function()
-                while shopSlots.auto do FireRemote("rev_bs_upgrade") task.wait(1) end
+            if _G.autoSlotsLoop then task.cancel(_G.autoSlotsLoop) end
+            _G.autoSlotsLoop = task.spawn(function()
+                while Rayfield.Flags.AutoBuySlots.Value do
+                    FireRemote("rev_bs_upgrade")
+                    task.wait(1)
+                end
             end)
         else
-            if shopSlots.loop then task.cancel(shopSlots.loop) shopSlots.loop = nil end
+            if _G.autoSlotsLoop then task.cancel(_G.autoSlotsLoop) _G.autoSlotsLoop = nil end
         end
     end,
 })
 miscTab:CreateToggle({
     Name = "Auto Rebirth", CurrentValue = false,
+    Flag = "AutoRebirth",
     Callback = function(v)
-        shopRebirth.auto = v
         if v then
-            if shopRebirth.loop then task.cancel(shopRebirth.loop) end
-            shopRebirth.loop = task.spawn(function()
-                while shopRebirth.auto do FireRemote("rev_RebirthRequest") task.wait(1) end
+            if _G.autoRebirthLoop then task.cancel(_G.autoRebirthLoop) end
+            _G.autoRebirthLoop = task.spawn(function()
+                while Rayfield.Flags.AutoRebirth.Value do
+                    FireRemote("rev_RebirthRequest")
+                    task.wait(1)
+                end
             end)
         else
-            if shopRebirth.loop then task.cancel(shopRebirth.loop) shopRebirth.loop = nil end
+            if _G.autoRebirthLoop then task.cancel(_G.autoRebirthLoop) _G.autoRebirthLoop = nil end
         end
     end,
 })
 
 miscTab:CreateSection("Upgrades")
-miscTab:CreateButton({Name = "Refresh Slots", Callback = refreshSlotMaps})
-upgradeSlots.dropdown = miscTab:CreateDropdown({
+miscTab:CreateButton({
+    Name = "Refresh Slots",
+    Flag = "UpgradeRefreshSlots",
+    Callback = refreshSlotMaps,
+})
+_G.upgradeSlotsDropdown = miscTab:CreateDropdown({
     Name = "Select Slots", Options = {"Press Refresh first"}, Multi = true,
+    Flag = "UpgradeSlotsSelected",
     Callback = function(sel)
-        upgradeSlots.selected = {}
+        local nums = {}
         for _, lbl in ipairs(sel) do
-            if upgradeSlots.map[lbl] then table.insert(upgradeSlots.selected, upgradeSlots.map[lbl]) end
+            if _G.upgradeMap and _G.upgradeMap[lbl] then table.insert(nums, _G.upgradeMap[lbl]) end
         end
+        Rayfield.Flags.UpgradeSlotsSelected.Value = nums
     end,
 })
 miscTab:CreateToggle({
     Name = "Auto Upgrade Selected Slots", CurrentValue = false,
+    Flag = "AutoUpgradeSelectedSlots",
     Callback = function(v)
-        upgradeSlots.auto = v
         if v then
-            if upgradeSlots.loop then task.cancel(upgradeSlots.loop) end
-            upgradeSlots.loop = task.spawn(function()
-                while upgradeSlots.auto do upgradeSelectedSlots() task.wait(0.15) end
+            if _G.autoUpgradeSlotsLoop then task.cancel(_G.autoUpgradeSlotsLoop) end
+            _G.autoUpgradeSlotsLoop = task.spawn(function()
+                while Rayfield.Flags.AutoUpgradeSelectedSlots.Value do
+                    upgradeSelectedSlots()
+                    task.wait(0.15)
+                end
             end)
         else
-            if upgradeSlots.loop then task.cancel(upgradeSlots.loop) upgradeSlots.loop = nil end
+            if _G.autoUpgradeSlotsLoop then task.cancel(_G.autoUpgradeSlotsLoop) _G.autoUpgradeSlotsLoop = nil end
         end
     end,
 })
 miscTab:CreateDropdown({
     Name = "Upgrade by Rarity", Options = rarities_with_all, Multi = true,
-    Callback = function(sel) upgradeRarity.rarities = sel end,
+    Flag = "UpgradeRarities",
+    Callback = function(sel) end,
 })
 miscTab:CreateToggle({
     Name = "Auto Upgrade by Rarity", CurrentValue = false,
+    Flag = "AutoUpgradeByRarity",
     Callback = function(v)
-        upgradeRarity.auto = v
         if v then
-            if upgradeRarity.loop then task.cancel(upgradeRarity.loop) end
-            upgradeRarity.loop = task.spawn(upgradeRarityLoop)
+            if _G.autoUpgradeRarityLoop then task.cancel(_G.autoUpgradeRarityLoop) end
+            _G.autoUpgradeRarityLoop = task.spawn(upgradeRarityLoop)
         else
-            if upgradeRarity.loop then task.cancel(upgradeRarity.loop) upgradeRarity.loop = nil end
+            if _G.autoUpgradeRarityLoop then task.cancel(_G.autoUpgradeRarityLoop) _G.autoUpgradeRarityLoop = nil end
         end
     end,
 })
@@ -1044,31 +1106,64 @@ webhookTab:CreateInput({
     Name = "Webhook URL",
     CurrentValue = "",
     PlaceholderText = "https://discord.com/api/webhooks/...",
-    Callback = function(text) WH.url = text end,
+    Flag = "WebhookURL",
+    Callback = function(text) end,
 })
 webhookTab:CreateInput({
     Name = "Ping User ID",
     CurrentValue = "",
     PlaceholderText = "e.g. 123456789012345678",
-    Callback = function(text) WH.pingUID = text or "" end,
+    Flag = "PingUserID",
+    Callback = function(text) end,
 })
 webhookTab:CreateInput({
     Name = "Min Earn",
     CurrentValue = "",
     PlaceholderText = "1m, 500k, 1b, blank = off",
-    Callback = function(text)
-        if text == nil or text == "" then WH.minEarn = nil
-        else local val = parseShortNumber(text); WH.minEarn = val; if not val then Rayfield:Notify({Title = "Webhook", Content = "Invalid number", Duration = 3}) end end
-    end,
+    Flag = "MinEarn",
+    Callback = function(text) end,
 })
-webhookTab:CreateToggle({Name = "Enable Discord Webhook", CurrentValue = false, Callback = function(v) WH.enabled = v end})
-webhookTab:CreateButton({Name = "Send Test Ping", Callback = sendTestWebhook})
+webhookTab:CreateToggle({
+    Name = "Enable Discord Webhook",
+    CurrentValue = false,
+    Flag = "EnableDiscordWebhook",
+    Callback = function(v) end,
+})
+webhookTab:CreateButton({
+    Name = "Send Test Ping",
+    Flag = "SendTestPing",
+    Callback = sendTestWebhook,
+})
 
 webhookTab:CreateSection("Filters")
-webhookTab:CreateDropdown({Name = "Send Mode", Options = {"All", "MutatedOnly", "RarityOnly"}, CurrentOption = "All", Callback = function(opt) WH.mode = opt end})
-webhookTab:CreateDropdown({Name = "Rarity Filter", Options = rarities_with_all, Multi = true, Callback = function(sel) WH.rarities = sel end})
-webhookTab:CreateDropdown({Name = "Mutation Filter", Options = mutations_with_all, Multi = true, Callback = function(sel) WH.mutations = sel end})
-webhookTab:CreateDropdown({Name = "Specific Brainrot Filter", Options = brainrots_with_all, Multi = true, Callback = function(sel) WH.specifics = sel end})
+webhookTab:CreateDropdown({
+    Name = "Send Mode",
+    Options = {"All", "MutatedOnly", "RarityOnly"},
+    CurrentOption = "All",
+    Flag = "SendMode",
+    Callback = function(opt) end,
+})
+webhookTab:CreateDropdown({
+    Name = "Rarity Filter",
+    Options = rarities_with_all,
+    Multi = true,
+    Flag = "RarityFilter",
+    Callback = function(sel) end,
+})
+webhookTab:CreateDropdown({
+    Name = "Mutation Filter",
+    Options = mutations_with_all,
+    Multi = true,
+    Flag = "MutationFilter",
+    Callback = function(sel) end,
+})
+webhookTab:CreateDropdown({
+    Name = "Specific Brainrot Filter",
+    Options = brainrots_with_all,
+    Multi = true,
+    Flag = "SpecificBrainrotFilter",
+    Callback = function(sel) end,
+})
 
 refreshSlotMaps()
 Rayfield:Notify({Title = "Cactus Hub", Content = "Loaded! Join discord.gg/qMWFBWdcf", Duration = 4})
