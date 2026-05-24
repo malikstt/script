@@ -117,7 +117,7 @@ local slotCollect = {selected = {}, map = {}, dropdown = nil, auto = false, dela
 local rarityCollect = {rarities = {}, auto = false, delay = 1, loop = nil}
 local placeConfig = {specifics = {}, rarities = {}, auto = false, delay = 0.5, loop = nil}
 local removeConfig = {specifics = {}, rarities = {}, auto = false, delay = 0.5, loop = nil}
-local kickConfig = {running = false, loop = nil, scale = 0.99, cosmic = false}
+local kickConfig = {running = false, loop = nil, scale = 0.99, cosmic = false, mode = "custom"}
 local sellRarity = {rarities = {}, auto = false, delay = 5, loop = nil}
 local sellSpecific = {targets = {}, auto = false, delay = 5, loop = nil}
 local sellMutation = {mutations = {}, auto = false, delay = 5, loop = nil}
@@ -283,7 +283,16 @@ end
 
 local function autoKickLoop()
     while kickConfig.running do
-        local scale = kickConfig.cosmic and (math.random(95, 99) / 100) or kickConfig.scale
+        local scale
+        if kickConfig.mode == "custom" then
+            scale = kickConfig.scale
+        elseif kickConfig.mode == "50-60" then scale = math.random(50, 60) / 100
+        elseif kickConfig.mode == "60-70" then scale = math.random(60, 70) / 100
+        elseif kickConfig.mode == "70-80" then scale = math.random(70, 80) / 100
+        elseif kickConfig.mode == "80-90" then scale = math.random(80, 90) / 100
+        elseif kickConfig.mode == "90-100" then scale = math.random(90, 100) / 100
+        else scale = kickConfig.scale
+        end
         local level = 1
         local ls = lp:FindFirstChild("leaderstats")
         if ls and ls:FindFirstChild("KickLevel") then level = ls.KickLevel.Value end
@@ -412,17 +421,13 @@ end
 
 local requestFunc = (syn and syn.request) or (http and http.request) or http_request
 
-local function getThumbnail(assetId)
-    if not assetId or not requestFunc then return nil end
-    local ok, res = pcall(requestFunc, {
-        Url = ("https://thumbnails.roblox.com/v1/assets?assetIds=%d&size=420x420&format=Png"):format(assetId),
-        Method = "GET",
-    })
-    if ok and res and res.Success then
-        local ok2, data = pcall(function() return HttpSvc:JSONDecode(res.Body) end)
-        if ok2 and data and data.data and data.data[1] then
-            return data.data[1].imageUrl
-        end
+local function formatChance(chancePercent)
+    if not chancePercent or chancePercent <= 0 then return "Unknown" end
+    local inverse = 100 / chancePercent
+    if inverse >= 1000000 then
+        return string.format("1 in %.0f,000,000", inverse / 1000000)
+    else
+        return string.format("1 in %s", string.reverse(string.gsub(string.reverse(tostring(math.floor(inverse))), "(%d%d%d)", "%1,")))
     end
 end
 
@@ -445,26 +450,29 @@ local function getBrainrotInfo(bname)
         rarity = EntitiesData.Brainrots[bname].Rarity or "Unknown"
     end
 
-    local chanceStr = "Unknown"
-    if chance > 0 then
-        local inv = 100 / chance
-        if inv >= 1e6 then chanceStr = ("1 in %.1fM"):format(inv / 1e6)
-        elseif inv >= 1e3 then chanceStr = ("1 in %.1fK"):format(inv / 1e3)
-        else chanceStr = ("1 in %d"):format(math.floor(inv))
-        end
-    end
-
     local rc = RarityData.Colors and RarityData.Colors[rarity]
     local color = rc and (math.floor(rc.R * 255) * 65536 + math.floor(rc.G * 255) * 256 + math.floor(rc.B * 255)) or 0x00BFFF
-
     local speed = WaveData[rarity] and WaveData[rarity].Speed or "?"
     local assetId = nil
     if EntitiesData.Brainrots and EntitiesData.Brainrots[bname] then
         local img = EntitiesData.Brainrots[bname].Image
         if type(img) == "string" then assetId = tonumber(img:match("rbxassetid://(%d+)")) end
     end
+    return {rarity = rarity, chance = chance, chanceFormatted = formatChance(chance), color = color, speed = speed, assetId = assetId}
+end
 
-    return {rarity = rarity, chance = chanceStr, color = color, speed = speed, assetId = assetId}
+local function getThumbnail(assetId)
+    if not assetId or not requestFunc then return nil end
+    local ok, res = pcall(requestFunc, {
+        Url = ("https://thumbnails.roblox.com/v1/assets?assetIds=%d&size=420x420&format=Png"):format(assetId),
+        Method = "GET",
+    })
+    if ok and res and res.Success then
+        local ok2, data = pcall(function() return HttpSvc:JSONDecode(res.Body) end)
+        if ok2 and data and data.data and data.data[1] then
+            return data.data[1].imageUrl
+        end
+    end
 end
 
 local function sendWebhook(bname, mutation, earnedValue)
@@ -474,7 +482,6 @@ local function sendWebhook(bname, mutation, earnedValue)
     mutation = mutation or "None"
 
     if WH.mode == "MutatedOnly" and (mutation == "None" or mutation == "") then return end
-
     if WH.minEarn and earnedValue and earnedValue < WH.minEarn then return end
 
     local info = getBrainrotInfo(bname)
@@ -485,14 +492,12 @@ local function sendWebhook(bname, mutation, earnedValue)
         for _, r in ipairs(rars) do if r == info.rarity then ok = true break end end
         if not ok then return end
     end
-
     if #WH.mutations > 0 then
         local muts = expandAll(WH.mutations, mutationsList)
         local ok = false
         for _, m in ipairs(muts) do if m == mutation then ok = true break end end
         if not ok then return end
     end
-
     if #WH.specifics > 0 then
         local specs = expandAll(WH.specifics, allBrainrots)
         local ok = false
@@ -500,37 +505,28 @@ local function sendWebhook(bname, mutation, earnedValue)
         if not ok then return end
     end
 
-    local mutText = ""
+    local mutationText = ""
     if mutation ~= "None" and mutation ~= "" then
         local md = MutationData.Buffs and MutationData.Buffs[mutation]
         local mul = md and md.Value or 1
-        mutText = ("\nMutation: %s (x%.1f)"):format(mutation, mul)
+        mutationText = string.format("\n✨ Mutation: **%s** (x%.1f)", mutation, mul)
     end
 
-    local earnText = ""
-    if earnedValue then
-        if earnedValue >= 1e12 then earnText = ("\nEarned: %.2fT"):format(earnedValue / 1e12)
-        elseif earnedValue >= 1e9 then earnText = ("\nEarned: %.2fB"):format(earnedValue / 1e9)
-        elseif earnedValue >= 1e6 then earnText = ("\nEarned: %.2fM"):format(earnedValue / 1e6)
-        elseif earnedValue >= 1e3 then earnText = ("\nEarned: %.2fK"):format(earnedValue / 1e3)
-        else earnText = ("\nEarned: %d"):format(earnedValue)
-        end
-    end
-
-    local thumb = getThumbnail(info.assetId)
+    local description = string.format("||%s|| got a **%s %s**!%s", lp.Name, info.rarity, bname, mutationText)
 
     local embed = {
-        title = "NEW BRAINROT CAPTURED",
-        description = ("%s caught a %s %s!%s%s"):format(lp.Name, info.rarity, bname, mutText, earnText),
+        title = "🎲 NEW BRAINROT CAPTURED",
+        description = description,
         color = info.color,
         fields = {
-            {name = "Rarity", value = info.rarity, inline = true},
-            {name = "Chance", value = info.chance, inline = true},
-            {name = "Speed", value = tostring(info.speed), inline = true},
+            {name = "🌀 Rarity", value = info.rarity, inline = true},
+            {name = "🍀 Chance", value = info.chanceFormatted, inline = true},
+            {name = "⚡ Speed", value = tostring(info.speed), inline = true},
         },
-        footer = {text = "Cactus Hub - " .. lp.Name},
         timestamp = DateTime.now():ToIsoDate(),
     }
+
+    local thumb = getThumbnail(info.assetId)
     if thumb then embed.thumbnail = {url = thumb} end
 
     local payload = {embeds = {embed}}
@@ -552,15 +548,15 @@ local function sendTestWebhook()
         return
     end
     if not requestFunc then
-        Rayfield:Notify({Title = "Webhook", Content = "No HTTP function available in this executor.", Duration = 4})
+        Rayfield:Notify({Title = "Webhook", Content = "No HTTP function available.", Duration = 4})
         return
     end
     local payload = {
         embeds = {{
             title = "Cactus Hub - Test Ping",
-            description = ("Webhook is working for %s!"):format(lp.Name),
+            description = ("Webhook works for ||%s||!"):format(lp.Name),
             color = 0x57F287,
-            footer = {text = "Cactus Hub v1.3"},
+            footer = {text = "Cactus Hub"},
             timestamp = DateTime.now():ToIsoDate(),
         }}
     }
@@ -572,11 +568,8 @@ local function sendTestWebhook()
             Headers = {["Content-Type"] = "application/json"},
             Body = HttpSvc:JSONEncode(payload),
         })
-        if ok then
-            Rayfield:Notify({Title = "Webhook", Content = "Test ping sent!", Duration = 3})
-        else
-            Rayfield:Notify({Title = "Webhook Error", Content = tostring(err), Duration = 5})
-        end
+        if ok then Rayfield:Notify({Title = "Webhook", Content = "Test ping sent!", Duration = 3})
+        else Rayfield:Notify({Title = "Error", Content = tostring(err), Duration = 5}) end
     end)
 end
 
@@ -589,17 +582,29 @@ lp.Backpack.ChildAdded:Connect(function(tool)
 end)
 
 local Window = Rayfield:CreateWindow({
-    Name = "Cactus Hub",
+    Name = "Cactus Hub • discord.gg/qMWFBWdcf",
     LoadingTitle = "Cactus Hub",
     LoadingSubtitle = "by Cactus",
     Theme = "Default",
-    ConfigurationSaving = {Enabled = false, FolderName = "CactusHub", FileName = "Config"},
+    ConfigurationSaving = {Enabled = false},
     KeySystem = false,
 })
 
+-- Main Tab
 local mainTab = Window:CreateTab("Main", 94483582151513)
 
-mainTab:CreateSection("Status")
+local fpsLabel = mainTab:CreateLabel("FPS: --")
+local pingLabel = mainTab:CreateLabel("Ping: --")
+
+local function updateStats()
+    local stats = lp:FindFirstChild("leaderstats")
+    if stats then
+        local cash = stats:FindFirstChild("Cash")
+        local rebirths = stats:FindFirstChild("Rebirths")
+        if cash then mainTab:CreateParagraph({Title = "💰 Cash", Content = tostring(cash.Value)}) end
+        if rebirths then mainTab:CreateParagraph({Title = "🌀 Rebirths", Content = tostring(rebirths.Value)}) end
+    end
+end
 
 local fpsCount = 0
 local fpsLast = tick()
@@ -607,25 +612,23 @@ RunSvc.RenderStepped:Connect(function()
     fpsCount = fpsCount + 1
     local now = tick()
     if now - fpsLast >= 1 then
+        fpsLabel:Set("FPS: " .. fpsCount)
         fpsCount = 0
         fpsLast = now
     end
 end)
 
-mainTab:CreateSection("Info")
-mainTab:CreateParagraph({
-    Title = "Latest Update",
-    Content = "v1.3 - Webhook tab now uses Rayfield text boxes and dropdowns.",
-})
-mainTab:CreateParagraph({
-    Title = "Anti-AFK",
-    Content = "Active by default. You will not be kicked for inactivity.",
-})
-mainTab:CreateParagraph({
-    Title = "Discord",
-    Content = "discord.gg/qMWFBWdcf",
-})
+local function updatePing()
+    local start = tick()
+    local success = pcall(function() Network:FindFirstChild("rev_KickEvent"):InvokeServer() end)
+    local ping = math.floor((tick() - start) * 1000)
+    pingLabel:Set("Ping: " .. ping .. "ms")
+end
+task.spawn(function() while true do updatePing() task.wait(5) end end)
 
+mainTab:CreateSection("Info")
+mainTab:CreateParagraph({Title = "Release", Content = "Cactus Hub • Join discord.gg/qMWFBWdcf"})
+mainTab:CreateParagraph({Title = "Anti-AFK", Content = "Active by default."})
 lp.Idled:Connect(function() FireRemote("AntiAFK") task.wait(0.5) end)
 
 mainTab:CreateSection("Utilities")
@@ -637,94 +640,26 @@ mainTab:CreateButton({
     end,
 })
 
-local collectTab = Window:CreateTab("Collect", 96942169425973)
+-- Farming Tab (Place + Farm)
+local farmingTab = Window:CreateTab("Farming", 123674526631914)
 
-collectTab:CreateSection("Auto Collect All")
-collectTab:CreateToggle({
-    Name = "Auto Collect All Slots", CurrentValue = false,
-    Callback = function(v)
-        collectConfig.enabled = v
-        if v then
-            if collectConfig.loop then task.cancel(collectConfig.loop) end
-            collectConfig.loop = task.spawn(autoCollectLoop)
-        else
-            if collectConfig.loop then task.cancel(collectConfig.loop) collectConfig.loop = nil end
-        end
-    end,
+farmingTab:CreateSection("Kick Settings")
+local kickModeDropdown = farmingTab:CreateDropdown({
+    Name = "Kick Accuracy Mode",
+    Options = {"custom", "50-60", "60-70", "70-80", "80-90", "90-100"},
+    CurrentOption = "custom",
+    Callback = function(opt) kickConfig.mode = opt end,
 })
-collectTab:CreateSlider({
-    Name = "Collect Interval", Range = {0.1, 10}, Increment = 0.1, Suffix = "s",
-    CurrentValue = 1,
-    Callback = function(v) collectConfig.delay = v end,
-})
-
-collectTab:CreateSection("Collect by Slot")
-collectTab:CreateButton({Name = "Refresh Slots", Callback = refreshSlotMaps})
-slotCollect.dropdown = collectTab:CreateDropdown({
-    Name = "Select Slots", Options = {"Press Refresh first"}, Multi = true,
-    Callback = function(sel)
-        slotCollect.selected = {}
-        for _, lbl in ipairs(sel) do
-            if slotCollect.map[lbl] then table.insert(slotCollect.selected, slotCollect.map[lbl]) end
-        end
-    end,
-})
-collectTab:CreateToggle({
-    Name = "Auto Collect Selected Slots", CurrentValue = false,
-    Callback = function(v)
-        slotCollect.auto = v
-        if v then
-            if slotCollect.loop then task.cancel(slotCollect.loop) end
-            slotCollect.loop = task.spawn(autoSlotCollectLoop)
-        else
-            if slotCollect.loop then task.cancel(slotCollect.loop) slotCollect.loop = nil end
-        end
-    end,
-})
-collectTab:CreateSlider({
-    Name = "Slot Collect Interval", Range = {0.1, 10}, Increment = 0.1, Suffix = "s",
-    CurrentValue = 1,
-    Callback = function(v) slotCollect.delay = v end,
-})
-
-collectTab:CreateSection("Collect by Rarity")
-collectTab:CreateDropdown({
-    Name = "Select Rarities", Options = rarities_with_all, Multi = true,
-    Callback = function(sel) rarityCollect.rarities = sel end,
-})
-collectTab:CreateToggle({
-    Name = "Auto Collect by Rarity", CurrentValue = false,
-    Callback = function(v)
-        rarityCollect.auto = v
-        if v then
-            if rarityCollect.loop then task.cancel(rarityCollect.loop) end
-            rarityCollect.loop = task.spawn(autoRarityCollectLoop)
-        else
-            if rarityCollect.loop then task.cancel(rarityCollect.loop) rarityCollect.loop = nil end
-        end
-    end,
-})
-collectTab:CreateSlider({
-    Name = "Rarity Collect Interval", Range = {0.1, 10}, Increment = 0.1, Suffix = "s",
-    CurrentValue = 1,
-    Callback = function(v) rarityCollect.delay = v end,
-})
-
-local farmTab = Window:CreateTab("Farm", 123674526631914)
-
-farmTab:CreateSection("Kick Settings")
-farmTab:CreateSlider({
-    Name = "Kick Accuracy", Range = {0, 100}, Increment = 1, Suffix = "%",
+farmingTab:CreateSlider({
+    Name = "Custom Kick Accuracy", Range = {0, 100}, Increment = 1, Suffix = "%",
     CurrentValue = 99,
     Callback = function(v) kickConfig.scale = v / 100 end,
 })
-farmTab:CreateToggle({
-    Name = "Cosmic Mode (random 95-99%)", CurrentValue = false,
-    Callback = function(v) kickConfig.cosmic = v end,
+farmingTab:CreateParagraph({
+    Title = "⚠️ WARNING",
+    Content = "Using 99% too many times can trigger anti-cheat. Use lower ranges for safety.",
 })
-
-farmTab:CreateSection("Auto Farm")
-farmTab:CreateToggle({
+farmingTab:CreateToggle({
     Name = "Start Auto Farm", CurrentValue = false,
     Callback = function(v)
         kickConfig.running = v
@@ -737,23 +672,21 @@ farmTab:CreateToggle({
     end,
 })
 
-local placeTab = Window:CreateTab("Place", 130504418378865)
-
-placeTab:CreateSection("Auto Place")
-placeTab:CreateDropdown({
+farmingTab:CreateSection("Auto Place")
+farmingTab:CreateDropdown({
     Name = "Specific Brainrots", Options = brainrots_with_all, Multi = true,
     Callback = function(sel) placeConfig.specifics = sel end,
 })
-placeTab:CreateDropdown({
+farmingTab:CreateDropdown({
     Name = "Rarities", Options = rarities_with_all, Multi = true,
     Callback = function(sel) placeConfig.rarities = sel end,
 })
-placeTab:CreateSlider({
+farmingTab:CreateSlider({
     Name = "Place Delay", Range = {0.1, 5}, Increment = 0.1, Suffix = "s",
     CurrentValue = 0.5,
     Callback = function(v) placeConfig.delay = v end,
 })
-placeTab:CreateToggle({
+farmingTab:CreateToggle({
     Name = "Auto Place", CurrentValue = false,
     Callback = function(v)
         placeConfig.auto = v
@@ -766,21 +699,21 @@ placeTab:CreateToggle({
     end,
 })
 
-placeTab:CreateSection("Auto Remove")
-placeTab:CreateDropdown({
+farmingTab:CreateSection("Auto Remove")
+farmingTab:CreateDropdown({
     Name = "Specific Brainrots", Options = brainrots_with_all, Multi = true,
     Callback = function(sel) removeConfig.specifics = sel end,
 })
-placeTab:CreateDropdown({
+farmingTab:CreateDropdown({
     Name = "Rarities", Options = rarities_with_all, Multi = true,
     Callback = function(sel) removeConfig.rarities = sel end,
 })
-placeTab:CreateSlider({
+farmingTab:CreateSlider({
     Name = "Remove Delay", Range = {0.1, 5}, Increment = 0.1, Suffix = "s",
     CurrentValue = 0.5,
     Callback = function(v) removeConfig.delay = v end,
 })
-placeTab:CreateToggle({
+farmingTab:CreateToggle({
     Name = "Auto Remove", CurrentValue = false,
     Callback = function(v)
         removeConfig.auto = v
@@ -793,10 +726,82 @@ placeTab:CreateToggle({
     end,
 })
 
-local sellTab = Window:CreateTab("Sell", 75227072663667)
+-- Brainrots & Cash Tab (Collect + Sell)
+local bcTab = Window:CreateTab("Brainrots & Cash", 96942169425973)
 
-sellTab:CreateSection("Quick Sell")
-sellTab:CreateButton({
+bcTab:CreateSection("Auto Collect All")
+bcTab:CreateToggle({
+    Name = "Auto Collect All Slots", CurrentValue = false,
+    Callback = function(v)
+        collectConfig.enabled = v
+        if v then
+            if collectConfig.loop then task.cancel(collectConfig.loop) end
+            collectConfig.loop = task.spawn(autoCollectLoop)
+        else
+            if collectConfig.loop then task.cancel(collectConfig.loop) collectConfig.loop = nil end
+        end
+    end,
+})
+bcTab:CreateSlider({
+    Name = "Collect Interval", Range = {0.1, 10}, Increment = 0.1, Suffix = "s",
+    CurrentValue = 1,
+    Callback = function(v) collectConfig.delay = v end,
+})
+
+bcTab:CreateSection("Collect by Slot")
+bcTab:CreateButton({Name = "Refresh Slots", Callback = refreshSlotMaps})
+slotCollect.dropdown = bcTab:CreateDropdown({
+    Name = "Select Slots", Options = {"Press Refresh first"}, Multi = true,
+    Callback = function(sel)
+        slotCollect.selected = {}
+        for _, lbl in ipairs(sel) do
+            if slotCollect.map[lbl] then table.insert(slotCollect.selected, slotCollect.map[lbl]) end
+        end
+    end,
+})
+bcTab:CreateToggle({
+    Name = "Auto Collect Selected Slots", CurrentValue = false,
+    Callback = function(v)
+        slotCollect.auto = v
+        if v then
+            if slotCollect.loop then task.cancel(slotCollect.loop) end
+            slotCollect.loop = task.spawn(autoSlotCollectLoop)
+        else
+            if slotCollect.loop then task.cancel(slotCollect.loop) slotCollect.loop = nil end
+        end
+    end,
+})
+bcTab:CreateSlider({
+    Name = "Slot Collect Interval", Range = {0.1, 10}, Increment = 0.1, Suffix = "s",
+    CurrentValue = 1,
+    Callback = function(v) slotCollect.delay = v end,
+})
+
+bcTab:CreateSection("Collect by Rarity")
+bcTab:CreateDropdown({
+    Name = "Select Rarities", Options = rarities_with_all, Multi = true,
+    Callback = function(sel) rarityCollect.rarities = sel end,
+})
+bcTab:CreateToggle({
+    Name = "Auto Collect by Rarity", CurrentValue = false,
+    Callback = function(v)
+        rarityCollect.auto = v
+        if v then
+            if rarityCollect.loop then task.cancel(rarityCollect.loop) end
+            rarityCollect.loop = task.spawn(autoRarityCollectLoop)
+        else
+            if rarityCollect.loop then task.cancel(rarityCollect.loop) rarityCollect.loop = nil end
+        end
+    end,
+})
+bcTab:CreateSlider({
+    Name = "Rarity Collect Interval", Range = {0.1, 10}, Increment = 0.1, Suffix = "s",
+    CurrentValue = 1,
+    Callback = function(v) rarityCollect.delay = v end,
+})
+
+bcTab:CreateSection("Quick Sell")
+bcTab:CreateButton({
     Name = "Sell Equipped",
     Callback = function()
         local char = lp.Character
@@ -804,17 +809,17 @@ sellTab:CreateButton({
         if hum then hum:UnequipTools() task.wait(0.2) FireRemote("rev_S_Interact", 1) end
     end,
 })
-sellTab:CreateButton({
+bcTab:CreateButton({
     Name = "Sell All Brainrots",
     Callback = function() InvokeRemote("ref_B_SellAll") end,
 })
 
-sellTab:CreateSection("Sell by Rarity")
-sellTab:CreateDropdown({
+bcTab:CreateSection("Sell by Rarity")
+bcTab:CreateDropdown({
     Name = "Select Rarities", Options = rarities_with_all, Multi = true,
     Callback = function(sel) sellRarity.rarities = sel end,
 })
-sellTab:CreateToggle({
+bcTab:CreateToggle({
     Name = "Auto Sell by Rarity", CurrentValue = false,
     Callback = function(v)
         sellRarity.auto = v
@@ -826,18 +831,18 @@ sellTab:CreateToggle({
         end
     end,
 })
-sellTab:CreateSlider({
+bcTab:CreateSlider({
     Name = "Sell Interval", Range = {1, 60}, Increment = 1, Suffix = "s",
     CurrentValue = 5,
     Callback = function(v) sellRarity.delay = v end,
 })
 
-sellTab:CreateSection("Sell Specific")
-sellTab:CreateDropdown({
+bcTab:CreateSection("Sell Specific")
+bcTab:CreateDropdown({
     Name = "Select Brainrots", Options = brainrots_with_all, Multi = true,
     Callback = function(sel) sellSpecific.targets = sel end,
 })
-sellTab:CreateToggle({
+bcTab:CreateToggle({
     Name = "Auto Sell Specific", CurrentValue = false,
     Callback = function(v)
         sellSpecific.auto = v
@@ -849,18 +854,18 @@ sellTab:CreateToggle({
         end
     end,
 })
-sellTab:CreateSlider({
+bcTab:CreateSlider({
     Name = "Sell Interval", Range = {1, 60}, Increment = 1, Suffix = "s",
     CurrentValue = 5,
     Callback = function(v) sellSpecific.delay = v end,
 })
 
-sellTab:CreateSection("Sell by Mutation")
-sellTab:CreateDropdown({
+bcTab:CreateSection("Sell by Mutation")
+bcTab:CreateDropdown({
     Name = "Select Mutations", Options = mutations_with_all, Multi = true,
     Callback = function(sel) sellMutation.mutations = sel end,
 })
-sellTab:CreateToggle({
+bcTab:CreateToggle({
     Name = "Auto Sell by Mutation", CurrentValue = false,
     Callback = function(v)
         sellMutation.auto = v
@@ -872,67 +877,22 @@ sellTab:CreateToggle({
         end
     end,
 })
-sellTab:CreateSlider({
+bcTab:CreateSlider({
     Name = "Sell Interval", Range = {1, 60}, Increment = 1, Suffix = "s",
     CurrentValue = 5,
     Callback = function(v) sellMutation.delay = v end,
 })
 
-local upgradeTab = Window:CreateTab("Upgrade", 135723754991512)
+-- Misc Tab (Shop + Upgrades)
+local miscTab = Window:CreateTab("Misc", 135748283315148)
 
-upgradeTab:CreateSection("Upgrade by Slot")
-upgradeTab:CreateButton({Name = "Refresh Slots", Callback = refreshSlotMaps})
-upgradeSlots.dropdown = upgradeTab:CreateDropdown({
-    Name = "Select Slots", Options = {"Press Refresh first"}, Multi = true,
-    Callback = function(sel)
-        upgradeSlots.selected = {}
-        for _, lbl in ipairs(sel) do
-            if upgradeSlots.map[lbl] then table.insert(upgradeSlots.selected, upgradeSlots.map[lbl]) end
-        end
-    end,
-})
-upgradeTab:CreateToggle({
-    Name = "Auto Upgrade Selected Slots", CurrentValue = false,
-    Callback = function(v)
-        upgradeSlots.auto = v
-        if v then
-            if upgradeSlots.loop then task.cancel(upgradeSlots.loop) end
-            upgradeSlots.loop = task.spawn(function()
-                while upgradeSlots.auto do upgradeSelectedSlots() task.wait(0.15) end
-            end)
-        else
-            if upgradeSlots.loop then task.cancel(upgradeSlots.loop) upgradeSlots.loop = nil end
-        end
-    end,
-})
-
-upgradeTab:CreateSection("Upgrade by Rarity")
-upgradeTab:CreateDropdown({
-    Name = "Select Rarities", Options = rarities_with_all, Multi = true,
-    Callback = function(sel) upgradeRarity.rarities = sel end,
-})
-upgradeTab:CreateToggle({
-    Name = "Auto Upgrade by Rarity", CurrentValue = false,
-    Callback = function(v)
-        upgradeRarity.auto = v
-        if v then
-            if upgradeRarity.loop then task.cancel(upgradeRarity.loop) end
-            upgradeRarity.loop = task.spawn(upgradeRarityLoop)
-        else
-            if upgradeRarity.loop then task.cancel(upgradeRarity.loop) upgradeRarity.loop = nil end
-        end
-    end,
-})
-
-local shopTab = Window:CreateTab("Shop", 135748283315148)
-
-shopTab:CreateSection("Speed")
-shopTab:CreateSlider({
+miscTab:CreateSection("Shop - Speed")
+miscTab:CreateSlider({
     Name = "Amount to Buy", Range = {1, 50}, Increment = 1, Suffix = "x",
     CurrentValue = 1,
     Callback = function(v) shopSpeed.amount = v end,
 })
-shopTab:CreateToggle({
+miscTab:CreateToggle({
     Name = "Auto Buy Speed", CurrentValue = false,
     Callback = function(v)
         shopSpeed.auto = v
@@ -947,12 +907,12 @@ shopTab:CreateToggle({
     end,
 })
 
-shopTab:CreateSection("Weights")
-shopTab:CreateDropdown({
+miscTab:CreateSection("Shop - Weights")
+miscTab:CreateDropdown({
     Name = "Select Weights", Options = weights_with_all, Multi = true,
     Callback = function(sel) shopWeights.selected = sel end,
 })
-shopTab:CreateToggle({
+miscTab:CreateToggle({
     Name = "Auto Buy Weights", CurrentValue = false,
     Callback = function(v)
         shopWeights.auto = v
@@ -972,8 +932,8 @@ shopTab:CreateToggle({
     end,
 })
 
-shopTab:CreateSection("Slots and Rebirth")
-shopTab:CreateToggle({
+miscTab:CreateSection("Shop - Slots & Rebirth")
+miscTab:CreateToggle({
     Name = "Auto Buy Slots", CurrentValue = false,
     Callback = function(v)
         shopSlots.auto = v
@@ -987,7 +947,7 @@ shopTab:CreateToggle({
         end
     end,
 })
-shopTab:CreateToggle({
+miscTab:CreateToggle({
     Name = "Auto Rebirth", CurrentValue = false,
     Callback = function(v)
         shopRebirth.auto = v
@@ -1002,24 +962,57 @@ shopTab:CreateToggle({
     end,
 })
 
+miscTab:CreateSection("Upgrades")
+miscTab:CreateButton({Name = "Refresh Slots", Callback = refreshSlotMaps})
+upgradeSlots.dropdown = miscTab:CreateDropdown({
+    Name = "Select Slots", Options = {"Press Refresh first"}, Multi = true,
+    Callback = function(sel)
+        upgradeSlots.selected = {}
+        for _, lbl in ipairs(sel) do
+            if upgradeSlots.map[lbl] then table.insert(upgradeSlots.selected, upgradeSlots.map[lbl]) end
+        end
+    end,
+})
+miscTab:CreateToggle({
+    Name = "Auto Upgrade Selected Slots", CurrentValue = false,
+    Callback = function(v)
+        upgradeSlots.auto = v
+        if v then
+            if upgradeSlots.loop then task.cancel(upgradeSlots.loop) end
+            upgradeSlots.loop = task.spawn(function()
+                while upgradeSlots.auto do upgradeSelectedSlots() task.wait(0.15) end
+            end)
+        else
+            if upgradeSlots.loop then task.cancel(upgradeSlots.loop) upgradeSlots.loop = nil end
+        end
+    end,
+})
+miscTab:CreateDropdown({
+    Name = "Upgrade by Rarity", Options = rarities_with_all, Multi = true,
+    Callback = function(sel) upgradeRarity.rarities = sel end,
+})
+miscTab:CreateToggle({
+    Name = "Auto Upgrade by Rarity", CurrentValue = false,
+    Callback = function(v)
+        upgradeRarity.auto = v
+        if v then
+            if upgradeRarity.loop then task.cancel(upgradeRarity.loop) end
+            upgradeRarity.loop = task.spawn(upgradeRarityLoop)
+        else
+            if upgradeRarity.loop then task.cancel(upgradeRarity.loop) upgradeRarity.loop = nil end
+        end
+    end,
+})
+
+-- Webhook Tab (simplified)
 local webhookTab = Window:CreateTab("Webhook", 122447804258070)
 
 webhookTab:CreateSection("Setup")
-
-webhookTab:CreateParagraph({
-    Title = "Webhook URL",
-    Content = "Enter your Discord webhook URL below.",
-})
 webhookTab:CreateInput({
     Name = "Webhook URL",
     CurrentValue = "",
     PlaceholderText = "https://discord.com/api/webhooks/...",
     Callback = function(text) WH.url = text end,
-})
-
-webhookTab:CreateParagraph({
-    Title = "Discord Ping User ID",
-    Content = "Optional: user ID to ping (e.g., 123456789012345678).",
 })
 webhookTab:CreateInput({
     Name = "Ping User ID",
@@ -1027,86 +1020,23 @@ webhookTab:CreateInput({
     PlaceholderText = "e.g. 123456789012345678",
     Callback = function(text) WH.pingUID = text or "" end,
 })
-
-webhookTab:CreateParagraph({
-    Title = "Minimum Earn Filter",
-    Content = "Only notify if earnings >= this value. Supports k/m/b/t (e.g., 1m, 500k, 1b). Leave blank to disable.",
-})
 webhookTab:CreateInput({
     Name = "Min Earn",
     CurrentValue = "",
-    PlaceholderText = "e.g. 1b, 500m, blank = off",
+    PlaceholderText = "1m, 500k, 1b, blank = off",
     Callback = function(text)
-        if text == nil or text == "" then
-            WH.minEarn = nil
-        else
-            local val = parseShortNumber(text)
-            WH.minEarn = val
-            if not val then
-                Rayfield:Notify({Title = "Webhook", Content = "Invalid number format. Keeping previous value.", Duration = 3})
-            end
-        end
+        if text == nil or text == "" then WH.minEarn = nil
+        else local val = parseShortNumber(text); WH.minEarn = val; if not val then Rayfield:Notify({Title = "Webhook", Content = "Invalid number", Duration = 3}) end end
     end,
 })
-
-webhookTab:CreateToggle({
-    Name = "Enable Notifications",
-    CurrentValue = false,
-    Callback = function(v) WH.enabled = v end,
-})
-
-webhookTab:CreateButton({
-    Name = "Send Test Ping",
-    Callback = function() sendTestWebhook() end,
-})
-
-webhookTab:CreateSection("Notification Mode")
-
-webhookTab:CreateParagraph({
-    Title = "Send Mode",
-    Content = "All: notify on every capture | MutatedOnly: only if mutated | RarityOnly: only for rarities selected below",
-})
-webhookTab:CreateDropdown({
-    Name = "Send Mode",
-    Options = {"All", "MutatedOnly", "RarityOnly"},
-    CurrentOption = "All",
-    Callback = function(opt) WH.mode = opt end,
-})
+webhookTab:CreateToggle({Name = "Enable Notifications", CurrentValue = false, Callback = function(v) WH.enabled = v end})
+webhookTab:CreateButton({Name = "Send Test Ping", Callback = sendTestWebhook})
 
 webhookTab:CreateSection("Filters")
-
-webhookTab:CreateParagraph({
-    Title = "Rarity Filter",
-    Content = "Only notify for these rarities (works with RarityOnly mode or always).",
-})
-webhookTab:CreateDropdown({
-    Name = "Rarity Filter",
-    Options = rarities_with_all,
-    Multi = true,
-    Callback = function(sel) WH.rarities = sel end,
-})
-
-webhookTab:CreateParagraph({
-    Title = "Mutation Filter",
-    Content = "Only notify for these mutations.",
-})
-webhookTab:CreateDropdown({
-    Name = "Mutation Filter",
-    Options = mutations_with_all,
-    Multi = true,
-    Callback = function(sel) WH.mutations = sel end,
-})
-
-webhookTab:CreateParagraph({
-    Title = "Specific Brainrot Filter",
-    Content = "Only notify for these exact brainrots.",
-})
-webhookTab:CreateDropdown({
-    Name = "Specific Brainrot Filter",
-    Options = brainrots_with_all,
-    Multi = true,
-    Callback = function(sel) WH.specifics = sel end,
-})
+webhookTab:CreateDropdown({Name = "Send Mode", Options = {"All", "MutatedOnly", "RarityOnly"}, CurrentOption = "All", Callback = function(opt) WH.mode = opt end})
+webhookTab:CreateDropdown({Name = "Rarity Filter", Options = rarities_with_all, Multi = true, Callback = function(sel) WH.rarities = sel end})
+webhookTab:CreateDropdown({Name = "Mutation Filter", Options = mutations_with_all, Multi = true, Callback = function(sel) WH.mutations = sel end})
+webhookTab:CreateDropdown({Name = "Specific Brainrot Filter", Options = brainrots_with_all, Multi = true, Callback = function(sel) WH.specifics = sel end})
 
 refreshSlotMaps()
-Rayfield:Notify({Title = "Cactus Hub", Content = "Loaded! v1.3 - Webhook uses native UI", Duration = 4})
+Rayfield:Notify({Title = "Cactus Hub", Content = "Loaded! Join discord.gg/qMWFBWdcf", Duration = 4})
