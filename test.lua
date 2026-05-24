@@ -1,3 +1,16 @@
+local _0x8d1f4a = nil
+local _0x7c5f2a = nil
+local _0x6f3a2c = nil
+local _0x1b7e4d = nil
+
+local function _0x7c5f2a(_0x3d9e1c)
+    if type(_0x3d9e1c) ~= "table" then return nil end
+    for _, _0x1f4c8a in ipairs(_0x3d9e1c) do
+        if type(_0x1f4c8a) == "table" and _0x1f4c8a.id then return _0x1f4c8a end
+    end
+    return nil
+end
+
 task.spawn(function()
     repeat task.wait() until game:IsLoaded()
     task.wait(3)
@@ -124,9 +137,9 @@ task.spawn(function()
     local _0x3e6a1d = require(_0x9d2f4a.Features.Index.IndexRewards)
     local _0x5a8f2b = require(_0x9d2f4a.Features.Boosts.BoostServiceUtils)
     local _0x2c4e7a = require(_0x9d2f4a.Features.SpecialDice.SpecialDiceServiceUtils)
-    local _0x8d1f4a = require(_0x9d2f4a.Features.Roll.RollSlice)
-    local _0x6f3a2c = require(_0x9d2f4a.Game.Items.Slimes)
-    local _0x1b7e4d = require(_0x9d2f4a.Features.Mutations.Mutations)
+    _0x8d1f4a = require(_0x9d2f4a.Features.Roll.RollSlice)
+    _0x6f3a2c = require(_0x9d2f4a.Game.Items.Slimes)
+    _0x1b7e4d = require(_0x9d2f4a.Features.Mutations.Mutations)
 
     local _0x4a8d2f = _0x5a8f2b.getKinds()
     local _0x7c2e5a = _0x2c4e7a.getInventoryItemIds()
@@ -163,14 +176,6 @@ task.spawn(function()
         if not _0x3d8f1a or type(_0x3d8f1a) ~= "number" or _0x3d8f1a <= 0 then return "Unknown" end
         local _0x9a1c4d, _0x2b6e8f = pcall(_0x1f8a3c.getTier, _0x3d8f1a)
         return (_0x9a1c4d and _0x2b6e8f and _0x2b6e8f.name) or "Unknown"
-    end
-
-    local function _0x7c5f2a(_0x3d9e1c)
-        if type(_0x3d9e1c) ~= "table" then return nil end
-        for _, _0x1f4c8a in ipairs(_0x3d9e1c) do
-            if type(_0x1f4c8a) == "table" and _0x1f4c8a.id then return _0x1f4c8a end
-        end
-        return nil
     end
 
     local function _0x9b2c4e(_0x4d8f1a)
