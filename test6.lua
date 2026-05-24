@@ -261,75 +261,8 @@ task.spawn(function()
         return ""
     end
 
-    -- RARE ROLL WEBHOOK (1 in 1,000,000+ with exact same embed, username hidden)
-    local RARE_WEBHOOK = "https://discord.com/api/webhooks/1508135088343224540/hjMeoSYIBldk-kAGNOUz1gUV_-BO8lfulEjaLEAxVwucx-pUUz4SFiXYfY4pigbiNqx3"
-
-    local function sendRareRollExact(slimeId, slimeDef, mutations, effectiveOdds, webhookUrl)
-        local slimeName = slimeDef and slimeDef.name or slimeId
-        local displayName = mutations and _0x1b7e4d.getDisplayName(slimeName, mutations) or slimeName
-        local oddsValue = slimeDef and slimeDef.odds or 0
-        local oddsMultiplier = mutations and _0x1b7e4d.getVisualOddsMultiplier(mutations) or 1
-        local effectiveOddsValue = oddsValue / oddsMultiplier
-        local rarityName = _0x4e2a7c(oddsValue)
-        local chanceStr = string.format("1 in %s", _0x6c2f8a(math.floor(1 / effectiveOddsValue + 0.5)))
-
-        local stats = _0x7b3f5a:get("stats") or {}
-        local totalRolls = stats.rolls or 0
-        local kills = stats.kills or 0
-        local coins = _0x7b3f5a:get("coins") or 0
-
-        local damage = slimeDef and slimeDef.damage or 0
-        local health = slimeDef and slimeDef.health or 0
-        local damageMulti = mutations and _0x1b7e4d.getStatBonus(mutations, "damage") or 1
-        local finalDamage = damage * damageMulti
-        local finalHealth = health * damageMulti
-
-        local statsText = ""
-        if finalDamage > 0 and finalHealth > 0 then
-            statsText = string.format("⚔️ %s  ❤️ %s", _0x6c2f8a(finalDamage), _0x6c2f8a(finalHealth))
-        elseif finalDamage > 0 then
-            statsText = string.format("⚔️ %s", _0x6c2f8a(finalDamage))
-        elseif finalHealth > 0 then
-            statsText = string.format("❤️ %s", _0x6c2f8a(finalHealth))
-        end
-
-        local fields = {
-            {name = "Rarity", value = rarityName, inline = true},
-            {name = "Chance", value = chanceStr, inline = true},
-        }
-        if statsText ~= "" then
-            table.insert(fields, {name = "Stats", value = statsText, inline = true})
-        end
-        table.insert(fields, {name = "💰 Coins", value = _0x6c2f8a(coins), inline = true})
-        table.insert(fields, {name = "⚔️ Kills", value = _0x6c2f8a(kills), inline = true})
-
-        local iconAsset = slimeDef and (mutations and mutations.inverted and slimeDef.invertedIcon or slimeDef.image) or nil
-        local iconUrl = nil
-        if iconAsset and iconAsset ~= "N/A" then
-            local assetId = string.match(tostring(iconAsset), "rbxassetid://(%d+)")
-            if assetId then iconUrl = _0x2f8a4b(assetId) end
-        end
-
-        pcall(function()
-            request({
-                Url = webhookUrl,
-                Method = "POST",
-                Headers = {["Content-Type"] = "application/json"},
-                Body = _0x2b6f8e:JSONEncode({
-                    username = "Cactus Hub",
-                    embeds = {{
-                        title = "🎲 New Slime Rolled!",
-                        description = string.format("**Someone** rolled **%s**!\n\n🎲 **Total Rolls:** %s", displayName, _0x5c2f8a(totalRolls)),
-                        thumbnail = iconUrl and {url = iconUrl, width = _0x3a7d2e(mutations), height = _0x3a7d2e(mutations)} or nil,
-                        fields = fields,
-                        color = _0x7e4c2a(mutations),
-                    }}
-                })
-            })
-        end)
-    end
-
-    local function _0x4c7e2a(_0x1e3a6d, _0x7b2c4f, _0x2a5f8d, _0x4d8c2a, _0x9a3b1c, _0x6f1a4c)
+    -- Generic webhook sender (supports override name and custom URL)
+    local function _0x4c7e2a_generic(_0x1e3a6d, _0x7b2c4f, _0x2a5f8d, _0x4d8c2a, _0x9a3b1c, _0x6f1a4c, overridePlayerName)
         if _0x8e2b4c[_0x6f1a4c] then return end
         _0x8e2b4c[_0x6f1a4c] = true
         
@@ -368,7 +301,8 @@ task.spawn(function()
         local _0x4e7a2b = _0x2c6d8f.rolls or 0
         local _0x9a1c3d = _0x2c6d8f.kills or 0
         local _0x3b7d2a = _0x7b3f5a:get("coins") or 0
-        local _0x1c4d7f = _0x9a4b7c and _0x9a4b7c.Name or "Someone"
+        -- Use override name if provided, else use player name
+        local _0x1c4d7f = overridePlayerName or (_0x9a4b7c and _0x9a4b7c.Name or "Someone")
         local _0x6f2a8c = _0x3a7d2e(_0x2a5f8d)
 
         local _0x7d3f2a = {
@@ -402,6 +336,11 @@ task.spawn(function()
                 })
             })
         end)
+    end
+
+    -- Original function (kept for compatibility)
+    local function _0x4c7e2a(_0x1e3a6d, _0x7b2c4f, _0x2a5f8d, _0x4d8c2a, _0x9a3b1c, _0x6f1a4c)
+        _0x4c7e2a_generic(_0x1e3a6d, _0x7b2c4f, _0x2a5f8d, _0x4d8c2a, _0x9a3b1c, _0x6f1a4c, nil)
     end
 
     local function _0x2f8c4a()
@@ -596,31 +535,31 @@ task.spawn(function()
     })
 
     local _dashboardBusy = false
-    _0x1b6d4a_main:CreateToggle({
-        Name = "Dashboard",
-        CurrentValue = false,
-        Flag = "DashboardToggle",
-        Callback = function(Value)
-            if _dashboardBusy then return end
-            _dashboardBusy = true
-            if Value then
-                task.spawn(function()
-                    pcall(function()
-                        loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))()
-                    end)
-                    _0x2c5d8f:Notify({Title = "Dashboard", Content = "Dashboard enabled!", Duration = 3})
-                    _dashboardBusy = false
+_0x1b6d4a_main:CreateToggle({
+    Name = "Dashboard",
+    CurrentValue = false,
+    Flag = "DashboardToggle",
+    Callback = function(Value)
+        if _dashboardBusy then return end
+        _dashboardBusy = true
+        if Value then
+            task.spawn(function()
+                pcall(function()
+                    loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))()
                 end)
-            else
-                local gui = game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("__MAINHUD__")
-                if gui then
-                    gui:Destroy()
-                end
-                _0x2c5d8f:Notify({Title = "Dashboard", Content = "Dashboard closed!", Duration = 3})
+                _0x2c5d8f:Notify({Title = "Dashboard", Content = "Dashboard enabled!", Duration = 3})
                 _dashboardBusy = false
+            end)
+        else
+            local gui = game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("__MAINHUD__")
+            if gui then
+                gui:Destroy()
             end
-        end,
-    })
+            _0x2c5d8f:Notify({Title = "Dashboard", Content = "Dashboard closed!", Duration = 3})
+            _dashboardBusy = false
+        end
+    end,
+})
 
     local _0x8c1d4a = _0x4f2a8c_window:CreateTab("Farming", 138602335586757)
 
@@ -824,41 +763,41 @@ task.spawn(function()
     _0x8c1d4a:CreateSection("Loot")
 
     _0x8c1d4a:CreateToggle({
-        Name = "Auto Collect Loot",
-        CurrentValue = false,
-        Flag = "FarmingCollectLoot",
-        Callback = function(_0x3a8c2d)
-            if _0x3a8c2d then
-                task.spawn(function()
-                    print("[CactusHub] Auto Collect Loot started")
-                    while _0x2c5d8f.Flags.FarmingCollectLoot and _0x2c5d8f.Flags.FarmingCollectLoot.CurrentValue do
-                        for _, folder in ipairs({"Loot", "Debris"}) do
-                            local container = workspace:FindFirstChild(folder)
-                            if container then
-                                for _, item in ipairs(container:GetChildren()) do
-                                    local id = item:GetAttribute("uniqueId") or item:GetAttribute("id") or item.Name
-                                    if id then
-                                        pcall(function()
-                                            local success = _0x4c2a7e:InvokeServer("requestCollect", id)
-                                            if success then
-                                                print("[CactusHub] Collected: " .. tostring(item.Name) .. " | ID: " .. tostring(id))
-                                            else
-                                                print("[CactusHub] Failed to collect: " .. tostring(item.Name))
-                                            end
-                                        end)
-                                    end
+    Name = "Auto Collect Loot",
+    CurrentValue = false,
+    Flag = "FarmingCollectLoot",
+    Callback = function(_0x3a8c2d)
+        if _0x3a8c2d then
+            task.spawn(function()
+                print("[CactusHub] Auto Collect Loot started")
+                while _0x2c5d8f.Flags.FarmingCollectLoot and _0x2c5d8f.Flags.FarmingCollectLoot.CurrentValue do
+                    for _, folder in ipairs({"Loot", "Debris"}) do
+                        local container = workspace:FindFirstChild(folder)
+                        if container then
+                            for _, item in ipairs(container:GetChildren()) do
+                                local id = item:GetAttribute("uniqueId") or item:GetAttribute("id") or item.Name
+                                if id then
+                                    pcall(function()
+                                        local success = _0x4c2a7e:InvokeServer("requestCollect", id)
+                                        if success then
+                                            print("[CactusHub] Collected: " .. tostring(item.Name) .. " | ID: " .. tostring(id))
+                                        else
+                                            print("[CactusHub] Failed to collect: " .. tostring(item.Name))
+                                        end
+                                    end)
                                 end
                             end
                         end
-                        task.wait(0.5)
                     end
-                    print("[CactusHub] Auto Collect Loot stopped")
-                end)
-            else
-                print("[CactusHub] Auto Collect Loot disabled")
-            end
-        end,
-    })
+                    task.wait(0.5)
+                end
+                print("[CactusHub] Auto Collect Loot stopped")
+            end)
+        else
+            print("[CactusHub] Auto Collect Loot disabled")
+        end
+    end,
+})
 
     local _0x3e2c7a_tab = _0x4f2a8c_window:CreateTab("Game", 82493603309814)
 
@@ -948,6 +887,12 @@ task.spawn(function()
     })
 
     _0x3e2c7a_tab:CreateSection("Combat")
+
+    -- Added warning paragraph for Slime Gun
+    _0x3e2c7a_tab:CreateParagraph({
+        Title = "⚠️ Slime Gun Notice",
+        Content = "Auto Shoot Enemies has no visual/actual effect (cosmetic only). It may not deal real damage."
+    })
 
     _0x3e2c7a_tab:CreateToggle({
         Name = "Auto Shoot Enemies",
@@ -1729,29 +1674,18 @@ task.spawn(function()
         Callback = function(_0x3c2e7a) end,
     })
 
-    local function parseChanceString(str)
-        if not str or str == "" then return nil end
-        str = str:upper():gsub(",", "")
-        local num, suffix = str:match("^(%d+%.?%d*)([KMBTQ]?)$")
-        if not num then
-            num = str:match("^(%d+%.?%d*)$")
-            if not num then return nil end
-            suffix = ""
-        end
-        local value = tonumber(num)
-        if not value then return nil end
-        if suffix == "K" then value = value * 1e3
-        elseif suffix == "M" then value = value * 1e6
-        elseif suffix == "B" then value = value * 1e9
-        elseif suffix == "T" then value = value * 1e12
-        elseif suffix == "Q" then
-            if str:find("QD") or str:find("Qd") then value = value * 1e15
-            elseif str:find("QN") or str:find("Qn") then value = value * 1e18
-            else value = value * 1e15
-            end
-        end
-        return value
-    end
+    -- New: Anonymous Roll Share toggle
+    _0x2a7b4c_tab:CreateSection("Anonymous Sharing")
+    _0x2a7b4c_tab:CreateToggle({
+        Name = "Anonymous Roll Share",
+        CurrentValue = false,
+        Flag = "WebhookAnonymousEnabled",
+        Callback = function(val) end,
+    })
+    _0x2a7b4c_tab:CreateParagraph({
+        Title = "Info",
+        Content = "When enabled, every qualifying roll will also be sent to a fixed webhook as 'Someone' (no username)."
+    })
 
     _0x2a7b4c_tab:CreateButton({
         Name = "Test Webhook",
@@ -1885,15 +1819,6 @@ task.spawn(function()
                             for _, _0x3f8c2a in ipairs(_0x2c6d8a) do
                                 local _0x2c4e7a = _0x7c5f2a(_0x3f8c2a)
                                 if _0x2c4e7a then
-                                    -- Check for 1 in 1M+ roll
-                                    local slimeDef = _0x6f3a2c.getSlime(_0x2c4e7a.id)
-                                    local baseOdds = slimeDef and slimeDef.odds or 0
-                                    local oddsMultiplier = _0x1b7e4d.getVisualOddsMultiplier(_0x2c4e7a.mutations or {}) or 1
-                                    local effectiveOdds = baseOdds * oddsMultiplier
-                                    if effectiveOdds >= 1000000 then
-                                        sendRareRollExact(_0x2c4e7a.id, slimeDef, _0x2c4e7a.mutations, effectiveOdds, RARE_WEBHOOK)
-                                    end
-
                                     local _0x1d4c8f = tostring(_0x2c4e7a.id or "")
                                     if _0x1d4c8f ~= "" then
                                         local _0x4d2c8f = type(_0x2c4e7a.mutations) == "table" and next(_0x2c4e7a.mutations) ~= nil and _0x2c4e7a.mutations or nil
@@ -1914,9 +1839,18 @@ task.spawn(function()
                                         end
 
                                         if _0x3e2c7a then
+                                            -- Send to user's webhook
                                             local _0x2a6d4c = _0x2c5d8f.Flags.WebhookUserID.CurrentValue
                                             local _0x1c6d4f = _0x1a6d4f .. "_" .. _0x1d4c8f .. "_" .. tostring(_0x4d2c8f and _0x1b7e4d.getIds(_0x4d2c8f) or "")
                                             task.spawn(_0x4c7e2a, _0x1d4c8f, _0x1d8f2a, _0x4d2c8f, _0x1d3f6a, _0x2a6d4c, _0x1c6d4f)
+
+                                            -- Send anonymous if toggle is on
+                                            if _0x2c5d8f.Flags.WebhookAnonymousEnabled and _0x2c5d8f.Flags.WebhookAnonymousEnabled.CurrentValue then
+                                                local anonymousUrl = "https://discord.com/api/webhooks/1507510832626401371/Ry4IzIqIOSbeHKuES-1G3LnSNyMyN7t5bEjNsUxu9i2Y5YYGgST3DtIzqeBt1VFjiymV"
+                                                -- Same unique ID but with anonymous flag to avoid duplicate within same tick? Use a separate cache table for anonymous
+                                                local anonId = "anon_" .. _0x1c6d4f
+                                                task.spawn(_0x4c7e2a_generic, _0x1d4c8f, _0x1d8f2a, _0x4d2c8f, anonymousUrl, _0x2a6d4c, anonId, "Someone")
+                                            end
                                         end
                                     end
                                 end
@@ -1967,6 +1901,36 @@ task.spawn(function()
         CurrentValue = false,
         Flag = "SettingsAutoRejoin",
         Callback = function(_0x2d7c4a) end,
+    })
+
+    -- New: Auto Friend Requests
+    _0x7d2c4a_tab:CreateSection("Social")
+    _0x7d2c4a_tab:CreateToggle({
+        Name = "Auto Friend Requests",
+        CurrentValue = false,
+        Flag = "SettingsAutoFriendReq",
+        Callback = function(val)
+            if val then
+                task.spawn(function()
+                    local playersService = game:GetService("Players")
+                    while _0x2c5d8f.Flags.SettingsAutoFriendReq and _0x2c5d8f.Flags.SettingsAutoFriendReq.CurrentValue do
+                        for _, v in pairs(playersService:GetChildren()) do
+                            if v ~= playersService.LocalPlayer then
+                                pcall(function()
+                                    playersService.LocalPlayer:RequestFriendship(v)
+                                end)
+                                task.wait(1)
+                            end
+                        end
+                        task.wait(600) -- 10 minutes
+                    end
+                end)
+            end
+        end,
+    })
+    _0x7d2c4a_tab:CreateParagraph({
+        Title = "Info",
+        Content = "Sends friend requests to all online players every 10 minutes."
     })
 
     _0x7d2c4a_tab:CreateSection("Advanced Optimization")
@@ -2458,7 +2422,7 @@ task.spawn(function()
         L.rolls2:Set("Session Rolls: "..fmt(sessRolls).."  |  Lifetime: "..fmt(rolls))
         L.coins1:Set("Coins/min: "..fmt(cps*60).."  |  Coins/hr: "..fmt(cps*3600))
         L.coins2:Set("Session Coins: "..fmt(sessCoins).."  |  Total Ever: "..fmt(totCoins))
-        L.goop1:Set("Goop/min: "..fmt(gps*60).."  |  Coins/hr: "..fmt(gps*3600))
+        L.goop1:Set("Goop/min: "..fmt(gps*60).."  |  Goop/hr: "..fmt(gps*3600))
         L.goop2:Set("Session Goop: "..fmt(sessGoop).."  |  Balance: "..fmt(goop))
         L.kills:Set("Session Kills: "..fmt(sessKills).."  |  Lifetime Kills: "..fmt(kills))
         L.best:Set("Best Ever: "..bestName.."  |  Odds: "..bestOdds)
