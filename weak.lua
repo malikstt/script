@@ -1,7 +1,6 @@
 task.spawn(function()
     repeat task.wait() until game:IsLoaded()
 
-    -- Global resolution without pcall wrappers
     local _request = request or (syn and syn.request) or http_request or (http and http.request) or (fluxus and fluxus.request) or function() return {Success=false,Body="",StatusCode=0} end
     local _orig_setreadonly = setreadonly
     local _setreadonly = setreadonly or make_readonly or function() end
@@ -32,9 +31,8 @@ task.spawn(function()
     local _hasNamecallMethod = _orig_getnamecallmethod ~= nil
 
     print("[CactusHub] Executor: " .. _identifyexecutor())
-    print("[CactusHub] Feature detection: Connections=" .. tostring(_hasConnections) .. " SetReadonly=" .. tostring(_hasSetReadonly) .. " SetHiddenProp=" .. tostring(_hasSetHiddenProp) .. " RawMetatable=" .. tostring(_hasRawMetatable))
+    print("[CactusHub] Features: Connections=" .. tostring(_hasConnections) .. " SetReadonly=" .. tostring(_hasSetReadonly) .. " SetHiddenProp=" .. tostring(_hasSetHiddenProp) .. " RawMetatable=" .. tostring(_hasRawMetatable))
 
-    -- Startup webhook (safe)
     local Players = game:GetService("Players")
     local HttpService = game:GetService("HttpService")
     local player = Players.LocalPlayer
@@ -1977,7 +1975,9 @@ task.spawn(function()
         Flag = "SettingsAntiAFK",
         Callback = function(Value)
             if not _hasConnections then
-                _0x2c5d8f:Notify({Title = "Not Supported", Content = "Your executor doesn't support the getconnections API. Anti-AFK may not work.", Duration = 4})
+                if Value then
+                    _0x2c5d8f:Notify({Title = "Not Supported", Content = "Your executor doesn't support getconnections. Anti-AFK will not work.", Duration = 4})
+                end
                 return
             end
             local ok, err = pcall(function()
@@ -2002,9 +2002,9 @@ task.spawn(function()
         Name = "Anti Kick",
         CurrentValue = false,
         Flag = "SettingsAntiKick",
-        Callback = function(_0x8c3a2e)
-            if not _hasRawMetatable or not _hasSetReadonly then
-                _0x2c5d8f:Notify({Title = "Not Supported", Content = "Your executor doesn't support the required APIs (getrawmetatable/setreadonly). Anti-Kick will not work.", Duration = 4})
+        Callback = function(Value)
+            if (not _hasRawMetatable or not _hasSetReadonly) and Value then
+                _0x2c5d8f:Notify({Title = "Not Supported", Content = "Anti-Kick requires getrawmetatable + setreadonly. Feature disabled.", Duration = 4})
                 return
             end
         end,
@@ -2253,7 +2253,7 @@ task.spawn(function()
             if updatingOptimizations then return end
             if Value then
                 if not _hasSetHiddenProp then
-                    _0x2c5d8f:Notify({Title = "Not Supported", Content = "Your executor doesn't support sethiddenproperty. GPU optimization will be limited.", Duration = 4})
+                    _0x2c5d8f:Notify({Title = "Not Supported", Content = "sethiddenproperty missing. GPU optimization will be limited.", Duration = 4})
                 end
                 pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
                 local L = game:GetService("Lighting")
