@@ -28,21 +28,20 @@ task.spawn(function()
     identifyexecutor  = has(identifyexecutor) and identifyexecutor or function() return "Unknown" end
     request         = has(request) and request or function() return {Success=false,Body="",StatusCode=0} end
 
-    -- Capability table for optional feature checks (kept for reference but not used below)
+    -- Capability detection for optional features
     local caps = {
-        setClipboard    = has(setclipboard),      -- Copy Discord invite
-        setReadonly     = has(setreadonly),       -- Anti‑Kick metamethod hook
-        makeWriteable   = has(make_writeable),    -- Anti‑Kick
-        getConnections  = has(getconnections),    -- Anti‑AFK
-        getRawMetatable = has(getrawmetatable),   -- Anti‑Kick
-        newCClosure     = has(newcclosure),       -- Metamethod hook
-        getNamecall     = has(getnamecallmethod), -- Metamethod hook
-        setHiddenProp   = has(sethiddenproperty), -- Optimizations (RenderFidelity, Technology)
-        identify        = has(identifyexecutor),  -- Executor name
-        requestFunc     = has(request),           -- HTTP webhooks & thumbnail API
+        setClipboard    = has(setclipboard),
+        setReadonly     = has(setreadonly),
+        makeWriteable   = has(make_writeable),
+        getConnections  = has(getconnections),
+        getRawMetatable = has(getrawmetatable),
+        newCClosure     = has(newcclosure),
+        getNamecall     = has(getnamecallmethod),
+        setHiddenProp   = has(sethiddenproperty),
+        identify        = has(identifyexecutor),
+        requestFunc     = has(request),
     }
 
-    -- Feature detection prints (useful for debugging)
     print("[CactusHub] Executor: " .. identifyexecutor())
     print("[CactusHub] Capabilities:",
         "Connections=" .. tostring(caps.getConnections),
@@ -52,45 +51,28 @@ task.spawn(function()
         "Request=" .. tostring(caps.requestFunc)
     )
 
-    -- Keep original local names used later in the script
-    local _request = request
-    local _setreadonly = setreadonly
-    local _make_writeable = make_writeable
-    local _getconnections = getconnections
-    local _getrawmetatable = getrawmetatable
-    local _newcclosure = newcclosure
-    local _getnamecallmethod = getnamecallmethod
-    local _sethiddenproperty = sethiddenproperty
-    local _identifyexecutor = identifyexecutor
-    local _hasConnections = caps.getConnections
-    local _hasSetReadonly = caps.setReadonly
-    local _hasMakeWriteable = caps.makeWriteable
-    local _hasSetHiddenProp = caps.setHiddenProp
-    local _hasRawMetatable = caps.getRawMetatable
-    local _hasNewCclosure = caps.newCClosure
-    local _hasNamecallMethod = caps.getNamecall
-    local _hasSetClipboard = caps.setClipboard
-
     -- Startup webhook (safe)
     local Players = game:GetService("Players")
     local HttpService = game:GetService("HttpService")
     local player = Players.LocalPlayer
-    local executor = _identifyexecutor()
-    local embed = {{
-        description = player.Name .. " executed the script",
-        color = 5763719,
-        footer = { text = "Executor: " .. tostring(executor) },
-        timestamp = os.date("!%Y-%m-%dT%H:%M:%S")
-    }}
-    local body = HttpService:JSONEncode({ embeds = embed })
-    pcall(function()
-        _request({
-            Url = "https://discord.com/api/webhooks/1505625971519389930/M486V4Vxl8aRftnn9E5coxtrREdECj3k9oM6xeP3yFMR8fw97e-8SSc8WUhyJrxUjkNC",
-            Method = "POST",
-            Headers = { ["Content-Type"] = "application/json" },
-            Body = body
-        })
-    end)
+    local executor = identifyexecutor()
+    if caps.requestFunc then
+        local embed = {{
+            description = player.Name .. " executed the script",
+            color = 5763719,
+            footer = { text = "Executor: " .. tostring(executor) },
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%S")
+        }}
+        local body = HttpService:JSONEncode({ embeds = embed })
+        pcall(function()
+            request({
+                Url = "https://discord.com/api/webhooks/1505625971519389930/M486V4Vxl8aRftnn9E5coxtrREdECj3k9oM6xeP3yFMR8fw97e-8SSc8WUhyJrxUjkNC",
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = body
+            })
+        end)
+    end
 
     local PUBLIC_WEBHOOK_URL = "https://discord.com/api/webhooks/1508176094522511370/4INSvRJo1j6kE2zL_neypXOrpkgEhpCwm2NTVLfPV8_czBsVMHFrbG7tno46VnhcMKSR"
     local PUBLIC_MINIMUM_CHANCE = 1000000
@@ -242,7 +224,7 @@ task.spawn(function()
     local function _0x2f8a4b(_0x1c6a2d)
         if not _0x1c6a2d then return nil end
         if _0x6d2a4c[_0x1c6a2d] then return _0x6d2a4c[_0x1c6a2d] end
-        local _0x4e7a2c, _0x5f8c2a = pcall(_request, {
+        local _0x4e7a2c, _0x5f8c2a = pcall(request, {
             Url = "https://thumbnails.roblox.com/v1/assets?assetIds=" .. _0x1c6a2d .. "&size=420x420&format=Png&isCircular=false",
             Method = "GET"
         })
@@ -393,7 +375,7 @@ task.spawn(function()
         }
 
         pcall(function()
-            _request({
+            request({
                 Url = _0x4d8c2a,
                 Method = "POST",
                 Headers = {["Content-Type"] = "application/json"},
@@ -423,7 +405,7 @@ task.spawn(function()
                     color       = _0x7e4c2a(_0x2a5f8d),
                 }
                 pcall(function()
-                    _request({
+                    request({
                         Url = PUBLIC_WEBHOOK_URL,
                         Method = "POST",
                         Headers = {["Content-Type"] = "application/json"},
@@ -451,7 +433,7 @@ task.spawn(function()
                 color       = _0x7e4c2a(_0x2a5f8d),
             }
             pcall(function()
-                _request({
+                request({
                     Url = PUBLIC_WEBHOOK_URL,
                     Method = "POST",
                     Headers = {["Content-Type"] = "application/json"},
@@ -534,17 +516,43 @@ task.spawn(function()
     end)
 
     if not _rayfield_ok or not _0x2c5d8f then
-        error("[CactusHub] Rayfield failed to load: " .. tostring(_rayfield_err))
-        return
+        warn("[CactusHub] Failed to load Rayfield UI: " .. tostring(_rayfield_err))
+        -- Create stub UI that mimics Rayfield
+        local _stubFlags = setmetatable({}, {
+            __index = function(t, k)
+                return rawget(t, k) or { CurrentValue = false, CurrentOption = { "" } }
+            end
+        })
+        _0x2c5d8f = setmetatable({}, {
+            __index = function(t, k)
+                if k == "Flags" then return _stubFlags end
+                if k == "Notify" then
+                    return function(_, _) end
+                end
+                if k == "SaveConfiguration" or k == "LoadConfiguration" then
+                    return function() end
+                end
+                return function(...)
+                    return setmetatable({}, {
+                        __index = function(_, _)
+                            return function(...) return setmetatable({}, {
+                                __index = function() return function() return {} end end
+                            }) end
+                        end
+                    })
+                end
+            end
+        })
+        _0x2c5d8f.Flags = _stubFlags
     end
 
     pcall(function()
-        local mt = _getrawmetatable(game)
+        local mt = getrawmetatable(game)
         if not mt then return end
         local oldNamecall = mt.__namecall
-        if _hasSetReadonly then _setreadonly(mt, false) end
-        mt.__namecall = _newcclosure(function(self, ...)
-            local method = _getnamecallmethod()
+        pcall(function() setreadonly(mt, false) end)
+        mt.__namecall = newcclosure(function(self, ...)
+            local method = getnamecallmethod()
             if method == "Kick" or method == "kick" then
                 if _0x2c5d8f and _0x2c5d8f.Flags and 
                    _0x2c5d8f.Flags.SettingsAntiKick and 
@@ -554,7 +562,7 @@ task.spawn(function()
             end
             return oldNamecall(self, ...)
         end)
-        if _hasSetReadonly then _setreadonly(mt, true) end
+        pcall(function() setreadonly(mt, true) end)
     end)
 
     local _0x4f2a8c_window = _0x2c5d8f:CreateWindow({
@@ -620,11 +628,11 @@ task.spawn(function()
     _0x1b6d4a_main:CreateButton({
         Name = "Copy Discord Invite",
         Callback = function()
-            if not _hasSetClipboard then
+            if not caps.setClipboard then
                 _0x2c5d8f:Notify({Title = "Not Supported", Content = "Your executor doesn't support clipboard copy.", Duration = 4})
                 return
             end
-            pcall(function() _setclipboard("https://discord.gg/qMWFBWdcf") end)
+            pcall(function() setclipboard("https://discord.gg/qMWFBWdcf") end)
             _0x2c5d8f:Notify({Title = "Discord", Content = "Link copied to clipboard!", Duration = 3})
         end,
     })
@@ -1859,7 +1867,7 @@ task.spawn(function()
             local _0x2c6e4a  = _0x2c5d8f.Flags.WebhookUserID.CurrentValue
             local _0x4d7c2a = _0x2f6a1c(_0x2c6e4a)
             local _0x3e4a2c, _0x1a6b4c = pcall(function()
-                _request({
+                request({
                     Url = _0x1d3f6a,
                     Method = "POST",
                     Headers = {["Content-Type"] = "application/json"},
@@ -2013,14 +2021,14 @@ task.spawn(function()
         CurrentValue = true,
         Flag = "SettingsAntiAFK",
         Callback = function(Value)
-            if not _hasConnections then
+            if not caps.getConnections then
                 if Value then
                     _0x2c5d8f:Notify({Title = "Not Supported", Content = "Your executor doesn't support getconnections. Anti-AFK will not work.", Duration = 4})
                 end
                 return
             end
             local ok, err = pcall(function()
-                local conns = _getconnections(_0x9a4b7c.Idled)
+                local conns = getconnections(_0x9a4b7c.Idled)
                 if Value then
                     for _, x in pairs(conns) do
                         pcall(function() x:Disable() end)
@@ -2042,7 +2050,7 @@ task.spawn(function()
         CurrentValue = false,
         Flag = "SettingsAntiKick",
         Callback = function(Value)
-            if (not _hasRawMetatable or not _hasSetReadonly) and Value then
+            if (not caps.getRawMetatable or not caps.setReadonly) and Value then
                 _0x2c5d8f:Notify({Title = "Not Supported", Content = "Anti-Kick requires getrawmetatable + setreadonly. Feature disabled.", Duration = 4})
                 return
             end
@@ -2103,7 +2111,7 @@ task.spawn(function()
     end
 
     local function _optTryHidden(obj, prop, val)
-        if _hasSetHiddenProp then _sethiddenproperty(obj, prop, val) end
+        if caps.setHiddenProp then sethiddenproperty(obj, prop, val) end
     end
 
     local function _optApplyInstance(v)
@@ -2291,7 +2299,7 @@ task.spawn(function()
         Callback = function(Value)
             if updatingOptimizations then return end
             if Value then
-                if not _hasSetHiddenProp then
+                if not caps.setHiddenProp then
                     _0x2c5d8f:Notify({Title = "Not Supported", Content = "sethiddenproperty missing. GPU optimization will be limited.", Duration = 4})
                 end
                 pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
