@@ -1,10 +1,8 @@
 task.spawn(function()
     repeat task.wait() until game:IsLoaded()
 
-    -- Compatibility layer with capability detection
     local function has(f) return type(f) == "function" end
 
-    -- Resolve each function using known executor alternatives
     local setclipboard    = setclipboard or toclipboard or set_clipboard
     local setreadonly     = setreadonly or make_readonly or set_readonly
     local make_writeable  = make_writeable or makewriteable or make_writable or set_writable
@@ -16,7 +14,6 @@ task.spawn(function()
     local identifyexecutor  = identifyexecutor or getexecutorname
     local request         = request or http_request or (http and http.request)
 
-    -- Provide fallbacks for missing functions
     setclipboard    = has(setclipboard) and setclipboard or function() end
     setreadonly     = has(setreadonly) and setreadonly or function() end
     make_writeable  = has(make_writeable) and make_writeable or function() end
@@ -28,7 +25,6 @@ task.spawn(function()
     identifyexecutor  = has(identifyexecutor) and identifyexecutor or function() return "Unknown" end
     request         = has(request) and request or function() return {Success=false,Body="",StatusCode=0} end
 
-    -- Capability detection for optional features
     local caps = {
         setClipboard    = has(setclipboard),
         setReadonly     = has(setreadonly),
@@ -51,7 +47,6 @@ task.spawn(function()
         "Request=" .. tostring(caps.requestFunc)
     )
 
-    -- Startup webhook (safe)
     local Players = game:GetService("Players")
     local HttpService = game:GetService("HttpService")
     local player = Players.LocalPlayer
@@ -84,35 +79,58 @@ task.spawn(function()
     local _0x7d2c9a = game:GetService("VirtualUser")
     local _0x2b6f8e = game:GetService("HttpService")
 
-    local _0x5c1a4d = _0x3f7a2b:WaitForChild("Packages")
-    local _0x9f3e2b = _0x5c1a4d:WaitForChild("_Index")
-    local _0x4d8c1f = _0x9f3e2b:WaitForChild("leifstout_networker@0.3.1"):WaitForChild("networker")
-    local _0x6a2e9c = _0x4d8c1f:WaitForChild("_remotes")
+    local function safeFind(parent, name)
+        if not parent then return nil end
+        return parent:FindFirstChild(name)
+    end
+
+    local function safeRequire(module, fallback)
+        if not module then return fallback end
+        local success, result = pcall(require, module)
+        if not success then
+            warn("[CactusHub] Failed to require " .. tostring(module) .. ": " .. tostring(result))
+            return fallback
+        end
+        return result
+    end
+
+    local _0x5c1a4d = safeFind(_0x3f7a2b, "Packages")
+    local _0x9f3e2b = _0x5c1a4d and safeFind(_0x5c1a4d, "_Index")
+    local _0x4d8c1f = _0x9f3e2b and safeFind(_0x9f3e2b, "leifstout_networker@0.3.1")
+    local _0x6a2e9c = _0x4d8c1f and safeFind(_0x4d8c1f, "_remotes")
 
     local _0x7b3f5a
-    pcall(function()
-        _0x7b3f5a = require(_0x5c1a4d.DataService).client
-    end)
+    if _0x5c1a4d then
+        local dataService = safeFind(_0x5c1a4d, "DataService")
+        if dataService then
+            local dsModule = safeRequire(dataService, nil)
+            _0x7b3f5a = dsModule and dsModule.client
+        end
+    end
     if not _0x7b3f5a then
         _0x7b3f5a = setmetatable({}, { __index = function() return function() end end })
     end
     pcall(function() _0x7b3f5a:waitForData() end)
 
     local _0x2c9e4d
-    pcall(function() _0x2c9e4d = require(_0x5c1a4d.Networker) end)
+    if _0x5c1a4d then
+        local networker = safeFind(_0x5c1a4d, "Networker")
+        if networker then
+            _0x2c9e4d = safeRequire(networker, nil)
+        end
+    end
 
     local _0x8a1d6f, _0x4e7b2c
-    pcall(function()
-        _0x8a1d6f = _0x2c9e4d and _0x2c9e4d.client and _0x2c9e4d.client.new("InventoryService")
-    end)
-    pcall(function()
-        _0x4e7b2c = _0x2c9e4d and _0x2c9e4d.client and _0x2c9e4d.client.new("XpTransferService")
-    end)
+    if _0x2c9e4d and _0x2c9e4d.client then
+        pcall(function() _0x8a1d6f = _0x2c9e4d.client.new("InventoryService") end)
+        pcall(function() _0x4e7b2c = _0x2c9e4d.client.new("XpTransferService") end)
+    end
 
     local function _0x3d6f9a(_0x1a4b7c)
-        local _0x2c5e8d = _0x6a2e9c:FindFirstChild(_0x1a4b7c) or _0x6a2e9c:WaitForChild(_0x1a4b7c, 10)
+        if not _0x6a2e9c then return nil end
+        local _0x2c5e8d = safeFind(_0x6a2e9c, _0x1a4b7c)
         if not _0x2c5e8d then return nil end
-        local _0x4f8a3b = _0x2c5e8d:FindFirstChild("RemoteFunction") or _0x2c5e8d:WaitForChild("RemoteFunction", 10)
+        local _0x4f8a3b = safeFind(_0x2c5e8d, "RemoteFunction")
         return _0x4f8a3b
     end
 
@@ -127,17 +145,29 @@ task.spawn(function()
     local _0x6f1a8d = _0x3d6f9a("IndexService")
     local _0x4c2a7e = _0x3d6f9a("LootService")
 
-    local _0x9d2f4a = _0x3f7a2b:WaitForChild("Source", 30)
-    if not _0x9d2f4a then return end
+    local _0x9d2f4a = safeFind(_0x3f7a2b, "Source")
+    local sourceAvailable = _0x9d2f4a ~= nil
+    if not sourceAvailable then
+        warn("[CactusHub] Source folder not found - many features disabled")
+    end
 
-    local _0x1f8a3c = require(_0x9d2f4a.Game.Items.RarityTiers)
-    local _0x7b4c2e = require(_0x9d2f4a.Features.Upgrades.UpgradeTree)
-    local _0x3e6a1d = require(_0x9d2f4a.Features.Index.IndexRewards)
-    local _0x5a8f2b = require(_0x9d2f4a.Features.Boosts.BoostServiceUtils)
-    local _0x2c4e7a = require(_0x9d2f4a.Features.SpecialDice.SpecialDiceServiceUtils)
-    local _0x8d1f4a = require(_0x9d2f4a.Features.Roll.RollSlice)
-    local _0x6f3a2c = require(_0x9d2f4a.Game.Items.Slimes)
-    local _0x1b7e4d = require(_0x9d2f4a.Features.Mutations.Mutations)
+    local _0x1f8a3c = sourceAvailable and safeRequire(safeFind(safeFind(safeFind(_0x9d2f4a, "Game"), "Items"), "RarityTiers"), { getTier = function() return false, nil end })
+    local _0x7b4c2e = sourceAvailable and safeRequire(safeFind(safeFind(safeFind(_0x9d2f4a, "Features"), "Upgrades"), "UpgradeTree"), { main = {} })
+    local _0x3e6a1d = sourceAvailable and safeRequire(safeFind(safeFind(safeFind(_0x9d2f4a, "Features"), "Index"), "IndexRewards"), {})
+    local _0x5a8f2b = sourceAvailable and safeRequire(safeFind(safeFind(safeFind(_0x9d2f4a, "Features"), "Boosts"), "BoostServiceUtils"), { getKinds = function() return {} end })
+    local _0x2c4e7a = sourceAvailable and safeRequire(safeFind(safeFind(safeFind(_0x9d2f4a, "Features"), "SpecialDice"), "SpecialDiceServiceUtils"), { getInventoryItemIds = function() return {} end, getDefinition = function() return nil end })
+    local _0x8d1f4a = sourceAvailable and safeRequire(safeFind(safeFind(safeFind(_0x9d2f4a, "Features"), "Roll"), "RollSlice"), { rollResults = function() return {} end, rollTime = function() return 0.2 end })
+    local _0x6f3a2c = sourceAvailable and safeRequire(safeFind(safeFind(safeFind(_0x9d2f4a, "Game"), "Items"), "Slimes"), { getSlime = function() return nil end })
+    local _0x1b7e4d = sourceAvailable and safeRequire(safeFind(safeFind(safeFind(_0x9d2f4a, "Features"), "Mutations"), "Mutations"), { getVisualOddsMultiplier = function() return 1 end, getStatBonus = function() return 1 end, getDisplayName = function(name) return name end, getIds = function() return {} end })
+
+    _0x1f8a3c = _0x1f8a3c or { getTier = function() return false, nil end }
+    _0x7b4c2e = _0x7b4c2e or { main = {} }
+    _0x3e6a1d = _0x3e6a1d or {}
+    _0x5a8f2b = _0x5a8f2b or { getKinds = function() return {} end }
+    _0x2c4e7a = _0x2c4e7a or { getInventoryItemIds = function() return {} end, getDefinition = function() return nil end }
+    _0x8d1f4a = _0x8d1f4a or { rollResults = function() return {} end, rollTime = function() return 0.2 end }
+    _0x6f3a2c = _0x6f3a2c or { getSlime = function() return nil end }
+    _0x1b7e4d = _0x1b7e4d or { getVisualOddsMultiplier = function() return 1 end, getStatBonus = function() return 1 end, getDisplayName = function(name) return name end, getIds = function() return {} end }
 
     local _0x4a8d2f = _0x5a8f2b.getKinds()
     local _0x7c2e5a = _0x2c4e7a.getInventoryItemIds()
@@ -517,7 +547,6 @@ task.spawn(function()
 
     if not _rayfield_ok or not _0x2c5d8f then
         warn("[CactusHub] Failed to load Rayfield UI: " .. tostring(_rayfield_err))
-        -- Create stub UI that mimics Rayfield
         local _stubFlags = setmetatable({}, {
             __index = function(t, k)
                 return rawget(t, k) or { CurrentValue = false, CurrentOption = { "" } }
@@ -684,7 +713,17 @@ task.spawn(function()
 
     _0x8c1d4a:CreateSection("Zones")
 
-    local ZonesModule = require(_0x3f7a2b:WaitForChild("Source").Game.Items.Zones)
+    local ZonesModule = nil
+    if sourceAvailable and _0x9d2f4a then
+        local zonesPath = safeFind(safeFind(safeFind(_0x9d2f4a, "Game"), "Items"), "Zones")
+        if zonesPath then
+            ZonesModule = safeRequire(zonesPath, nil)
+        end
+    end
+    if not ZonesModule then
+        ZonesModule = { getMaxZone = function() return 0 end, getZone = function() return nil end }
+    end
+
     local totalZones = ZonesModule.getMaxZone()
     local zoneOptions = { "Best Unlocked" }
     for i = 1, totalZones do
@@ -715,6 +754,7 @@ task.spawn(function()
                 task.spawn(function()
                     while _0x2c5d8f.Flags.FarmingStayInBestZone and _0x2c5d8f.Flags.FarmingStayInBestZone.CurrentValue do
                         pcall(function()
+                            if not _0x2a7e4c then return end
                             local targetOption = _0x2c5d8f.Flags.FarmingZoneTarget.CurrentOption[1]
                             if targetOption == "Best Unlocked" then
                                 local maxZone = 33
@@ -749,7 +789,9 @@ task.spawn(function()
                 task.spawn(function()
                     while _0x2c5d8f.Flags.FarmingUnlockAffordableZones and _0x2c5d8f.Flags.FarmingUnlockAffordableZones.CurrentValue do
                         pcall(function()
-                            pcall(_0x2a7e4c.InvokeServer, _0x2a7e4c, "requestPurchaseZone")
+                            if _0x2a7e4c then
+                                pcall(_0x2a7e4c.InvokeServer, _0x2a7e4c, "requestPurchaseZone")
+                            end
                         end)
                         task.wait(5)
                     end
@@ -770,7 +812,9 @@ task.spawn(function()
                     local _0x3a7c2b = 30
                     while _0x2c5d8f.Flags.FarmingEquipBestSlimes and _0x2c5d8f.Flags.FarmingEquipBestSlimes.CurrentValue do
                         pcall(function()
-                            pcall(_0x9c3a2e.InvokeServer, _0x9c3a2e, "requestEquipBest")
+                            if _0x9c3a2e then
+                                pcall(_0x9c3a2e.InvokeServer, _0x9c3a2e, "requestEquipBest")
+                            end
                         end)
                         task.wait(_0x3a7c2b)
                         _0x3a7c2b = math.min(_0x3a7c2b * 2, 600)
@@ -795,7 +839,7 @@ task.spawn(function()
                     if _0x2b6f8a then
                         local _0x3c7e2a = _0x7b3f5a:get("items") or {}
                         for _0x4d2f8a, _0x5a1c7e in pairs(_0x3c7e2a) do
-                            if type(_0x5a1c7e) == "number" and _0x5a1c7e > 0 then
+                            if type(_0x5a1c7e) == "number" and _0x5a1c7e > 0 and _0x8a1d6f then
                                 pcall(_0x8a1d6f.fetch, _0x8a1d6f, "requestUseFood", _0x4d2f8a, _0x2b6f8a, _0x5a1c7e)
                                 task.wait(0.3)
                             end
@@ -854,10 +898,14 @@ task.spawn(function()
                                 local isEquipped = teamSet[uid]
                                 local hasXp = (type(data) == "table" and (data.xp or 0) > 0) or (type(data) == "number" and data > 0)
                                 if sourceOption == "Unequipped With XP" and not isEquipped and hasXp then
-                                    pcall(_0x4e7b2c.fetch, _0x4e7b2c, "requestTransferXp", uid, target)
+                                    if _0x4e7b2c then
+                                        pcall(_0x4e7b2c.fetch, _0x4e7b2c, "requestTransferXp", uid, target)
+                                    end
                                     task.wait(0.5)
                                 elseif sourceOption == "All Slimes" and hasXp then
-                                    pcall(_0x4e7b2c.fetch, _0x4e7b2c, "requestTransferXp", uid, target)
+                                    if _0x4e7b2c then
+                                        pcall(_0x4e7b2c.fetch, _0x4e7b2c, "requestTransferXp", uid, target)
+                                    end
                                     task.wait(0.5)
                                 end
                             end
@@ -877,12 +925,13 @@ task.spawn(function()
         Callback = function(_0x7c2a4e)
             if _0x7c2a4e then
                 task.spawn(function()
-                    local _0x4a7b2c = require(game:GetService("ReplicatedStorage"):WaitForChild("Source"):WaitForChild("Features"):WaitForChild("Roll"):WaitForChild("RollSlice"))
                     while _0x2c5d8f.Flags.FarmingFastRoll and _0x2c5d8f.Flags.FarmingFastRoll.CurrentValue do
                         pcall(function()
-                            game:GetService("ReplicatedStorage"):WaitForChild("Packages"):WaitForChild("_Index"):WaitForChild("leifstout_networker@0.3.1"):WaitForChild("networker"):WaitForChild("_remotes"):WaitForChild("RollService"):WaitForChild("RemoteFunction"):InvokeServer("requestRoll")
+                            if _0x7e2a4c then
+                                _0x7e2a4c:InvokeServer("requestRoll")
+                            end
                         end)
-                        task.wait(_0x4a7b2c.rollTime())
+                        task.wait(_0x8d1f4a.rollTime())
                     end
                 end)
             end
@@ -906,7 +955,7 @@ task.spawn(function()
                                 if container then
                                     for _, item in ipairs(container:GetChildren()) do
                                         local id = item:GetAttribute("uniqueId") or item:GetAttribute("id") or item.Name
-                                        if id then
+                                        if id and _0x4c2a7e then
                                             pcall(function()
                                                 local success = _0x4c2a7e:InvokeServer("requestCollect", id)
                                                 if success then
@@ -948,7 +997,7 @@ task.spawn(function()
                             local _0x1c6a4d = _0x7b3f5a:get("furthestZone") or 0
                             local _0x3e7c2a = (2 ^ _0x2a7c4e) * 500
                             local _0x4d8f2b = tonumber(_0x2c5d8f.Flags.GameMinZoneRebirth and _0x2c5d8f.Flags.GameMinZoneRebirth.CurrentValue or 0)
-                            if _0x1c6a4d >= _0x4d8f2b and _0x5d8f2a >= _0x3e7c2a then
+                            if _0x1c6a4d >= _0x4d8f2b and _0x5d8f2a >= _0x3e7c2a and _0x4d8f1b then
                                 pcall(_0x4d8f1b.InvokeServer, _0x4d8f1b, "requestRebirth")
                             end
                         end)
@@ -980,6 +1029,7 @@ task.spawn(function()
                     local _0x2e4c7a, _0x7b3f2a = _0x7c3f2a()
                     while task.wait(0.5) and _0x2c5d8f.Flags.GameAutoUpgrade and _0x2c5d8f.Flags.GameAutoUpgrade.CurrentValue do
                         pcall(function()
+                            if not _0x5c8f2a then return end
                             local _0x8a2c4f = _0x2c5d8f.Flags.GameUpgradeMode and _0x2c5d8f.Flags.GameUpgradeMode.CurrentOption[1] or "All"
                             local _0x4b2d7e = _0x7b3f5a:get("upgrades") or {}
                             local _0x6c2f8a = _0x7b3f5a:get("coins") or 0
@@ -1079,10 +1129,14 @@ task.spawn(function()
         local Players = game:GetService("Players")
         local player = Players.LocalPlayer
         
-        local GameplayServiceClient = require(ReplicatedStorage.Source.Features.Gameplay.GameplayServiceClient)
-        local GoopGunServiceClient = require(ReplicatedStorage.Source.Features.GoopGun.GoopGunServiceClient)
-        local GoopGunServiceUtils = require(ReplicatedStorage.Source.Features.GoopGun.GoopGunServiceUtils)
-        local DataService = require(ReplicatedStorage.Packages.DataService).client
+        local GameplayServiceClient = sourceAvailable and safeRequire(safeFind(safeFind(safeFind(ReplicatedStorage, "Source"), "Features"), "Gameplay") and safeFind(safeFind(safeFind(ReplicatedStorage, "Source"), "Features"), "Gameplay").GameplayServiceClient, { gameplay = nil })
+        local GoopGunServiceClient = sourceAvailable and safeRequire(safeFind(safeFind(safeFind(ReplicatedStorage, "Source"), "Features"), "GoopGun") and safeFind(safeFind(safeFind(ReplicatedStorage, "Source"), "Features"), "GoopGun").GoopGunServiceClient, { wrapper = nil })
+        local GoopGunServiceUtils = sourceAvailable and safeRequire(safeFind(safeFind(safeFind(ReplicatedStorage, "Source"), "Features"), "GoopGun") and safeFind(safeFind(safeFind(ReplicatedStorage, "Source"), "Features"), "GoopGun").GoopGunServiceUtils, { getFireRate = function() return 0.2 end })
+        local DataService = sourceAvailable and safeRequire(safeFind(safeFind(ReplicatedStorage, "Packages"), "DataService"), { client = { get = function() return {} end } })
+        
+        if not GameplayServiceClient or not GoopGunServiceClient or not GoopGunServiceUtils then
+            return
+        end
         
         local screenGui = Instance.new("ScreenGui")
         screenGui.Name = "SlimeGunHUD"
@@ -1319,7 +1373,7 @@ task.spawn(function()
                 if character and character:FindFirstChildOfClass("Humanoid") and character:FindFirstChildOfClass("Humanoid").Health > 0 then
                     pcall(function()
                         _0x1c6f4a_ensureEquipped()
-                        local upgrades = DataService:get("upgrades") or {}
+                        local upgrades = (DataService and DataService.client and DataService.client.get("upgrades")) or {}
                         local fireRate = GoopGunServiceUtils.getFireRate(upgrades)
                         local targetId = selectTarget()
                         if targetId then
@@ -1637,7 +1691,9 @@ task.spawn(function()
                     while _0x2c5d8f.Flags.MiscRedeemCodes and _0x2c5d8f.Flags.MiscRedeemCodes.CurrentValue do
                         pcall(function()
                             for _, _0x2a7b4c in ipairs(_0x1c4a7d) do
-                                pcall(_0x1b6d8f.InvokeServer, _0x1b6d8f, "redeem", _0x2a7b4c)
+                                if _0x1b6d8f then
+                                    pcall(_0x1b6d8f.InvokeServer, _0x1b6d8f, "redeem", _0x2a7b4c)
+                                end
                                 task.wait(0.5)
                             end
                         end)
@@ -1657,7 +1713,9 @@ task.spawn(function()
                 task.spawn(function()
                     while _0x2c5d8f.Flags.MiscClaimOffline and _0x2c5d8f.Flags.MiscClaimOffline.CurrentValue do
                         pcall(function()
-                            pcall(_0x3e7a2c_remote.InvokeServer, _0x3e7a2c_remote, "requestClaim")
+                            if _0x3e7a2c_remote then
+                                pcall(_0x3e7a2c_remote.InvokeServer, _0x3e7a2c_remote, "requestClaim")
+                            end
                         end)
                         task.wait(60)
                     end
@@ -1675,7 +1733,7 @@ task.spawn(function()
                 task.spawn(function()
                     local function _0x3c2e7a()
                         local _0x1a4b7c = _0x7b3f5a:get("index")
-                        if not _0x1a4b7c or not _0x1a4b7c.categories then return end
+                        if not _0x1a4b7c or not _0x1a4b7c.categories or not _0x6f1a8d then return end
                         for _0x5c3e2a, _0x7c3f2a in pairs(_0x3e6a1d) do
                             local _0x3f6a2c = _0x1a4b7c.categories[_0x5c3e2a]
                             if _0x3f6a2c then
@@ -1718,7 +1776,7 @@ task.spawn(function()
                             local _0x4c2d7e = _0x2c5d8f.Flags.MiscPotionTypes and _0x2c5d8f.Flags.MiscPotionTypes.CurrentOption or {}
                             for _, _0x2c4f8a in ipairs(_0x4c2d7e) do
                                 local _0x1a4b7c = _0x1f4a7c[_0x2c4f8a]
-                                if _0x1a4b7c and (_0x1a4b7c.amount or 0) > 0 then
+                                if _0x1a4b7c and (_0x1a4b7c.amount or 0) > 0 and _0x8b1d4f then
                                     pcall(_0x8b1d4f.InvokeServer, _0x8b1d4f, "requestUseBoost", _0x2c4f8a)
                                 end
                             end
@@ -1751,7 +1809,7 @@ task.spawn(function()
                             local _0x5c2f7a = _0x2c5d8f.Flags.MiscDiceTypes and _0x2c5d8f.Flags.MiscDiceTypes.CurrentOption or {}
                             for _, _0x2f4a7c in ipairs(_0x5c2f7a) do
                                 local _0x1b4c6a = _0x9d4c1e[_0x2f4a7c]
-                                if _0x1b4c6a and (_0x1c4d7a[_0x1b4c6a] or 0) > 0 then
+                                if _0x1b4c6a and (_0x1c4d7a[_0x1b4c6a] or 0) > 0 and _0x9c3a2e then
                                     pcall(_0x9c3a2e.InvokeServer, _0x9c3a2e, "requestUseItem", _0x1b4c6a)
                                 end
                             end
@@ -2651,14 +2709,21 @@ task.spawn(function()
 
     local RS = game:GetService("ReplicatedStorage")
     local function getCraftingRemote()
-        return RS
-            :WaitForChild("Packages")
-            :WaitForChild("_Index")
-            :WaitForChild("leifstout_networker@0.3.1")
-            :WaitForChild("networker")
-            :WaitForChild("_remotes")
-            :WaitForChild("CraftingService")
-            :WaitForChild("RemoteFunction")
+        if not sourceAvailable then return nil end
+        local packages = safeFind(RS, "Packages")
+        if not packages then return nil end
+        local index = safeFind(packages, "_Index")
+        if not index then return nil end
+        local networkerFolder = safeFind(index, "leifstout_networker@0.3.1")
+        if not networkerFolder then return nil end
+        local networker = safeFind(networkerFolder, "networker")
+        if not networker then return nil end
+        local remotes = safeFind(networker, "_remotes")
+        if not remotes then return nil end
+        local craftingService = safeFind(remotes, "CraftingService")
+        if not craftingService then return nil end
+        local remoteFunction = safeFind(craftingService, "RemoteFunction")
+        return remoteFunction
     end
 
     local function getCraftingData(key)
@@ -2667,7 +2732,15 @@ task.spawn(function()
 
     local MutationsModule = _0x1b7e4d
     local RecipesModule
-    pcall(function() RecipesModule = require(RS.Source.Features.Crafting.Recipes) end)
+    if sourceAvailable then
+        local recipesPath = safeFind(safeFind(safeFind(RS, "Source"), "Features"), "Crafting")
+        if recipesPath then
+            local recipes = safeFind(recipesPath, "Recipes")
+            if recipes then
+                RecipesModule = safeRequire(recipes, nil)
+            end
+        end
+    end
 
     local function getMutationValue(mutId)
         if not MutationsModule then return 0 end
@@ -2865,12 +2938,14 @@ task.spawn(function()
     end
 
     local function doCraftAll(amount)
+        local remote = getCraftingRemote()
+        if not remote then return {} end
         local results = {}
         for _, recipeId in ipairs(craftingState.selectedRecipeIds) do
             local args = buildCraftArgsForRecipe(recipeId, amount)
             if args then
                 local ok, result = pcall(function()
-                    return getCraftingRemote():InvokeServer(table.unpack(args))
+                    return remote:InvokeServer(table.unpack(args))
                 end)
                 if not ok then warn("[CactusHub]", result) end
                 results[recipeId] = ok and result ~= false
