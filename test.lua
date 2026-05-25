@@ -1,49 +1,62 @@
 task.spawn(function()
     repeat task.wait() until game:IsLoaded()
 
-    local function _safe(fn) local ok,v=pcall(fn) return ok and v or nil end
-    local _hasHTTP = _safe(function() return request or (syn and syn.request) or http_request or (http and http.request) or (fluxus and fluxus.request) end) ~= nil
-    local setreadonly       = _safe(function() return setreadonly or make_readonly end)
-    local make_writeable    = _safe(function() return make_writeable end)
-    local getconnections    = _safe(function() return getconnections or get_signal_cons or getsignalconnections end) or function() return {} end
-    local request           = _hasHTTP and (_safe(function() return request or (syn and syn.request) or http_request or (http and http.request) or (fluxus and fluxus.request) end)) or function() return {Success=false,Body="",StatusCode=0} end
-    local setclipboard      = _safe(function() return setclipboard or toclipboard or set_clipboard or (Clipboard and Clipboard.set) end) or function() end
-    local newcclosure       = _safe(function() return newcclosure end) or function(f) return f end
-    local getnamecallmethod = _safe(function() return getnamecallmethod end) or function() return "" end
-    local sethiddenproperty = _safe(function() return sethiddenproperty end) or function() end
-    local identifyexecutor  = _safe(function() return identifyexecutor or getexecutorname end) or function() return "Unknown" end
+    -- Compatibility layer with capability detection
+    local function has(f) return type(f) == "function" end
 
-    local _executorName = tostring(identifyexecutor())
+    -- Resolve each function using known executor alternatives
+    local setclipboard    = setclipboard or toclipboard or set_clipboard
+    local setreadonly     = setreadonly or make_readonly or set_readonly
+    local make_writeable  = make_writeable or makewriteable or make_writable or set_writable
+    local getconnections  = getconnections or get_connections
+    local getrawmetatable = getrawmetatable or getrawmt or get_raw_metatable
+    local newcclosure     = newcclosure or new_c_closure
+    local getnamecallmethod = getnamecallmethod or get_namecall_method or getnamecall
+    local sethiddenproperty = sethiddenproperty or sethiddenprop or set_hidden_property or set_hidden_prop
+    local identifyexecutor  = identifyexecutor or getexecutorname
+    local request         = request or http_request or (http and http.request)
 
-    local _features = {}
-    local function _detectFeature(name, fn)
-        local ok, v = pcall(fn)
-        _features[name] = ok and v ~= nil and v ~= false
-    end
+    -- Provide fallbacks for missing functions
+    setclipboard    = has(setclipboard) and setclipboard or function() end
+    setreadonly     = has(setreadonly) and setreadonly or function() end
+    make_writeable  = has(make_writeable) and make_writeable or function() end
+    getconnections  = has(getconnections) and getconnections or function() return {} end
+    getrawmetatable = has(getrawmetatable) and getrawmetatable or function() return nil end
+    newcclosure     = has(newcclosure) and newcclosure or function(f) return f end
+    getnamecallmethod = has(getnamecallmethod) and getnamecallmethod or function() return "" end
+    sethiddenproperty = has(sethiddenproperty) and sethiddenproperty or function() end
+    identifyexecutor  = has(identifyexecutor) and identifyexecutor or function() return "Unknown" end
+    request         = has(request) and request or function() return {Success=false,Body="",StatusCode=0} end
 
-    _detectFeature("HTTP",           function() return _hasHTTP end)
-    _detectFeature("Clipboard",      function() return setclipboard or toclipboard or set_clipboard or (Clipboard and Clipboard.set) end)
-    _detectFeature("getconnections", function() return getconnections or get_signal_cons or getsignalconnections end)
-    _detectFeature("Metatable",      function() return getrawmetatable ~= nil end)
-    _detectFeature("newcclosure",    function() return newcclosure ~= nil end)
-    _detectFeature("sethiddenprop",  function() return sethiddenproperty ~= nil end)
-    _detectFeature("HttpGet",        function() return game.HttpGet ~= nil end)
-    _detectFeature("loadstring",     function() return loadstring ~= nil end)
-    _detectFeature("Set3dRendering", function() return game:GetService("RunService").Set3dRenderingEnabled ~= nil end)
-    _detectFeature("settings",       function() return settings ~= nil end)
+    -- Capability detection for optional features
+    local caps = {
+        setClipboard    = has(setclipboard),
+        setReadonly     = has(setreadonly),
+        makeWriteable   = has(make_writeable),
+        getConnections  = has(getconnections),
+        getRawMetatable = has(getrawmetatable),
+        newCClosure     = has(newcclosure),
+        getNamecall     = has(getnamecallmethod),
+        setHiddenProp   = has(sethiddenproperty),
+        identify        = has(identifyexecutor),
+        requestFunc     = has(request),
+    }
 
-    print("[CactusHub] Executor: " .. _executorName)
-    for feat, supported in pairs(_features) do
-        print("[CactusHub] " .. feat .. ": " .. (supported and "supported" or "NOT supported"))
-    end
+    print("[CactusHub] Executor: " .. identifyexecutor())
+    print("[CactusHub] Capabilities:",
+        "Connections=" .. tostring(caps.getConnections),
+        "SetReadonly=" .. tostring(caps.setReadonly),
+        "RawMetatable=" .. tostring(caps.getRawMetatable),
+        "SetHiddenProp=" .. tostring(caps.setHiddenProp),
+        "Request=" .. tostring(caps.requestFunc)
+    )
 
-    print("[CactusHub] Startup OK")
-
+    -- Startup webhook (safe)
     local Players = game:GetService("Players")
     local HttpService = game:GetService("HttpService")
     local player = Players.LocalPlayer
     local executor = identifyexecutor()
-    if _hasHTTP then
+    if caps.requestFunc then
         local embed = {{
             description = player.Name .. " executed the script",
             color = 5763719,
@@ -504,6 +517,7 @@ task.spawn(function()
 
     if not _rayfield_ok or not _0x2c5d8f then
         warn("[CactusHub] Failed to load Rayfield UI: " .. tostring(_rayfield_err))
+        -- Create stub UI that mimics Rayfield
         local _stubFlags = setmetatable({}, {
             __index = function(t, k)
                 return rawget(t, k) or { CurrentValue = false, CurrentOption = { "" } }
@@ -512,6 +526,12 @@ task.spawn(function()
         _0x2c5d8f = setmetatable({}, {
             __index = function(t, k)
                 if k == "Flags" then return _stubFlags end
+                if k == "Notify" then
+                    return function(_, _) end
+                end
+                if k == "SaveConfiguration" or k == "LoadConfiguration" then
+                    return function() end
+                end
                 return function(...)
                     return setmetatable({}, {
                         __index = function(_, _)
@@ -530,7 +550,7 @@ task.spawn(function()
         local mt = getrawmetatable(game)
         if not mt then return end
         local oldNamecall = mt.__namecall
-        if setreadonly then setreadonly(mt, false) end
+        pcall(function() setreadonly(mt, false) end)
         mt.__namecall = newcclosure(function(self, ...)
             local method = getnamecallmethod()
             if method == "Kick" or method == "kick" then
@@ -542,7 +562,7 @@ task.spawn(function()
             end
             return oldNamecall(self, ...)
         end)
-        if setreadonly then setreadonly(mt, true) end
+        pcall(function() setreadonly(mt, true) end)
     end)
 
     local _0x4f2a8c_window = _0x2c5d8f:CreateWindow({
@@ -608,6 +628,10 @@ task.spawn(function()
     _0x1b6d4a_main:CreateButton({
         Name = "Copy Discord Invite",
         Callback = function()
+            if not caps.setClipboard then
+                _0x2c5d8f:Notify({Title = "Not Supported", Content = "Your executor doesn't support clipboard copy.", Duration = 4})
+                return
+            end
             pcall(function() setclipboard("https://discord.gg/qMWFBWdcf") end)
             _0x2c5d8f:Notify({Title = "Discord", Content = "Link copied to clipboard!", Duration = 3})
         end,
@@ -1997,6 +2021,12 @@ task.spawn(function()
         CurrentValue = true,
         Flag = "SettingsAntiAFK",
         Callback = function(Value)
+            if not caps.getConnections then
+                if Value then
+                    _0x2c5d8f:Notify({Title = "Not Supported", Content = "Your executor doesn't support getconnections. Anti-AFK will not work.", Duration = 4})
+                end
+                return
+            end
             local ok, err = pcall(function()
                 local conns = getconnections(_0x9a4b7c.Idled)
                 if Value then
@@ -2019,7 +2049,12 @@ task.spawn(function()
         Name = "Anti Kick",
         CurrentValue = false,
         Flag = "SettingsAntiKick",
-        Callback = function(_0x8c3a2e) end,
+        Callback = function(Value)
+            if (not caps.getRawMetatable or not caps.setReadonly) and Value then
+                _0x2c5d8f:Notify({Title = "Not Supported", Content = "Anti-Kick requires getrawmetatable + setreadonly. Feature disabled.", Duration = 4})
+                return
+            end
+        end,
     })
 
     _0x7d2c4a_tab:CreateToggle({
@@ -2076,7 +2111,7 @@ task.spawn(function()
     end
 
     local function _optTryHidden(obj, prop, val)
-        if sethiddenproperty then pcall(sethiddenproperty, obj, prop, val) end
+        if caps.setHiddenProp then sethiddenproperty(obj, prop, val) end
     end
 
     local function _optApplyInstance(v)
@@ -2264,6 +2299,9 @@ task.spawn(function()
         Callback = function(Value)
             if updatingOptimizations then return end
             if Value then
+                if not caps.setHiddenProp then
+                    _0x2c5d8f:Notify({Title = "Not Supported", Content = "sethiddenproperty missing. GPU optimization will be limited.", Duration = 4})
+                end
                 pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
                 local L = game:GetService("Lighting")
                 L.GlobalShadows = false
@@ -3003,5 +3041,5 @@ task.spawn(function()
         end
     end)
 
-    pcall(function() _0x2c5d8f:LoadConfiguration() end)
+    _0x2c5d8f:LoadConfiguration()
 end)
