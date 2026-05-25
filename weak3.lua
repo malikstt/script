@@ -798,25 +798,7 @@ local mainTab = Window:AddTab({Title = "Main", Icon = "home"})
 local fpsPara = mainTab:AddParagraph({Title = "", Content = "FPS: --"})
 local pingPara = mainTab:AddParagraph({Title = "", Content = "Ping: --"})
 
-local fpsCount = 0
-local fpsLast = tick()
-RunSvc.RenderStepped:Connect(function()
-    fpsCount = fpsCount + 1
-    local now = tick()
-    if now - fpsLast >= 1 then
-        fpsPara:SetContent("FPS: " .. fpsCount)
-        fpsCount = 0
-        fpsLast = now
-    end
-end)
-
-task.spawn(function()
-    while true do
-        local pingValue = math.floor(lp:GetNetworkPing() * 1000)
-        pingPara:SetContent("Ping: " .. pingValue .. "ms")
-        task.wait(5)
-    end
-end)
+-- FPS/Ping updates removed (static text)
 
 mainTab:AddSection("Release")
 mainTab:AddParagraph({Title = "⚡ Features", Content = "• Auto Farm Kick\n• Auto Collect & Sell\n• Auto Place & Remove\n• Auto Upgrade & Shop\n• Discord Webhook"})
@@ -1460,9 +1442,6 @@ eventTab:AddSection("⬆️ Volcano Upgrades")
 
 local function updateUpgradeLevelMax()
     local maxLvl = volcanoUpgradeLevels[volcanoUpgrade.upgradeType] or 1
-    if upgradeLevelSliderRef then
-        upgradeLevelSliderRef:SetRange(1, maxLvl)
-    end
     if volcanoUpgrade.level > maxLvl then
         volcanoUpgrade.level = maxLvl
         if upgradeLevelSliderRef then
