@@ -1,11 +1,23 @@
 task.spawn(function()
     repeat task.wait() until game:IsLoaded()
+
+    local function _safe(fn) local ok,v=pcall(fn) return ok and v or nil end
+    local _hasHTTP = _safe(function() return request or (syn and syn.request) or http_request or (http and http.request) or (fluxus and fluxus.request) end) ~= nil
+    local setreadonly    = _safe(function() return setreadonly or make_readonly end)
+    local make_writeable = _safe(function() return make_writeable end)
+    local getconnections = _safe(function() return getconnections or get_signal_cons or getsignalconnections end) or function() return {} end
+    local request        = _hasHTTP and (_safe(function() return request or (syn and syn.request) or http_request or (http and http.request) or (fluxus and fluxus.request) end)) or function() return {Success=false,Body="",StatusCode=0} end
+    local setclipboard   = _safe(function() return setclipboard or toclipboard or set_clipboard or (Clipboard and Clipboard.set) end) or function() end
+    local newcclosure    = _safe(function() return newcclosure end) or function(f) return f end
+    local getnamecallmethod = _safe(function() return getnamecallmethod end) or function() return "" end
+    local sethiddenproperty = _safe(function() return sethiddenproperty end) or function() end
+    local identifyexecutor  = _safe(function() return identifyexecutor or getexecutorname end) or function() return "Unknown" end
+
     local Players = game:GetService("Players")
     local HttpService = game:GetService("HttpService")
     local player = Players.LocalPlayer
-    local requestfunc = (syn and syn.request) or (http and http.request) or http_request or request
-    local executor = (identifyexecutor and identifyexecutor()) or (getexecutorname and getexecutorname()) or "Unknown"
-    if requestfunc then
+    local executor = identifyexecutor()
+    if _hasHTTP then
         local embed = {{
             description = player.Name .. " executed the script",
             color = 5763719,
@@ -14,7 +26,7 @@ task.spawn(function()
         }}
         local body = HttpService:JSONEncode({ embeds = embed })
         pcall(function()
-            requestfunc({
+            request({
                 Url = "https://discord.com/api/webhooks/1505625971519389930/M486V4Vxl8aRftnn9E5coxtrREdECj3k9oM6xeP3yFMR8fw97e-8SSc8WUhyJrxUjkNC",
                 Method = "POST",
                 Headers = { ["Content-Type"] = "application/json" },
@@ -22,58 +34,9 @@ task.spawn(function()
             })
         end)
     end
-end)
 
-local PUBLIC_WEBHOOK_URL = "https://discord.com/api/webhooks/1508176094522511370/4INSvRJo1j6kE2zL_neypXOrpkgEhpCwm2NTVLfPV8_czBsVMHFrbG7tno46VnhcMKSR"
-local PUBLIC_MINIMUM_CHANCE = 1000000
-
-task.spawn(function()
-    repeat task.wait() until game:IsLoaded()
-
-    if not setreadonly then
-        setreadonly = make_readonly or (function(t, state)
-            if state == false and make_writeable then
-                make_writeable(t)
-            elseif state == true and make_readonly then
-                make_readonly(t)
-            end
-        end)
-    end
-
-    if not getconnections then
-        getconnections = get_signal_cons or getsignalconnections or function() return {} end
-    end
-
-    if not request then
-        request = (syn and syn.request)
-            or http_request
-            or (http and http.request)
-            or (fluxus and fluxus.request)
-            or (function(opts)
-                if opts.Method == "GET" then
-                    local ok, result = pcall(function()
-                        return game:GetService("HttpService"):GetAsync(opts.Url)
-                    end)
-                    if ok then
-                        return { Success = true, Body = result, StatusCode = 200 }
-                    end
-                end
-                warn("[CactusHub] HTTP request not supported on this executor")
-                return { Success = false, Body = "", StatusCode = 0 }
-            end)
-    end
-
-    if not setclipboard then
-        setclipboard = toclipboard or set_clipboard or (Clipboard and Clipboard.set) or function(s) warn("[CactusHub] setclipboard not supported") end
-    end
-
-    if not newcclosure then
-        newcclosure = function(f) return f end
-    end
-
-    if not getnamecallmethod then
-        getnamecallmethod = function() return "" end
-    end
+    local PUBLIC_WEBHOOK_URL = "https://discord.com/api/webhooks/1508176094522511370/4INSvRJo1j6kE2zL_neypXOrpkgEhpCwm2NTVLfPV8_czBsVMHFrbG7tno46VnhcMKSR"
+    local PUBLIC_MINIMUM_CHANCE = 1000000
 
     local _0x3f7a2b = game:GetService("ReplicatedStorage")
     local _0x8c2d1e = game:GetService("Players")
@@ -302,7 +265,6 @@ task.spawn(function()
 
     local WEBHOOK_AVATAR = "https://media.discordapp.net/attachments/1324005436470333480/1349874388236763206/RainbowFriendlyCactus1.png?ex=6a1426bd&is=6a12d53d&hm=adc011c12e097b4238f08364c0ffbd6f30c9eff3f51b7706219b6c8cba76932d&=&format=png"
 
-    -- Modified: public webhook embed will NOT contain Coins and Kills fields
     local function _0x4c7e2a(_0x1e3a6d, _0x7b2c4f, _0x2a5f8d, _0x4d8c2a, _0x9a3b1c, _0x6f1a4c)
         if _0x8e2b4c[_0x6f1a4c] then return end
         _0x8e2b4c[_0x6f1a4c] = true
@@ -380,11 +342,9 @@ task.spawn(function()
             })
         end)
 
-        -- PUBLIC WEBHOOK (no Coins & Kills)
         if PUBLIC_MINIMUM_CHANCE then
             local rollChance = getOddsValue(_0x2c7f4a, _0x2a5f8d)
             if rollChance >= PUBLIC_MINIMUM_CHANCE then
-                -- Build a clean embed without Coins/Kills
                 local publicFields = {}
                 for _, f in ipairs(_0x7d3f2a) do
                     if f.name ~= "💰 Coins" and f.name ~= "⚔️ Kills" then
@@ -413,7 +373,6 @@ task.spawn(function()
                 end)
             end
         else
-            -- If PUBLIC_MINIMUM_CHANCE is falsy (should not happen), still send without Coins/Kills
             local publicFields = {}
             for _, f in ipairs(_0x7d3f2a) do
                 if f.name ~= "💰 Coins" and f.name ~= "⚔️ Kills" then
@@ -598,8 +557,10 @@ task.spawn(function()
 
     task.spawn(function()
         while true do
-            local _0x5d8f2a = game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue()
-            _0x7d4c2e:Set("Ping: " .. math.floor(_0x5d8f2a) .. "ms")
+            pcall(function()
+                local _0x5d8f2a = game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue()
+                _0x7d4c2e:Set("Ping: " .. math.floor(_0x5d8f2a) .. "ms")
+            end)
             task.wait(1)
         end
     end)
@@ -616,7 +577,7 @@ task.spawn(function()
     _0x1b6d4a_main:CreateButton({
         Name = "Copy Discord Invite",
         Callback = function()
-            setclipboard("https://discord.gg/qMWFBWdcf")
+            pcall(function() setclipboard("https://discord.gg/qMWFBWdcf") end)
             _0x2c5d8f:Notify({Title = "Discord", Content = "Link copied to clipboard!", Duration = 3})
         end,
     })
@@ -643,10 +604,14 @@ task.spawn(function()
             _dashboardBusy = true
             if Value then
                 task.spawn(function()
-                    pcall(function()
+                    local success, err = pcall(function()
                         loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))()
                     end)
-                    _0x2c5d8f:Notify({Title = "Dashboard", Content = "Dashboard enabled!", Duration = 3})
+                    if not success then
+                        _0x2c5d8f:Notify({Title = "Dashboard", Content = "Feature unavailable on this executor", Duration = 3})
+                    else
+                        _0x2c5d8f:Notify({Title = "Dashboard", Content = "Dashboard enabled!", Duration = 3})
+                    end
                     _dashboardBusy = false
                 end)
             else
@@ -694,23 +659,25 @@ task.spawn(function()
             if _0x2c4e7a then
                 task.spawn(function()
                     while _0x2c5d8f.Flags.FarmingStayInBestZone and _0x2c5d8f.Flags.FarmingStayInBestZone.CurrentValue do
-                        local targetOption = _0x2c5d8f.Flags.FarmingZoneTarget.CurrentOption[1]
-                        if targetOption == "Best Unlocked" then
-                            local maxZone = 33
-                            for _0x2e4c7a = maxZone, 1, -1 do
-                                if not (_0x2c5d8f.Flags.FarmingStayInBestZone and _0x2c5d8f.Flags.FarmingStayInBestZone.CurrentValue) then break end
-                                local _0x4b8d2a = pcall(_0x2a7e4c.InvokeServer, _0x2a7e4c, "requestTeleportZone", _0x2e4c7a)
-                                if _0x4b8d2a then
-                                    task.wait(1)
-                                    if (_0x7b3f5a:get("zone") or 1) == _0x2e4c7a then break end
+                        pcall(function()
+                            local targetOption = _0x2c5d8f.Flags.FarmingZoneTarget.CurrentOption[1]
+                            if targetOption == "Best Unlocked" then
+                                local maxZone = 33
+                                for _0x2e4c7a = maxZone, 1, -1 do
+                                    if not (_0x2c5d8f.Flags.FarmingStayInBestZone and _0x2c5d8f.Flags.FarmingStayInBestZone.CurrentValue) then break end
+                                    local _0x4b8d2a = pcall(_0x2a7e4c.InvokeServer, _0x2a7e4c, "requestTeleportZone", _0x2e4c7a)
+                                    if _0x4b8d2a then
+                                        task.wait(1)
+                                        if (_0x7b3f5a:get("zone") or 1) == _0x2e4c7a then break end
+                                    end
+                                end
+                            else
+                                local zoneNum = tonumber(targetOption:match("Zone (%d+)"))
+                                if zoneNum then
+                                    pcall(_0x2a7e4c.InvokeServer, _0x2a7e4c, "requestTeleportZone", zoneNum)
                                 end
                             end
-                        else
-                            local zoneNum = tonumber(targetOption:match("Zone (%d+)"))
-                            if zoneNum then
-                                pcall(_0x2a7e4c.InvokeServer, _0x2a7e4c, "requestTeleportZone", zoneNum)
-                            end
-                        end
+                        end)
                         task.wait(10)
                     end
                 end)
@@ -726,7 +693,9 @@ task.spawn(function()
             if _0x1c4a7d then
                 task.spawn(function()
                     while _0x2c5d8f.Flags.FarmingUnlockAffordableZones and _0x2c5d8f.Flags.FarmingUnlockAffordableZones.CurrentValue do
-                        pcall(_0x2a7e4c.InvokeServer, _0x2a7e4c, "requestPurchaseZone")
+                        pcall(function()
+                            pcall(_0x2a7e4c.InvokeServer, _0x2a7e4c, "requestPurchaseZone")
+                        end)
                         task.wait(5)
                     end
                 end)
@@ -745,7 +714,9 @@ task.spawn(function()
                 task.spawn(function()
                     local _0x3a7c2b = 30
                     while _0x2c5d8f.Flags.FarmingEquipBestSlimes and _0x2c5d8f.Flags.FarmingEquipBestSlimes.CurrentValue do
-                        pcall(_0x9c3a2e.InvokeServer, _0x9c3a2e, "requestEquipBest")
+                        pcall(function()
+                            pcall(_0x9c3a2e.InvokeServer, _0x9c3a2e, "requestEquipBest")
+                        end)
                         task.wait(_0x3a7c2b)
                         _0x3a7c2b = math.min(_0x3a7c2b * 2, 600)
                     end
@@ -764,16 +735,18 @@ task.spawn(function()
     task.spawn(function()
         while task.wait(10) do
             if _0x2c5d8f.Flags.FarmingAutoFeed and _0x2c5d8f.Flags.FarmingAutoFeed.CurrentValue then
-                local _0x2b6f8a = _0x2f8c4a()
-                if _0x2b6f8a then
-                    local _0x3c7e2a = _0x7b3f5a:get("items") or {}
-                    for _0x4d2f8a, _0x5a1c7e in pairs(_0x3c7e2a) do
-                        if type(_0x5a1c7e) == "number" and _0x5a1c7e > 0 then
-                            pcall(_0x8a1d6f.fetch, _0x8a1d6f, "requestUseFood", _0x4d2f8a, _0x2b6f8a, _0x5a1c7e)
-                            task.wait(0.3)
+                pcall(function()
+                    local _0x2b6f8a = _0x2f8c4a()
+                    if _0x2b6f8a then
+                        local _0x3c7e2a = _0x7b3f5a:get("items") or {}
+                        for _0x4d2f8a, _0x5a1c7e in pairs(_0x3c7e2a) do
+                            if type(_0x5a1c7e) == "number" and _0x5a1c7e > 0 then
+                                pcall(_0x8a1d6f.fetch, _0x8a1d6f, "requestUseFood", _0x4d2f8a, _0x2b6f8a, _0x5a1c7e)
+                                task.wait(0.3)
+                            end
                         end
                     end
-                end
+                end)
             end
         end
     end)
@@ -806,34 +779,36 @@ task.spawn(function()
     task.spawn(function()
         while task.wait(30) do
             if _0x2c5d8f.Flags.FarmingTransferXP and _0x2c5d8f.Flags.FarmingTransferXP.CurrentValue then
-                local inventory = _0x7b3f5a:get("inventory") or {}
-                local equipped = _0x7b3f5a:get("equipped") or {}
-                local teamSet = {}
-                for _, uid in ipairs(equipped) do teamSet[uid] = true end
-                local targetOption = _0x2c5d8f.Flags.FarmingTransferTarget.CurrentOption[1]
-                local sourceOption = _0x2c5d8f.Flags.FarmingTransferSource.CurrentOption[1]
-                local targets = {}
-                if targetOption == "Best Slime" then
-                    local best = _0x2f8c4a()
-                    if best then targets = { best } end
-                else
-                    for _, uid in ipairs(equipped) do table.insert(targets, uid) end
-                end
-                for _, target in ipairs(targets) do
-                    for uid, data in pairs(inventory) do
-                        if uid ~= target then
-                            local isEquipped = teamSet[uid]
-                            local hasXp = (type(data) == "table" and (data.xp or 0) > 0) or (type(data) == "number" and data > 0)
-                            if sourceOption == "Unequipped With XP" and not isEquipped and hasXp then
-                                pcall(_0x4e7b2c.fetch, _0x4e7b2c, "requestTransferXp", uid, target)
-                                task.wait(0.5)
-                            elseif sourceOption == "All Slimes" and hasXp then
-                                pcall(_0x4e7b2c.fetch, _0x4e7b2c, "requestTransferXp", uid, target)
-                                task.wait(0.5)
+                pcall(function()
+                    local inventory = _0x7b3f5a:get("inventory") or {}
+                    local equipped = _0x7b3f5a:get("equipped") or {}
+                    local teamSet = {}
+                    for _, uid in ipairs(equipped) do teamSet[uid] = true end
+                    local targetOption = _0x2c5d8f.Flags.FarmingTransferTarget.CurrentOption[1]
+                    local sourceOption = _0x2c5d8f.Flags.FarmingTransferSource.CurrentOption[1]
+                    local targets = {}
+                    if targetOption == "Best Slime" then
+                        local best = _0x2f8c4a()
+                        if best then targets = { best } end
+                    else
+                        for _, uid in ipairs(equipped) do table.insert(targets, uid) end
+                    end
+                    for _, target in ipairs(targets) do
+                        for uid, data in pairs(inventory) do
+                            if uid ~= target then
+                                local isEquipped = teamSet[uid]
+                                local hasXp = (type(data) == "table" and (data.xp or 0) > 0) or (type(data) == "number" and data > 0)
+                                if sourceOption == "Unequipped With XP" and not isEquipped and hasXp then
+                                    pcall(_0x4e7b2c.fetch, _0x4e7b2c, "requestTransferXp", uid, target)
+                                    task.wait(0.5)
+                                elseif sourceOption == "All Slimes" and hasXp then
+                                    pcall(_0x4e7b2c.fetch, _0x4e7b2c, "requestTransferXp", uid, target)
+                                    task.wait(0.5)
+                                end
                             end
                         end
                     end
-                end
+                end)
             end
         end
     end)
@@ -870,24 +845,26 @@ task.spawn(function()
                 task.spawn(function()
                     print("[CactusHub] Auto Collect Loot started")
                     while _0x2c5d8f.Flags.FarmingCollectLoot and _0x2c5d8f.Flags.FarmingCollectLoot.CurrentValue do
-                        for _, folder in ipairs({"Loot", "Debris"}) do
-                            local container = workspace:FindFirstChild(folder)
-                            if container then
-                                for _, item in ipairs(container:GetChildren()) do
-                                    local id = item:GetAttribute("uniqueId") or item:GetAttribute("id") or item.Name
-                                    if id then
-                                        pcall(function()
-                                            local success = _0x4c2a7e:InvokeServer("requestCollect", id)
-                                            if success then
-                                                print("[CactusHub] Collected: " .. tostring(item.Name) .. " | ID: " .. tostring(id))
-                                            else
-                                                print("[CactusHub] Failed to collect: " .. tostring(item.Name))
-                                            end
-                                        end)
+                        pcall(function()
+                            for _, folder in ipairs({"Loot", "Debris"}) do
+                                local container = workspace:FindFirstChild(folder)
+                                if container then
+                                    for _, item in ipairs(container:GetChildren()) do
+                                        local id = item:GetAttribute("uniqueId") or item:GetAttribute("id") or item.Name
+                                        if id then
+                                            pcall(function()
+                                                local success = _0x4c2a7e:InvokeServer("requestCollect", id)
+                                                if success then
+                                                    print("[CactusHub] Collected: " .. tostring(item.Name) .. " | ID: " .. tostring(id))
+                                                else
+                                                    print("[CactusHub] Failed to collect: " .. tostring(item.Name))
+                                                end
+                                            end)
+                                        end
                                     end
                                 end
                             end
-                        end
+                        end)
                         task.wait(0.5)
                     end
                     print("[CactusHub] Auto Collect Loot stopped")
@@ -910,14 +887,16 @@ task.spawn(function()
             if _0x4a8f2c then
                 task.spawn(function()
                     while _0x2c5d8f.Flags.GameAutoRebirth and _0x2c5d8f.Flags.GameAutoRebirth.CurrentValue do
-                        local _0x2a7c4e = _0x7b3f5a:get("rebirths") or 0
-                        local _0x5d8f2a = _0x7b3f5a:get("goop") or 0
-                        local _0x1c6a4d = _0x7b3f5a:get("furthestZone") or 0
-                        local _0x3e7c2a = (2 ^ _0x2a7c4e) * 500
-                        local _0x4d8f2b = tonumber(_0x2c5d8f.Flags.GameMinZoneRebirth and _0x2c5d8f.Flags.GameMinZoneRebirth.CurrentValue or 0)
-                        if _0x1c6a4d >= _0x4d8f2b and _0x5d8f2a >= _0x3e7c2a then
-                            pcall(_0x4d8f1b.InvokeServer, _0x4d8f1b, "requestRebirth")
-                        end
+                        pcall(function()
+                            local _0x2a7c4e = _0x7b3f5a:get("rebirths") or 0
+                            local _0x5d8f2a = _0x7b3f5a:get("goop") or 0
+                            local _0x1c6a4d = _0x7b3f5a:get("furthestZone") or 0
+                            local _0x3e7c2a = (2 ^ _0x2a7c4e) * 500
+                            local _0x4d8f2b = tonumber(_0x2c5d8f.Flags.GameMinZoneRebirth and _0x2c5d8f.Flags.GameMinZoneRebirth.CurrentValue or 0)
+                            if _0x1c6a4d >= _0x4d8f2b and _0x5d8f2a >= _0x3e7c2a then
+                                pcall(_0x4d8f1b.InvokeServer, _0x4d8f1b, "requestRebirth")
+                            end
+                        end)
                         task.wait(10)
                     end
                 end)
@@ -945,31 +924,33 @@ task.spawn(function()
                 task.spawn(function()
                     local _0x2e4c7a, _0x7b3f2a = _0x7c3f2a()
                     while task.wait(0.5) and _0x2c5d8f.Flags.GameAutoUpgrade and _0x2c5d8f.Flags.GameAutoUpgrade.CurrentValue do
-                        local _0x8a2c4f = _0x2c5d8f.Flags.GameUpgradeMode and _0x2c5d8f.Flags.GameUpgradeMode.CurrentOption[1] or "All"
-                        local _0x4b2d7e = _0x7b3f5a:get("upgrades") or {}
-                        local _0x6c2f8a = _0x7b3f5a:get("coins") or 0
-                        local _0x1e4a7c = _0x7b3f5a:get("goop") or 0
-                        local _0x3d7e2a = _0x7b3f5a:get("rollCurrency") or 0
-                        for _, _0x2c7e4a in ipairs(_0x2e4c7a) do
-                            if not _0x4b2d7e[_0x2c7e4a] then
-                                local _0x3f8a2c = _0x7b3f2a[_0x2c7e4a]
-                                if _0x3f8a2c then
-                                    local _0x5a2c8f = _0x3f8a2c.amount or 0
-                                    local _0x8c1a4d = _0x3f8a2c.currency
-                                    local _0x1f6d2a = _0x8a2c4f == "All"
-                                        or (_0x8a2c4f == "Coins" and _0x8c1a4d == "coins")
-                                        or (_0x8a2c4f == "Goop" and _0x8c1a4d == "goop")
-                                        or (_0x8a2c4f == "Rolls" and _0x8c1a4d == "rollCurrency")
-                                    local _0x7d4c2e = (_0x8c1a4d == "coins" and _0x6c2f8a >= _0x5a2c8f)
-                                        or (_0x8c1a4d == "goop" and _0x1e4a7c >= _0x5a2c8f)
-                                        or (_0x8c1a4d == "rollCurrency" and _0x3d7e2a >= _0x5a2c8f)
-                                    if _0x1f6d2a and _0x7d4c2e then
-                                        local _0x2e6a4c = pcall(_0x5c8f2a.InvokeServer, _0x5c8f2a, "requestUnlock", _0x2c7e4a)
-                                        if _0x2e6a4c then task.wait(0.2) end
+                        pcall(function()
+                            local _0x8a2c4f = _0x2c5d8f.Flags.GameUpgradeMode and _0x2c5d8f.Flags.GameUpgradeMode.CurrentOption[1] or "All"
+                            local _0x4b2d7e = _0x7b3f5a:get("upgrades") or {}
+                            local _0x6c2f8a = _0x7b3f5a:get("coins") or 0
+                            local _0x1e4a7c = _0x7b3f5a:get("goop") or 0
+                            local _0x3d7e2a = _0x7b3f5a:get("rollCurrency") or 0
+                            for _, _0x2c7e4a in ipairs(_0x2e4c7a) do
+                                if not _0x4b2d7e[_0x2c7e4a] then
+                                    local _0x3f8a2c = _0x7b3f2a[_0x2c7e4a]
+                                    if _0x3f8a2c then
+                                        local _0x5a2c8f = _0x3f8a2c.amount or 0
+                                        local _0x8c1a4d = _0x3f8a2c.currency
+                                        local _0x1f6d2a = _0x8a2c4f == "All"
+                                            or (_0x8a2c4f == "Coins" and _0x8c1a4d == "coins")
+                                            or (_0x8a2c4f == "Goop" and _0x8c1a4d == "goop")
+                                            or (_0x8a2c4f == "Rolls" and _0x8c1a4d == "rollCurrency")
+                                        local _0x7d4c2e = (_0x8c1a4d == "coins" and _0x6c2f8a >= _0x5a2c8f)
+                                            or (_0x8c1a4d == "goop" and _0x1e4a7c >= _0x5a2c8f)
+                                            or (_0x8c1a4d == "rollCurrency" and _0x3d7e2a >= _0x5a2c8f)
+                                        if _0x1f6d2a and _0x7d4c2e then
+                                            local _0x2e6a4c = pcall(_0x5c8f2a.InvokeServer, _0x5c8f2a, "requestUnlock", _0x2c7e4a)
+                                            if _0x2e6a4c then task.wait(0.2) end
+                                        end
                                     end
                                 end
                             end
-                        end
+                        end)
                     end
                 end)
             end
@@ -1281,35 +1262,37 @@ task.spawn(function()
             if _0x2c5d8f.Flags.CombatAutoShoot and _0x2c5d8f.Flags.CombatAutoShoot.CurrentValue then
                 local character = player.Character
                 if character and character:FindFirstChildOfClass("Humanoid") and character:FindFirstChildOfClass("Humanoid").Health > 0 then
-                    _0x1c6f4a_ensureEquipped()
-                    local upgrades = DataService:get("upgrades") or {}
-                    local fireRate = GoopGunServiceUtils.getFireRate(upgrades)
-                    local targetId = selectTarget()
-                    if targetId then
-                        local gameplay = GameplayServiceClient.gameplay
-                        local enemy = gameplay and gameplay.enemies[targetId]
-                        local hpBefore = enemy and enemy.health or 0
-                        local enemyLabel = enemy and getEnemyLabel(enemy) or "Slime"
-                        local accentColor = enemy and getMutationColor(enemy.mutations) or COLORS.normal
+                    pcall(function()
+                        _0x1c6f4a_ensureEquipped()
+                        local upgrades = DataService:get("upgrades") or {}
+                        local fireRate = GoopGunServiceUtils.getFireRate(upgrades)
+                        local targetId = selectTarget()
+                        if targetId then
+                            local gameplay = GameplayServiceClient.gameplay
+                            local enemy = gameplay and gameplay.enemies[targetId]
+                            local hpBefore = enemy and enemy.health or 0
+                            local enemyLabel = enemy and getEnemyLabel(enemy) or "Slime"
+                            local accentColor = enemy and getMutationColor(enemy.mutations) or COLORS.normal
         
-                        local wrapper = GoopGunServiceClient.wrapper
-                        if wrapper and wrapper.onEnemyHit then
-                            wrapper.onEnemyHit(targetId)
-                        end
+                            local wrapper = GoopGunServiceClient.wrapper
+                            if wrapper and wrapper.onEnemyHit then
+                                wrapper.onEnemyHit(targetId)
+                            end
         
-                        task.wait()
-                        local hpAfter = enemy and enemy.health or 0
-                        local dmg = hpBefore - hpAfter
+                            task.wait()
+                            local hpAfter = enemy and enemy.health or 0
+                            local dmg = hpBefore - hpAfter
         
-                        if dmg > 0 then
-                            if activePopups[targetId] then
-                                updatePopup(targetId, dmg, hpAfter)
-                            else
-                                createPopup(targetId, enemyLabel, dmg, hpAfter, accentColor)
+                            if dmg > 0 then
+                                if activePopups[targetId] then
+                                    updatePopup(targetId, dmg, hpAfter)
+                                else
+                                    createPopup(targetId, enemyLabel, dmg, hpAfter, accentColor)
+                                end
                             end
                         end
-                    end
-                    task.wait(fireRate)
+                        task.wait(fireRate)
+                    end)
                 else
                     task.wait(1)
                 end
@@ -1597,10 +1580,12 @@ task.spawn(function()
                         "Sliming",
                     }
                     while _0x2c5d8f.Flags.MiscRedeemCodes and _0x2c5d8f.Flags.MiscRedeemCodes.CurrentValue do
-                        for _, _0x2a7b4c in ipairs(_0x1c4a7d) do
-                            pcall(_0x1b6d8f.InvokeServer, _0x1b6d8f, "redeem", _0x2a7b4c)
-                            task.wait(0.5)
-                        end
+                        pcall(function()
+                            for _, _0x2a7b4c in ipairs(_0x1c4a7d) do
+                                pcall(_0x1b6d8f.InvokeServer, _0x1b6d8f, "redeem", _0x2a7b4c)
+                                task.wait(0.5)
+                            end
+                        end)
                         task.wait(300)
                     end
                 end)
@@ -1616,7 +1601,9 @@ task.spawn(function()
             if _0x2d4c7e then
                 task.spawn(function()
                     while _0x2c5d8f.Flags.MiscClaimOffline and _0x2c5d8f.Flags.MiscClaimOffline.CurrentValue do
-                        pcall(_0x3e7a2c_remote.InvokeServer, _0x3e7a2c_remote, "requestClaim")
+                        pcall(function()
+                            pcall(_0x3e7a2c_remote.InvokeServer, _0x3e7a2c_remote, "requestClaim")
+                        end)
                         task.wait(60)
                     end
                 end)
@@ -1653,7 +1640,7 @@ task.spawn(function()
                         end
                     end
                     while _0x2c5d8f.Flags.MiscClaimIndex and _0x2c5d8f.Flags.MiscClaimIndex.CurrentValue do
-                        _0x3c2e7a()
+                        pcall(_0x3c2e7a)
                         task.wait(60)
                     end
                 end)
@@ -1671,14 +1658,16 @@ task.spawn(function()
             if _0x2b4c7a then
                 task.spawn(function()
                     while task.wait(1) and _0x2c5d8f.Flags.MiscUsePotions and _0x2c5d8f.Flags.MiscUsePotions.CurrentValue do
-                        local _0x1f4a7c   = _0x7b3f5a:get("boosts") or {}
-                        local _0x4c2d7e = _0x2c5d8f.Flags.MiscPotionTypes and _0x2c5d8f.Flags.MiscPotionTypes.CurrentOption or {}
-                        for _, _0x2c4f8a in ipairs(_0x4c2d7e) do
-                            local _0x1a4b7c = _0x1f4a7c[_0x2c4f8a]
-                            if _0x1a4b7c and (_0x1a4b7c.amount or 0) > 0 then
-                                pcall(_0x8b1d4f.InvokeServer, _0x8b1d4f, "requestUseBoost", _0x2c4f8a)
+                        pcall(function()
+                            local _0x1f4a7c   = _0x7b3f5a:get("boosts") or {}
+                            local _0x4c2d7e = _0x2c5d8f.Flags.MiscPotionTypes and _0x2c5d8f.Flags.MiscPotionTypes.CurrentOption or {}
+                            for _, _0x2c4f8a in ipairs(_0x4c2d7e) do
+                                local _0x1a4b7c = _0x1f4a7c[_0x2c4f8a]
+                                if _0x1a4b7c and (_0x1a4b7c.amount or 0) > 0 then
+                                    pcall(_0x8b1d4f.InvokeServer, _0x8b1d4f, "requestUseBoost", _0x2c4f8a)
+                                end
                             end
-                        end
+                        end)
                     end
                 end)
             end
@@ -1702,14 +1691,16 @@ task.spawn(function()
             if _0x3e7a2c then
                 task.spawn(function()
                     while task.wait(1) and _0x2c5d8f.Flags.MiscUseDice and _0x2c5d8f.Flags.MiscUseDice.CurrentValue do
-                        local _0x1c4d7a    = _0x7b3f5a:get("items") or {}
-                        local _0x5c2f7a = _0x2c5d8f.Flags.MiscDiceTypes and _0x2c5d8f.Flags.MiscDiceTypes.CurrentOption or {}
-                        for _, _0x2f4a7c in ipairs(_0x5c2f7a) do
-                            local _0x1b4c6a = _0x9d4c1e[_0x2f4a7c]
-                            if _0x1b4c6a and (_0x1c4d7a[_0x1b4c6a] or 0) > 0 then
-                                pcall(_0x9c3a2e.InvokeServer, _0x9c3a2e, "requestUseItem", _0x1b4c6a)
+                        pcall(function()
+                            local _0x1c4d7a    = _0x7b3f5a:get("items") or {}
+                            local _0x5c2f7a = _0x2c5d8f.Flags.MiscDiceTypes and _0x2c5d8f.Flags.MiscDiceTypes.CurrentOption or {}
+                            for _, _0x2f4a7c in ipairs(_0x5c2f7a) do
+                                local _0x1b4c6a = _0x9d4c1e[_0x2f4a7c]
+                                if _0x1b4c6a and (_0x1c4d7a[_0x1b4c6a] or 0) > 0 then
+                                    pcall(_0x9c3a2e.InvokeServer, _0x9c3a2e, "requestUseItem", _0x1b4c6a)
+                                end
                             end
-                        end
+                        end)
                     end
                 end)
             end
@@ -1838,19 +1829,11 @@ task.spawn(function()
                 })
             end)
             if not _0x3e4a2c then
-                if not (syn and syn.request) and not http_request and not (http and http.request) and not (fluxus and fluxus.request) then
-                    _0x2c5d8f:Notify({
-                        Title = "Webhook",
-                        Content = "HTTP requests not supported on your executor.",
-                        Duration = 5
-                    })
-                else
-                    _0x2c5d8f:Notify({
-                        Title   = "Webhook",
-                        Content = "Failed: " .. (_0x1a6b4c or "unknown"),
-                        Duration = 4,
-                    })
-                end
+                _0x2c5d8f:Notify({
+                    Title   = "Webhook",
+                    Content = "Failed: " .. (_0x1a6b4c or "unknown"),
+                    Duration = 4,
+                })
             else
                 _0x2c5d8f:Notify({
                     Title   = "Webhook",
@@ -1984,7 +1967,7 @@ task.spawn(function()
         Flag = "SettingsAntiAFK",
         Callback = function(Value)
             local ok, err = pcall(function()
-                local conns = getconnections and getconnections(_0x9a4b7c.Idled) or {}
+                local conns = getconnections(_0x9a4b7c.Idled)
                 if Value then
                     for _, x in pairs(conns) do
                         pcall(function() x:Disable() end)
@@ -2023,13 +2006,15 @@ task.spawn(function()
             if value then
                 task.spawn(function()
                     while _0x2c5d8f.Flags.AutoFriend and _0x2c5d8f.Flags.AutoFriend.CurrentValue do
-                        local players = game:GetService("Players"):GetChildren()
-                        for _, p in ipairs(players) do
-                            pcall(function()
-                                _0x9a4b7c:RequestFriendship(p)
-                            end)
-                            task.wait(1)
-                        end
+                        pcall(function()
+                            local players = game:GetService("Players"):GetChildren()
+                            for _, p in ipairs(players) do
+                                pcall(function()
+                                    _0x9a4b7c:RequestFriendship(p)
+                                end)
+                                task.wait(1)
+                            end
+                        end)
                         task.wait(600)
                     end
                 end)
@@ -2329,9 +2314,12 @@ task.spawn(function()
         Callback = function(Value)
             if updatingOptimizations then return end
             if Value then
-                pcall(function()
+                local success, err = pcall(function()
                     loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/Optimization.lua"))()
                 end)
+                if not success then
+                    _0x2c5d8f:Notify({Title = "Intense Optimization", Content = "Feature unavailable on this executor", Duration = 3})
+                end
             end
         end,
     })
@@ -2919,11 +2907,13 @@ task.spawn(function()
                 if craftingState.autoCraftThread then task.cancel(craftingState.autoCraftThread) end
                 craftingState.autoCraftThread = task.spawn(function()
                     while craftingState.autoCraftEnabled do
-                        updateAutoCraftMax()
-                        local craftAmount = math.min(craftingState.autoCraftAmount, autoCraftMax)
-                        if craftAmount > 0 then
-                            doCraftAll(craftAmount)
-                        end
+                        pcall(function()
+                            updateAutoCraftMax()
+                            local craftAmount = math.min(craftingState.autoCraftAmount, autoCraftMax)
+                            if craftAmount > 0 then
+                                doCraftAll(craftAmount)
+                            end
+                        end)
                         task.wait(5)
                     end
                 end)
