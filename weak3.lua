@@ -40,18 +40,22 @@ print("[ Cactus Hub ] Loaded")
 local Fluent, SaveManager, InterfaceManager
 
 local function tryLoad(url)
-    local ok, src = pcall(game.HttpGet, game, url)
-    if not ok or not src or src == "" then return nil end
-    local ok2, fn = pcall(loadstring, src)
+    local ok, res = pcall(request, {Url = url, Method = "GET"})
+    if not ok or not res or not res.Body or res.Body == "" then return nil end
+    local ok2, fn = pcall(loadstring, res.Body)
     if not ok2 or not fn then return nil end
     local ok3, result = pcall(fn)
     if not ok3 then return nil end
     return result
 end
 
-Fluent = tryLoad("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua")
+Fluent = tryLoad("https://cdn.jsdelivr.net/gh/dawid-scripts/Fluent@master/src/main.lua")
+    or tryLoad("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/src/main.lua")
+    or tryLoad("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua")
+
 if not Fluent then
-    error("[CactusHub] Failed to load Fluent. Check HTTP permissions.")
+    print("[CactusHub] Fluent failed to load")
+    error("[CactusHub] Failed to load Fluent.")
 end
 
 SaveManager = tryLoad("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua")
