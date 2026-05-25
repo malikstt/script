@@ -18,39 +18,16 @@ task.spawn(function()
         end
     end
 
-    local function resolveAPI(apiName, aliases)
-        for _, alias in ipairs(aliases) do
-            local fn = _G[alias]
-            if type(fn) == "function" then
-                return fn
-            end
-        end
-        return nil
-    end
-
-    local apiAliases = {
-        setclipboard = { "setclipboard", "toclipboard", "set_clipboard", "Clipboard.set" },
-        setreadonly = { "setreadonly", "make_readonly", "set_readonly" },
-        make_writeable = { "make_writeable", "makewriteable", "make_writable", "set_writable" },
-        getconnections = { "getconnections", "get_connections", "get_signal_cons", "getsignalconnections" },
-        getrawmetatable = { "getrawmetatable", "getrawmt", "get_raw_metatable" },
-        newcclosure = { "newcclosure", "new_c_closure" },
-        getnamecallmethod = { "getnamecallmethod", "get_namecall_method", "getnamecall" },
-        sethiddenproperty = { "sethiddenproperty", "set_hidden_prop", "set_hidden_property" },
-        identifyexecutor = { "identifyexecutor", "getexecutorname" },
-        request = { "request", "http_request", "http.request", "syn.request", "fluxus.request" }
-    }
-
-    local setclipboard = resolveAPI("setclipboard", apiAliases.setclipboard)
-    local setreadonly = resolveAPI("setreadonly", apiAliases.setreadonly)
-    local make_writeable = resolveAPI("make_writeable", apiAliases.make_writeable)
-    local getconnections = resolveAPI("getconnections", apiAliases.getconnections)
-    local getrawmetatable = resolveAPI("getrawmetatable", apiAliases.getrawmetatable)
-    local newcclosure = resolveAPI("newcclosure", apiAliases.newcclosure)
-    local getnamecallmethod = resolveAPI("getnamecallmethod", apiAliases.getnamecallmethod)
-    local sethiddenproperty = resolveAPI("sethiddenproperty", apiAliases.sethiddenproperty)
-    local identifyexecutor = resolveAPI("identifyexecutor", apiAliases.identifyexecutor)
-    local request = resolveAPI("request", apiAliases.request)
+    local setclipboard = setclipboard or toclipboard or set_clipboard or (Clipboard and Clipboard.set)
+    local setreadonly = setreadonly or make_readonly or set_readonly
+    local make_writeable = make_writeable or makewriteable or make_writable or set_writable
+    local getconnections = getconnections or get_connections or get_signal_cons or getsignalconnections
+    local getrawmetatable = getrawmetatable or getrawmt or get_raw_metatable
+    local newcclosure = newcclosure or new_c_closure
+    local getnamecallmethod = getnamecallmethod or get_namecall_method or getnamecall
+    local sethiddenproperty = sethiddenproperty or set_hidden_prop or set_hidden_property
+    local identifyexecutor = identifyexecutor or getexecutorname
+    local request = request or http_request or (http and http.request) or (syn and syn.request) or (fluxus and fluxus.request)
 
     if not request then
         showNotification("Executor Warning", "HTTP requests not supported. Webhooks & thumbnails will not work.", 8)
@@ -88,52 +65,6 @@ task.spawn(function()
 
     task.spawn(function()
         repeat task.wait() until game:IsLoaded()
-
-        if not setreadonly then
-            setreadonly = make_readonly or (function(t, state)
-                if state == false and make_writeable then
-                    make_writeable(t)
-                elseif state == true and make_readonly then
-                    make_readonly(t)
-                end
-            end)
-        end
-
-        if not getconnections then
-            getconnections = get_signal_cons or getsignalconnections or function() return {} end
-        end
-
-        if not request then
-            request = (syn and syn.request)
-                or http_request
-                or (http and http.request)
-                or (fluxus and fluxus.request)
-                or (function(opts)
-                    if opts.Method == "GET" then
-                        local ok, result = pcall(function()
-                            return game:GetService("HttpService"):GetAsync(opts.Url)
-                        end)
-                        if ok then
-                            return { Success = true, Body = result, StatusCode = 200 }
-                        end
-                    end
-                    warn("[CactusHub] HTTP request not supported on this executor")
-                    return { Success = false, Body = "", StatusCode = 0 }
-                end)
-        end
-
-        if not setclipboard then
-            setclipboard = toclipboard or set_clipboard or (Clipboard and Clipboard.set) or function(s) warn("[CactusHub] setclipboard not supported") end
-        end
-
-        if not newcclosure then
-            newcclosure = function(f) return f end
-        end
-
-        if not getnamecallmethod then
-            getnamecallmethod = function() return "" end
-        end
-
         local _0x3f7a2b = game:GetService("ReplicatedStorage")
         local _0x8c2d1e = game:GetService("Players")
         local _0x9a4b7c = _0x8c2d1e.LocalPlayer
