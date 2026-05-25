@@ -1496,9 +1496,6 @@ autoVolcanoShopToggle:OnChanged(function(v)
 eventTab:AddParagraph({ Title = "⬆️ Volcano Upgrades", Content = "" })
 local function updateUpgradeLevelMax()
     local maxLvl = volcanoUpgradeLevels[volcanoUpgrade.upgradeType] or 1
-    if upgradeLevelSliderRef then
-        upgradeLevelSliderRef:SetRange(1, maxLvl)
-    end
     if volcanoUpgrade.level > maxLvl then
         volcanoUpgrade.level = maxLvl
         if upgradeLevelSliderRef then
