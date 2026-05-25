@@ -209,8 +209,6 @@ local cachedPlot = nil
 local cachedSlots = {} -- array of {part, num}
 local cachedEmptySlots = {}
 local cachedBackpackTools = {} -- array of tool names
-local lastPlotRefresh = 0
-local lastBackpackRefresh = 0
 
 local function refreshPlotAndSlots()
     local plot = nil
@@ -295,7 +293,7 @@ local placeConfig = {specifics = {}, rarities = {}, auto = false, delay = 0.5, l
 local removeConfig = {specifics = {}, rarities = {}, auto = false, delay = 0.5, lastRun = 0}
 local kickConfig = {running = false, lastRun = 0, scale = 0.99, mode = "custom"}
 local sellRarity = {rarities = {}, auto = false, delay = 5, lastRun = 0}
-local sellSpecific = {targets = {}, auto = false, delay = 5, lastRun = 0}
+local sellSpecificConfig = {targets = {}, auto = false, delay = 5, lastRun = 0}  -- renamed
 local sellMutation = {mutations = {}, auto = false, delay = 5, lastRun = 0}
 local upgradeSlots = {selected = {}, map = {}, dropdown = nil, auto = false, lastRun = 0, delay = 0.15}
 local upgradeRarity = {rarities = {}, auto = false, lastRun = 0, delay = 0.15}
@@ -317,7 +315,7 @@ local WH = {
     specifics = {},
 }
 
--- ========== FEATURE FUNCTIONS (unchanged logic, only uses cached data) ==========
+-- ========== FEATURE FUNCTIONS (optimized) ==========
 local function collectFromSlot(slotNum)
     if not cachedPlot then return end
     local char = lp.Character
@@ -357,17 +355,20 @@ local function autoRarityCollect()
     if not rarityCollect.auto then return end
     if not cachedPlot or #rarityCollect.rarities == 0 then return end
     local rars = expandAll(rarityCollect.rarities, raritiesList)
+    -- Pre-build a set of brainrot names that match the selected rarities
+    local targetSet = {}
+    for _, rar in ipairs(rars) do
+        for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
+            targetSet[bname] = true
+        end
+    end
+    if not next(targetSet) then return end
     for _, slot in ipairs(cachedSlots) do
         local placed = slot.part:FindFirstChild("PlacedPart")
         if placed then
             local id = placed:GetAttribute("ID")
-            for _, rar in ipairs(rars) do
-                for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
-                    if id == bname then
-                        collectFromSlot(slot.num)
-                        break
-                    end
-                end
+            if targetSet[id] then
+                collectFromSlot(slot.num)
             end
         end
     end
@@ -381,21 +382,34 @@ local function autoPlace()
     local backpack = lp:FindFirstChild("Backpack")
     if not backpack then return end
     local brainrots = {}
+    -- Pre-build a set for rarities if needed
+    local raritySet = nil
+    if #rars > 0 then
+        raritySet = {}
+        local expandedRars = expandAll(rars, raritiesList)
+        for _, rar in ipairs(expandedRars) do
+            for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
+                raritySet[bname] = true
+            end
+        end
+    end
     for _, tool in ipairs(backpack:GetChildren()) do
         if tool:IsA("Tool") then
+            -- Filter out weights
             local isWeight = false
             for _, w in ipairs(weightsList) do
                 if tool.Name == w then isWeight = true break end
             end
             if not isWeight then
                 local matched = (#specs == 0 and #rars == 0)
-                for _, s in ipairs(specs) do if tool.Name == s then matched = true break end end
                 if not matched then
-                    for _, rar in ipairs(rars) do
-                        for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
-                            if tool.Name == bname then matched = true break end
-                        end
-                        if matched then break end
+                    -- Check specifics
+                    for _, s in ipairs(specs) do
+                        if tool.Name == s then matched = true break end
+                    end
+                    -- Check rarities set
+                    if not matched and raritySet and raritySet[tool.Name] then
+                        matched = true
                     end
                 end
                 if matched then table.insert(brainrots, tool.Name) end
@@ -420,18 +434,30 @@ local function autoRemove()
     if not cachedPlot then return end
     local specs = removeConfig.specifics
     local rars = removeConfig.rarities
+    -- Pre-build a set for rarities
+    local raritySet = nil
+    if #rars > 0 then
+        raritySet = {}
+        local expandedRars = expandAll(rars, raritiesList)
+        for _, rar in ipairs(expandedRars) do
+            for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
+                raritySet[bname] = true
+            end
+        end
+    end
     for _, slot in ipairs(cachedSlots) do
         local placed = slot.part:FindFirstChild("PlacedPart")
         if placed then
             local id = placed:GetAttribute("ID")
             local matched = (#specs == 0 and #rars == 0)
-            for _, s in ipairs(specs) do if id == s then matched = true break end end
             if not matched then
-                for _, rar in ipairs(rars) do
-                    for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
-                        if id == bname then matched = true break end
+                if #specs > 0 then
+                    for _, s in ipairs(specs) do
+                        if id == s then matched = true break end
                     end
-                    if matched then break end
+                end
+                if not matched and raritySet and raritySet[id] then
+                    matched = true
                 end
             end
             if matched then
@@ -482,40 +508,42 @@ end
 local function sellByRarity()
     if not sellRarity.auto or #sellRarity.rarities == 0 then return end
     local rars = expandAll(sellRarity.rarities, raritiesList)
+    -- Pre-build a set of brainrot names
+    local targetSet = {}
+    for _, rar in ipairs(rars) do
+        for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
+            targetSet[bname] = true
+        end
+    end
+    if not next(targetSet) then return end
     for _, toolName in ipairs(cachedBackpackTools) do
-        for _, rar in ipairs(rars) do
-            for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
-                if toolName == bname then
-                    local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
-                    local tool = lp.Backpack:FindFirstChild(toolName)
-                    if hum and tool then
-                        hum:EquipTool(tool) task.wait(0.2)
-                        InvokeRemote("ref_B_Sell") task.wait(0.2)
-                        hum:UnequipTools()
-                        dprint("[SellRarity] Sold", toolName)
-                    end
-                    break
-                end
+        if targetSet[toolName] then
+            local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
+            local tool = lp.Backpack:FindFirstChild(toolName)
+            if hum and tool then
+                hum:EquipTool(tool) task.wait(0.2)
+                InvokeRemote("ref_B_Sell") task.wait(0.2)
+                hum:UnequipTools()
+                dprint("[SellRarity] Sold", toolName)
             end
         end
     end
 end
 
 local function sellSpecific()
-    if not sellSpecific.auto or #sellSpecific.targets == 0 then return end
-    local targets = expandAll(sellSpecific.targets, allBrainrots)
+    if not sellSpecificConfig.auto or #sellSpecificConfig.targets == 0 then return end
+    local targets = expandAll(sellSpecificConfig.targets, allBrainrots)
+    local targetSet = {}
+    for _, t in ipairs(targets) do targetSet[t] = true end
     for _, toolName in ipairs(cachedBackpackTools) do
-        for _, target in ipairs(targets) do
-            if toolName == target then
-                local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
-                local tool = lp.Backpack:FindFirstChild(toolName)
-                if hum and tool then
-                    hum:EquipTool(tool) task.wait(0.2)
-                    InvokeRemote("ref_B_Sell") task.wait(0.2)
-                    hum:UnequipTools()
-                    dprint("[SellSpecific] Sold", toolName)
-                end
-                break
+        if targetSet[toolName] then
+            local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
+            local tool = lp.Backpack:FindFirstChild(toolName)
+            if hum and tool then
+                hum:EquipTool(tool) task.wait(0.2)
+                InvokeRemote("ref_B_Sell") task.wait(0.2)
+                hum:UnequipTools()
+                dprint("[SellSpecific] Sold", toolName)
             end
         end
     end
@@ -524,20 +552,19 @@ end
 local function sellByMutation()
     if not sellMutation.auto or #sellMutation.mutations == 0 then return end
     local muts = expandAll(sellMutation.mutations, mutationsList)
+    local mutSet = {}
+    for _, m in ipairs(muts) do mutSet[m] = true end
     for _, toolName in ipairs(cachedBackpackTools) do
         local tool = lp.Backpack:FindFirstChild(toolName)
         if tool then
             local mut = tool:GetAttribute("Mutation") or "None"
-            for _, m in ipairs(muts) do
-                if mut == m then
-                    local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
-                    if hum then
-                        hum:EquipTool(tool) task.wait(0.2)
-                        InvokeRemote("ref_B_Sell") task.wait(0.2)
-                        hum:UnequipTools()
-                        dprint("[SellMutation] Sold", toolName, "mutation:", mut)
-                    end
-                    break
+            if mutSet[mut] then
+                local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
+                if hum then
+                    hum:EquipTool(tool) task.wait(0.2)
+                    InvokeRemote("ref_B_Sell") task.wait(0.2)
+                    hum:UnequipTools()
+                    dprint("[SellMutation] Sold", toolName, "mutation:", mut)
                 end
             end
         end
@@ -555,20 +582,21 @@ end
 local function upgradeByRarity()
     if #upgradeRarity.rarities == 0 then return end
     local rars = expandAll(upgradeRarity.rarities, raritiesList)
+    local targetSet = {}
+    for _, rar in ipairs(rars) do
+        for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
+            targetSet[bname] = true
+        end
+    end
     if not cachedPlot then return end
     for _, slot in ipairs(cachedSlots) do
         local placed = slot.part:FindFirstChild("PlacedPart")
         if placed then
             local id = placed:GetAttribute("ID")
-            for _, rar in ipairs(rars) do
-                for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
-                    if id == bname then
-                        FireRemote("rev_B_Upgrade", slot.num)
-                        task.wait(0.1)
-                        dprint("[UpgradeRarity] Upgraded slot", slot.num, "ID:", id)
-                        break
-                    end
-                end
+            if targetSet[id] then
+                FireRemote("rev_B_Upgrade", slot.num)
+                task.wait(0.1)
+                dprint("[UpgradeRarity] Upgraded slot", slot.num, "ID:", id)
             end
         end
     end
@@ -644,8 +672,8 @@ task.spawn(function()
             sellByRarity()
         end
         -- Sell Specific
-        if sellSpecific.auto and now - sellSpecific.lastRun >= sellSpecific.delay then
-            sellSpecific.lastRun = now
+        if sellSpecificConfig.auto and now - sellSpecificConfig.lastRun >= sellSpecificConfig.delay then
+            sellSpecificConfig.lastRun = now
             sellSpecific()
         end
         -- Sell by Mutation
@@ -697,7 +725,7 @@ task.spawn(function()
     end
 end)
 
--- ========== ORIGINAL UI (unchanged except slider->input) ==========
+-- ========== ORIGINAL UI (unchanged except slider->input and variable rename) ==========
 local requestFunc
 if syn and syn.request then requestFunc = syn.request
 elseif http and http.request then requestFunc = http.request
@@ -1226,12 +1254,12 @@ bcTab:AddDropdown("SellSpecificBrainrots", {
     Values = brainrots_with_all,
     Multi = true,
     Default = {},
-    Callback = function(sel) sellSpecific.targets = sel dprint("[SellSpecific] Selected", #sel, "brainrots") end,
+    Callback = function(sel) sellSpecificConfig.targets = sel dprint("[SellSpecific] Selected", #sel, "brainrots") end,
 })
 bcTab:AddToggle("AutoSellSpecific", {
     Title = "Auto Sell Specific",
     Default = false,
-    Callback = function(v) sellSpecific.auto = v dprint("[AutoSellSpecific] Toggled", v) end,
+    Callback = function(v) sellSpecificConfig.auto = v dprint("[AutoSellSpecific] Toggled", v) end,
 })
 bcTab:AddInput("SellSpecificInterval", {
     Title = "Sell Interval",
@@ -1241,7 +1269,7 @@ bcTab:AddInput("SellSpecificInterval", {
         local num = tonumber(v)
         if num then
             num = math.clamp(num, 1, 60)
-            sellSpecific.delay = num
+            sellSpecificConfig.delay = num
             dprint("[SellSpecificInterval] Set to", num)
         end
     end,
@@ -1538,10 +1566,11 @@ eventTab:AddToggle("AutoVolcanoUpgrade", {
 
 Window:SelectTab(mainTab)
 refreshSlotMaps()
+
+pcall(function() SaveManager:BuildConfigSection(Window) end)
+pcall(function() InterfaceManager:BuildInterfaceSection(Window) end)
 SaveManager:SetLibrary(Library)
 InterfaceManager:SetLibrary(Library)
-SaveManager:BuildConfigSection(Window)
-InterfaceManager:BuildInterfaceSection(Window)
 SaveManager:LoadAutoLoad()
 
 Library:Notify({Title = "Cactus Hub", Content = "Loaded! Join discord.gg/qMWFBWdcf", Duration = 4})
