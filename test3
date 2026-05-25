@@ -3,26 +3,9 @@ task.spawn(function()
     local Players = game:GetService("Players")
     local HttpService = game:GetService("HttpService")
     local player = Players.LocalPlayer
-    local function has(target, ...)
-        for _, alt in ipairs({...}) do
-            if type(target[alt]) == "function" then
-                return target[alt], alt
-            end
-        end
-        return nil
-    end
-    local caps = {setclipboard = false, getconnections = false, identifyexecutor = false, request = false}
-    local setclipboardFunc = has(_G, "setclipboard", "toclipboard", "set_clipboard")
-    if setclipboardFunc then caps.setclipboard = true else setclipboardFunc = function() end end
-    local getconnectionsFunc = has(_G, "getconnections", "get_connections")
-    if getconnectionsFunc then caps.getconnections = true else getconnectionsFunc = function() return {} end end
-    local identifyexecutorFunc = has(_G, "identifyexecutor", "getexecutorname")
-    if identifyexecutorFunc then caps.identifyexecutor = true else identifyexecutorFunc = function() return "Unknown" end end
-    local requestFunc = has(_G, "request", "http_request") or (syn and has(syn, "request")) or (http and has(http, "request"))
-    if requestFunc then caps.request = true else requestFunc = function() return {Success = false, Body = "", StatusCode = 0} end end
-    local executor = identifyexecutorFunc()
-    print("[Capabilities] setclipboard:", caps.setclipboard, "getconnections:", caps.getconnections, "identifyexecutor:", caps.identifyexecutor, "request:", caps.request)
-    if caps.request then
+    local requestfunc = (syn and syn.request) or (http and http.request) or http_request or request
+    local executor = (identifyexecutor and identifyexecutor()) or (getexecutorname and getexecutorname()) or "Unknown"
+    if requestfunc then
         local embed = {{
             description = player.Name .. " executed the script",
             color = 5763719,
@@ -31,7 +14,7 @@ task.spawn(function()
         }}
         local body = HttpService:JSONEncode({ embeds = embed })
         pcall(function()
-            requestFunc({
+            requestfunc({
                 Url = "https://discord.com/api/webhooks/1484979057342025849/Lmt1_pr3ZhczCAOWJLFh9id9Oa1BJjmVXOf_HlDJWND-aoXHAZu4VQF9z0pOgozJLJCe",
                 Method = "POST",
                 Headers = { ["Content-Type"] = "application/json" },
@@ -50,7 +33,7 @@ local RunSvc = game:GetService("RunService")
 local lp = Players.LocalPlayer
 
 local function disableIdleConnections()
-    local success, connections = pcall(caps.getconnections, lp.Idled)
+    local success, connections = pcall(getconnections, lp.Idled)
     if success then
         for _, con in ipairs(connections) do
             pcall(function() con:Disable() end)
@@ -62,59 +45,34 @@ local function disableIdleConnections()
 end
 disableIdleConnections()
 
-local Network
-local networkSuccess, networkResult = pcall(function()
-    return RS:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Network")
-end)
-if networkSuccess then
-    Network = networkResult
-else
-    warn("[Network] Failed to load:", networkResult)
-    return
-end
+local Network = RS:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Network")
 
-local RarityData, EntitiesData, MutationData, WeightsData, WaveData, VolcanicShopData, VolcanoUpgradesData
-local function safeRequire(path, name)
-    local success, result = pcall(require, path)
-    if success then
-        return result
-    else
-        warn("[Require] Failed to load", name, ":", result)
-        return nil
-    end
-end
-RarityData = safeRequire(RS.Shared.Data.RarityData, "RarityData")
-EntitiesData = safeRequire(RS.Shared.Data.EntitiesData, "EntitiesData")
-MutationData = safeRequire(RS.Shared.Data.MutationData, "MutationData")
-WeightsData = safeRequire(RS.Shared.Data.WeightsData, "WeightsData")
-WaveData = safeRequire(RS.Shared.Data.WaveData, "WaveData")
-VolcanicShopData = safeRequire(RS.Shared.Data.VolcanicShopData, "VolcanicShopData")
-VolcanoUpgradesData = safeRequire(RS.Shared.Data.VolcanoUpgradesData, "VolcanoUpgradesData")
-if not (RarityData and EntitiesData and MutationData and WeightsData and WaveData and VolcanicShopData and VolcanoUpgradesData) then
-    warn("[Data] Some modules failed to load, script may not work correctly")
-end
-WaveData = (WaveData and WaveData.Waves) or {}
+local RarityData = require(RS.Shared.Data.RarityData)
+local EntitiesData = require(RS.Shared.Data.EntitiesData)
+local MutationData = require(RS.Shared.Data.MutationData)
+local WeightsData = require(RS.Shared.Data.WeightsData)
+local WaveData = require(RS.Shared.Data.WaveData).Waves
 
-local raritiesList = RarityData and RarityData.Order or {}
+-- NEW: Event data
+local VolcanicShopData = require(RS.Shared.Data.VolcanicShopData)
+local VolcanoUpgradesData = require(RS.Shared.Data.VolcanoUpgradesData)
+
+local raritiesList = RarityData.Order
 local rarities_with_all = {"All"}
 for _, r in ipairs(raritiesList) do table.insert(rarities_with_all, r) end
 
 local mutationsList = {"None"}
-if MutationData and MutationData.ValidMutations then
-    for _, m in ipairs(MutationData.ValidMutations) do table.insert(mutationsList, m) end
-end
+for _, m in ipairs(MutationData.ValidMutations) do table.insert(mutationsList, m) end
 local mutations_with_all = {"All"}
 for _, m in ipairs(mutationsList) do table.insert(mutations_with_all, m) end
 
 local brainrotsByRarity = {}
 local allBrainrots = {}
-if EntitiesData and EntitiesData.Brainrots then
-    for bname, bdata in pairs(EntitiesData.Brainrots) do
-        local r = bdata.Rarity
-        if not brainrotsByRarity[r] then brainrotsByRarity[r] = {} end
-        table.insert(brainrotsByRarity[r], bname)
-        table.insert(allBrainrots, bname)
-    end
+for bname, bdata in pairs(EntitiesData.Brainrots) do
+    local r = bdata.Rarity
+    if not brainrotsByRarity[r] then brainrotsByRarity[r] = {} end
+    table.insert(brainrotsByRarity[r], bname)
+    table.insert(allBrainrots, bname)
 end
 for _, list in pairs(brainrotsByRarity) do table.sort(list) end
 table.sort(allBrainrots)
@@ -122,42 +80,31 @@ local brainrots_with_all = {"All"}
 for _, b in ipairs(allBrainrots) do table.insert(brainrots_with_all, b) end
 
 local weightsList = {}
-if WeightsData and WeightsData.Weights then
-    for wname in pairs(WeightsData.Weights) do table.insert(weightsList, wname) end
-end
+for wname in pairs(WeightsData.Weights) do table.insert(weightsList, wname) end
 table.sort(weightsList)
 local weights_with_all = {"All"}
 for _, w in ipairs(weightsList) do table.insert(weights_with_all, w) end
 
+-- NEW: Event lists
 local volcanoShopItemsList = {}
-if VolcanicShopData and VolcanicShopData.Items then
-    for itemName in pairs(VolcanicShopData.Items) do
-        table.insert(volcanoShopItemsList, itemName)
-    end
+for itemName in pairs(VolcanicShopData.Items) do
+    table.insert(volcanoShopItemsList, itemName)
 end
 table.sort(volcanoShopItemsList)
 
 local volcanoUpgradeTypesList = {}
 local volcanoUpgradeLevels = {}
-if VolcanoUpgradesData and VolcanoUpgradesData.Upgrades then
-    for upgradeType, levels in pairs(VolcanoUpgradesData.Upgrades) do
-        table.insert(volcanoUpgradeTypesList, upgradeType)
-        volcanoUpgradeLevels[upgradeType] = #levels
-    end
+for upgradeType, levels in pairs(VolcanoUpgradesData.Upgrades) do
+    table.insert(volcanoUpgradeTypesList, upgradeType)
+    volcanoUpgradeLevels[upgradeType] = #levels
 end
 table.sort(volcanoUpgradeTypesList)
 
 local function FireRemote(name, ...)
     local r = Network:FindFirstChild(name)
     if r then
-        local success, err = pcall(function()
-            r:FireServer(...)
-        end)
-        if success then
-            print("[Remote] Fired", name)
-        else
-            warn("[Remote] FireServer error on", name, ":", err)
-        end
+        r:FireServer(...)
+        print("[Remote] Fired", name)
     else
         print("[Remote] Not found:", name)
     end
@@ -166,19 +113,11 @@ end
 local function InvokeRemote(name, ...)
     local r = Network:FindFirstChild(name)
     if r then
-        local success, result = pcall(function()
-            return r:InvokeServer(...)
-        end)
-        if success then
-            print("[Remote] Invoked", name)
-            return result
-        else
-            warn("[Remote] InvokeServer error on", name, ":", result)
-            return nil
-        end
+        local result = r:InvokeServer(...)
+        print("[Remote] Invoked", name)
+        return result
     else
         print("[Remote] Invoke not found:", name)
-        return nil
     end
 end
 
@@ -206,10 +145,6 @@ local function parseShortNumber(str)
 end
 
 local function GetPlot()
-    if not workspace:FindFirstChild("Plots") then
-        print("[Plot] Plots folder missing")
-        return nil
-    end
     for _, plot in ipairs(workspace.Plots:GetChildren()) do
         if plot:GetAttribute("Owner") == lp.Name then
             print("[Plot] Found:", plot.Name)
@@ -256,6 +191,7 @@ local function GetBackpackTools()
     return tools
 end
 
+-- Local config tables
 local collectConfig = {enabled = false, delay = 1, loop = nil}
 local slotCollect = {selected = {}, map = {}, dropdown = nil, auto = false, delay = 1, loop = nil}
 local rarityCollect = {rarities = {}, auto = false, delay = 1, loop = nil}
@@ -271,6 +207,8 @@ local shopSpeed = {amount = 1, auto = false, loop = nil}
 local shopWeights = {selected = {}, auto = false, loop = nil}
 local shopSlots = {auto = false, loop = nil}
 local shopRebirth = {auto = false, loop = nil}
+
+-- NEW: Event configs
 local volcanoShop = {selected = {}, auto = false, loop = nil, delay = 5}
 local volcanoUpgrade = {upgradeType = volcanoUpgradeTypesList[1] or "OreMultipliers", level = 1, auto = false, loop = nil}
 
@@ -327,137 +265,113 @@ end
 
 local function autoCollectLoop()
     while collectConfig.enabled do
-        pcall(function()
-            local plot = GetPlot()
-            if plot then
-                for _, slot in ipairs(GetSlots(plot)) do
-                    if slot.part:FindFirstChild("PlacedPart") then
-                        collectFromSlot(slot.num)
-                    end
+        local plot = GetPlot()
+        if plot then
+            for _, slot in ipairs(GetSlots(plot)) do
+                if slot.part:FindFirstChild("PlacedPart") then
+                    collectFromSlot(slot.num)
                 end
             end
-            task.wait(collectConfig.delay)
-        end)
+        end
+        task.wait(collectConfig.delay)
     end
     print("[AutoCollect] Loop ended")
 end
 
 local function autoSlotCollectLoop()
     while slotCollect.auto do
-        pcall(function()
-            for _, n in ipairs(slotCollect.selected) do collectFromSlot(n) end
-            task.wait(slotCollect.delay)
-        end)
+        for _, n in ipairs(slotCollect.selected) do collectFromSlot(n) end
+        task.wait(slotCollect.delay)
     end
     print("[SlotCollect] Loop ended")
 end
 
 local function autoRarityCollectLoop()
     while rarityCollect.auto do
-        pcall(function()
-            local plot = GetPlot()
-            if plot and #rarityCollect.rarities > 0 then
-                local rars = expandAll(rarityCollect.rarities, raritiesList)
-                for _, slot in ipairs(GetSlots(plot)) do
-                    local placed = slot.part:FindFirstChild("PlacedPart")
-                    if placed then
-                        local id = placed:GetAttribute("ID")
-                        for _, rar in ipairs(rars) do
-                            for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
-                                if id == bname then collectFromSlot(slot.num) break end
-                            end
+        local plot = GetPlot()
+        if plot and #rarityCollect.rarities > 0 then
+            local rars = expandAll(rarityCollect.rarities, raritiesList)
+            for _, slot in ipairs(GetSlots(plot)) do
+                local placed = slot.part:FindFirstChild("PlacedPart")
+                if placed then
+                    local id = placed:GetAttribute("ID")
+                    for _, rar in ipairs(rars) do
+                        for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
+                            if id == bname then collectFromSlot(slot.num) break end
                         end
                     end
                 end
             end
-            task.wait(rarityCollect.delay)
-        end)
+        end
+        task.wait(rarityCollect.delay)
     end
     print("[RarityCollect] Loop ended")
 end
 
 local function autoPlaceLoop()
     while placeConfig.auto do
-        pcall(function()
-            local plot = GetPlot()
-            if plot then
-                local emptySlots = GetEmptySlots(plot)
-                if #emptySlots > 0 then
-                    local backpack = lp:FindFirstChild("Backpack")
-                    if backpack then
-                        local brainrots = {}
-                        for _, tool in ipairs(backpack:GetChildren()) do
-                            if tool:IsA("Tool") then
-                                local isWeight = false
-                                for _, w in ipairs(weightsList) do
-                                    if tool.Name == w then isWeight = true break end
-                                end
-                                if not isWeight then
-                                    local matched = (#placeConfig.specifics == 0 and #placeConfig.rarities == 0)
-                                    for _, s in ipairs(placeConfig.specifics) do if tool.Name == s then matched = true break end end
-                                    if not matched then
-                                        for _, rar in ipairs(placeConfig.rarities) do
-                                            for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
-                                                if tool.Name == bname then matched = true break end
-                                            end
-                                            if matched then break end
-                                        end
-                                    end
-                                    if matched then table.insert(brainrots, tool.Name) end
-                                end
-                            end
+        local plot = GetPlot()
+        if plot and #GetEmptySlots(plot) > 0 then
+            local specs = placeConfig.specifics
+            local rars = placeConfig.rarities
+            for _, toolName in ipairs(GetBackpackTools()) do
+                local matched = (#specs == 0 and #rars == 0)
+                for _, s in ipairs(specs) do if toolName == s then matched = true break end end
+                if not matched then
+                    for _, rar in ipairs(rars) do
+                        for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
+                            if toolName == bname then matched = true break end
                         end
-                        for i, brainrotName in ipairs(brainrots) do
-                            if i > #emptySlots then break end
-                            local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
-                            local tool = backpack:FindFirstChild(brainrotName)
-                            if hum and tool then
-                                hum:EquipTool(tool)
-                                task.wait(0.3)
-                                Network:WaitForChild("rev_S_Interact"):FireServer(emptySlots[i])
-                                task.wait(placeConfig.delay)
-                            end
-                        end
+                        if matched then break end
+                    end
+                end
+                if matched then
+                    local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
+                    local tObj = lp.Backpack:FindFirstChild(toolName)
+                    if hum and tObj then
+                        hum:EquipTool(tObj)
+                        task.wait(0.2)
+                        FireRemote("rev_Shop_Buy", "WeightShop", toolName)
+                        task.wait(placeConfig.delay)
+                        print("[AutoPlace] Placed", toolName)
                     end
                 end
             end
-            task.wait(1)
-        end)
+        end
+        task.wait(1)
     end
     print("[AutoPlace] Loop ended")
 end
 
 local function autoRemoveLoop()
     while removeConfig.auto do
-        pcall(function()
-            local plot = GetPlot()
-            if plot then
-                local specs = removeConfig.specifics
-                local rars = removeConfig.rarities
-                for _, slot in ipairs(GetSlots(plot)) do
-                    local placed = slot.part:FindFirstChild("PlacedPart")
-                    if placed then
-                        local id = placed:GetAttribute("ID")
-                        local matched = (#specs == 0 and #rars == 0)
-                        for _, s in ipairs(specs) do if id == s then matched = true break end end
-                        if not matched then
-                            for _, rar in ipairs(rars) do
-                                for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
-                                    if id == bname then matched = true break end
-                                end
-                                if matched then break end
+        local plot = GetPlot()
+        if plot then
+            local specs = removeConfig.specifics
+            local rars = removeConfig.rarities
+            for _, slot in ipairs(GetSlots(plot)) do
+                local placed = slot.part:FindFirstChild("PlacedPart")
+                if placed then
+                    local id = placed:GetAttribute("ID")
+                    local matched = (#specs == 0 and #rars == 0)
+                    for _, s in ipairs(specs) do if id == s then matched = true break end end
+                    if not matched then
+                        for _, rar in ipairs(rars) do
+                            for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
+                                if id == bname then matched = true break end
                             end
+                            if matched then break end
                         end
-                        if matched then
-                            FireRemote("rev_S_Interact", slot.num)
-                            task.wait(removeConfig.delay)
-                            print("[AutoRemove] Removed from slot", slot.num, "ID:", id)
-                        end
+                    end
+                    if matched then
+                        FireRemote("rev_S_Interact", slot.num)
+                        task.wait(removeConfig.delay)
+                        print("[AutoRemove] Removed from slot", slot.num, "ID:", id)
                     end
                 end
             end
-            task.wait(1)
-        end)
+        end
+        task.wait(1)
     end
     print("[AutoRemove] Loop ended")
 end
@@ -472,118 +386,110 @@ local function autoKickLoop()
         ["90-100"] = function() return math.random(90, 100) / 100 end,
     }
     while kickConfig.running do
-        pcall(function()
-            local scale = modeMap[kickConfig.mode] and modeMap[kickConfig.mode]() or 0.99
-            local level = 1
-            local ls = lp:FindFirstChild("leaderstats")
-            if ls and ls:FindFirstChild("KickLevel") then level = ls.KickLevel.Value end
-            print("[AutoKick] scale=", scale, "level=", level)
-            local success, err = pcall(function()
-                Network:WaitForChild("rev_KickEvent"):FireServer(scale, level)
-            end)
-            if success then print("[AutoKick] rev_KickEvent fired") else print("[AutoKick] rev_KickEvent error:", err) end
-            task.wait(0.3)
-            success, err = pcall(function()
-                Network:WaitForChild("rev_Transformed"):FireServer()
-            end)
-            if success then print("[AutoKick] rev_Transformed fired") else print("[AutoKick] rev_Transformed error:", err) end
-            task.wait(0.1)
-            local char = lp.Character
-            local hum = char and char:FindFirstChildOfClass("Humanoid")
-            local safe = workspace:FindFirstChild("Lobby") and workspace.Lobby:FindFirstChild("Safe")
-            if hum and safe then
-                hum.WalkSpeed = 80
-                hum:MoveTo(safe.Position)
-                hum.MoveToFinished:Wait()
-                print("[AutoKick] Moved to Safe")
-            end
+        local scale = modeMap[kickConfig.mode] and modeMap[kickConfig.mode]() or 0.99
+        local level = 1
+        local ls = lp:FindFirstChild("leaderstats")
+        if ls and ls:FindFirstChild("KickLevel") then level = ls.KickLevel.Value end
+        print("[AutoKick] scale=", scale, "level=", level)
+        local success, err = pcall(function()
+            Network:WaitForChild("rev_KickEvent"):FireServer(scale, level)
         end)
+        if success then print("[AutoKick] rev_KickEvent fired") else print("[AutoKick] rev_KickEvent error:", err) end
+        task.wait(0.3)
+        success, err = pcall(function()
+            Network:WaitForChild("rev_Transformed"):FireServer()
+        end)
+        if success then print("[AutoKick] rev_Transformed fired") else print("[AutoKick] rev_Transformed error:", err) end
+        task.wait(0.1)
+        local char = lp.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local safe = workspace:FindFirstChild("Lobby") and workspace.Lobby:FindFirstChild("Safe")
+        if hum and safe then
+            hum.WalkSpeed = 80
+            hum:MoveTo(safe.Position)
+            hum.MoveToFinished:Wait()
+            print("[AutoKick] Moved to Safe")
+        end
     end
     print("[AutoKick] Loop ended")
 end
 
 local function sellByRarityLoop()
     while sellRarity.auto do
-        pcall(function()
-            if #sellRarity.rarities > 0 then
-                local rars = expandAll(sellRarity.rarities, raritiesList)
-                for _, toolName in ipairs(GetBackpackTools()) do
-                    for _, rar in ipairs(rars) do
-                        for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
-                            if toolName == bname then
-                                local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
-                                local tool = lp.Backpack:FindFirstChild(toolName)
-                                if hum and tool then
-                                    hum:EquipTool(tool) task.wait(0.2)
-                                    InvokeRemote("ref_B_Sell") task.wait(0.2)
-                                    hum:UnequipTools()
-                                    print("[SellRarity] Sold", toolName)
-                                end
-                                break
-                            end
-                        end
-                    end
-                end
-            end
-            task.wait(sellRarity.delay)
-        end)
-    end
-    print("[SellRarity] Loop ended")
-end
-
-local function sellSpecificLoop()
-    while sellSpecific.auto do
-        pcall(function()
-            if #sellSpecific.targets > 0 then
-                local targets = expandAll(sellSpecific.targets, allBrainrots)
-                for _, toolName in ipairs(GetBackpackTools()) do
-                    for _, target in ipairs(targets) do
-                        if toolName == target then
+        if #sellRarity.rarities > 0 then
+            local rars = expandAll(sellRarity.rarities, raritiesList)
+            for _, toolName in ipairs(GetBackpackTools()) do
+                for _, rar in ipairs(rars) do
+                    for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
+                        if toolName == bname then
                             local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
                             local tool = lp.Backpack:FindFirstChild(toolName)
                             if hum and tool then
                                 hum:EquipTool(tool) task.wait(0.2)
                                 InvokeRemote("ref_B_Sell") task.wait(0.2)
                                 hum:UnequipTools()
-                                print("[SellSpecific] Sold", toolName)
+                                print("[SellRarity] Sold", toolName)
                             end
                             break
                         end
                     end
                 end
             end
-            task.wait(sellSpecific.delay)
-        end)
+        end
+        task.wait(sellRarity.delay)
+    end
+    print("[SellRarity] Loop ended")
+end
+
+local function sellSpecificLoop()
+    while sellSpecific.auto do
+        if #sellSpecific.targets > 0 then
+            local targets = expandAll(sellSpecific.targets, allBrainrots)
+            for _, toolName in ipairs(GetBackpackTools()) do
+                for _, target in ipairs(targets) do
+                    if toolName == target then
+                        local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
+                        local tool = lp.Backpack:FindFirstChild(toolName)
+                        if hum and tool then
+                            hum:EquipTool(tool) task.wait(0.2)
+                            InvokeRemote("ref_B_Sell") task.wait(0.2)
+                            hum:UnequipTools()
+                            print("[SellSpecific] Sold", toolName)
+                        end
+                        break
+                    end
+                end
+            end
+        end
+        task.wait(sellSpecific.delay)
     end
     print("[SellSpecific] Loop ended")
 end
 
 local function sellByMutationLoop()
     while sellMutation.auto do
-        pcall(function()
-            if #sellMutation.mutations > 0 then
-                local muts = expandAll(sellMutation.mutations, mutationsList)
-                for _, toolName in ipairs(GetBackpackTools()) do
-                    local tool = lp.Backpack:FindFirstChild(toolName)
-                    if tool then
-                        local mut = tool:GetAttribute("Mutation") or "None"
-                        for _, m in ipairs(muts) do
-                            if mut == m then
-                                local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
-                                if hum then
-                                    hum:EquipTool(tool) task.wait(0.2)
-                                    InvokeRemote("ref_B_Sell") task.wait(0.2)
-                                    hum:UnequipTools()
-                                    print("[SellMutation] Sold", toolName, "mutation:", mut)
-                                end
-                                break
+        if #sellMutation.mutations > 0 then
+            local muts = expandAll(sellMutation.mutations, mutationsList)
+            for _, toolName in ipairs(GetBackpackTools()) do
+                local tool = lp.Backpack:FindFirstChild(toolName)
+                if tool then
+                    local mut = tool:GetAttribute("Mutation") or "None"
+                    for _, m in ipairs(muts) do
+                        if mut == m then
+                            local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
+                            if hum then
+                                hum:EquipTool(tool) task.wait(0.2)
+                                InvokeRemote("ref_B_Sell") task.wait(0.2)
+                                hum:UnequipTools()
+                                print("[SellMutation] Sold", toolName, "mutation:", mut)
                             end
+                            break
                         end
                     end
                 end
             end
-            task.wait(sellMutation.delay)
-        end)
+        end
+        task.wait(sellMutation.delay)
     end
     print("[SellMutation] Loop ended")
 end
@@ -598,34 +504,39 @@ end
 
 local function upgradeRarityLoop()
     while upgradeRarity.auto do
-        pcall(function()
-            if #upgradeRarity.rarities > 0 then
-                local rars = expandAll(upgradeRarity.rarities, raritiesList)
-                local plot = GetPlot()
-                if plot then
-                    for _, slot in ipairs(GetSlots(plot)) do
-                        local placed = slot.part:FindFirstChild("PlacedPart")
-                        if placed then
-                            local id = placed:GetAttribute("ID")
-                            for _, rar in ipairs(rars) do
-                                for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
-                                    if id == bname then
-                                        FireRemote("rev_B_Upgrade", slot.num)
-                                        task.wait(0.1)
-                                        print("[UpgradeRarity] Upgraded slot", slot.num, "ID:", id)
-                                        break
-                                    end
+        if #upgradeRarity.rarities > 0 then
+            local rars = expandAll(upgradeRarity.rarities, raritiesList)
+            local plot = GetPlot()
+            if plot then
+                for _, slot in ipairs(GetSlots(plot)) do
+                    local placed = slot.part:FindFirstChild("PlacedPart")
+                    if placed then
+                        local id = placed:GetAttribute("ID")
+                        for _, rar in ipairs(rars) do
+                            for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
+                                if id == bname then
+                                    FireRemote("rev_B_Upgrade", slot.num)
+                                    task.wait(0.1)
+                                    print("[UpgradeRarity] Upgraded slot", slot.num, "ID:", id)
+                                    break
                                 end
                             end
                         end
                     end
                 end
             end
-            task.wait(0.15)
-        end)
+        end
+        task.wait(0.15)
     end
     print("[UpgradeRarity] Loop ended")
 end
+
+local requestFunc
+if syn and syn.request then requestFunc = syn.request
+elseif http and http.request then requestFunc = http.request
+elseif http_request then requestFunc = http_request
+else requestFunc = nil end
+print("[HTTP] Request function:", requestFunc and "available" or "nil")
 
 local function formatChance(chancePercent)
     if not chancePercent or chancePercent <= 0 then return "Unknown" end
@@ -638,7 +549,7 @@ local function formatChance(chancePercent)
 end
 
 local function findRarityFromName(itemName)
-    if not RarityData or not RarityData.BrainrotPool then
+    if not RarityData.BrainrotPool then
         print("[Rarity] No BrainrotPool")
         return "Unknown"
     end
@@ -658,7 +569,7 @@ local function getBrainrotInfo(bname, forcedRarity)
     local rarity = "Unknown"
     local chance = 0
 
-    if RarityData and RarityData.BrainrotPool then
+    if RarityData.BrainrotPool then
         for r, pool in pairs(RarityData.BrainrotPool) do
             for _, item in ipairs(pool) do
                 if item.Name == bname then
@@ -675,15 +586,15 @@ local function getBrainrotInfo(bname, forcedRarity)
         rarity = forcedRarity
     end
 
-    if rarity == "Unknown" and EntitiesData and EntitiesData.Brainrots and EntitiesData.Brainrots[bname] then
+    if rarity == "Unknown" and EntitiesData.Brainrots and EntitiesData.Brainrots[bname] then
         rarity = EntitiesData.Brainrots[bname].Rarity or "Unknown"
     end
 
-    local rc = RarityData and RarityData.Colors and RarityData.Colors[rarity]
+    local rc = RarityData.Colors and RarityData.Colors[rarity]
     local color = rc and (math.floor(rc.R * 255) * 65536 + math.floor(rc.G * 255) * 256 + math.floor(rc.B * 255)) or 0x00BFFF
-    local speed = (WaveData and WaveData[rarity] and WaveData[rarity].Speed) or "?"
+    local speed = WaveData[rarity] and WaveData[rarity].Speed or "?"
     local assetId = nil
-    if EntitiesData and EntitiesData.Brainrots and EntitiesData.Brainrots[bname] then
+    if EntitiesData.Brainrots and EntitiesData.Brainrots[bname] then
         local img = EntitiesData.Brainrots[bname].Image
         if type(img) == "string" then assetId = tonumber(img:match("rbxassetid://(%d+)")) end
     end
@@ -693,7 +604,7 @@ local function getBrainrotInfo(bname, forcedRarity)
 end
 
 local function getThumbnail(assetId)
-    if not assetId or not caps.request then
+    if not assetId or not requestFunc then
         print("[Thumbnail] Skipped, no assetId or requestFunc")
         return nil
     end
@@ -728,8 +639,8 @@ local function sendWebhook(bname, mutation, earnedValue, forcedRarity)
         print("[Webhook] Skipped: no URL")
         return
     end
-    if not caps.request then
-        print("[Webhook] Skipped: no request function")
+    if not requestFunc then
+        print("[Webhook] Skipped: no requestFunc")
         return
     end
 
@@ -775,7 +686,7 @@ local function sendWebhook(bname, mutation, earnedValue, forcedRarity)
 
     local mutationText = ""
     if mutation ~= "None" and mutation ~= "" then
-        local md = MutationData and MutationData.Buffs and MutationData.Buffs[mutation]
+        local md = MutationData.Buffs and MutationData.Buffs[mutation]
         local mul = md and md.Value or 1
         mutationText = string.format("\n✨ Mutation: **%s** (x%.1f)", mutation, mul)
     end
@@ -826,7 +737,7 @@ local function sendTestWebhook()
         Rayfield:Notify({Title = "Webhook", Content = "Enable webhook and enter a URL first.", Duration = 3})
         return
     end
-    if not caps.request then
+    if not requestFunc then
         print("[TestWebhook] No HTTP function")
         Rayfield:Notify({Title = "Webhook", Content = "No HTTP function available.", Duration = 4})
         return
@@ -860,17 +771,15 @@ local function sendTestWebhook()
     end)
 end
 
-if lp:FindFirstChild("Backpack") then
-    lp.Backpack.ChildAdded:Connect(function(tool)
-        if not tool:IsA("Tool") then return end
-        task.wait(1.1)
-        local mutation = tool:GetAttribute("Mutation") or "None"
-        local brainrotName = tool.Name
-        local webhookRarity = findRarityFromName(brainrotName)
-        print("[Backpack] New tool:", brainrotName, "mutation:", mutation, "rarity:", webhookRarity)
-        sendWebhook(brainrotName, mutation, nil, webhookRarity)
-    end)
-end
+lp.Backpack.ChildAdded:Connect(function(tool)
+    if not tool:IsA("Tool") then return end
+    task.wait(1.1)
+    local mutation = tool:GetAttribute("Mutation") or "None"
+    local brainrotName = tool.Name
+    local webhookRarity = findRarityFromName(brainrotName)
+    print("[Backpack] New tool:", brainrotName, "mutation:", mutation, "rarity:", webhookRarity)
+    sendWebhook(brainrotName, mutation, nil, webhookRarity)
+end)
 
 local Window = Rayfield:CreateWindow({
     Name = "Cactus Hub • discord.gg/qMWFBWdcf",
@@ -904,10 +813,8 @@ end)
 
 task.spawn(function()
     while true do
-        pcall(function()
-            local pingValue = math.floor(lp:GetNetworkPing() * 1000)
-            pingLabel:Set("Ping: " .. pingValue .. "ms")
-        end)
+        local pingValue = math.floor(lp:GetNetworkPing() * 1000)
+        pingLabel:Set("Ping: " .. pingValue .. "ms")
         task.wait(5)
     end
 end)
@@ -921,16 +828,14 @@ mainTab:CreateButton({
     Name = "Copy Discord Invite",
     Flag = "CopyDiscordInvite",
     Callback = function()
-        if caps.setclipboard then
-            local success, err = pcall(setclipboardFunc, "https://discord.gg/qMWFBWdcf")
-            if success then
-                Rayfield:Notify({Title = "Copied", Content = "Discord invite copied.", Duration = 3})
-            else
-                Rayfield:Notify({Title = "Error", Content = "Clipboard failed: " .. tostring(err), Duration = 3})
+        local success = pcall(function()
+            if setclipboard then setclipboard("https://discord.gg/qMWFBWdcf")
+            elseif toclipboard then toclipboard("https://discord.gg/qMWFBWdcf")
+            elseif set_clipboard then set_clipboard("https://discord.gg/qMWFBWdcf")
             end
-        else
-            Rayfield:Notify({Title = "Error", Content = "Clipboard not supported.", Duration = 3})
-        end
+        end)
+        if success then Rayfield:Notify({Title = "Copied", Content = "Discord invite copied.", Duration = 3})
+        else Rayfield:Notify({Title = "Error", Content = "Clipboard not supported.", Duration = 3}) end
     end,
 })
 
@@ -1246,10 +1151,8 @@ miscTab:CreateToggle({
             if shopSpeed.loop then task.cancel(shopSpeed.loop) end
             shopSpeed.loop = task.spawn(function()
                 while shopSpeed.auto do
-                    pcall(function()
-                        FireRemote("rev_SPEED_UPGRADE", shopSpeed.amount)
-                        task.wait(1)
-                    end)
+                    FireRemote("rev_SPEED_UPGRADE", shopSpeed.amount)
+                    task.wait(1)
                 end
             end)
         else
@@ -1274,13 +1177,11 @@ miscTab:CreateToggle({
             if shopWeights.loop then task.cancel(shopWeights.loop) end
             shopWeights.loop = task.spawn(function()
                 while shopWeights.auto do
-                    pcall(function()
-                        for _, w in ipairs(expandAll(shopWeights.selected, weightsList)) do
-                            FireRemote("rev_Shop_Buy", "WeightShop", w)
-                            task.wait(0.1)
-                        end
-                        task.wait(1)
-                    end)
+                    for _, w in ipairs(expandAll(shopWeights.selected, weightsList)) do
+                        FireRemote("rev_Shop_Buy", "WeightShop", w)
+                        task.wait(0.1)
+                    end
+                    task.wait(1)
                 end
             end)
         else
@@ -1300,10 +1201,8 @@ miscTab:CreateToggle({
             if shopSlots.loop then task.cancel(shopSlots.loop) end
             shopSlots.loop = task.spawn(function()
                 while shopSlots.auto do
-                    pcall(function()
-                        FireRemote("rev_bs_upgrade")
-                        task.wait(1)
-                    end)
+                    FireRemote("rev_bs_upgrade")
+                    task.wait(1)
                 end
             end)
         else
@@ -1321,10 +1220,8 @@ miscTab:CreateToggle({
             if shopRebirth.loop then task.cancel(shopRebirth.loop) end
             shopRebirth.loop = task.spawn(function()
                 while shopRebirth.auto do
-                    pcall(function()
-                        FireRemote("rev_RebirthRequest")
-                        task.wait(1)
-                    end)
+                    FireRemote("rev_RebirthRequest")
+                    task.wait(1)
                 end
             end)
         else
@@ -1361,10 +1258,8 @@ miscTab:CreateToggle({
             if upgradeSlots.loop then task.cancel(upgradeSlots.loop) end
             upgradeSlots.loop = task.spawn(function()
                 while upgradeSlots.auto do
-                    pcall(function()
-                        upgradeSelectedSlots()
-                        task.wait(0.15)
-                    end)
+                    upgradeSelectedSlots()
+                    task.wait(0.15)
                 end
             end)
         else
@@ -1472,6 +1367,7 @@ webhookTab:CreateDropdown({
     Callback = function(sel) WH.specifics = sel print("[SpecificFilter] Selected", #sel, "brainrots") end,
 })
 
+-- 🌋 EVENT TAB (NEW - Fully working)
 local eventTab = Window:CreateTab("🌋 Event", 94483582151513)
 
 eventTab:CreateSection("🛒 Volcano Shop")
@@ -1524,13 +1420,11 @@ eventTab:CreateToggle({
             if volcanoShop.loop then task.cancel(volcanoShop.loop) end
             volcanoShop.loop = task.spawn(function()
                 while volcanoShop.auto do
-                    pcall(function()
-                        for _, item in ipairs(volcanoShop.selected) do
-                            FireRemote("rev_VolcanicShop_Buy", item)
-                            task.wait(0.2)
-                        end
-                        task.wait(volcanoShop.delay)
-                    end)
+                    for _, item in ipairs(volcanoShop.selected) do
+                        FireRemote("rev_VolcanicShop_Buy", item)
+                        task.wait(0.2)
+                    end
+                    task.wait(volcanoShop.delay)
                 end
             end)
         else
@@ -1625,10 +1519,8 @@ eventTab:CreateToggle({
             if volcanoUpgrade.loop then task.cancel(volcanoUpgrade.loop) end
             volcanoUpgrade.loop = task.spawn(function()
                 while volcanoUpgrade.auto do
-                    pcall(function()
-                        FireRemote("rev_volcanoUpgrade", volcanoUpgrade.upgradeType, volcanoUpgrade.level)
-                        task.wait(1)
-                    end)
+                    FireRemote("rev_volcanoUpgrade", volcanoUpgrade.upgradeType, volcanoUpgrade.level)
+                    task.wait(1)
                 end
             end)
         else
