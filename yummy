@@ -56,10 +56,15 @@ disableIdleConnections()
 
 local Network = RS:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Network")
 
+task.wait()
 local RarityData = require(RS.Shared.Data.RarityData)
+task.wait()
 local EntitiesData = require(RS.Shared.Data.EntitiesData)
+task.wait()
 local MutationData = require(RS.Shared.Data.MutationData)
+task.wait()
 local WeightsData = require(RS.Shared.Data.WeightsData)
+task.wait()
 local WaveData = require(RS.Shared.Data.WaveData).Waves
 
 -- NEW: Event data with pcall safety
@@ -69,6 +74,7 @@ local volcanoShopItemsList = {}
 local volcanoUpgradeTypesList = {}
 local volcanoUpgradeLevels = {}
 
+task.wait()
 local success, shopData = pcall(function() return require(RS.Shared.Data.VolcanicShopData) end)
 if success and shopData and shopData.Items then
     VolcanicShopData = shopData
@@ -81,6 +87,7 @@ if #volcanoShopItemsList == 0 then
     volcanoShopItemsList = {"None"}
 end
 
+task.wait()
 local success2, upgradeData = pcall(function() return require(RS.Shared.Data.VolcanoUpgradesData) end)
 if success2 and upgradeData and upgradeData.Upgrades then
     VolcanoUpgradesData = upgradeData
@@ -95,6 +102,7 @@ if #volcanoUpgradeTypesList == 0 then
     volcanoUpgradeLevels["None"] = 1
 end
 
+task.wait()
 local raritiesList = RarityData.Order or {}
 if #raritiesList == 0 then
     raritiesList = {"Unknown"}
@@ -102,6 +110,7 @@ end
 local rarities_with_all = {"All"}
 for _, r in ipairs(raritiesList) do table.insert(rarities_with_all, r) end
 
+task.wait()
 local mutationsList = {"None"}
 if MutationData.ValidMutations and #MutationData.ValidMutations > 0 then
     for _, m in ipairs(MutationData.ValidMutations) do table.insert(mutationsList, m) end
@@ -109,6 +118,7 @@ end
 local mutations_with_all = {"All"}
 for _, m in ipairs(mutationsList) do table.insert(mutations_with_all, m) end
 
+task.wait()
 local brainrotsByRarity = {}
 local allBrainrots = {}
 if EntitiesData.Brainrots then
@@ -128,6 +138,7 @@ end
 local brainrots_with_all = {"All"}
 for _, b in ipairs(allBrainrots) do table.insert(brainrots_with_all, b) end
 
+task.wait()
 local weightsList = {}
 if WeightsData.Weights then
     for wname in pairs(WeightsData.Weights) do table.insert(weightsList, wname) end
@@ -350,36 +361,51 @@ end
 local function autoPlaceLoop()
     while placeConfig.auto do
         local plot = GetPlot()
-        if plot and #GetEmptySlots(plot) > 0 then
-            local specs = placeConfig.specifics
-            local rars = placeConfig.rarities
-            for _, toolName in ipairs(GetBackpackTools()) do
-                local matched = (#specs == 0 and #rars == 0)
-                for _, s in ipairs(specs) do if toolName == s then matched = true break end end
-                if not matched then
-                    for _, rar in ipairs(rars) do
-                        for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
-                            if toolName == bname then matched = true break end
+        if plot then
+            local emptySlots = GetEmptySlots(plot)
+            if #emptySlots > 0 then
+                local backpack = lp:FindFirstChild("Backpack")
+                if backpack then
+                    local brainrots = {}
+                    for _, tool in ipairs(backpack:GetChildren()) do
+                        if tool:IsA("Tool") then
+                            -- Filter out weights
+                            local isWeight = false
+                            for _, w in ipairs(weightsList) do
+                                if tool.Name == w then isWeight = true break end
+                            end
+                            if not isWeight then
+                                -- Apply specific/rarity filter if set
+                                local matched = (#placeConfig.specifics == 0 and #placeConfig.rarities == 0)
+                                for _, s in ipairs(placeConfig.specifics) do if tool.Name == s then matched = true break end end
+                                if not matched then
+                                    for _, rar in ipairs(placeConfig.rarities) do
+                                        for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
+                                            if tool.Name == bname then matched = true break end
+                                        end
+                                        if matched then break end
+                                    end
+                                end
+                                if matched then table.insert(brainrots, tool.Name) end
+                            end
                         end
-                        if matched then break end
                     end
-                end
-                if matched then
-                    local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
-                    local tObj = lp.Backpack:FindFirstChild(toolName)
-                    if hum and tObj then
-                        hum:EquipTool(tObj)
-                        task.wait(0.2)
-                        FireRemote("rev_Shop_Buy", "WeightShop", toolName)
-                        task.wait(placeConfig.delay)
-                        print("[AutoPlace] Placed", toolName)
+                    for i, brainrotName in ipairs(brainrots) do
+                        if i > #emptySlots then break end
+                        local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
+                        local tool = backpack:FindFirstChild(brainrotName)
+                        if hum and tool then
+                            hum:EquipTool(tool)
+                            task.wait(0.3)
+                            Network:WaitForChild("rev_S_Interact"):FireServer(emptySlots[i])
+                            task.wait(placeConfig.delay)
+                        end
                     end
                 end
             end
         end
         task.wait(1)
     end
-    print("[AutoPlace] Loop ended")
 end
 
 local function autoRemoveLoop()
@@ -832,8 +858,6 @@ local Window = Library:CreateWindow({
 })
 
 local mainTab = Window:AddTab({Title = "Main", Icon = "home"})
-
--- Removed static FPS/ping paragraphs; using overlay instead
 
 mainTab:AddSection("Release")
 mainTab:AddParagraph({Title = "⚡ Features", Content = "• Auto Farm Kick\n• Auto Collect & Sell\n• Auto Place & Remove\n• Auto Upgrade & Shop\n• Discord Webhook"})
@@ -1622,56 +1646,6 @@ eventTab:AddToggle("AutoVolcanoUpgrade", {
 
 -- Ensure the Main tab is selected when the UI opens
 Window:SelectTab(mainTab)
-
--- Create FPS/Ping overlay (ScreenGui TextLabel)
-local overlayGui = Instance.new("ScreenGui")
-overlayGui.Name = "CactusHubOverlay"
-overlayGui.ResetOnSpawn = false
-local overlayLabel = Instance.new("TextLabel")
-overlayLabel.Size = UDim2.new(0, 200, 0, 40)
-overlayLabel.Position = UDim2.new(0, 10, 0, 10)
-overlayLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-overlayLabel.BackgroundTransparency = 0.3
-overlayLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-overlayLabel.TextXAlignment = Enum.TextXAlignment.Left
-overlayLabel.Font = Enum.Font.SourceSansBold
-overlayLabel.TextSize = 14
-overlayLabel.Text = "FPS: -- | Ping: --"
-overlayLabel.Parent = overlayGui
-
--- Try to parent to CoreGui, fallback to PlayerGui
-local successGui, err = pcall(function()
-    overlayGui.Parent = game:GetService("CoreGui")
-end)
-if not successGui then
-    overlayGui.Parent = lp:WaitForChild("PlayerGui")
-end
-
--- Update FPS every second
-local frameCount = 0
-local lastTime = tick()
-RunSvc.RenderStepped:Connect(function()
-    frameCount = frameCount + 1
-    local now = tick()
-    if now - lastTime >= 1 then
-        local fps = frameCount
-        frameCount = 0
-        lastTime = now
-        -- ping part will be updated separately
-        overlayLabel.Text = string.format("FPS: %d | Ping: --", fps)
-    end
-end)
-
--- Update ping every 5 seconds
-task.spawn(function()
-    while true do
-        local ping = math.floor(lp:GetNetworkPing() * 1000)
-        local currentText = overlayLabel.Text
-        local fpsPart = currentText:match("FPS: (%d+)") or "--"
-        overlayLabel.Text = string.format("FPS: %s | Ping: %dms", fpsPart, ping)
-        task.wait(5)
-    end
-end)
 
 refreshSlotMaps()
 SaveManager:SetLibrary(Library)
