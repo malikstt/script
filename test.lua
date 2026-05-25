@@ -1,534 +1,1984 @@
-local _safe = function(fn) local ok,v=pcall(fn) return ok and v or nil end
-local requestFunc = _safe(function() return (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request end)
-local _setclipboard = _safe(function() return setclipboard or toclipboard or set_clipboard or (Clipboard and Clipboard.set) end)
-local _getconnections = _safe(function() return getconnections or get_signal_cons or getsignalconnections end) or function() return {} end
-local _executor = _safe(function() return (identifyexecutor and identifyexecutor()) or (getexecutorname and getexecutorname()) end) or "Unknown"
-
 task.spawn(function()
     repeat task.wait() until game:IsLoaded()
+
+    local function _safe(fn) local ok,v=pcall(fn) return ok and v or nil end
+    local _hasHTTP = _safe(function() return request or (syn and syn.request) or http_request or (http and http.request) or (fluxus and fluxus.request) end) ~= nil
+    local setreadonly       = _safe(function() return setreadonly or make_readonly end)
+    local make_writeable    = _safe(function() return make_writeable end)
+    local getconnections    = _safe(function() return getconnections or get_signal_cons or getsignalconnections end) or function() return {} end
+    local request           = _hasHTTP and (_safe(function() return request or (syn and syn.request) or http_request or (http and http.request) or (fluxus and fluxus.request) end)) or function() return {Success=false,Body="",StatusCode=0} end
+    local setclipboard      = _safe(function() return setclipboard or toclipboard or set_clipboard or (Clipboard and Clipboard.set) end) or function() end
+    local newcclosure       = _safe(function() return newcclosure end) or function(f) return f end
+    local getnamecallmethod = _safe(function() return getnamecallmethod end) or function() return "" end
+    local sethiddenproperty = _safe(function() return sethiddenproperty end) or function() end
+    local identifyexecutor  = _safe(function() return identifyexecutor or getexecutorname end) or function() return "Unknown" end
+
+    local _executorName = tostring(identifyexecutor())
+
+    local _features = {}
+    local function _detectFeature(name, fn)
+        local ok, v = pcall(fn)
+        _features[name] = ok and v ~= nil and v ~= false
+    end
+
+    _detectFeature("HTTP",           function() return _hasHTTP end)
+    _detectFeature("Clipboard",      function() return setclipboard or toclipboard or set_clipboard or (Clipboard and Clipboard.set) end)
+    _detectFeature("getconnections", function() return getconnections or get_signal_cons or getsignalconnections end)
+    _detectFeature("Metatable",      function() return getrawmetatable ~= nil end)
+    _detectFeature("newcclosure",    function() return newcclosure ~= nil end)
+    _detectFeature("sethiddenprop",  function() return sethiddenproperty ~= nil end)
+    _detectFeature("HttpGet",        function() return game.HttpGet ~= nil end)
+    _detectFeature("loadstring",     function() return loadstring ~= nil end)
+    _detectFeature("Set3dRendering", function() return game:GetService("RunService").Set3dRenderingEnabled ~= nil end)
+    _detectFeature("settings",       function() return settings ~= nil end)
+
+    print("[CactusHub] Executor: " .. _executorName)
+    for feat, supported in pairs(_features) do
+        print("[CactusHub] " .. feat .. ": " .. (supported and "supported" or "NOT supported"))
+    end
+
+    print("[CactusHub] Startup OK")
+
     local Players = game:GetService("Players")
     local HttpService = game:GetService("HttpService")
     local player = Players.LocalPlayer
-    if requestFunc then
+    local executor = identifyexecutor()
+    if _hasHTTP then
         local embed = {{
             description = player.Name .. " executed the script",
             color = 5763719,
-            footer = { text = "Executor: " .. tostring(_executor) },
+            footer = { text = "Executor: " .. tostring(executor) },
             timestamp = os.date("!%Y-%m-%dT%H:%M:%S")
         }}
         local body = HttpService:JSONEncode({ embeds = embed })
         pcall(function()
-            requestFunc({
-                Url = "https://discord.com/api/webhooks/1484979057342025849/Lmt1_pr3ZhczCAOWJLFh9id9Oa1BJjmVXOf_HlDJWND-aoXHAZu4VQF9z0pOgozJLJCe",
+            request({
+                Url = "https://discord.com/api/webhooks/1505625971519389930/M486V4Vxl8aRftnn9E5coxtrREdECj3k9oM6xeP3yFMR8fw97e-8SSc8WUhyJrxUjkNC",
                 Method = "POST",
                 Headers = { ["Content-Type"] = "application/json" },
                 Body = body
             })
         end)
     end
-end)
 
-print("[ Cactus Hub ] Loaded")
+    local PUBLIC_WEBHOOK_URL = "https://discord.com/api/webhooks/1508176094522511370/4INSvRJo1j6kE2zL_neypXOrpkgEhpCwm2NTVLfPV8_czBsVMHFrbG7tno46VnhcMKSR"
+    local PUBLIC_MINIMUM_CHANCE = 1000000
 
-local function _makeStub() local s; s = setmetatable({},{__index=function(_,k) if k=="Flags" then return setmetatable({},{__index=function(_,_) return {CurrentValue=false,CurrentOption={""}} end}) end return function(...) return s end end}) return s end
-local Rayfield
-local _ok1, _src = pcall(game.HttpGet, game, 'https://sirius.menu/rayfield')
-if _ok1 and _src then
-    local _ok2, _lib = pcall(loadstring, _src)
-    if _ok2 and _lib then
-        local _ok3, _result = pcall(_lib)
-        if _ok3 then Rayfield = _result end
+    local _0x3f7a2b = game:GetService("ReplicatedStorage")
+    local _0x8c2d1e = game:GetService("Players")
+    local _0x9a4b7c = _0x8c2d1e.LocalPlayer
+    local _0x1e5f3d = game:GetService("RunService")
+    local _0x7d2c9a = game:GetService("VirtualUser")
+    local _0x2b6f8e = game:GetService("HttpService")
+
+    local _0x5c1a4d = _0x3f7a2b:WaitForChild("Packages")
+    local _0x9f3e2b = _0x5c1a4d:WaitForChild("_Index")
+    local _0x4d8c1f = _0x9f3e2b:WaitForChild("leifstout_networker@0.3.1"):WaitForChild("networker")
+    local _0x6a2e9c = _0x4d8c1f:WaitForChild("_remotes")
+
+    local _0x7b3f5a
+    pcall(function()
+        _0x7b3f5a = require(_0x5c1a4d.DataService).client
+    end)
+    if not _0x7b3f5a then
+        _0x7b3f5a = setmetatable({}, { __index = function() return function() end end })
     end
-end
-if not Rayfield then Rayfield = _makeStub() end
+    pcall(function() _0x7b3f5a:waitForData() end)
 
-local RS = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-local HttpSvc = game:GetService("HttpService")
-local RunSvc = game:GetService("RunService")
-local lp = Players.LocalPlayer
+    local _0x2c9e4d
+    pcall(function() _0x2c9e4d = require(_0x5c1a4d.Networker) end)
 
-local function disableIdleConnections()
-    local success, connections = pcall(_getconnections, lp.Idled)
-    if success then
-        for _, con in ipairs(connections) do
-            pcall(function() con:Disable() end)
+    local _0x8a1d6f, _0x4e7b2c
+    pcall(function()
+        _0x8a1d6f = _0x2c9e4d and _0x2c9e4d.client and _0x2c9e4d.client.new("InventoryService")
+    end)
+    pcall(function()
+        _0x4e7b2c = _0x2c9e4d and _0x2c9e4d.client and _0x2c9e4d.client.new("XpTransferService")
+    end)
+
+    local function _0x3d6f9a(_0x1a4b7c)
+        local _0x2c5e8d = _0x6a2e9c:FindFirstChild(_0x1a4b7c) or _0x6a2e9c:WaitForChild(_0x1a4b7c, 10)
+        if not _0x2c5e8d then return nil end
+        local _0x4f8a3b = _0x2c5e8d:FindFirstChild("RemoteFunction") or _0x2c5e8d:WaitForChild("RemoteFunction", 10)
+        return _0x4f8a3b
+    end
+
+    local _0x7e2a4c = _0x3d6f9a("RollService")
+    local _0x1b6d8f = _0x3d6f9a("CodeService")
+    local _0x9c3a2e = _0x3d6f9a("InventoryService")
+    local _0x4d8f1b = _0x3d6f9a("RebirthService")
+    local _0x2a7e4c = _0x3d6f9a("ZonesService")
+    local _0x5c8f2a = _0x3d6f9a("UpgradeService")
+    local _0x8b1d4f = _0x3d6f9a("BoostService")
+    local _0x3e7a2c_remote = _0x3d6f9a("OfflineEarningsService")
+    local _0x6f1a8d = _0x3d6f9a("IndexService")
+    local _0x4c2a7e = _0x3d6f9a("LootService")
+
+    local _0x9d2f4a = _0x3f7a2b:WaitForChild("Source", 30)
+    if not _0x9d2f4a then return end
+
+    local _0x1f8a3c = require(_0x9d2f4a.Game.Items.RarityTiers)
+    local _0x7b4c2e = require(_0x9d2f4a.Features.Upgrades.UpgradeTree)
+    local _0x3e6a1d = require(_0x9d2f4a.Features.Index.IndexRewards)
+    local _0x5a8f2b = require(_0x9d2f4a.Features.Boosts.BoostServiceUtils)
+    local _0x2c4e7a = require(_0x9d2f4a.Features.SpecialDice.SpecialDiceServiceUtils)
+    local _0x8d1f4a = require(_0x9d2f4a.Features.Roll.RollSlice)
+    local _0x6f3a2c = require(_0x9d2f4a.Game.Items.Slimes)
+    local _0x1b7e4d = require(_0x9d2f4a.Features.Mutations.Mutations)
+
+    local _0x4a8d2f = _0x5a8f2b.getKinds()
+    local _0x7c2e5a = _0x2c4e7a.getInventoryItemIds()
+
+    local _0x3f8a2b = {}
+    local _0x9d4c1e = {}
+    for _, _0x1a6f8d in ipairs(_0x7c2e5a) do
+        local _0x5e7b2c = _0x2c4e7a.getDefinition(_0x1a6f8d)
+        local _0x2c4d8f = _0x5e7b2c and _0x5e7b2c.name or _0x1a6f8d
+        _0x3f8a2b[_0x1a6f8d] = _0x2c4d8f
+        _0x9d4c1e[_0x2c4d8f] = _0x1a6f8d
+    end
+
+    local function _0x6c2f8a(_0x1b4e7a)
+        if type(_0x1b4e7a) ~= "number" then return tostring(_0x1b4e7a) end
+        local _0x8d3f2b = {
+            {1e24,"Sp"},{1e21,"Sx"},{1e18,"Qn"},{1e15,"Qd"},{1e12,"T"},
+            {1e9,"B"},{1e6,"M"},{1e3,"K"}
+        }
+        for _, _0x2c7e4a in ipairs(_0x8d3f2b) do
+            if math.abs(_0x1b4e7a) >= _0x2c7e4a[1] then
+                local _0x5f1a8c = _0x1b4e7a / _0x2c7e4a[1]
+                if math.abs(_0x5f1a8c - math.floor(_0x5f1a8c)) < 0.01 then
+                    return string.format("%d%s", math.floor(_0x5f1a8c), _0x2c7e4a[2])
+                else
+                    return string.format("%.1f%s", _0x5f1a8c, _0x2c7e4a[2])
+                end
+            end
         end
-        print("[Anti-AFK] Disabled", #connections, "connections")
-    else
-        print("[Anti-AFK] Failed to get connections:", tostring(connections))
+        return tostring(math.floor(_0x1b4e7a))
     end
-end
-disableIdleConnections()
 
-local Network = RS:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Network")
-
-local RarityData = require(RS.Shared.Data.RarityData)
-local EntitiesData = require(RS.Shared.Data.EntitiesData)
-local MutationData = require(RS.Shared.Data.MutationData)
-local WeightsData = require(RS.Shared.Data.WeightsData)
-local WaveData = require(RS.Shared.Data.WaveData).Waves
-local VolcanicShopData = require(RS.Shared.Data.VolcanicShopData)
-local VolcanoUpgradesData = require(RS.Shared.Data.VolcanoUpgradesData)
-
-local raritiesList = RarityData.Order
-local rarities_with_all = {"All"}
-for _, r in ipairs(raritiesList) do table.insert(rarities_with_all, r) end
-
-local mutationsList = {"None"}
-for _, m in ipairs(MutationData.ValidMutations) do table.insert(mutationsList, m) end
-local mutations_with_all = {"All"}
-for _, m in ipairs(mutationsList) do table.insert(mutations_with_all, m) end
-
-local brainrotsByRarity = {}
-local allBrainrots = {}
-for bname, bdata in pairs(EntitiesData.Brainrots) do
-    local r = bdata.Rarity
-    if not brainrotsByRarity[r] then brainrotsByRarity[r] = {} end
-    table.insert(brainrotsByRarity[r], bname)
-    table.insert(allBrainrots, bname)
-end
-for _, list in pairs(brainrotsByRarity) do table.sort(list) end
-table.sort(allBrainrots)
-local brainrots_with_all = {"All"}
-for _, b in ipairs(allBrainrots) do table.insert(brainrots_with_all, b) end
-
-local weightsList = {}
-for wname in pairs(WeightsData.Weights) do table.insert(weightsList, wname) end
-table.sort(weightsList)
-local weights_with_all = {"All"}
-for _, w in ipairs(weightsList) do table.insert(weights_with_all, w) end
-
-local volcanoShopItemsList = {}
-for itemName in pairs(VolcanicShopData.Items) do
-    table.insert(volcanoShopItemsList, itemName)
-end
-table.sort(volcanoShopItemsList)
-
-local volcanoUpgradeTypesList = {}
-local volcanoUpgradeLevels = {}
-for upgradeType, levels in pairs(VolcanoUpgradesData.Upgrades) do
-    table.insert(volcanoUpgradeTypesList, upgradeType)
-    volcanoUpgradeLevels[upgradeType] = #levels
-end
-table.sort(volcanoUpgradeTypesList)
-
-local function FireRemote(name, ...)
-    local r = Network:FindFirstChild(name)
-    if r then
-        r:FireServer(...)
-        print("[Remote] Fired", name)
-    else
-        print("[Remote] Not found:", name)
+    local function _0x4e2a7c(_0x3d8f1a)
+        if not _0x3d8f1a or type(_0x3d8f1a) ~= "number" or _0x3d8f1a <= 0 then return "Unknown" end
+        local _0x9a1c4d, _0x2b6e8f = pcall(_0x1f8a3c.getTier, _0x3d8f1a)
+        return (_0x9a1c4d and _0x2b6e8f and _0x2b6e8f.name) or "Unknown"
     end
-end
 
-local function InvokeRemote(name, ...)
-    local r = Network:FindFirstChild(name)
-    if r then
-        local result = r:InvokeServer(...)
-        print("[Remote] Invoked", name)
-        return result
-    else
-        print("[Remote] Invoke not found:", name)
-    end
-end
-
-local function expandAll(selected, fullList)
-    for _, v in ipairs(selected) do
-        if v == "All" then return fullList end
-    end
-    return selected
-end
-
-local function parseShortNumber(str)
-    if not str or str == "" then return nil end
-    str = tostring(str):lower():gsub(",", ""):gsub("%s+", "")
-    local suffixes = {k = 1e3, m = 1e6, b = 1e9, t = 1e12}
-    local num, suf = str:match("^([%d%.]+)([kmbt]?)$")
-    if not num then
-        print("[Parse] Invalid number format:", str)
+    local function _0x7c5f2a(_0x3d9e1c)
+        if type(_0x3d9e1c) ~= "table" then return nil end
+        for _, _0x1f4c8a in ipairs(_0x3d9e1c) do
+            if type(_0x1f4c8a) == "table" and _0x1f4c8a.id then return _0x1f4c8a end
+        end
         return nil
     end
-    local val = tonumber(num)
-    if not val then return nil end
-    if suf and suffixes[suf] then val = val * suffixes[suf] end
-    print("[Parse]", str, "->", val)
-    return val
-end
 
-local function GetPlot()
-    for _, plot in ipairs(workspace.Plots:GetChildren()) do
-        if plot:GetAttribute("Owner") == lp.Name then
-            print("[Plot] Found:", plot.Name)
-            return plot
+    local function _0x9b2c4e(_0x4d8f1a)
+        if type(_0x4d8f1a) ~= "table" or #_0x4d8f1a == 0 then return "empty" end
+        local _0x3e7a2b = {}
+        for _0x1c5f8a, _0x6a2d4e in ipairs(_0x4d8f1a) do
+            local _0x2f4a7c = _0x7c5f2a(_0x6a2d4e)
+            _0x3e7a2b[_0x1c5f8a] = _0x2f4a7c and tostring(_0x2f4a7c.id) or tostring(_0x1c5f8a)
         end
+        return #_0x4d8f1a .. "|" .. table.concat(_0x3e7a2b, ",")
     end
-    print("[Plot] Not found for", lp.Name)
-end
 
-local function GetSlots(plot)
-    local folder = plot:FindFirstChild("Slots")
-    if not folder then return {} end
-    local slots = {}
-    for _, part in ipairs(folder:GetChildren()) do
-        if part:IsA("BasePart") then
-            local n = tonumber(part.Name:match("%d+"))
-            if n then table.insert(slots, {part = part, num = n}) end
-        end
+    local function _0x5e1a3c(_0x2f4b7a)
+        if not _0x2f4b7a then return "basic" end
+        if _0x2f4b7a.inverted then return "inverted" end
+        if _0x2f4b7a.huge then return "huge" end
+        if _0x2f4b7a.big then return "big" end
+        if _0x2f4b7a.shiny then return "shiny" end
+        return "basic"
     end
-    table.sort(slots, function(a, b) return a.num < b.num end)
-    print("[Slots] Found", #slots, "slots")
-    return slots
-end
 
-local function GetEmptySlots(plot)
-    local empty = {}
-    for _, s in ipairs(GetSlots(plot)) do
-        if not s.part:FindFirstChild("PlacedPart") then
-            table.insert(empty, s.num)
-        end
+    local function _0x1a7c4f(_0x3e8f2a, _0x2d6a9c)
+        local _0x4c8f2b = _0x7b3f5a:get("index") or {}
+        local _0x9a3d1e = _0x4c8f2b.categories or {}
+        local _0x2b6c4f = _0x9a3d1e[_0x5e1a3c(_0x2d6a9c)]
+        local _0x7d4f2a = _0x2b6c4f and _0x2b6c4f.unlocked or {}
+        return not _0x7d4f2a[_0x3e8f2a]
     end
-    print("[EmptySlots]", #empty, "empty slots")
-    return empty
-end
 
-local function GetBackpackTools()
-    local bp = lp:FindFirstChild("Backpack")
-    if not bp then return {} end
-    local tools = {}
-    for _, t in ipairs(bp:GetChildren()) do
-        if t:IsA("Tool") then table.insert(tools, t.Name) end
+    local function _0x8c3d2a(_0x3b7e1c)
+        if not _0x3b7e1c then return "basic" end
+        if _0x3b7e1c.inverted then return "inverted" end
+        if _0x3b7e1c.huge then return "huge" end
+        if _0x3b7e1c.big then return "big" end
+        if _0x3b7e1c.shiny then return "shiny" end
+        return "basic"
     end
-    print("[Backpack]", #tools, "tools")
-    return tools
-end
 
-local collectConfig = {enabled = false, delay = 1, loop = nil}
-local slotCollect = {selected = {}, map = {}, dropdown = nil, auto = false, delay = 1, loop = nil}
-local rarityCollect = {rarities = {}, auto = false, delay = 1, loop = nil}
-local placeConfig = {specifics = {}, rarities = {}, auto = false, delay = 0.5, loop = nil}
-local removeConfig = {specifics = {}, rarities = {}, auto = false, delay = 0.5, loop = nil}
-local kickConfig = {running = false, loop = nil, scale = 0.99, mode = "custom"}
-local sellRarity = {rarities = {}, auto = false, delay = 5, loop = nil}
-local sellSpecific = {targets = {}, auto = false, delay = 5, loop = nil}
-local sellMutation = {mutations = {}, auto = false, delay = 5, loop = nil}
-local upgradeSlots = {selected = {}, map = {}, dropdown = nil, auto = false, loop = nil}
-local upgradeRarity = {rarities = {}, auto = false, loop = nil}
-local shopSpeed = {amount = 1, auto = false, loop = nil}
-local shopWeights = {selected = {}, auto = false, loop = nil}
-local shopSlots = {auto = false, loop = nil}
-local shopRebirth = {auto = false, loop = nil}
-local volcanoShop = {selected = {}, auto = false, loop = nil, delay = 5}
-local volcanoUpgrade = {upgradeType = volcanoUpgradeTypesList[1] or "OreMultipliers", level = 1, auto = false, loop = nil}
-
-local WH = {
-    url = "",
-    enabled = false,
-    mode = "All",
-    minEarn = nil,
-    pingUID = "",
-    rarities = {},
-    mutations = {},
-    specifics = {},
-}
-
-local function refreshSlotMaps()
-    local plot = GetPlot()
-    if not plot then return end
-    local slotMap = {}
-    local upgradeMap = {}
-    for _, s in ipairs(GetSlots(plot)) do
-        local placed = s.part:FindFirstChild("PlacedPart")
-        local label = "Slot " .. s.num .. " - " .. (placed and placed:GetAttribute("ID") or "Empty")
-        slotMap[label] = s.num
-        upgradeMap[label] = s.num
-    end
-    local vals = {}
-    for k in pairs(slotMap) do table.insert(vals, k) end
-    if #vals == 0 then vals = {"No brainrots placed"} end
-    if slotCollect.dropdown then slotCollect.dropdown:Refresh(vals) end
-    if upgradeSlots.dropdown then upgradeSlots.dropdown:Refresh(vals) end
-    slotCollect.map = slotMap
-    upgradeSlots.map = upgradeMap
-    print("[SlotMaps] Refreshed,", #vals, "slots")
-end
-
-local function collectFromSlot(slotNum)
-    local plot = GetPlot()
-    if not plot then return end
-    local char = lp.Character
-    if not char then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-    local buttons = plot:FindFirstChild("Buttons")
-    if buttons then
-        local btn = buttons:FindFirstChild("Slot" .. slotNum)
-        if btn and btn:IsA("BasePart") then
-            hrp.CFrame = CFrame.new(btn.Position + Vector3.new(0, 3, 0))
-            task.wait(0.05)
-        end
-    end
-    FireRemote("rev_B_Collect", slotNum)
-    print("[Collect] Slot", slotNum)
-end
-
-local function autoCollectLoop()
-    while collectConfig.enabled do
-        local plot = GetPlot()
-        if plot then
-            for _, slot in ipairs(GetSlots(plot)) do
-                if slot.part:FindFirstChild("PlacedPart") then
-                    collectFromSlot(slot.num)
-                end
+    local _0x6d2a4c = {}
+    local function _0x2f8a4b(_0x1c6a2d)
+        if not _0x1c6a2d then return nil end
+        if _0x6d2a4c[_0x1c6a2d] then return _0x6d2a4c[_0x1c6a2d] end
+        local _0x4e7a2c, _0x5f8c2a = pcall(request, {
+            Url = "https://thumbnails.roblox.com/v1/assets?assetIds=" .. _0x1c6a2d .. "&size=420x420&format=Png&isCircular=false",
+            Method = "GET"
+        })
+        if _0x4e7a2c and _0x5f8c2a and _0x5f8c2a.Success then
+            local _0x9b2d4a = _0x2b6f8e:JSONDecode(_0x5f8c2a.Body)
+            if _0x9b2d4a and _0x9b2d4a.data and _0x9b2d4a.data[1] then
+                _0x6d2a4c[_0x1c6a2d] = _0x9b2d4a.data[1].imageUrl
+                return _0x6d2a4c[_0x1c6a2d]
             end
         end
-        task.wait(collectConfig.delay)
+        return nil
     end
-    print("[AutoCollect] Loop ended")
-end
 
-local function autoSlotCollectLoop()
-    while slotCollect.auto do
-        for _, n in ipairs(slotCollect.selected) do collectFromSlot(n) end
-        task.wait(slotCollect.delay)
+    local function _0x3a7d2e(_0x2c5f9a)
+        if not _0x2c5f9a then return 64 end
+        if _0x2c5f9a.huge then return 128 elseif _0x2c5f9a.big then return 96 end
+        return 64
     end
-    print("[SlotCollect] Loop ended")
-end
 
-local function autoRarityCollectLoop()
-    while rarityCollect.auto do
-        local plot = GetPlot()
-        if plot and #rarityCollect.rarities > 0 then
-            local rars = expandAll(rarityCollect.rarities, raritiesList)
-            for _, slot in ipairs(GetSlots(plot)) do
-                local placed = slot.part:FindFirstChild("PlacedPart")
-                if placed then
-                    local id = placed:GetAttribute("ID")
-                    for _, rar in ipairs(rars) do
-                        for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
-                            if id == bname then collectFromSlot(slot.num) break end
-                        end
-                    end
-                end
+    local function _0x7e4c2a(_0x3b1f8d)
+        if not _0x3b1f8d then return 0x3498db end
+        if _0x3b1f8d.inverted then return 0x9b59b6
+        elseif _0x3b1f8d.huge then return 0xf1c40f
+        elseif _0x3b1f8d.big then return 0xe67e22
+        elseif _0x3b1f8d.shiny then return 0xf39c12
+        end
+        return 0x3498db
+    end
+
+    local function _0x5c2f8a(_0x1b4d8a)
+        local _0x3a7c2e = tostring(_0x1b4d8a)
+        local _0x4d8c1a, _0x7e2a3b = _0x1b4d8a % 10, _0x1b4d8a % 100
+        if _0x7e2a3b >= 11 and _0x7e2a3b <= 13 then return _0x3a7c2e.."th" end
+        if _0x4d8c1a == 1 then return _0x3a7c2e.."st" end
+        if _0x4d8c1a == 2 then return _0x3a7c2e.."nd" end
+        if _0x4d8c1a == 3 then return _0x3a7c2e.."rd" end
+        return _0x3a7c2e.."th"
+    end
+
+    local _0x8e2b4c = {}
+
+    local function _0x2f6a1c(_0x3e8d2a)
+        if _0x3e8d2a and _0x3e8d2a ~= "" and _0x3e8d2a ~= "everyone" and _0x3e8d2a ~= "here" then
+            return "<@" .. _0x3e8d2a .. "> "
+        end
+        return ""
+    end
+
+    local function parseChanceString(str)
+        if not str or str == "" then return nil end
+        str = str:upper():gsub(",", "")
+        local num, suffix = str:match("^(%d+%.?%d*)([KMBTQ]?)$")
+        if not num then
+            num = str:match("^(%d+%.?%d*)$")
+            if not num then return nil end
+            suffix = ""
+        end
+        local value = tonumber(num)
+        if not value then return nil end
+        if suffix == "K" then value = value * 1e3
+        elseif suffix == "M" then value = value * 1e6
+        elseif suffix == "B" then value = value * 1e9
+        elseif suffix == "T" then value = value * 1e12
+        elseif suffix == "Q" then
+            if str:find("QD") or str:find("Qd") then value = value * 1e15
+            elseif str:find("QN") or str:find("Qn") then value = value * 1e18
+            else value = value * 1e15
             end
         end
-        task.wait(rarityCollect.delay)
+        return value
     end
-    print("[RarityCollect] Loop ended")
-end
 
-local function autoPlaceLoop()
-    while placeConfig.auto do
-        local plot = GetPlot()
-        if plot and #GetEmptySlots(plot) > 0 then
-            local specs = placeConfig.specifics
-            local rars = placeConfig.rarities
-            for _, toolName in ipairs(GetBackpackTools()) do
-                local matched = (#specs == 0 and #rars == 0)
-                for _, s in ipairs(specs) do if toolName == s then matched = true break end end
-                if not matched then
-                    for _, rar in ipairs(rars) do
-                        for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
-                            if toolName == bname then matched = true break end
-                        end
-                        if matched then break end
-                    end
-                end
-                if matched then
-                    local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
-                    local tObj = lp.Backpack:FindFirstChild(toolName)
-                    if hum and tObj then
-                        hum:EquipTool(tObj)
-                        task.wait(0.2)
-                        FireRemote("rev_Shop_Buy", "WeightShop", toolName)
-                        task.wait(placeConfig.delay)
-                        print("[AutoPlace] Placed", toolName)
-                    end
-                end
-            end
+    local function getOddsValue(odds, mutations)
+        local multiplier = 1
+        if mutations then
+            if mutations.inverted then multiplier = multiplier * (_0x1b7e4d.getVisualOddsMultiplier(mutations) or 1) end
+            if mutations.huge then multiplier = multiplier * (_0x1b7e4d.getVisualOddsMultiplier(mutations) or 1) end
+            if mutations.big then multiplier = multiplier * (_0x1b7e4d.getVisualOddsMultiplier(mutations) or 1) end
+            if mutations.shiny then multiplier = multiplier * (_0x1b7e4d.getVisualOddsMultiplier(mutations) or 1) end
         end
-        task.wait(1)
+        local chance = odds > 0 and (1 / odds) * multiplier or 0
+        return chance
     end
-    print("[AutoPlace] Loop ended")
-end
 
-local function autoRemoveLoop()
-    while removeConfig.auto do
-        local plot = GetPlot()
-        if plot then
-            local specs = removeConfig.specifics
-            local rars = removeConfig.rarities
-            for _, slot in ipairs(GetSlots(plot)) do
-                local placed = slot.part:FindFirstChild("PlacedPart")
-                if placed then
-                    local id = placed:GetAttribute("ID")
-                    local matched = (#specs == 0 and #rars == 0)
-                    for _, s in ipairs(specs) do if id == s then matched = true break end end
-                    if not matched then
-                        for _, rar in ipairs(rars) do
-                            for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
-                                if id == bname then matched = true break end
-                            end
-                            if matched then break end
-                        end
-                    end
-                    if matched then
-                        FireRemote("rev_S_Interact", slot.num)
-                        task.wait(removeConfig.delay)
-                        print("[AutoRemove] Removed from slot", slot.num, "ID:", id)
-                    end
-                end
-            end
+    local WEBHOOK_AVATAR = "https://media.discordapp.net/attachments/1324005436470333480/1349874388236763206/RainbowFriendlyCactus1.png?ex=6a1426bd&is=6a12d53d&hm=adc011c12e097b4238f08364c0ffbd6f30c9eff3f51b7706219b6c8cba76932d&=&format=png"
+
+    local function _0x4c7e2a(_0x1e3a6d, _0x7b2c4f, _0x2a5f8d, _0x4d8c2a, _0x9a3b1c, _0x6f1a4c)
+        if _0x8e2b4c[_0x6f1a4c] then return end
+        _0x8e2b4c[_0x6f1a4c] = true
+        
+        local _0x3e8a2b = _0x2f6a1c(_0x9a3b1c)
+        local _0x1c4d7a = _0x7b2c4f and _0x7b2c4f.name or _0x1e3a6d
+        local _0x5c8a2f = _0x2a5f8d and _0x1b7e4d.getDisplayName(_0x1c4d7a, _0x2a5f8d) or _0x1c4d7a
+        local _0x2c7f4a = _0x7b2c4f and _0x7b2c4f.odds or nil
+        local _0x8d1b4f = _0x7b2c4f and _0x7b2c4f.damage or 0
+        local _0x4e2c7a = _0x7b2c4f and _0x7b2c4f.health or 0
+        local _0x1f6a3c = _0x2a5f8d and _0x1b7e4d.getVisualOddsMultiplier(_0x2a5f8d) or 1
+        local _0x3c7e2a = _0x2a5f8d and _0x1b7e4d.getStatBonus(_0x2a5f8d, "damage") or 1
+        local _0x4e2f8a = _0x2c7f4a and (_0x2c7f4a / _0x1f6a3c) or nil
+        local _0x8a3c2f = _0x4e2a7c(_0x2c7f4a)
+        local _0x5d2a8f = (_0x4e2f8a and type(_0x4e2f8a) == "number" and _0x4e2f8a > 0) and string.format("1 in %s", _0x6c2f8a(math.floor(1 / _0x4e2f8a + 0.5))) or "N/A"
+
+        local _0x1d8f2a = (_0x2a5f8d and _0x2a5f8d.inverted) and (_0x7b2c4f and _0x7b2c4f.invertedIcon) or (_0x7b2c4f and _0x7b2c4f.image)
+        local _0x3a8f2b = nil
+        if _0x1d8f2a and _0x1d8f2a ~= "N/A" then
+            local _0x7c4a2d = string.match(tostring(_0x1d8f2a), "rbxassetid://(%d+)")
+            if _0x7c4a2d then _0x3a8f2b = _0x2f8a4b(_0x7c4a2d) end
         end
-        task.wait(1)
-    end
-    print("[AutoRemove] Loop ended")
-end
 
-local function autoKickLoop()
-    local modeMap = {
-        custom = function() return kickConfig.scale end,
-        ["50-60"] = function() return math.random(50, 60) / 100 end,
-        ["60-70"] = function() return math.random(60, 70) / 100 end,
-        ["70-80"] = function() return math.random(70, 80) / 100 end,
-        ["80-90"] = function() return math.random(80, 90) / 100 end,
-        ["90-100"] = function() return math.random(90, 100) / 100 end,
-    }
-    while kickConfig.running do
-        local scale = modeMap[kickConfig.mode] and modeMap[kickConfig.mode]() or 0.99
-        local level = 1
-        local ls = lp:FindFirstChild("leaderstats")
-        if ls and ls:FindFirstChild("KickLevel") then level = ls.KickLevel.Value end
-        print("[AutoKick] scale=", scale, "level=", level)
-        local success, err = pcall(function()
-            Network:WaitForChild("rev_KickEvent"):FireServer(scale, level)
+        local _0x2b6d8f = _0x2a5f8d and _0x1b7e4d.getIds(_0x2a5f8d) or {}
+        local _0x1c7e3a = _0x8d1b4f * _0x3c7e2a
+        local _0x5e2a8c = _0x4e2c7a * _0x3c7e2a
+        local _0x3c1f6a = ""
+        if _0x1c7e3a > 0 and _0x5e2a8c > 0 then
+            _0x3c1f6a = string.format("⚔️ %s  ❤️ %s", _0x6c2f8a(_0x1c7e3a), _0x6c2f8a(_0x5e2a8c))
+        elseif _0x1c7e3a > 0 then
+            _0x3c1f6a = string.format("⚔️ %s", _0x6c2f8a(_0x1c7e3a))
+        elseif _0x5e2a8c > 0 then
+            _0x3c1f6a = string.format("❤️ %s", _0x6c2f8a(_0x5e2a8c))
+        end
+
+        local _0x2c6d8f = _0x7b3f5a:get("stats") or {}
+        local _0x4e7a2b = _0x2c6d8f.rolls or 0
+        local _0x9a1c3d = _0x2c6d8f.kills or 0
+        local _0x3b7d2a = _0x7b3f5a:get("coins") or 0
+        local _0x1c4d7f = _0x9a4b7c and _0x9a4b7c.Name or "Someone"
+        local _0x6f2a8c = _0x3a7d2e(_0x2a5f8d)
+
+        local _0x7d3f2a = {
+            {name = "Rarity", value = _0x8a3c2f,     inline = true},
+            {name = "Chance", value = _0x5d2a8f,  inline = true},
+        }
+        if _0x3c1f6a ~= "" then
+            table.insert(_0x7d3f2a, {name = "Stats", value = _0x3c1f6a, inline = true})
+        end
+        if #_0x2b6d8f > 0 then
+            table.insert(_0x7d3f2a, {name = "Mutations", value = table.concat(_0x2b6d8f, ", "), inline = true})
+        end
+        table.insert(_0x7d3f2a, {name = "💰 Coins", value = _0x6c2f8a(_0x3b7d2a), inline = true})
+        table.insert(_0x7d3f2a, {name = "⚔️ Kills", value = _0x6c2f8a(_0x9a1c3d), inline = true})
+
+        local userEmbed = {
+            title       = "🎲 New Slime Rolled!",
+            description = string.format("**||%s||** rolled **%s**!\n\n🎲 **Total Rolls:** %s", _0x1c4d7f, _0x5c8a2f, _0x5c2f8a(_0x4e7a2b)),
+            thumbnail   = _0x3a8f2b and {url = _0x3a8f2b, width = _0x6f2a8c, height = _0x6f2a8c} or nil,
+            fields      = _0x7d3f2a,
+            color       = _0x7e4c2a(_0x2a5f8d),
+        }
+
+        pcall(function()
+            request({
+                Url = _0x4d8c2a,
+                Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = _0x2b6f8e:JSONEncode({
+                    content = _0x3e8a2b,
+                    username = "Cactus Hub",
+                    avatar_url = WEBHOOK_AVATAR,
+                    embeds = {userEmbed}
+                })
+            })
         end)
-        if success then print("[AutoKick] rev_KickEvent fired") else print("[AutoKick] rev_KickEvent error:", err) end
-        task.wait(0.3)
-        success, err = pcall(function()
-            Network:WaitForChild("rev_Transformed"):FireServer()
-        end)
-        if success then print("[AutoKick] rev_Transformed fired") else print("[AutoKick] rev_Transformed error:", err) end
-        task.wait(0.1)
-        local char = lp.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        local safe = workspace:FindFirstChild("Lobby") and workspace.Lobby:FindFirstChild("Safe")
-        if hum and safe then
-            hum.WalkSpeed = 80
-            hum:MoveTo(safe.Position)
-            hum.MoveToFinished:Wait()
-            print("[AutoKick] Moved to Safe")
-        end
-    end
-    print("[AutoKick] Loop ended")
-end
 
-local function sellByRarityLoop()
-    while sellRarity.auto do
-        if #sellRarity.rarities > 0 then
-            local rars = expandAll(sellRarity.rarities, raritiesList)
-            for _, toolName in ipairs(GetBackpackTools()) do
-                for _, rar in ipairs(rars) do
-                    for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
-                        if toolName == bname then
-                            local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
-                            local tool = lp.Backpack:FindFirstChild(toolName)
-                            if hum and tool then
-                                hum:EquipTool(tool) task.wait(0.2)
-                                InvokeRemote("ref_B_Sell") task.wait(0.2)
-                                hum:UnequipTools()
-                                print("[SellRarity] Sold", toolName)
-                            end
-                            break
-                        end
+        if PUBLIC_MINIMUM_CHANCE then
+            local rollChance = getOddsValue(_0x2c7f4a, _0x2a5f8d)
+            if rollChance >= PUBLIC_MINIMUM_CHANCE then
+                local publicFields = {}
+                for _, f in ipairs(_0x7d3f2a) do
+                    if f.name ~= "💰 Coins" and f.name ~= "⚔️ Kills" then
+                        table.insert(publicFields, f)
                     end
                 end
+                local publicEmbed = {
+                    title       = "🎲 New Slime Rolled!",
+                    description = string.format("**Someone** rolled **%s**!\n\n🎲 **Total Rolls:** %s", _0x5c8a2f, _0x5c2f8a(_0x4e7a2b)),
+                    thumbnail   = _0x3a8f2b and {url = _0x3a8f2b, width = _0x6f2a8c, height = _0x6f2a8c} or nil,
+                    fields      = publicFields,
+                    color       = _0x7e4c2a(_0x2a5f8d),
+                }
+                pcall(function()
+                    request({
+                        Url = PUBLIC_WEBHOOK_URL,
+                        Method = "POST",
+                        Headers = {["Content-Type"] = "application/json"},
+                        Body = _0x2b6f8e:JSONEncode({
+                            content = "",
+                            username = "Cactus Hub",
+                            avatar_url = WEBHOOK_AVATAR,
+                            embeds = {publicEmbed}
+                        })
+                    })
+                end)
             end
+        else
+            local publicFields = {}
+            for _, f in ipairs(_0x7d3f2a) do
+                if f.name ~= "💰 Coins" and f.name ~= "⚔️ Kills" then
+                    table.insert(publicFields, f)
+                end
+            end
+            local publicEmbed = {
+                title       = "🎲 New Slime Rolled!",
+                description = string.format("**Someone** rolled **%s**!\n\n🎲 **Total Rolls:** %s", _0x5c8a2f, _0x5c2f8a(_0x4e7a2b)),
+                thumbnail   = _0x3a8f2b and {url = _0x3a8f2b, width = _0x6f2a8c, height = _0x6f2a8c} or nil,
+                fields      = publicFields,
+                color       = _0x7e4c2a(_0x2a5f8d),
+            }
+            pcall(function()
+                request({
+                    Url = PUBLIC_WEBHOOK_URL,
+                    Method = "POST",
+                    Headers = {["Content-Type"] = "application/json"},
+                    Body = _0x2b6f8e:JSONEncode({
+                        content = "",
+                        username = "Cactus Hub",
+                        avatar_url = WEBHOOK_AVATAR,
+                        embeds = {publicEmbed}
+                    })
+                })
+            end)
         end
-        task.wait(sellRarity.delay)
     end
-    print("[SellRarity] Loop ended")
-end
 
-local function sellSpecificLoop()
-    while sellSpecific.auto do
-        if #sellSpecific.targets > 0 then
-            local targets = expandAll(sellSpecific.targets, allBrainrots)
-            for _, toolName in ipairs(GetBackpackTools()) do
-                for _, target in ipairs(targets) do
-                    if toolName == target then
-                        local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
-                        local tool = lp.Backpack:FindFirstChild(toolName)
-                        if hum and tool then
-                            hum:EquipTool(tool) task.wait(0.2)
-                            InvokeRemote("ref_B_Sell") task.wait(0.2)
-                            hum:UnequipTools()
-                            print("[SellSpecific] Sold", toolName)
-                        end
+    local function _0x2f8c4a()
+        local _0x4c2d8f = _0x7b3f5a:get("stats") or {}
+        local _0x2a7e4b = _0x4c2d8f.rarestRoll
+        if not _0x2a7e4b or not _0x2a7e4b.slimeData then return nil end
+        local _0x5f8a2c = _0x2a7e4b.slimeData
+        local _0x3e7a1c = _0x5f8a2c.mutations or {}
+        local _0x7b1c4a = _0x7b3f5a:get("inventory") or {}
+        for _0x1c3f6a, _0x2b7d4e in pairs(_0x7b1c4a) do
+            if type(_0x2b7d4e) == "table" and _0x2b7d4e.id == _0x5f8a2c.id then
+                local _0x4c1f8a = true
+                for _0x2a6d8f, _0x1c4b7a in pairs(_0x3e7a1c) do
+                    if _0x2b7d4e.mutations and _0x2b7d4e.mutations[_0x2a6d8f] ~= _0x1c4b7a then
+                        _0x4c1f8a = false
                         break
                     end
                 end
+                if _0x4c1f8a then return _0x1c3f6a end
             end
         end
-        task.wait(sellSpecific.delay)
+        return nil
     end
-    print("[SellSpecific] Loop ended")
-end
 
-local function sellByMutationLoop()
-    while sellMutation.auto do
-        if #sellMutation.mutations > 0 then
-            local muts = expandAll(sellMutation.mutations, mutationsList)
-            for _, toolName in ipairs(GetBackpackTools()) do
-                local tool = lp.Backpack:FindFirstChild(toolName)
-                if tool then
-                    local mut = tool:GetAttribute("Mutation") or "None"
-                    for _, m in ipairs(muts) do
-                        if mut == m then
-                            local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
-                            if hum then
-                                hum:EquipTool(tool) task.wait(0.2)
-                                InvokeRemote("ref_B_Sell") task.wait(0.2)
-                                hum:UnequipTools()
-                                print("[SellMutation] Sold", toolName, "mutation:", mut)
+    local function _0x7c3f2a()
+        local _0x2a6d8f = {}
+        local _0x1c7e3b = {}
+        local _0x4f7a2c = {}
+        
+        local function _0x3d8f2a(_0x5e1c4a)
+            if type(_0x5e1c4a) ~= "table" or _0x4f7a2c[_0x5e1c4a] then return end
+            _0x4f7a2c[_0x5e1c4a] = true
+            for _0x3a2f8d, _0x2c6f4a in pairs(_0x5e1c4a) do
+                if type(_0x2c6f4a) == "table" then
+                    if _0x2c6f4a.cost then
+                        table.insert(_0x2a6d8f, _0x3a2f8d)
+                        _0x1c7e3b[_0x3a2f8d] = _0x2c6f4a.cost
+                    end
+                    _0x3d8f2a(_0x2c6f4a)
+                end
+            end
+        end
+        
+        _0x3d8f2a(_0x7b4c2e.main)
+        return _0x2a6d8f, _0x1c7e3b
+    end
+
+    local _0x1f4c7a = nil
+    local function _0x3e2c8f()
+        if _0x1f4c7a and _0x1f4c7a.Parent then return _0x1f4c7a end
+        for _, _0x4b7d2a in ipairs(workspace:GetChildren()) do
+            if _0x4b7d2a.Name:match("^Gameplay") then
+                _0x1f4c7a = _0x4b7d2a
+                return _0x4b7d2a
+            end
+        end
+        return nil
+    end
+
+    local _0x2c5d8f
+    local _rayfield_ok, _rayfield_err = pcall(function()
+        local src = game:HttpGet('https://sirius.menu/rayfield')
+        local fn, compileErr = loadstring(src)
+        if not fn then
+            error("Rayfield compile error: " .. tostring(compileErr))
+        end
+        _0x2c5d8f = fn()
+    end)
+
+    if not _rayfield_ok or not _0x2c5d8f then
+        warn("[CactusHub] Failed to load Rayfield UI: " .. tostring(_rayfield_err))
+        local _stubFlags = setmetatable({}, {
+            __index = function(t, k)
+                return rawget(t, k) or { CurrentValue = false, CurrentOption = { "" } }
+            end
+        })
+        _0x2c5d8f = setmetatable({}, {
+            __index = function(t, k)
+                if k == "Flags" then return _stubFlags end
+                return function(...)
+                    return setmetatable({}, {
+                        __index = function(_, _)
+                            return function(...) return setmetatable({}, {
+                                __index = function() return function() return {} end end
+                            }) end
+                        end
+                    })
+                end
+            end
+        })
+        _0x2c5d8f.Flags = _stubFlags
+    end
+
+    pcall(function()
+        local mt = getrawmetatable(game)
+        if not mt then return end
+        local oldNamecall = mt.__namecall
+        if setreadonly then setreadonly(mt, false) end
+        mt.__namecall = newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            if method == "Kick" or method == "kick" then
+                if _0x2c5d8f and _0x2c5d8f.Flags and 
+                   _0x2c5d8f.Flags.SettingsAntiKick and 
+                   _0x2c5d8f.Flags.SettingsAntiKick.CurrentValue then
+                    return nil
+                end
+            end
+            return oldNamecall(self, ...)
+        end)
+        if setreadonly then setreadonly(mt, true) end
+    end)
+
+    local _0x4f2a8c_window = _0x2c5d8f:CreateWindow({
+        Name = "Cactus Hub • discord.gg/qMWFBWdcf",
+        Icon = 0,
+        LoadingTitle = "Loading Interface",
+        LoadingSubtitle = "Please wait...",
+        Theme = "Default",
+        ToggleUIKeybind = "K",
+        DisableRayfieldPrompts = false,
+        DisableBuildWarnings = true,
+        ConfigurationSaving = {
+            Enabled = true,
+            FolderName = "CactusHub",
+            FileName = "Config"
+        },
+        Discord = {
+            Enabled = false,
+            Invite = "",
+            RememberJoins = true
+        },
+        KeySystem = false,
+    })
+
+    local _0x1b6d4a_main = _0x4f2a8c_window:CreateTab("Main", 138602335586757)
+
+    _0x1b6d4a_main:CreateSection("Status")
+
+    local _0x3a2c8f = _0x1b6d4a_main:CreateLabel("FPS: Calculating...")
+    local _0x7d4c2e = _0x1b6d4a_main:CreateLabel("Ping: Calculating...")
+
+    local _0x2d7c4a = 0
+    local _0x1c4d8f = tick()
+    _0x1e5f3d.RenderStepped:Connect(function()
+        _0x2d7c4a = _0x2d7c4a + 1
+        local _0x4a7f2c = tick()
+        if _0x4a7f2c - _0x1c4d8f >= 1 then
+            _0x3a2c8f:Set("FPS: " .. math.floor(_0x2d7c4a / (_0x4a7f2c - _0x1c4d8f)))
+            _0x2d7c4a = 0
+            _0x1c4d8f = _0x4a7f2c
+        end
+    end)
+
+    task.spawn(function()
+        while true do
+            pcall(function()
+                local _0x5d8f2a = game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue()
+                _0x7d4c2e:Set("Ping: " .. math.floor(_0x5d8f2a) .. "ms")
+            end)
+            task.wait(1)
+        end
+    end)
+
+    _0x1b6d4a_main:CreateParagraph({
+        Title = "Enabled By Default",
+        Content = "[+] Anti AFK"
+    })
+
+    _0x1b6d4a_main:CreateParagraph({
+        Title = "Latest Update",
+        Content = "[+] Auto Send & Accept Friend Requests\n[+] Fixed Auto Collect Loot\n[+] Fixed Settings (Optimization Toggles)\n[+] Added Public Webhook in Discord\n[+] Hide Attack & Damage UI\n[+] Bug Fixes"
+    })
+    _0x1b6d4a_main:CreateButton({
+        Name = "Copy Discord Invite",
+        Callback = function()
+            pcall(function() setclipboard("https://discord.gg/qMWFBWdcf") end)
+            _0x2c5d8f:Notify({Title = "Discord", Content = "Link copied to clipboard!", Duration = 3})
+        end,
+    })
+
+    _0x1b6d4a_main:CreateParagraph({
+        Title = "",
+        Content = "Report bugs in the Discord\nhttps://discord.gg/qMWFBWdcf"
+    })
+
+    _0x1b6d4a_main:CreateButton({
+        Name = "Save Config Manually",
+        Callback = function()
+            _0x2c5d8f:SaveConfiguration()
+        end,
+    })
+
+    local _dashboardBusy = false
+    _0x1b6d4a_main:CreateToggle({
+        Name = "Dashboard",
+        CurrentValue = false,
+        Flag = "DashboardToggle",
+        Callback = function(Value)
+            if _dashboardBusy then return end
+            _dashboardBusy = true
+            if Value then
+                task.spawn(function()
+                    local success, err = pcall(function()
+                        loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))()
+                    end)
+                    if not success then
+                        _0x2c5d8f:Notify({Title = "Dashboard", Content = "Feature unavailable on this executor", Duration = 3})
+                    else
+                        _0x2c5d8f:Notify({Title = "Dashboard", Content = "Dashboard enabled!", Duration = 3})
+                    end
+                    _dashboardBusy = false
+                end)
+            else
+                local gui = game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("__MAINHUD__")
+                if gui then
+                    gui:Destroy()
+                end
+                _0x2c5d8f:Notify({Title = "Dashboard", Content = "Dashboard closed!", Duration = 3})
+                _dashboardBusy = false
+            end
+        end,
+    })
+
+    local _0x8c1d4a = _0x4f2a8c_window:CreateTab("Farming", 138602335586757)
+
+    _0x8c1d4a:CreateSection("Zones")
+
+    local ZonesModule = require(_0x3f7a2b:WaitForChild("Source").Game.Items.Zones)
+    local totalZones = ZonesModule.getMaxZone()
+    local zoneOptions = { "Best Unlocked" }
+    for i = 1, totalZones do
+        local zone = ZonesModule.getZone(i)
+        if zone and zone.name then
+            table.insert(zoneOptions, zone.name .. " (Zone " .. i .. ")")
+        else
+            table.insert(zoneOptions, "Zone " .. i)
+        end
+    end
+
+    _0x8c1d4a:CreateDropdown({
+        Name = "Zone Target",
+        Options = zoneOptions,
+        CurrentOption = { "Best Unlocked" },
+        MultipleOptions = false,
+        Flag = "FarmingZoneTarget",
+        Callback = function(option)
+        end,
+    })
+
+    _0x8c1d4a:CreateToggle({
+        Name = "Auto Farm Zone",
+        CurrentValue = false,
+        Flag = "FarmingStayInBestZone",
+        Callback = function(_0x2c4e7a)
+            if _0x2c4e7a then
+                task.spawn(function()
+                    while _0x2c5d8f.Flags.FarmingStayInBestZone and _0x2c5d8f.Flags.FarmingStayInBestZone.CurrentValue do
+                        pcall(function()
+                            local targetOption = _0x2c5d8f.Flags.FarmingZoneTarget.CurrentOption[1]
+                            if targetOption == "Best Unlocked" then
+                                local maxZone = 33
+                                for _0x2e4c7a = maxZone, 1, -1 do
+                                    if not (_0x2c5d8f.Flags.FarmingStayInBestZone and _0x2c5d8f.Flags.FarmingStayInBestZone.CurrentValue) then break end
+                                    local _0x4b8d2a = pcall(_0x2a7e4c.InvokeServer, _0x2a7e4c, "requestTeleportZone", _0x2e4c7a)
+                                    if _0x4b8d2a then
+                                        task.wait(1)
+                                        if (_0x7b3f5a:get("zone") or 1) == _0x2e4c7a then break end
+                                    end
+                                end
+                            else
+                                local zoneNum = tonumber(targetOption:match("Zone (%d+)"))
+                                if zoneNum then
+                                    pcall(_0x2a7e4c.InvokeServer, _0x2a7e4c, "requestTeleportZone", zoneNum)
+                                end
                             end
-                            break
+                        end)
+                        task.wait(10)
+                    end
+                end)
+            end
+        end,
+    })
+
+    _0x8c1d4a:CreateToggle({
+        Name = "Auto Unlock Affordable Zones",
+        CurrentValue = false,
+        Flag = "FarmingUnlockAffordableZones",
+        Callback = function(_0x1c4a7d)
+            if _0x1c4a7d then
+                task.spawn(function()
+                    while _0x2c5d8f.Flags.FarmingUnlockAffordableZones and _0x2c5d8f.Flags.FarmingUnlockAffordableZones.CurrentValue do
+                        pcall(function()
+                            pcall(_0x2a7e4c.InvokeServer, _0x2a7e4c, "requestPurchaseZone")
+                        end)
+                        task.wait(5)
+                    end
+                end)
+            end
+        end,
+    })
+
+    _0x8c1d4a:CreateSection("Slimes")
+
+    _0x8c1d4a:CreateToggle({
+        Name = "Auto Equip Best Slimes",
+        CurrentValue = false,
+        Flag = "FarmingEquipBestSlimes",
+        Callback = function(_0x4c2d8a)
+            if _0x4c2d8a then
+                task.spawn(function()
+                    local _0x3a7c2b = 30
+                    while _0x2c5d8f.Flags.FarmingEquipBestSlimes and _0x2c5d8f.Flags.FarmingEquipBestSlimes.CurrentValue do
+                        pcall(function()
+                            pcall(_0x9c3a2e.InvokeServer, _0x9c3a2e, "requestEquipBest")
+                        end)
+                        task.wait(_0x3a7c2b)
+                        _0x3a7c2b = math.min(_0x3a7c2b * 2, 600)
+                    end
+                end)
+            end
+        end,
+    })
+
+    _0x8c1d4a:CreateToggle({
+        Name = "Auto Feed Best Slime",
+        CurrentValue = false,
+        Flag = "FarmingAutoFeed",
+        Callback = function(_0x1f4c7a) end,
+    })
+
+    task.spawn(function()
+        while task.wait(10) do
+            if _0x2c5d8f.Flags.FarmingAutoFeed and _0x2c5d8f.Flags.FarmingAutoFeed.CurrentValue then
+                pcall(function()
+                    local _0x2b6f8a = _0x2f8c4a()
+                    if _0x2b6f8a then
+                        local _0x3c7e2a = _0x7b3f5a:get("items") or {}
+                        for _0x4d2f8a, _0x5a1c7e in pairs(_0x3c7e2a) do
+                            if type(_0x5a1c7e) == "number" and _0x5a1c7e > 0 then
+                                pcall(_0x8a1d6f.fetch, _0x8a1d6f, "requestUseFood", _0x4d2f8a, _0x2b6f8a, _0x5a1c7e)
+                                task.wait(0.3)
+                            end
+                        end
+                    end
+                end)
+            end
+        end
+    end)
+
+    _0x8c1d4a:CreateToggle({
+        Name = "Auto Transfer XP",
+        CurrentValue = false,
+        Flag = "FarmingTransferXP",
+        Callback = function(_0x2c4f7a) end,
+    })
+
+    _0x8c1d4a:CreateDropdown({
+        Name = "Transfer To",
+        Options = { "Best Slime", "Whole Team" },
+        CurrentOption = { "Best Slime" },
+        MultipleOptions = false,
+        Flag = "FarmingTransferTarget",
+        Callback = function(_0x3c6a2d) end,
+    })
+
+    _0x8c1d4a:CreateDropdown({
+        Name = "Transfer From",
+        Options = { "Unequipped With XP", "All Slimes" },
+        CurrentOption = { "Unequipped With XP" },
+        MultipleOptions = false,
+        Flag = "FarmingTransferSource",
+        Callback = function(_0x1c6f4a) end,
+    })
+
+    task.spawn(function()
+        while task.wait(30) do
+            if _0x2c5d8f.Flags.FarmingTransferXP and _0x2c5d8f.Flags.FarmingTransferXP.CurrentValue then
+                pcall(function()
+                    local inventory = _0x7b3f5a:get("inventory") or {}
+                    local equipped = _0x7b3f5a:get("equipped") or {}
+                    local teamSet = {}
+                    for _, uid in ipairs(equipped) do teamSet[uid] = true end
+                    local targetOption = _0x2c5d8f.Flags.FarmingTransferTarget.CurrentOption[1]
+                    local sourceOption = _0x2c5d8f.Flags.FarmingTransferSource.CurrentOption[1]
+                    local targets = {}
+                    if targetOption == "Best Slime" then
+                        local best = _0x2f8c4a()
+                        if best then targets = { best } end
+                    else
+                        for _, uid in ipairs(equipped) do table.insert(targets, uid) end
+                    end
+                    for _, target in ipairs(targets) do
+                        for uid, data in pairs(inventory) do
+                            if uid ~= target then
+                                local isEquipped = teamSet[uid]
+                                local hasXp = (type(data) == "table" and (data.xp or 0) > 0) or (type(data) == "number" and data > 0)
+                                if sourceOption == "Unequipped With XP" and not isEquipped and hasXp then
+                                    pcall(_0x4e7b2c.fetch, _0x4e7b2c, "requestTransferXp", uid, target)
+                                    task.wait(0.5)
+                                elseif sourceOption == "All Slimes" and hasXp then
+                                    pcall(_0x4e7b2c.fetch, _0x4e7b2c, "requestTransferXp", uid, target)
+                                    task.wait(0.5)
+                                end
+                            end
+                        end
+                    end
+                end)
+            end
+        end
+    end)
+
+    _0x8c1d4a:CreateSection("Rolling")
+
+    _0x8c1d4a:CreateToggle({
+        Name = "Auto Fast Roll",
+        CurrentValue = false,
+        Flag = "FarmingFastRoll",
+        Callback = function(_0x7c2a4e)
+            if _0x7c2a4e then
+                task.spawn(function()
+                    local _0x4a7b2c = require(game:GetService("ReplicatedStorage"):WaitForChild("Source"):WaitForChild("Features"):WaitForChild("Roll"):WaitForChild("RollSlice"))
+                    while _0x2c5d8f.Flags.FarmingFastRoll and _0x2c5d8f.Flags.FarmingFastRoll.CurrentValue do
+                        pcall(function()
+                            game:GetService("ReplicatedStorage"):WaitForChild("Packages"):WaitForChild("_Index"):WaitForChild("leifstout_networker@0.3.1"):WaitForChild("networker"):WaitForChild("_remotes"):WaitForChild("RollService"):WaitForChild("RemoteFunction"):InvokeServer("requestRoll")
+                        end)
+                        task.wait(_0x4a7b2c.rollTime())
+                    end
+                end)
+            end
+        end,
+    })
+
+    _0x8c1d4a:CreateSection("Loot")
+
+    _0x8c1d4a:CreateToggle({
+        Name = "Auto Collect Loot",
+        CurrentValue = false,
+        Flag = "FarmingCollectLoot",
+        Callback = function(_0x3a8c2d)
+            if _0x3a8c2d then
+                task.spawn(function()
+                    print("[CactusHub] Auto Collect Loot started")
+                    while _0x2c5d8f.Flags.FarmingCollectLoot and _0x2c5d8f.Flags.FarmingCollectLoot.CurrentValue do
+                        pcall(function()
+                            for _, folder in ipairs({"Loot", "Debris"}) do
+                                local container = workspace:FindFirstChild(folder)
+                                if container then
+                                    for _, item in ipairs(container:GetChildren()) do
+                                        local id = item:GetAttribute("uniqueId") or item:GetAttribute("id") or item.Name
+                                        if id then
+                                            pcall(function()
+                                                local success = _0x4c2a7e:InvokeServer("requestCollect", id)
+                                                if success then
+                                                    print("[CactusHub] Collected: " .. tostring(item.Name) .. " | ID: " .. tostring(id))
+                                                else
+                                                    print("[CactusHub] Failed to collect: " .. tostring(item.Name))
+                                                end
+                                            end)
+                                        end
+                                    end
+                                end
+                            end
+                        end)
+                        task.wait(0.5)
+                    end
+                    print("[CactusHub] Auto Collect Loot stopped")
+                end)
+            else
+                print("[CactusHub] Auto Collect Loot disabled")
+            end
+        end,
+    })
+
+    local _0x3e2c7a_tab = _0x4f2a8c_window:CreateTab("Game", 82493603309814)
+
+    _0x3e2c7a_tab:CreateSection("Rebirth")
+
+    _0x3e2c7a_tab:CreateToggle({
+        Name = "Auto Rebirth",
+        CurrentValue = false,
+        Flag = "GameAutoRebirth",
+        Callback = function(_0x4a8f2c)
+            if _0x4a8f2c then
+                task.spawn(function()
+                    while _0x2c5d8f.Flags.GameAutoRebirth and _0x2c5d8f.Flags.GameAutoRebirth.CurrentValue do
+                        pcall(function()
+                            local _0x2a7c4e = _0x7b3f5a:get("rebirths") or 0
+                            local _0x5d8f2a = _0x7b3f5a:get("goop") or 0
+                            local _0x1c6a4d = _0x7b3f5a:get("furthestZone") or 0
+                            local _0x3e7c2a = (2 ^ _0x2a7c4e) * 500
+                            local _0x4d8f2b = tonumber(_0x2c5d8f.Flags.GameMinZoneRebirth and _0x2c5d8f.Flags.GameMinZoneRebirth.CurrentValue or 0)
+                            if _0x1c6a4d >= _0x4d8f2b and _0x5d8f2a >= _0x3e7c2a then
+                                pcall(_0x4d8f1b.InvokeServer, _0x4d8f1b, "requestRebirth")
+                            end
+                        end)
+                        task.wait(10)
+                    end
+                end)
+            end
+        end,
+    })
+
+    _0x3e2c7a_tab:CreateInput({
+        Name = "Minimum Zone To Rebirth",
+        CurrentValue = "",
+        PlaceholderText = "e.g. 10",
+        RemoveTextAfterFocusLost = false,
+        Flag = "GameMinZoneRebirth",
+        Callback = function(_0x1d4f8a) end,
+    })
+
+    _0x3e2c7a_tab:CreateSection("Upgrades")
+
+    _0x3e2c7a_tab:CreateToggle({
+        Name = "Auto Upgrade Purchasing",
+        CurrentValue = false,
+        Flag = "GameAutoUpgrade",
+        Callback = function(_0x5c4d2a)
+            if _0x5c4d2a then
+                task.spawn(function()
+                    local _0x2e4c7a, _0x7b3f2a = _0x7c3f2a()
+                    while task.wait(0.5) and _0x2c5d8f.Flags.GameAutoUpgrade and _0x2c5d8f.Flags.GameAutoUpgrade.CurrentValue do
+                        pcall(function()
+                            local _0x8a2c4f = _0x2c5d8f.Flags.GameUpgradeMode and _0x2c5d8f.Flags.GameUpgradeMode.CurrentOption[1] or "All"
+                            local _0x4b2d7e = _0x7b3f5a:get("upgrades") or {}
+                            local _0x6c2f8a = _0x7b3f5a:get("coins") or 0
+                            local _0x1e4a7c = _0x7b3f5a:get("goop") or 0
+                            local _0x3d7e2a = _0x7b3f5a:get("rollCurrency") or 0
+                            for _, _0x2c7e4a in ipairs(_0x2e4c7a) do
+                                if not _0x4b2d7e[_0x2c7e4a] then
+                                    local _0x3f8a2c = _0x7b3f2a[_0x2c7e4a]
+                                    if _0x3f8a2c then
+                                        local _0x5a2c8f = _0x3f8a2c.amount or 0
+                                        local _0x8c1a4d = _0x3f8a2c.currency
+                                        local _0x1f6d2a = _0x8a2c4f == "All"
+                                            or (_0x8a2c4f == "Coins" and _0x8c1a4d == "coins")
+                                            or (_0x8a2c4f == "Goop" and _0x8c1a4d == "goop")
+                                            or (_0x8a2c4f == "Rolls" and _0x8c1a4d == "rollCurrency")
+                                        local _0x7d4c2e = (_0x8c1a4d == "coins" and _0x6c2f8a >= _0x5a2c8f)
+                                            or (_0x8c1a4d == "goop" and _0x1e4a7c >= _0x5a2c8f)
+                                            or (_0x8c1a4d == "rollCurrency" and _0x3d7e2a >= _0x5a2c8f)
+                                        if _0x1f6d2a and _0x7d4c2e then
+                                            local _0x2e6a4c = pcall(_0x5c8f2a.InvokeServer, _0x5c8f2a, "requestUnlock", _0x2c7e4a)
+                                            if _0x2e6a4c then task.wait(0.2) end
+                                        end
+                                    end
+                                end
+                            end
+                        end)
+                    end
+                end)
+            end
+        end,
+    })
+
+    _0x3e2c7a_tab:CreateDropdown({
+        Name = "Upgrade Mode",
+        Options = {"All", "Goop", "Coins", "Rolls"},
+        CurrentOption = {"All"},
+        MultipleOptions = false,
+        Flag = "GameUpgradeMode",
+        Callback = function(_0x4d8c1a) end,
+    })
+
+    _0x3e2c7a_tab:CreateSection("Combat")
+
+    _0x3e2c7a_tab:CreateToggle({
+        Name = "Auto Shoot Enemies",
+        CurrentValue = false,
+        Flag = "CombatAutoShoot",
+        Content = "Auto Shoot is enabled but visual effects will not appear — damage is still dealt.",
+        Callback = function(_0x7a2c4e) end,
+    })
+
+    _0x3e2c7a_tab:CreateDropdown({
+        Name = "Target Priority",
+        Options = {"Closest", "Lowest HP", "Highest HP"},
+        CurrentOption = {"Closest"},
+        MultipleOptions = false,
+        Flag = "CombatTargetPriority",
+        Callback = function(_0x3c6a2d) end,
+    })
+
+    local function _0x1c6f4a_ensureEquipped()
+        local character = _0x9a4b7c.Character
+        if not character then return false end
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if not humanoid then return false end
+        local gun = character:FindFirstChild("SlimeGun") or _0x9a4b7c.Backpack:FindFirstChild("SlimeGun")
+        if gun and gun.Parent ~= character then
+            humanoid:EquipTool(gun)
+        end
+        return gun ~= nil
+    end
+
+    task.spawn(function()
+        while true do
+            _0x1c6f4a_ensureEquipped()
+            task.wait(2)
+        end
+    end)
+
+    local damageUIParent = nil
+    local function getDamageUIParent()
+        if damageUIParent and damageUIParent.Parent then return damageUIParent end
+        local playerGui = _0x9a4b7c.PlayerGui
+        local screenGui = playerGui:FindFirstChild("SlimeGunHUD")
+        if screenGui then
+            local container = screenGui:FindFirstChild("PopupContainer")
+            if container then
+                damageUIParent = container
+                return container
+            end
+        end
+        return nil
+    end
+
+    task.spawn(function()
+        local ReplicatedStorage = game:GetService("ReplicatedStorage")
+        local Players = game:GetService("Players")
+        local player = Players.LocalPlayer
+        
+        local GameplayServiceClient = require(ReplicatedStorage.Source.Features.Gameplay.GameplayServiceClient)
+        local GoopGunServiceClient = require(ReplicatedStorage.Source.Features.GoopGun.GoopGunServiceClient)
+        local GoopGunServiceUtils = require(ReplicatedStorage.Source.Features.GoopGun.GoopGunServiceUtils)
+        local DataService = require(ReplicatedStorage.Packages.DataService).client
+        
+        local screenGui = Instance.new("ScreenGui")
+        screenGui.Name = "SlimeGunHUD"
+        screenGui.ResetOnSpawn = false
+        screenGui.IgnoreGuiInset = true
+        screenGui.DisplayOrder = 999
+        screenGui.Parent = player.PlayerGui
+        
+        local container = Instance.new("Frame")
+        container.Name = "PopupContainer"
+        container.Position = UDim2.new(1, -276, 0, 48)
+        container.Size = UDim2.new(0, 260, 1, -96)
+        container.BackgroundTransparency = 1
+        container.Parent = screenGui
+        
+        local layout = Instance.new("UIListLayout")
+        layout.SortOrder = Enum.SortOrder.LayoutOrder
+        layout.VerticalAlignment = Enum.VerticalAlignment.Top
+        layout.Padding = UDim.new(0, 6)
+        layout.Parent = container
+        
+        local COLORS = {
+            normal   = Color3.fromRGB(120, 220, 255),
+            big      = Color3.fromRGB(255, 180, 50),
+            huge     = Color3.fromRGB(255, 80, 80),
+            shiny    = Color3.fromRGB(255, 230, 50),
+            inverted = Color3.fromRGB(180, 80, 255),
+        }
+        
+        local function getMutationColor(mutations)
+            if not mutations then return COLORS.normal end
+            if mutations.inverted then return COLORS.inverted end
+            if mutations.huge     then return COLORS.huge end
+            if mutations.shiny    then return COLORS.shiny end
+            if mutations.big      then return COLORS.big end
+            return COLORS.normal
+        end
+        
+        local function getEnemyLabel(enemy)
+            local tier = "Lv." .. tostring(enemy.enemyId or 1)
+            local uid = "#" .. tostring(enemy.uniqueId or "?")
+            if enemy.mutations then
+                local tags = {}
+                for mut in pairs(enemy.mutations) do
+                    table.insert(tags, mut:sub(1,1):upper() .. mut:sub(2))
+                end
+                if #tags > 0 then
+                    return table.concat(tags, " ") .. " Slime " .. tier .. " " .. uid
+                end
+            end
+            return "Slime " .. tier .. " " .. uid
+        end
+        
+        local activePopups = {}
+        local popupOrder = 0
+        
+        local TweenService = game:GetService("TweenService")
+        
+        local function pulseFrame(frame, accentColor)
+            TweenService:Create(frame, TweenInfo.new(0.06, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                BackgroundColor3 = accentColor
+            }):Play()
+            task.delay(0.06, function()
+                TweenService:Create(frame, TweenInfo.new(0.12, Enum.EasingStyle.Quad), {
+                    BackgroundColor3 = Color3.fromRGB(10, 10, 18)
+                }):Play()
+            end)
+        end
+        
+        local function destroyPopup(uid)
+            local p = activePopups[uid]
+            if not p then return end
+            activePopups[uid] = nil
+            local frame = p.frame
+            TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quint), {
+                BackgroundTransparency = 1,
+                Size = UDim2.new(1, 0, 0, 0)
+            }):Play()
+            for _, lbl in ipairs(p.labels) do
+                TweenService:Create(lbl, TweenInfo.new(0.3), { TextTransparency = 1 }):Play()
+            end
+            TweenService:Create(p.accent, TweenInfo.new(0.3), { BackgroundTransparency = 1 }):Play()
+            task.delay(0.3, function() frame:Destroy() end)
+        end
+        
+        local function scheduleExpiry(uid)
+            local p = activePopups[uid]
+            if not p then return end
+            if p.expireTask then task.cancel(p.expireTask) end
+            p.expireTask = task.delay(2.5, function()
+                destroyPopup(uid)
+            end)
+        end
+        
+        local function createPopup(uid, enemyLabel, dmg, hpAfter, accentColor)
+            popupOrder += 1
+        
+            local frame = Instance.new("Frame")
+            frame.Size = UDim2.new(1, 0, 0, 52)
+            frame.BackgroundColor3 = Color3.fromRGB(10, 10, 18)
+            frame.BackgroundTransparency = 0.1
+            frame.BorderSizePixel = 0
+            frame.ClipsDescendants = true
+            frame.LayoutOrder = popupOrder
+            frame.Parent = container
+        
+            Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
+        
+            local accent = Instance.new("Frame")
+            accent.Size = UDim2.new(0, 3, 1, 0)
+            accent.BackgroundColor3 = accentColor
+            accent.BorderSizePixel = 0
+            accent.Parent = frame
+            Instance.new("UICorner", accent).CornerRadius = UDim.new(0, 10)
+        
+            local nameLabel = Instance.new("TextLabel")
+            nameLabel.Position = UDim2.new(0, 14, 0, 5)
+            nameLabel.Size = UDim2.new(1, -90, 0, 18)
+            nameLabel.BackgroundTransparency = 1
+            nameLabel.Text = enemyLabel
+            nameLabel.TextColor3 = Color3.fromRGB(220, 220, 230)
+            nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+            nameLabel.Font = Enum.Font.GothamBold
+            nameLabel.TextSize = 13
+            nameLabel.Parent = frame
+        
+            local hpLabel = Instance.new("TextLabel")
+            hpLabel.Position = UDim2.new(0, 14, 0, 25)
+            hpLabel.Size = UDim2.new(1, -90, 0, 14)
+            hpLabel.BackgroundTransparency = 1
+            hpLabel.Text = "HP: " .. tostring(math.max(0, math.floor(hpAfter)))
+            hpLabel.TextColor3 = Color3.fromRGB(130, 130, 150)
+            hpLabel.TextXAlignment = Enum.TextXAlignment.Left
+            hpLabel.Font = Enum.Font.Gotham
+            hpLabel.TextSize = 11
+            hpLabel.Parent = frame
+        
+            local hitsLabel = Instance.new("TextLabel")
+            hitsLabel.Position = UDim2.new(0, 14, 0, 38)
+            hitsLabel.Size = UDim2.new(1, -90, 0, 12)
+            hitsLabel.BackgroundTransparency = 1
+            hitsLabel.Text = "1 hit  •  " .. tostring(math.floor(dmg)) .. " total dmg"
+            hitsLabel.TextColor3 = Color3.fromRGB(90, 90, 110)
+            hitsLabel.TextXAlignment = Enum.TextXAlignment.Left
+            hitsLabel.Font = Enum.Font.Gotham
+            hitsLabel.TextSize = 10
+            hitsLabel.Parent = frame
+        
+            local dmgLabel = Instance.new("TextLabel")
+            dmgLabel.Position = UDim2.new(1, -80, 0, 0)
+            dmgLabel.Size = UDim2.new(0, 72, 1, 0)
+            dmgLabel.BackgroundTransparency = 1
+            dmgLabel.Text = "-" .. tostring(math.floor(dmg))
+            dmgLabel.TextColor3 = accentColor
+            dmgLabel.TextXAlignment = Enum.TextXAlignment.Right
+            dmgLabel.Font = Enum.Font.GothamBold
+            dmgLabel.TextSize = 20
+            dmgLabel.Parent = frame
+        
+            frame.Position = UDim2.new(-1, 0, 0, 0)
+            TweenService:Create(frame, TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+                Position = UDim2.new(0, 0, 0, 0)
+            }):Play()
+        
+            activePopups[uid] = {
+                frame      = frame,
+                accent     = accent,
+                labels     = { nameLabel, hpLabel, hitsLabel, dmgLabel },
+                hpLabel    = hpLabel,
+                hitsLabel  = hitsLabel,
+                dmgLabel   = dmgLabel,
+                totalDmg   = dmg,
+                hits       = 1,
+                accentColor = accentColor,
+                expireTask = nil,
+            }
+        
+            scheduleExpiry(uid)
+        end
+        
+        local function updatePopup(uid, dmg, hpAfter)
+            local p = activePopups[uid]
+            if not p then return end
+        
+            p.totalDmg = p.totalDmg + dmg
+            p.hits = p.hits + 1
+        
+            p.hpLabel.Text   = "HP: " .. tostring(math.max(0, math.floor(hpAfter)))
+            p.hitsLabel.Text = p.hits .. " hits  •  " .. tostring(math.floor(p.totalDmg)) .. " total dmg"
+            p.dmgLabel.Text  = "-" .. tostring(math.floor(p.totalDmg))
+        
+            pulseFrame(p.frame, p.accentColor)
+            scheduleExpiry(uid)
+        end
+        
+        local function selectTarget()
+            local gameplay = GameplayServiceClient.gameplay
+            if not gameplay then return nil end
+            local character = player.Character
+            if not character then return nil end
+            local rootPart = character:FindFirstChild("HumanoidRootPart")
+            if not rootPart then return nil end
+        
+            local priority = _0x2c5d8f.Flags.CombatTargetPriority.CurrentOption[1]
+            local best, bestVal = nil, nil
+        
+            for uniqueId, enemy in pairs(gameplay.enemies) do
+                if enemy.health and enemy.health > 0 then
+                    if priority == "Closest" then
+                        local dist = (enemy.pos - rootPart.Position).Magnitude
+                        if bestVal == nil or dist < bestVal then
+                            bestVal = dist
+                            best = uniqueId
+                        end
+                    elseif priority == "Lowest HP" then
+                        if bestVal == nil or enemy.health < bestVal then
+                            bestVal = enemy.health
+                            best = uniqueId
+                        end
+                    elseif priority == "Highest HP" then
+                        if bestVal == nil or enemy.health > bestVal then
+                            bestVal = enemy.health
+                            best = uniqueId
                         end
                     end
                 end
             end
+            return best
         end
-        task.wait(sellMutation.delay)
-    end
-    print("[SellMutation] Loop ended")
-end
+        
+        while true do
+            if _0x2c5d8f.Flags.CombatAutoShoot and _0x2c5d8f.Flags.CombatAutoShoot.CurrentValue then
+                local character = player.Character
+                if character and character:FindFirstChildOfClass("Humanoid") and character:FindFirstChildOfClass("Humanoid").Health > 0 then
+                    pcall(function()
+                        _0x1c6f4a_ensureEquipped()
+                        local upgrades = DataService:get("upgrades") or {}
+                        local fireRate = GoopGunServiceUtils.getFireRate(upgrades)
+                        local targetId = selectTarget()
+                        if targetId then
+                            local gameplay = GameplayServiceClient.gameplay
+                            local enemy = gameplay and gameplay.enemies[targetId]
+                            local hpBefore = enemy and enemy.health or 0
+                            local enemyLabel = enemy and getEnemyLabel(enemy) or "Slime"
+                            local accentColor = enemy and getMutationColor(enemy.mutations) or COLORS.normal
+        
+                            local wrapper = GoopGunServiceClient.wrapper
+                            if wrapper and wrapper.onEnemyHit then
+                                wrapper.onEnemyHit(targetId)
+                            end
+        
+                            task.wait()
+                            local hpAfter = enemy and enemy.health or 0
+                            local dmg = hpBefore - hpAfter
+        
+                            if dmg > 0 then
+                                if activePopups[targetId] then
+                                    updatePopup(targetId, dmg, hpAfter)
+                                else
+                                    createPopup(targetId, enemyLabel, dmg, hpAfter, accentColor)
+                                end
+                            end
+                        end
+                        task.wait(fireRate)
+                    end)
+                else
+                    task.wait(1)
+                end
+            else
+                task.wait(0.5)
+            end
+        end
+    end)
 
-local function upgradeSelectedSlots()
-    for _, n in ipairs(upgradeSlots.selected) do
-        FireRemote("rev_B_Upgrade", n)
-        task.wait(0.1)
-        print("[UpgradeSlots] Upgraded slot", n)
+    local function _0x2c7f4a(_0x3e2c4a)
+        return _0x3e2c4a.PrimaryPart
+            or _0x3e2c4a:FindFirstChild("HumanoidRootPart")
+            or _0x3e2c4a:FindFirstChild("RootPart")
+            or _0x3e2c4a:FindFirstChildWhichIsA("BasePart")
     end
-end
 
-local function upgradeRarityLoop()
-    while upgradeRarity.auto do
-        if #upgradeRarity.rarities > 0 then
-            local rars = expandAll(upgradeRarity.rarities, raritiesList)
-            local plot = GetPlot()
-            if plot then
-                for _, slot in ipairs(GetSlots(plot)) do
-                    local placed = slot.part:FindFirstChild("PlacedPart")
-                    if placed then
-                        local id = placed:GetAttribute("ID")
-                        for _, rar in ipairs(rars) do
-                            for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
-                                if id == bname then
-                                    FireRemote("rev_B_Upgrade", slot.num)
-                                    task.wait(0.1)
-                                    print("[UpgradeRarity] Upgraded slot", slot.num, "ID:", id)
-                                    break
+    local _0x3a8c2d = false
+    local _0x5d2c4a    = false
+    local _0x4f2c7a   = false
+
+    local _0x8c1a3d = {}
+    local _0x2e4b7a = {}
+    local _0x1a6c4d  = 0
+
+    local function _0x9b4c2e()
+        local _0x1c4d8f = tick()
+        if _0x1c4d8f - _0x1a6c4d < 0.5 then return end
+        _0x1a6c4d = _0x1c4d8f
+
+        local _0x3e2c7a = _0x3e2c8f()
+        if not _0x3e2c7a then return end
+
+        local _0x4d2f8a = _0x3e2c7a:FindFirstChild("Enemies")
+        local _0x2b7c4e = _0x3e2c7a:FindFirstChild("Slimes")
+
+        _0x8c1a3d = {}
+        if _0x4d2f8a then
+            for _, _0x1c4a7e in ipairs(_0x4d2f8a:GetChildren()) do
+                if _0x1c4a7e:IsA("Model") then
+                    local _0x3e8d2a = _0x2c7f4a(_0x1c4a7e)
+                    if _0x3e8d2a then
+                        table.insert(_0x8c1a3d, {model = _0x1c4a7e, root = _0x3e8d2a})
+                    end
+                end
+            end
+        end
+
+        _0x2e4b7a = {}
+        if _0x2b7c4e then
+            for _, _0x1b7d2a in ipairs(_0x2b7c4e:GetChildren()) do
+                if _0x1b7d2a:IsA("Model") then
+                    local _0x2a7e4c = _0x2c7f4a(_0x1b7d2a)
+                    if _0x2a7e4c then
+                        table.insert(_0x2e4b7a, {model = _0x1b7d2a, root = _0x2a7e4c, id = _0x1b7d2a.Name})
+                    end
+                end
+            end
+        end
+    end
+
+    local _0x1c6f4a = nil
+
+    local function _0x5a8f2c(_0x3e2a6c)
+        if not _0x3e2a6c or not _0x3e2a6c.Parent then return false end
+        local _0x4d8f1a = _0x2c7f4a(_0x3e2a6c)
+        if not _0x4d8f1a then return false end
+        local _0x2e4b7a = _0x3e2a6c:FindFirstChildOfClass("Humanoid")
+        if _0x2e4b7a and _0x2e4b7a.Health <= 0 then return false end
+        return true
+    end
+
+    local function _0x3c4e2a(_0x1b4c7d)
+        local _0xgameplay = _0x3e2c8f()
+        if not _0xgameplay then return nil end
+        local _0x1a4b7c = _0xgameplay:FindFirstChild("Enemies")
+        if not _0x1a4b7c then return nil end
+        local _0x3d6f2a, _0x2c8e4a = nil, math.huge
+        for _, _0x1c7a2e in ipairs(_0x1a4b7c:GetChildren()) do
+            if _0x1c7a2e:IsA("Model") and _0x5a8f2c(_0x1c7a2e) then
+                local _0x5a3b8c = _0x2c7f4a(_0x1c7a2e)
+                if _0x5a3b8c then
+                    local _0x1f6c4a = (_0x5a3b8c.Position - _0x1b4c7d).Magnitude
+                    if _0x1f6c4a < _0x2c8e4a then
+                        _0x2c8e4a = _0x1f6c4a
+                        _0x3d6f2a     = _0x1c7a2e
+                    end
+                end
+            end
+        end
+        return _0x3d6f2a
+    end
+
+    _0x3e2c7a_tab:CreateSection("Floating Enemies")
+
+    _0x3e2c7a_tab:CreateToggle({
+        Name = "Float Enemies Around Player",
+        CurrentValue = false,
+        Flag = "GameFloatEnemies",
+        Callback = function(_0x3c6a2d)
+            _0x5d2c4a = _0x3c6a2d
+        end,
+    })
+
+    _0x3e2c7a_tab:CreateSlider({
+        Name = "Float Radius",
+        Range = {5, 25},
+        Increment = 1,
+        Suffix = "studs",
+        CurrentValue = 12,
+        Flag = "GameFloatRadius",
+        Callback = function(_0x2a7b4c) end,
+    })
+
+    _0x3e2c7a_tab:CreateSlider({
+        Name = "Float Rotation Speed",
+        Range = {0.5, 5},
+        Increment = 0.1,
+        Suffix = "x",
+        CurrentValue = 1,
+        Flag = "GameFloatSpeed",
+        Callback = function(_0x4c2d7e) end,
+    })
+
+    _0x3e2c7a_tab:CreateSlider({
+        Name = "Float Wave Speed",
+        Range = {1, 10},
+        Increment = 0.5,
+        Suffix = "x",
+        CurrentValue = 3,
+        Flag = "GameFloatWaveSpeed",
+        Callback = function(_0x1c5f8a) end,
+    })
+
+    _0x3e2c7a_tab:CreateSlider({
+        Name = "Float Wave Height",
+        Range = {0.5, 5},
+        Increment = 0.5,
+        Suffix = "studs",
+        CurrentValue = 1.5,
+        Flag = "GameFloatWaveHeight",
+        Callback = function(_0x2d7e4a) end,
+    })
+
+    _0x3e2c7a_tab:CreateSection("Attack System")
+
+    _0x3e2c7a_tab:CreateToggle({
+        Name = "Attack Floating Enemies",
+        CurrentValue = false,
+        Flag = "GameAttackEnemies",
+        Callback = function(_0x8c3e2a)
+            _0x4f2c7a = _0x8c3e2a
+        end,
+    })
+
+    _0x3e2c7a_tab:CreateSlider({
+        Name = "Attack Range",
+        Range = {10, 50},
+        Increment = 1,
+        Suffix = "studs",
+        CurrentValue = 25,
+        Flag = "GameAttackRange",
+        Callback = function(_0x4c2e6a) end,
+    })
+
+    _0x3e2c7a_tab:CreateSlider({
+        Name = "Attack Lunge Speed",
+        Range = {5, 30},
+        Increment = 1,
+        Suffix = "x",
+        CurrentValue = 15,
+        Flag = "GameAttackLungeSpeed",
+        Callback = function(_0x3a7c2e) end,
+    })
+
+    local _0x4b2d7e = {}
+
+    local function _0x7c3e2a(_0x1f4c8a, _0x3a8d2c)
+        if not _0x1f4c8a or not _0x1f4c8a.Parent then return end
+        pcall(function()
+            local _0x1c5f8a = _0x1f4c8a.PrimaryPart or _0x1f4c8a:FindFirstChildWhichIsA("BasePart")
+            if _0x1c5f8a and not _0x1c5f8a:IsA("UnionOperation") then
+                _0x1f4c8a:PivotTo(_0x3a8d2c)
+            end
+        end)
+    end
+
+    _0x1e5f3d.RenderStepped:Connect(function()
+        if not _0x5d2c4a and not _0x4f2c7a then return end
+
+        _0x9b4c2e()
+
+        local _0x1c4f7a = _0x9a4b7c.Character
+        local _0x7c2e4a  = _0x1c4f7a and _0x1c4f7a:FindFirstChild("HumanoidRootPart")
+        if not _0x7c2e4a then return end
+
+        local _0x1a4c7d         = tick()
+        local _0x2a7b4c    = _0x2c5d8f.Flags.GameFloatRadius    and _0x2c5d8f.Flags.GameFloatRadius.CurrentValue    or 12
+        local _0x3c2e7a  = _0x2c5d8f.Flags.GameFloatSpeed     and _0x2c5d8f.Flags.GameFloatSpeed.CurrentValue     or 1
+        local _0x4d7e2a = _0x2c5d8f.Flags.GameFloatWaveSpeed and _0x2c5d8f.Flags.GameFloatWaveSpeed.CurrentValue or 3
+        local _0x5a2c8f= _0x2c5d8f.Flags.GameFloatWaveHeight and _0x2c5d8f.Flags.GameFloatWaveHeight.CurrentValue or 1.5
+
+        if _0x5d2c4a and #_0x8c1a3d > 0 then
+            local _0x1b7c4d = #_0x8c1a3d
+            for _0x1a3c6d, _0x3e7a2c in ipairs(_0x8c1a3d) do
+                local _0x2c7e4a        = ((_0x1a3c6d / _0x1b7c4d) * math.pi * 2) + (_0x1a4c7d * _0x3c2e7a)
+                local _0x4d2f8a = math.sin((_0x1a4c7d * _0x4d7e2a) + _0x1a3c6d) * _0x5a2c8f
+
+                local _0x3f6a2c = _0x7c2e4a.Position + Vector3.new(
+                    math.cos(_0x2c7e4a) * _0x2a7b4c,
+                    _0x4d2f8a + 2,
+                    math.sin(_0x2c7e4a) * _0x2a7b4c
+                )
+
+                local _0x2e4c7a = (_0x3f6a2c - _0x7c2e4a.Position).Unit
+                _0x7c3e2a(_0x3e7a2c.model, CFrame.lookAt(_0x3f6a2c, _0x3f6a2c + _0x2e4c7a))
+            end
+        end
+
+        if _0x4f2c7a and #_0x2e4b7a > 0 and #_0x8c1a3d > 0 then
+            local _0x3c6d2a = _0x2c5d8f.Flags.GameAttackRange     and _0x2c5d8f.Flags.GameAttackRange.CurrentValue     or 25
+            local _0x6b2c4f  = _0x2c5d8f.Flags.GameAttackLungeSpeed and _0x2c5d8f.Flags.GameAttackLungeSpeed.CurrentValue or 15
+
+            local _0x1e4c6a = #_0x2e4b7a
+            for _0x1a3c6d, _0x2e4c7a in ipairs(_0x2e4b7a) do
+                local _0x1c4d8f   = ((_0x1a3c6d / _0x1e4c6a) * math.pi * 2) + (_0x1a4c7d * _0x3c2e7a)
+                local _0x7d2c4e = math.sin((_0x1a4c7d * _0x4d7e2a) + _0x1a3c6d) * _0x5a2c8f
+
+                local _0x3f6a2c = _0x7c2e4a.Position + Vector3.new(
+                    math.cos(_0x1c4d8f) * _0x2a7b4c,
+                    _0x7d2c4e + 2,
+                    math.sin(_0x1c4d8f) * _0x2a7b4c
+                )
+
+                local _0x5c2d7a, _0x1c7d3a = nil, _0x3c6d2a
+                for _, _0x1c4a7e in ipairs(_0x8c1a3d) do
+                    local _0x2a6d4c = (_0x3f6a2c - _0x1c4a7e.root.Position).Magnitude
+                    if _0x2a6d4c < _0x1c7d3a then
+                        _0x1c7d3a  = _0x2a6d4c
+                        _0x5c2d7a = _0x1c4a7e
+                    end
+                end
+
+                local _0x7e2a4c  = _0x3f6a2c
+                local _0x1b6d4a = _0x3f6a2c + (_0x3f6a2c - _0x7c2e4a.Position).Unit
+
+                if _0x5c2d7a then
+                    if not _0x4b2d7e[_0x2e4c7a.id] then
+                        _0x4b2d7e[_0x2e4c7a.id] = _0x1a4c7d
+                    end
+
+                    local _0x5f2c7a   = _0x1a4c7d - _0x4b2d7e[_0x2e4c7a.id]
+                    local _0x8c3e2a = math.sin(_0x5f2c7a * _0x6b2c4f)
+
+                    if _0x8c3e2a > 0 then
+                        _0x7e2a4c   = _0x3f6a2c:Lerp(_0x5c2d7a.root.Position, _0x8c3e2a * 0.85)
+                        _0x1b6d4a = _0x5c2d7a.root.Position
+                    else
+                        _0x4b2d7e[_0x2e4c7a.id] = _0x1a4c7d
+                    end
+                else
+                    _0x4b2d7e[_0x2e4c7a.id] = nil
+                end
+
+                _0x7c3e2a(_0x2e4c7a.model, CFrame.lookAt(_0x7e2a4c, _0x1b6d4a))
+            end
+        end
+    end)
+
+    local _0x4c2e7a_tab = _0x4f2a8c_window:CreateTab("Misc", 96334002390551)
+
+    _0x4c2e7a_tab:CreateSection("Codes & Rewards")
+
+    _0x4c2e7a_tab:CreateToggle({
+        Name = "Auto Redeem Codes",
+        CurrentValue = false,
+        Flag = "MiscRedeemCodes",
+        Callback = function(_0x3e7a2c)
+            if _0x3e7a2c then
+                task.spawn(function()
+                    local _0x1c4a7d = {
+                        "gullible",
+                        "test",
+                        "goingBananas",
+                        "AAisComing",
+                        "Sliming",
+                    }
+                    while _0x2c5d8f.Flags.MiscRedeemCodes and _0x2c5d8f.Flags.MiscRedeemCodes.CurrentValue do
+                        pcall(function()
+                            for _, _0x2a7b4c in ipairs(_0x1c4a7d) do
+                                pcall(_0x1b6d8f.InvokeServer, _0x1b6d8f, "redeem", _0x2a7b4c)
+                                task.wait(0.5)
+                            end
+                        end)
+                        task.wait(300)
+                    end
+                end)
+            end
+        end,
+    })
+
+    _0x4c2e7a_tab:CreateToggle({
+        Name = "Auto Claim Offline Earnings",
+        CurrentValue = false,
+        Flag = "MiscClaimOffline",
+        Callback = function(_0x2d4c7e)
+            if _0x2d4c7e then
+                task.spawn(function()
+                    while _0x2c5d8f.Flags.MiscClaimOffline and _0x2c5d8f.Flags.MiscClaimOffline.CurrentValue do
+                        pcall(function()
+                            pcall(_0x3e7a2c_remote.InvokeServer, _0x3e7a2c_remote, "requestClaim")
+                        end)
+                        task.wait(60)
+                    end
+                end)
+            end
+        end,
+    })
+
+    _0x4c2e7a_tab:CreateToggle({
+        Name = "Auto Claim Index Rewards",
+        CurrentValue = false,
+        Flag = "MiscClaimIndex",
+        Callback = function(_0x8c3a2e)
+            if _0x8c3a2e then
+                task.spawn(function()
+                    local function _0x3c2e7a()
+                        local _0x1a4b7c = _0x7b3f5a:get("index")
+                        if not _0x1a4b7c or not _0x1a4b7c.categories then return end
+                        for _0x5c3e2a, _0x7c3f2a in pairs(_0x3e6a1d) do
+                            local _0x3f6a2c = _0x1a4b7c.categories[_0x5c3e2a]
+                            if _0x3f6a2c then
+                                local _0x9b2c4e = _0x3f6a2c.unlocked or {}
+                                local _0x2e7a4c = 0
+                                for _, _0x4d8f2a in pairs(_0x9b2c4e) do
+                                    if _0x4d8f2a == true then _0x2e7a4c = _0x2e7a4c + 1 end
+                                end
+                                local _0x1c3d6a = _0x3f6a2c.claimedRewards or {}
+                                for _, _0x5a8f2c in ipairs(_0x7c3f2a) do
+                                    if _0x2e7a4c >= _0x5a8f2c.req and not _0x1c3d6a[_0x5a8f2c.key] then
+                                        pcall(_0x6f1a8d.InvokeServer, _0x6f1a8d, "requestClaimReward", _0x5c3e2a)
+                                        task.wait(0.5)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    while _0x2c5d8f.Flags.MiscClaimIndex and _0x2c5d8f.Flags.MiscClaimIndex.CurrentValue do
+                        pcall(_0x3c2e7a)
+                        task.wait(60)
+                    end
+                end)
+            end
+        end,
+    })
+
+    _0x4c2e7a_tab:CreateSection("Consumables")
+
+    _0x4c2e7a_tab:CreateToggle({
+        Name = "Auto Use Potions",
+        CurrentValue = false,
+        Flag = "MiscUsePotions",
+        Callback = function(_0x2b4c7a)
+            if _0x2b4c7a then
+                task.spawn(function()
+                    while task.wait(1) and _0x2c5d8f.Flags.MiscUsePotions and _0x2c5d8f.Flags.MiscUsePotions.CurrentValue do
+                        pcall(function()
+                            local _0x1f4a7c   = _0x7b3f5a:get("boosts") or {}
+                            local _0x4c2d7e = _0x2c5d8f.Flags.MiscPotionTypes and _0x2c5d8f.Flags.MiscPotionTypes.CurrentOption or {}
+                            for _, _0x2c4f8a in ipairs(_0x4c2d7e) do
+                                local _0x1a4b7c = _0x1f4a7c[_0x2c4f8a]
+                                if _0x1a4b7c and (_0x1a4b7c.amount or 0) > 0 then
+                                    pcall(_0x8b1d4f.InvokeServer, _0x8b1d4f, "requestUseBoost", _0x2c4f8a)
+                                end
+                            end
+                        end)
+                    end
+                end)
+            end
+        end,
+    })
+
+    _0x4c2e7a_tab:CreateDropdown({
+        Name = "Potion Types",
+        Options = _0x4a8d2f,
+        CurrentOption = {_0x4a8d2f[1]},
+        MultipleOptions = true,
+        Flag = "MiscPotionTypes",
+        Callback = function(_0x3c2f7a) end,
+    })
+
+    _0x4c2e7a_tab:CreateToggle({
+        Name = "Auto Use Dice & Items",
+        CurrentValue = false,
+        Flag = "MiscUseDice",
+        Callback = function(_0x3e7a2c)
+            if _0x3e7a2c then
+                task.spawn(function()
+                    while task.wait(1) and _0x2c5d8f.Flags.MiscUseDice and _0x2c5d8f.Flags.MiscUseDice.CurrentValue do
+                        pcall(function()
+                            local _0x1c4d7a    = _0x7b3f5a:get("items") or {}
+                            local _0x5c2f7a = _0x2c5d8f.Flags.MiscDiceTypes and _0x2c5d8f.Flags.MiscDiceTypes.CurrentOption or {}
+                            for _, _0x2f4a7c in ipairs(_0x5c2f7a) do
+                                local _0x1b4c6a = _0x9d4c1e[_0x2f4a7c]
+                                if _0x1b4c6a and (_0x1c4d7a[_0x1b4c6a] or 0) > 0 then
+                                    pcall(_0x9c3a2e.InvokeServer, _0x9c3a2e, "requestUseItem", _0x1b4c6a)
+                                end
+                            end
+                        end)
+                    end
+                end)
+            end
+        end,
+    })
+
+    do
+        local _0x7a3c2e = {}
+        for _, _0x1f4c8a in ipairs(_0x7c2e5a) do
+            table.insert(_0x7a3c2e, _0x3f8a2b[_0x1f4c8a])
+        end
+        _0x4c2e7a_tab:CreateDropdown({
+            Name = "Dice & Item Types",
+            Options = _0x7a3c2e,
+            CurrentOption = {_0x7a3c2e[1]},
+            MultipleOptions = true,
+            Flag = "MiscDiceTypes",
+            Callback = function(_0x1a6c4d) end,
+        })
+    end
+
+    local _0x2a7b4c_tab = _0x4f2a8c_window:CreateTab("Webhook", 84577758013974)
+
+    _0x2a7b4c_tab:CreateSection("Warning")
+
+    _0x2a7b4c_tab:CreateParagraph({
+        Title = "⚠️ WARNING",
+        Content = "WEBHOOK WILL ONLY WORK IF YOU MANUALLY ENABLE AUTO ROLL IN GAME\nPLEASE DISABLE FAST ROLL (from Farming Tab) if you have it enabled"
+    })
+
+    _0x2a7b4c_tab:CreateSection("Configuration")
+
+    _0x2a7b4c_tab:CreateToggle({
+        Name = "Enable Webhook",
+        CurrentValue = false,
+        Flag = "WebhookEnabled",
+        Callback = function(_0x2b4c7a) end,
+    })
+
+    local _0x1d3f6a = ""
+    _0x2a7b4c_tab:CreateInput({
+        Name = "Webhook URL",
+        CurrentValue = "",
+        PlaceholderText = "Paste your Discord webhook URL",
+        RemoveTextAfterFocusLost = false,
+        Flag = "WebhookURLDisplay",
+        Callback = function(_0x3f6a2c)
+            if _0x3f6a2c and _0x3f6a2c:match("^https://discord") then
+                _0x1d3f6a = _0x3f6a2c
+                local _0x2a7c4e = string.rep("•", #_0x3f6a2c - 6) .. _0x3f6a2c:sub(-6)
+                _0x2c5d8f:Notify({Title = "Webhook", Content = "URL saved: " .. _0x2a7c4e, Duration = 3})
+            end
+        end,
+    })
+
+    _0x2a7b4c_tab:CreateInput({
+        Name = "User ID",
+        CurrentValue = "",
+        PlaceholderText = "Discord User ID",
+        RemoveTextAfterFocusLost = false,
+        Flag = "WebhookUserID",
+        Callback = function(_0x1d4f8a) end,
+    })
+
+    _0x2a7b4c_tab:CreateInput({
+        Name = "Minimum Chance To Send",
+        CurrentValue = "",
+        PlaceholderText = "e.g. 1B or 1000000000",
+        RemoveTextAfterFocusLost = false,
+        Flag = "WebhookMinChance",
+        Callback = function(_0x3c2e7a) end,
+    })
+
+    local function parseChanceString(str)
+        if not str or str == "" then return nil end
+        str = str:upper():gsub(",", "")
+        local num, suffix = str:match("^(%d+%.?%d*)([KMBTQ]?)$")
+        if not num then
+            num = str:match("^(%d+%.?%d*)$")
+            if not num then return nil end
+            suffix = ""
+        end
+        local value = tonumber(num)
+        if not value then return nil end
+        if suffix == "K" then value = value * 1e3
+        elseif suffix == "M" then value = value * 1e6
+        elseif suffix == "B" then value = value * 1e9
+        elseif suffix == "T" then value = value * 1e12
+        elseif suffix == "Q" then
+            if str:find("QD") or str:find("Qd") then value = value * 1e15
+            elseif str:find("QN") or str:find("Qn") then value = value * 1e18
+            else value = value * 1e15
+            end
+        end
+        return value
+    end
+
+    _0x2a7b4c_tab:CreateButton({
+        Name = "Test Webhook",
+        Callback = function()
+            if _0x1d3f6a == "" then
+                _0x2c5d8f:Notify({Title = "Webhook", Content = "Please paste a Webhook URL first.", Duration = 4})
+                return
+            end
+            if not _0x2c5d8f.Flags.WebhookEnabled.CurrentValue then
+                _0x2c5d8f:Notify({Title = "Webhook", Content = "Please enable Webhook first.", Duration = 4})
+                return
+            end
+            local _0x2c6e4a  = _0x2c5d8f.Flags.WebhookUserID.CurrentValue
+            local _0x4d7c2a = _0x2f6a1c(_0x2c6e4a)
+            local _0x3e4a2c, _0x1a6b4c = pcall(function()
+                request({
+                    Url = _0x1d3f6a,
+                    Method = "POST",
+                    Headers = {["Content-Type"] = "application/json"},
+                    Body = _0x2b6f8e:JSONEncode({
+                        content  = _0x4d7c2a,
+                        username = "Cactus Hub",
+                        avatar_url = WEBHOOK_AVATAR,
+                        embeds   = {{
+                            title       = "✅ Webhook Test",
+                            description = "Your webhook is working correctly!",
+                            color       = 0x2ecc71,
+                        }}
+                    })
+                })
+            end)
+            if not _0x3e4a2c then
+                _0x2c5d8f:Notify({
+                    Title   = "Webhook",
+                    Content = "Failed: " .. (_0x1a6b4c or "unknown"),
+                    Duration = 4,
+                })
+            else
+                _0x2c5d8f:Notify({
+                    Title   = "Webhook",
+                    Content = "Test sent successfully!",
+                    Duration = 4,
+                })
+            end
+        end,
+    })
+
+    _0x2a7b4c_tab:CreateSection("Filters")
+
+    _0x2a7b4c_tab:CreateToggle({
+        Name = "Send All Slimes",
+        CurrentValue = false,
+        Flag = "WebhookSendAll",
+        Callback = function(_0x2c4a7d) end,
+    })
+
+    _0x2a7b4c_tab:CreateToggle({
+        Name = "Send New Slimes Only",
+        CurrentValue = false,
+        Flag = "WebhookSendNew",
+        Callback = function(_0x4b2c7a) end,
+    })
+
+    _0x2a7b4c_tab:CreateToggle({
+        Name = "Send Mutated Slimes",
+        CurrentValue = false,
+        Flag = "WebhookSendMutated",
+        Callback = function(_0x3f6a2c) end,
+    })
+
+    _0x2a7b4c_tab:CreateDropdown({
+        Name = "Mutations Filter",
+        Options = {"All", "Shiny", "Big", "Huge", "Inverted"},
+        CurrentOption = {"All"},
+        MultipleOptions = true,
+        Flag = "WebhookMutations",
+        Callback = function(_0x1c7d3e) end,
+    })
+
+    local _0x7b2c4f = nil
+
+    local function _0x4f2a8c_filter(_0x3c6a2d)
+        local _0x5d2f8a = _0x2c5d8f.Flags.WebhookMutations and _0x2c5d8f.Flags.WebhookMutations.CurrentOption or {"All"}
+        local _0x1c7e4a = false
+        for _, _0x3e4c2a in ipairs(_0x5d2f8a) do
+            if _0x3e4c2a == "All" then
+                _0x1c7e4a = true
+                break
+            end
+        end
+        if _0x1c7e4a then return true end
+        if not _0x3c6a2d then return false end
+        local _0x1d4f8a = _0x8c3d2a(_0x3c6a2d)
+        for _, _0x3a8f2c in ipairs(_0x5d2f8a) do
+            if string.lower(_0x3a8f2c) == _0x1d4f8a then return true end
+        end
+        return false
+    end
+
+    task.spawn(function()
+        while true do
+            task.wait(0.1)
+
+            if not _0x2c5d8f.Flags.WebhookEnabled or not _0x2c5d8f.Flags.WebhookEnabled.CurrentValue then
+
+            elseif _0x1d3f6a ~= "" then
+                if not _0x8d1f4a or type(_0x8d1f4a.rollResults) ~= "function" then
+                    task.wait(1)
+                else
+                    local _0x4f7a2c, _0x2c6d8a = pcall(_0x8d1f4a.rollResults)
+                    if not _0x4f7a2c or type(_0x2c6d8a) ~= "table" or #_0x2c6d8a == 0 then
+                        task.wait(0.5)
+                    else
+                        local _0x1a6d4f = _0x9b2c4e(_0x2c6d8a)
+                        if _0x1a6d4f ~= _0x7b2c4f then
+                            _0x7b2c4f = _0x1a6d4f
+
+                            local _0x7e2a4c = _0x2c5d8f.Flags.WebhookSendAll and _0x2c5d8f.Flags.WebhookSendAll.CurrentValue
+                            local _0x1f4a3c = _0x2c5d8f.Flags.WebhookSendNew and _0x2c5d8f.Flags.WebhookSendNew.CurrentValue
+                            local _0x3c8a2d = _0x2c5d8f.Flags.WebhookSendMutated and _0x2c5d8f.Flags.WebhookSendMutated.CurrentValue
+                            local minChanceStr = _0x2c5d8f.Flags.WebhookMinChance.CurrentValue
+                            local minChanceNum = parseChanceString(minChanceStr)
+
+                            for _, _0x3f8c2a in ipairs(_0x2c6d8a) do
+                                local _0x2c4e7a = _0x7c5f2a(_0x3f8c2a)
+                                if _0x2c4e7a then
+                                    local _0x1d4c8f = tostring(_0x2c4e7a.id or "")
+                                    if _0x1d4c8f ~= "" then
+                                        local _0x4d2c8f = type(_0x2c4e7a.mutations) == "table" and next(_0x2c4e7a.mutations) ~= nil and _0x2c4e7a.mutations or nil
+                                        local _0x2a3b7c, _0x3e7a2c = pcall(_0x6f3a2c.getSlime, _0x1d4c8f)
+                                        local _0x1d8f2a = _0x2a3b7c and _0x3e7a2c or nil
+
+                                        local _0x1b4c7d = _0x4d2c8f ~= nil
+                                        local _0x7c3d2a = _0x1a7c4f(_0x1d4c8f, _0x4d2c8f)
+
+                                        local _0x3e2c7a = _0x7e2a4c or (_0x1f4a3c and _0x7c3d2a) or (_0x3c8a2d and _0x1b4c7d and _0x4f2a8c_filter(_0x4d2c8f))
+
+                                        if _0x3e2c7a and minChanceNum then
+                                            local odds = _0x1d8f2a and _0x1d8f2a.odds or 0
+                                            local chanceValue = odds > 0 and (1 / odds) or 0
+                                            if chanceValue > minChanceNum then
+                                                _0x3e2c7a = false
+                                            end
+                                        end
+
+                                        if _0x3e2c7a then
+                                            local _0x2a6d4c = _0x2c5d8f.Flags.WebhookUserID.CurrentValue
+                                            local _0x1c6d4f = _0x1a6d4f .. "_" .. _0x1d4c8f .. "_" .. tostring(_0x4d2c8f and _0x1b7e4d.getIds(_0x4d2c8f) or "")
+                                            task.spawn(_0x4c7e2a, _0x1d4c8f, _0x1d8f2a, _0x4d2c8f, _0x1d3f6a, _0x2a6d4c, _0x1c6d4f)
+                                        end
+                                    end
                                 end
                             end
                         end
@@ -536,987 +1986,1022 @@ local function upgradeRarityLoop()
                 end
             end
         end
-        task.wait(0.15)
-    end
-    print("[UpgradeRarity] Loop ended")
-end
+    end)
 
-print("[HTTP] Request function:", requestFunc and "available" or "nil")
+    local _0x7d2c4a_tab = _0x4f2a8c_window:CreateTab("Settings", 122930981612451)
 
-local function formatChance(chancePercent)
-    if not chancePercent or chancePercent <= 0 then return "Unknown" end
-    local inverse = 100 / chancePercent
-    if inverse >= 1000000 then
-        return string.format("1 in %.0f,000,000", inverse / 1000000)
-    else
-        return string.format("1 in %s", string.reverse(string.gsub(string.reverse(tostring(math.floor(inverse))), "(%d%d%d)", "%1,")))
-    end
-end
+    _0x7d2c4a_tab:CreateSection("System")
 
-local function findRarityFromName(itemName)
-    if not RarityData.BrainrotPool then
-        print("[Rarity] No BrainrotPool")
-        return "Unknown"
-    end
-    for rarity, pool in pairs(RarityData.BrainrotPool) do
-        for _, entry in ipairs(pool) do
-            if entry.Name == itemName then
-                print("[Rarity] Found", itemName, "->", rarity)
-                return rarity
-            end
-        end
-    end
-    print("[Rarity] Not found:", itemName, "-> Unknown")
-    return "Unknown"
-end
-
-local function getBrainrotInfo(bname, forcedRarity)
-    local rarity = "Unknown"
-    local chance = 0
-    if RarityData.BrainrotPool then
-        for r, pool in pairs(RarityData.BrainrotPool) do
-            for _, item in ipairs(pool) do
-                if item.Name == bname then
-                    rarity = r
-                    chance = item.Chance or 0
-                    break
+    _0x7d2c4a_tab:CreateToggle({
+        Name = "Anti AFK",
+        CurrentValue = true,
+        Flag = "SettingsAntiAFK",
+        Callback = function(Value)
+            local ok, err = pcall(function()
+                local conns = getconnections(_0x9a4b7c.Idled)
+                if Value then
+                    for _, x in pairs(conns) do
+                        pcall(function() x:Disable() end)
+                    end
+                else
+                    for _, x in pairs(conns) do
+                        pcall(function() x:Enable() end)
+                    end
                 end
+            end)
+            if not ok then
+                warn("[CactusHub] getconnections error: " .. tostring(err))
             end
-            if rarity ~= "Unknown" then break end
-        end
-    end
-    if forcedRarity then
-        rarity = forcedRarity
-    end
-    if rarity == "Unknown" and EntitiesData.Brainrots and EntitiesData.Brainrots[bname] then
-        rarity = EntitiesData.Brainrots[bname].Rarity or "Unknown"
-    end
-    local rc = RarityData.Colors and RarityData.Colors[rarity]
-    local color = rc and (math.floor(rc.R * 255) * 65536 + math.floor(rc.G * 255) * 256 + math.floor(rc.B * 255)) or 0x00BFFF
-    local speed = WaveData[rarity] and WaveData[rarity].Speed or "?"
-    local assetId = nil
-    if EntitiesData.Brainrots and EntitiesData.Brainrots[bname] then
-        local img = EntitiesData.Brainrots[bname].Image
-        if type(img) == "string" then assetId = tonumber(img:match("rbxassetid://(%d+)")) end
-    end
-    print("[BrainrotInfo]", bname, "rarity=", rarity, "chance=", chance, "speed=", speed)
-    return {rarity = rarity, chance = chance, chanceFormatted = formatChance(chance), color = color, speed = speed, assetId = assetId}
-end
-
-local function getThumbnail(assetId)
-    if not assetId or not requestFunc then
-        print("[Thumbnail] Skipped, no assetId or requestFunc")
-        return nil
-    end
-    local url = ("https://thumbnails.roblox.com/v1/assets?assetIds=%d&size=420x420&format=Png"):format(assetId)
-    print("[Thumbnail] Fetching", url)
-    local ok, res = pcall(requestFunc, {
-        Url = url,
-        Method = "GET",
+        end,
     })
-    if ok and res and res.Success then
-        local ok2, data = pcall(function() return HttpSvc:JSONDecode(res.Body) end)
-        if ok2 and data and data.data and data.data[1] then
-            local imgUrl = data.data[1].imageUrl
-            print("[Thumbnail] Success:", imgUrl)
-            return imgUrl
-        else
-            print("[Thumbnail] Failed to decode response")
-        end
-    else
-        print("[Thumbnail] Request failed:", ok, res)
-    end
-    return nil
-end
 
-local function sendWebhook(bname, mutation, earnedValue, forcedRarity)
-    print("[Webhook] Called for", bname, "mutation:", mutation, "earned:", earnedValue, "forcedRarity:", forcedRarity)
-    if not WH.enabled then
-        print("[Webhook] Skipped: not enabled")
-        return
-    end
-    if WH.url == "" then
-        print("[Webhook] Skipped: no URL")
-        return
-    end
-    if not requestFunc then
-        print("[Webhook] Skipped: no requestFunc")
-        return
-    end
-    mutation = mutation or "None"
-    if WH.mode == "MutatedOnly" and (mutation == "None" or mutation == "") then
-        print("[Webhook] Skipped: MutatedOnly filter, mutation=", mutation)
-        return
-    end
-    if WH.minEarn and earnedValue and earnedValue < WH.minEarn then
-        print("[Webhook] Skipped: minEarn filter, earned=", earnedValue, "min=", WH.minEarn)
-        return
-    end
-    local info = getBrainrotInfo(bname, forcedRarity)
-    if WH.mode == "RarityOnly" and #WH.rarities > 0 then
-        local rars = expandAll(WH.rarities, raritiesList)
-        local ok = false
-        for _, r in ipairs(rars) do if r == info.rarity then ok = true break end end
-        if not ok then
-            print("[Webhook] Skipped: RarityOnly filter, rarity=", info.rarity)
-            return
-        end
-    end
-    if #WH.mutations > 0 then
-        local muts = expandAll(WH.mutations, mutationsList)
-        local ok = false
-        for _, m in ipairs(muts) do if m == mutation then ok = true break end end
-        if not ok then
-            print("[Webhook] Skipped: Mutation filter, mutation=", mutation)
-            return
-        end
-    end
-    if #WH.specifics > 0 then
-        local specs = expandAll(WH.specifics, allBrainrots)
-        local ok = false
-        for _, s in ipairs(specs) do if s == bname then ok = true break end end
-        if not ok then
-            print("[Webhook] Skipped: Specific filter, brainrot=", bname)
-            return
-        end
-    end
-    local mutationText = ""
-    if mutation ~= "None" and mutation ~= "" then
-        local md = MutationData.Buffs and MutationData.Buffs[mutation]
-        local mul = md and md.Value or 1
-        mutationText = string.format("\n✨ Mutation: **%s** (x%.1f)", mutation, mul)
-    end
-    local description = string.format("||%s|| got a **%s %s**!%s", lp.Name, info.rarity, bname, mutationText)
-    local embed = {
-        title = "🎲 NEW BRAINROT CAPTURED",
-        description = description,
-        color = info.color,
-        fields = {
-            {name = "🌀 Rarity", value = info.rarity, inline = true},
-            {name = "🍀 Chance", value = info.chanceFormatted, inline = true},
-            {name = "⚡ Speed", value = tostring(info.speed), inline = true},
-        },
-        timestamp = DateTime.now():ToIsoDate(),
+    _0x7d2c4a_tab:CreateToggle({
+        Name = "Anti Kick",
+        CurrentValue = false,
+        Flag = "SettingsAntiKick",
+        Callback = function(_0x8c3a2e) end,
+    })
+
+    _0x7d2c4a_tab:CreateToggle({
+        Name = "Auto Rejoin On Disconnect",
+        CurrentValue = false,
+        Flag = "SettingsAutoRejoin",
+        Callback = function(_0x2d7c4a) end,
+    })
+
+    _0x7d2c4a_tab:CreateToggle({
+        Name = "Auto Friend Requests",
+        CurrentValue = false,
+        Flag = "AutoFriend",
+        Callback = function(value)
+            if value then
+                task.spawn(function()
+                    while _0x2c5d8f.Flags.AutoFriend and _0x2c5d8f.Flags.AutoFriend.CurrentValue do
+                        pcall(function()
+                            local players = game:GetService("Players"):GetChildren()
+                            for _, p in ipairs(players) do
+                                pcall(function()
+                                    _0x9a4b7c:RequestFriendship(p)
+                                end)
+                                task.wait(1)
+                            end
+                        end)
+                        task.wait(600)
+                    end
+                end)
+            end
+        end,
+    })
+    _0x7d2c4a_tab:CreateLabel("( I'm not sure if it works )")
+
+    _0x7d2c4a_tab:CreateSection("Advanced Optimization")
+
+    local _optConnections = {}
+    local _optApplied = false
+
+    local CHEAP_MATERIAL = Enum.Material.SmoothPlastic
+    local OPT_VISUAL_TYPES = {
+        ParticleEmitter=true, Trail=true, Beam=true, Fire=true,
+        Smoke=true, Sparkles=true, SurfaceAppearance=true,
+        Highlight=true, SelectionBox=true, SelectionSphere=true, Atmosphere=true,
     }
-    local thumb = getThumbnail(info.assetId)
-    if thumb then embed.thumbnail = {url = thumb} end
-    local payload = {
-        username = "Cactus Hub",
-        avatar_url = "https://media.discordapp.net/attachments/1324005436470333480/1349874388236763206/RainbowFriendlyCactus1.png?ex=6a1426bd&is=6a12d53d&hm=adc011c12e097b4238f08364c0ffbd6f30c9eff3f51b7706219b6c8cba76932d&=&format=png",
-        embeds = {embed},
+    local OPT_LIGHTING_TYPES = {
+        BloomEffect=true, BlurEffect=true, ColorCorrectionEffect=true,
+        DepthOfFieldEffect=true, SunRaysEffect=true, PixelateEffect=true,
+        FilmGrainEffect=true, Atmosphere=true, Sky=true,
     }
-    if WH.pingUID ~= "" then payload.content = "<@" .. WH.pingUID .. ">" end
-    task.spawn(function()
-        local ok, res = pcall(requestFunc, {
-            Url = WH.url,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = HttpSvc:JSONEncode(payload),
-        })
-        if ok then
-            print("[Webhook] Sent successfully, response body:", res and res.Body or "nil")
-        else
-            print("[Webhook] Failed to send:", res)
-        end
-    end)
-end
 
-local function sendTestWebhook()
-    print("[TestWebhook] Called")
-    if not WH.enabled or WH.url == "" then
-        print("[TestWebhook] Not enabled or no URL")
-        Rayfield:Notify({Title = "Webhook", Content = "Enable webhook and enter a URL first.", Duration = 3})
-        return
+    local function _optSafeDestroy(obj)
+        if obj and obj.Parent then obj:Destroy() end
     end
-    if not requestFunc then
-        print("[TestWebhook] No HTTP function")
-        Rayfield:Notify({Title = "Webhook", Content = "No HTTP function available.", Duration = 4})
-        return
+
+    local function _optTryHidden(obj, prop, val)
+        if sethiddenproperty then pcall(sethiddenproperty, obj, prop, val) end
     end
-    local payload = {
-        username = "Cactus Hub",
-        avatar_url = "https://media.discordapp.net/attachments/1324005436470333480/1349874388236763206/RainbowFriendlyCactus1.png?ex=6a1426bd&is=6a12d53d&hm=adc011c12e097b4238f08364c0ffbd6f30c9eff3f51b7706219b6c8cba76932d&=&format=png",
-        embeds = {{
-            title = "Cactus Hub - Test Ping",
-            description = ("Webhook works for ||%s||!"):format(lp.Name),
-            color = 0x57F287,
-            footer = {text = "Cactus Hub"},
-            timestamp = DateTime.now():ToIsoDate(),
-        }}
-    }
-    if WH.pingUID ~= "" then payload.content = "<@" .. WH.pingUID .. ">" end
-    task.spawn(function()
-        local ok, res = pcall(requestFunc, {
-            Url = WH.url,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = HttpSvc:JSONEncode(payload),
-        })
-        if ok then
-            print("[TestWebhook] Sent, response:", res and res.Body or "nil")
-            Rayfield:Notify({Title = "Webhook", Content = "Test ping sent!", Duration = 3})
-        else
-            print("[TestWebhook] Error:", res)
-            Rayfield:Notify({Title = "Error", Content = tostring(res), Duration = 5})
+
+    local function _optApplyInstance(v)
+        local cn = v.ClassName
+        if OPT_VISUAL_TYPES[cn] then _optSafeDestroy(v) return end
+        if cn == "Decal" or cn == "Texture" then v.Transparency = 1 return end
+        if cn == "SpecialMesh" then v.TextureId = "" return end
+        if cn == "PointLight" or cn == "SpotLight" or cn == "SurfaceLight" then v.Enabled = false return end
+        if v:IsA("BasePart") then
+            v.CastShadow = false
+            v.Reflectance = 0
+            pcall(function() v.Material = CHEAP_MATERIAL end)
+            if not v:IsA("TriangleMeshPart") then
+                _optTryHidden(v, "RenderFidelity", 2)
+            end
         end
-    end)
-end
-
-lp.Backpack.ChildAdded:Connect(function(tool)
-    if not tool:IsA("Tool") then return end
-    task.wait(1.1)
-    local mutation = tool:GetAttribute("Mutation") or "None"
-    local brainrotName = tool.Name
-    local webhookRarity = findRarityFromName(brainrotName)
-    print("[Backpack] New tool:", brainrotName, "mutation:", mutation, "rarity:", webhookRarity)
-    sendWebhook(brainrotName, mutation, nil, webhookRarity)
-end)
-
-local Window = Rayfield:CreateWindow({
-    Name = "Cactus Hub • discord.gg/qMWFBWdcf",
-    LoadingTitle = "Cactus Hub",
-    LoadingSubtitle = "by Cactus",
-    Theme = "Default",
-    ConfigurationSaving = {
-        Enabled = true,
-        FolderName = "CactusHub",
-        FileName = "Config"
-    },
-    KeySystem = false,
-})
-
-local mainTab = Window:CreateTab("Main", 94483582151513)
-
-local fpsLabel = mainTab:CreateLabel("FPS: --")
-local pingLabel = mainTab:CreateLabel("Ping: --")
-
-local fpsCount = 0
-local fpsLast = tick()
-RunSvc.RenderStepped:Connect(function()
-    fpsCount = fpsCount + 1
-    local now = tick()
-    if now - fpsLast >= 1 then
-        fpsLabel:Set("FPS: " .. fpsCount)
-        fpsCount = 0
-        fpsLast = now
     end
-end)
 
-task.spawn(function()
-    while true do
-        local pingValue = math.floor(lp:GetNetworkPing() * 1000)
-        pingLabel:Set("Ping: " .. pingValue .. "ms")
-        task.wait(5)
+    local function _optLighting()
+        local L = game:GetService("Lighting")
+        L.GlobalShadows = false
+        L.FogEnd = 100000
+        L.FogStart = 100000
+        L.Brightness = 1
+        L.Ambient = Color3.fromRGB(180, 180, 180)
+        L.OutdoorAmbient = Color3.fromRGB(180, 180, 180)
+        L.ShadowSoftness = 0
+        L.EnvironmentDiffuseScale = 0
+        L.EnvironmentSpecularScale = 0
+        _optTryHidden(L, "Technology", 0)
+        for _, c in ipairs(L:GetChildren()) do
+            if OPT_LIGHTING_TYPES[c.ClassName] then c:Destroy() end
+        end
+        local terrain = workspace:FindFirstChildOfClass("Terrain")
+        if terrain then
+            pcall(function()
+                local clouds = terrain:FindFirstChildOfClass("Clouds")
+                if clouds then clouds:Destroy() end
+                terrain.WaterWaveSize = 0
+                terrain.WaterWaveSpeed = 0
+                terrain.WaterReflectance = 0
+                terrain.WaterTransparency = 1
+            end)
+        end
+        table.insert(_optConnections, L.ChildAdded:Connect(function(child)
+            if OPT_LIGHTING_TYPES[child.ClassName] then
+                task.defer(child.Destroy, child)
+            end
+        end))
     end
-end)
 
-mainTab:CreateSection("Release")
-mainTab:CreateParagraph({Title = "⚡ Features", Content = "• Auto Farm Kick\n• Auto Collect & Sell\n• Auto Place & Remove\n• Auto Upgrade & Shop\n• Discord Webhook"})
-mainTab:CreateParagraph({Title = "🛡️ Anti-AFK", Content = "Permanently disabled. You won't be kicked."})
-
-mainTab:CreateSection("Utilities")
-mainTab:CreateButton({
-    Name = "Copy Discord Invite",
-    Flag = "CopyDiscordInvite",
-    Callback = function()
-        local success = false
-        if _setclipboard then
-            success = pcall(_setclipboard, "https://discord.gg/qMWFBWdcf")
-        end
-        if success then Rayfield:Notify({Title = "Copied", Content = "Discord invite copied.", Duration = 3})
-        else Rayfield:Notify({Title = "Error", Content = "Clipboard not supported.", Duration = 3}) end
-    end,
-})
-
-local farmingTab = Window:CreateTab("Farming", 123674526631914)
-
-farmingTab:CreateSection("Kick Settings")
-farmingTab:CreateDropdown({
-    Name = "Kick Accuracy Mode",
-    Options = {"custom", "50-60", "60-70", "70-80", "80-90", "90-100"},
-    CurrentOption = "custom",
-    Flag = "KickMode",
-    Callback = function(opt) kickConfig.mode = opt print("[KickMode] Set to", opt) end,
-})
-farmingTab:CreateSlider({
-    Name = "Custom Kick Accuracy", Range = {0, 100}, Increment = 1, Suffix = "%",
-    CurrentValue = 99,
-    Flag = "CustomKickAccuracy",
-    Callback = function(v) kickConfig.scale = v / 100 print("[CustomKick] Set to", v, "%") end,
-})
-farmingTab:CreateParagraph({
-    Title = "⚠️ WARNING",
-    Content = "Using 99% too many times can trigger anti-cheat. Use lower ranges for safety.",
-})
-farmingTab:CreateToggle({
-    Name = "Start Auto Farm", CurrentValue = false,
-    Flag = "AutoFarm",
-    Callback = function(v)
-        kickConfig.running = v
-        print("[AutoFarm] Toggled", v)
-        if v then
-            if kickConfig.loop then task.cancel(kickConfig.loop) end
-            kickConfig.loop = task.spawn(autoKickLoop)
-        else
-            if kickConfig.loop then task.cancel(kickConfig.loop) kickConfig.loop = nil end
-        end
-    end,
-})
-
-farmingTab:CreateSection("Auto Place")
-farmingTab:CreateDropdown({
-    Name = "Specific Brainrots", Options = brainrots_with_all, Multi = true,
-    Flag = "PlaceSpecificBrainrots",
-    Callback = function(sel) placeConfig.specifics = sel print("[PlaceSpecific] Selected", #sel, "items") end,
-})
-farmingTab:CreateDropdown({
-    Name = "Rarities", Options = rarities_with_all, Multi = true,
-    Flag = "PlaceRarities",
-    Callback = function(sel) placeConfig.rarities = sel print("[PlaceRarities] Selected", #sel, "rarities") end,
-})
-farmingTab:CreateSlider({
-    Name = "Place Delay", Range = {0.1, 5}, Increment = 0.1, Suffix = "s",
-    CurrentValue = 0.5,
-    Flag = "PlaceDelay",
-    Callback = function(v) placeConfig.delay = v print("[PlaceDelay] Set to", v) end,
-})
-farmingTab:CreateToggle({
-    Name = "Auto Place", CurrentValue = false,
-    Flag = "AutoPlace",
-    Callback = function(v)
-        placeConfig.auto = v
-        print("[AutoPlace] Toggled", v)
-        if v then
-            if placeConfig.loop then task.cancel(placeConfig.loop) end
-            placeConfig.loop = task.spawn(autoPlaceLoop)
-        else
-            if placeConfig.loop then task.cancel(placeConfig.loop) placeConfig.loop = nil end
-        end
-    end,
-})
-
-farmingTab:CreateSection("Auto Remove")
-farmingTab:CreateDropdown({
-    Name = "Specific Brainrots", Options = brainrots_with_all, Multi = true,
-    Flag = "RemoveSpecificBrainrots",
-    Callback = function(sel) removeConfig.specifics = sel print("[RemoveSpecific] Selected", #sel, "items") end,
-})
-farmingTab:CreateDropdown({
-    Name = "Rarities", Options = rarities_with_all, Multi = true,
-    Flag = "RemoveRarities",
-    Callback = function(sel) removeConfig.rarities = sel print("[RemoveRarities] Selected", #sel, "rarities") end,
-})
-farmingTab:CreateSlider({
-    Name = "Remove Delay", Range = {0.1, 5}, Increment = 0.1, Suffix = "s",
-    CurrentValue = 0.5,
-    Flag = "RemoveDelay",
-    Callback = function(v) removeConfig.delay = v print("[RemoveDelay] Set to", v) end,
-})
-farmingTab:CreateToggle({
-    Name = "Auto Remove", CurrentValue = false,
-    Flag = "AutoRemove",
-    Callback = function(v)
-        removeConfig.auto = v
-        print("[AutoRemove] Toggled", v)
-        if v then
-            if removeConfig.loop then task.cancel(removeConfig.loop) end
-            removeConfig.loop = task.spawn(autoRemoveLoop)
-        else
-            if removeConfig.loop then task.cancel(removeConfig.loop) removeConfig.loop = nil end
-        end
-    end,
-})
-
-local bcTab = Window:CreateTab("Brainrots & Cash", 96942169425973)
-
-bcTab:CreateSection("Auto Collect All")
-bcTab:CreateToggle({
-    Name = "Auto Collect All Slots", CurrentValue = false,
-    Flag = "AutoCollectAllSlots",
-    Callback = function(v)
-        collectConfig.enabled = v
-        print("[AutoCollectAll] Toggled", v)
-        if v then
-            if collectConfig.loop then task.cancel(collectConfig.loop) end
-            collectConfig.loop = task.spawn(autoCollectLoop)
-        else
-            if collectConfig.loop then task.cancel(collectConfig.loop) collectConfig.loop = nil end
-        end
-    end,
-})
-bcTab:CreateSlider({
-    Name = "Collect Interval", Range = {0.1, 10}, Increment = 0.1, Suffix = "s",
-    CurrentValue = 1,
-    Flag = "CollectInterval",
-    Callback = function(v) collectConfig.delay = v print("[CollectInterval] Set to", v) end,
-})
-
-bcTab:CreateSection("Collect by Slot")
-bcTab:CreateButton({
-    Name = "Refresh Slots",
-    Flag = "RefreshSlots",
-    Callback = refreshSlotMaps,
-})
-slotCollect.dropdown = bcTab:CreateDropdown({
-    Name = "Select Slots", Options = {"Press Refresh first"}, Multi = true,
-    Flag = "SlotCollectSelected",
-    Callback = function(sel)
-        local nums = {}
-        for _, lbl in ipairs(sel) do
-            if slotCollect.map[lbl] then table.insert(nums, slotCollect.map[lbl]) end
-        end
-        slotCollect.selected = nums
-        print("[SlotCollectSelected] Selected", #nums, "slots")
-    end,
-})
-bcTab:CreateToggle({
-    Name = "Auto Collect Selected Slots", CurrentValue = false,
-    Flag = "AutoCollectSelectedSlots",
-    Callback = function(v)
-        slotCollect.auto = v
-        print("[AutoCollectSelected] Toggled", v)
-        if v then
-            if slotCollect.loop then task.cancel(slotCollect.loop) end
-            slotCollect.loop = task.spawn(autoSlotCollectLoop)
-        else
-            if slotCollect.loop then task.cancel(slotCollect.loop) slotCollect.loop = nil end
-        end
-    end,
-})
-bcTab:CreateSlider({
-    Name = "Slot Collect Interval", Range = {0.1, 10}, Increment = 0.1, Suffix = "s",
-    CurrentValue = 1,
-    Flag = "SlotCollectInterval",
-    Callback = function(v) slotCollect.delay = v print("[SlotCollectInterval] Set to", v) end,
-})
-
-bcTab:CreateSection("Collect by Rarity")
-bcTab:CreateDropdown({
-    Name = "Select Rarities", Options = rarities_with_all, Multi = true,
-    Flag = "CollectRarities",
-    Callback = function(sel) rarityCollect.rarities = sel print("[CollectRarities] Selected", #sel, "rarities") end,
-})
-bcTab:CreateToggle({
-    Name = "Auto Collect by Rarity", CurrentValue = false,
-    Flag = "AutoCollectByRarity",
-    Callback = function(v)
-        rarityCollect.auto = v
-        print("[AutoCollectByRarity] Toggled", v)
-        if v then
-            if rarityCollect.loop then task.cancel(rarityCollect.loop) end
-            rarityCollect.loop = task.spawn(autoRarityCollectLoop)
-        else
-            if rarityCollect.loop then task.cancel(rarityCollect.loop) rarityCollect.loop = nil end
-        end
-    end,
-})
-bcTab:CreateSlider({
-    Name = "Rarity Collect Interval", Range = {0.1, 10}, Increment = 0.1, Suffix = "s",
-    CurrentValue = 1,
-    Flag = "RarityCollectInterval",
-    Callback = function(v) rarityCollect.delay = v print("[RarityCollectInterval] Set to", v) end,
-})
-
-bcTab:CreateSection("Quick Sell")
-bcTab:CreateButton({
-    Name = "Sell Equipped",
-    Flag = "SellEquipped",
-    Callback = function()
-        local char = lp.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local function _optCharacter(character)
+        if not character then return end
+        local hum = character:FindFirstChildOfClass("Humanoid")
         if hum then
-            hum:UnequipTools() task.wait(0.2)
-            FireRemote("rev_S_Interact", 1)
-            print("[SellEquipped] Executed")
+            hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+            hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+            hum.NameDisplayDistance = 0
+            hum.HealthDisplayDistance = 0
         end
-    end,
-})
-bcTab:CreateButton({
-    Name = "Sell All Brainrots",
-    Flag = "SellAllBrainrots",
-    Callback = function()
-        InvokeRemote("ref_B_SellAll")
-        print("[SellAll] Executed")
-    end,
-})
-
-bcTab:CreateSection("Sell by Rarity")
-bcTab:CreateDropdown({
-    Name = "Select Rarities", Options = rarities_with_all, Multi = true,
-    Flag = "SellRarities",
-    Callback = function(sel) sellRarity.rarities = sel print("[SellRarities] Selected", #sel, "rarities") end,
-})
-bcTab:CreateToggle({
-    Name = "Auto Sell by Rarity", CurrentValue = false,
-    Flag = "AutoSellByRarity",
-    Callback = function(v)
-        sellRarity.auto = v
-        print("[AutoSellByRarity] Toggled", v)
-        if v then
-            if sellRarity.loop then task.cancel(sellRarity.loop) end
-            sellRarity.loop = task.spawn(sellByRarityLoop)
-        else
-            if sellRarity.loop then task.cancel(sellRarity.loop) sellRarity.loop = nil end
+        for _, v in ipairs(character:GetDescendants()) do
+            local cn = v.ClassName
+            if OPT_VISUAL_TYPES[cn] then
+                pcall(v.Destroy, v)
+            elseif v:IsA("BasePart") then
+                v.CastShadow = false
+                v.Reflectance = 0
+                pcall(function() v.Material = CHEAP_MATERIAL end)
+            elseif cn == "Decal" or cn == "Texture" then
+                v.Transparency = 1
+            elseif cn == "SpecialMesh" then
+                v.TextureId = ""
+            elseif cn == "Accessory" then
+                pcall(v.Destroy, v)
+            end
         end
-    end,
-})
-bcTab:CreateSlider({
-    Name = "Sell Interval", Range = {1, 60}, Increment = 1, Suffix = "s",
-    CurrentValue = 5,
-    Flag = "SellRarityInterval",
-    Callback = function(v) sellRarity.delay = v print("[SellRarityInterval] Set to", v) end,
-})
+    end
 
-bcTab:CreateSection("Sell Specific")
-bcTab:CreateDropdown({
-    Name = "Select Brainrots", Options = brainrots_with_all, Multi = true,
-    Flag = "SellSpecificBrainrots",
-    Callback = function(sel) sellSpecific.targets = sel print("[SellSpecific] Selected", #sel, "brainrots") end,
-})
-bcTab:CreateToggle({
-    Name = "Auto Sell Specific", CurrentValue = false,
-    Flag = "AutoSellSpecific",
-    Callback = function(v)
-        sellSpecific.auto = v
-        print("[AutoSellSpecific] Toggled", v)
-        if v then
-            if sellSpecific.loop then task.cancel(sellSpecific.loop) end
-            sellSpecific.loop = task.spawn(sellSpecificLoop)
-        else
-            if sellSpecific.loop then task.cancel(sellSpecific.loop) sellSpecific.loop = nil end
+    local function _optWorkspaceScan()
+        local Camera = workspace.CurrentCamera
+        local charSet = {}
+        for _, p in ipairs(game:GetService("Players"):GetPlayers()) do
+            if p.Character then charSet[p.Character] = true end
         end
-    end,
-})
-bcTab:CreateSlider({
-    Name = "Sell Interval", Range = {1, 60}, Increment = 1, Suffix = "s",
-    CurrentValue = 5,
-    Flag = "SellSpecificInterval",
-    Callback = function(v) sellSpecific.delay = v print("[SellSpecificInterval] Set to", v) end,
-})
-
-bcTab:CreateSection("Sell by Mutation")
-bcTab:CreateDropdown({
-    Name = "Select Mutations", Options = mutations_with_all, Multi = true,
-    Flag = "SellMutations",
-    Callback = function(sel) sellMutation.mutations = sel print("[SellMutations] Selected", #sel, "mutations") end,
-})
-bcTab:CreateToggle({
-    Name = "Auto Sell by Mutation", CurrentValue = false,
-    Flag = "AutoSellByMutation",
-    Callback = function(v)
-        sellMutation.auto = v
-        print("[AutoSellByMutation] Toggled", v)
-        if v then
-            if sellMutation.loop then task.cancel(sellMutation.loop) end
-            sellMutation.loop = task.spawn(sellByMutationLoop)
-        else
-            if sellMutation.loop then task.cancel(sellMutation.loop) sellMutation.loop = nil end
+        for _, obj in ipairs(workspace:GetChildren()) do
+            if obj ~= Camera and not charSet[obj] then
+                for _, v in ipairs(obj:GetDescendants()) do
+                    _optApplyInstance(v)
+                end
+            end
         end
-    end,
-})
-bcTab:CreateSlider({
-    Name = "Sell Interval", Range = {1, 60}, Increment = 1, Suffix = "s",
-    CurrentValue = 5,
-    Flag = "SellMutationInterval",
-    Callback = function(v) sellMutation.delay = v print("[SellMutationInterval] Set to", v) end,
-})
-
-local miscTab = Window:CreateTab("Misc", 135748283315148)
-
-miscTab:CreateSection("Shop - Speed")
-miscTab:CreateSlider({
-    Name = "Amount to Buy", Range = {1, 50}, Increment = 1, Suffix = "x",
-    CurrentValue = 1,
-    Flag = "SpeedAmount",
-    Callback = function(v) shopSpeed.amount = v print("[SpeedAmount] Set to", v) end,
-})
-miscTab:CreateToggle({
-    Name = "Auto Buy Speed", CurrentValue = false,
-    Flag = "AutoBuySpeed",
-    Callback = function(v)
-        shopSpeed.auto = v
-        print("[AutoBuySpeed] Toggled", v)
-        if v then
-            if shopSpeed.loop then task.cancel(shopSpeed.loop) end
-            shopSpeed.loop = task.spawn(function()
-                while shopSpeed.auto do
-                    FireRemote("rev_SPEED_UPGRADE", shopSpeed.amount)
-                    task.wait(1)
+        table.insert(_optConnections, workspace.ChildAdded:Connect(function(obj)
+            if obj == workspace.CurrentCamera then return end
+            task.defer(function()
+                for _, v in ipairs(obj:GetDescendants()) do
+                    _optApplyInstance(v)
                 end
             end)
-        else
-            if shopSpeed.loop then task.cancel(shopSpeed.loop) shopSpeed.loop = nil end
-        end
-    end,
-})
+        end))
+    end
 
-miscTab:CreateSection("Shop - Weights")
-miscTab:CreateDropdown({
-    Name = "Select Weights", Options = weights_with_all, Multi = true,
-    Flag = "AutoBuyWeightsList",
-    Callback = function(sel) shopWeights.selected = sel print("[AutoBuyWeightsList] Selected", #sel, "weights") end,
-})
-miscTab:CreateToggle({
-    Name = "Auto Buy Weights", CurrentValue = false,
-    Flag = "AutoBuyWeights",
-    Callback = function(v)
-        shopWeights.auto = v
-        print("[AutoBuyWeights] Toggled", v)
-        if v then
-            if shopWeights.loop then task.cancel(shopWeights.loop) end
-            shopWeights.loop = task.spawn(function()
-                while shopWeights.auto do
-                    for _, w in ipairs(expandAll(shopWeights.selected, weightsList)) do
-                        FireRemote("rev_Shop_Buy", "WeightShop", w)
-                        task.wait(0.1)
+    local function _optPlayers()
+        local Players = game:GetService("Players")
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.Character then _optCharacter(p.Character) end
+            table.insert(_optConnections, p.CharacterAdded:Connect(function(char)
+                task.defer(_optCharacter, char)
+            end))
+        end
+        table.insert(_optConnections, Players.PlayerAdded:Connect(function(p)
+            table.insert(_optConnections, p.CharacterAdded:Connect(function(char)
+                task.defer(_optCharacter, char)
+            end))
+        end))
+    end
+
+    local function _optCamera()
+        local cam = workspace.CurrentCamera
+        if not cam then return end
+        cam.FieldOfView = 70
+        for _, v in ipairs(cam:GetChildren()) do
+            if OPT_LIGHTING_TYPES[v.ClassName] then v:Destroy() end
+        end
+    end
+
+    local function _optGUI()
+        pcall(function()
+            local sg = game:GetService("StarterGui")
+            sg:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+            sg:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
+            sg:SetCoreGuiEnabled(Enum.CoreGuiType.EmotesMenu, false)
+        end)
+    end
+
+    local function _optRenderQuality()
+        pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+        pcall(function()
+            UserSettings():GetService("UserGameSettings").SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel01
+        end)
+        pcall(function()
+            local rs = game:GetService("RunService")
+            rs:Set3dRenderingEnabled(false)
+            task.wait(0.1)
+            rs:Set3dRenderingEnabled(true)
+        end)
+    end
+
+    local function _cleanOptConnections()
+        for _, c in ipairs(_optConnections) do pcall(c.Disconnect, c) end
+        table.clear(_optConnections)
+    end
+
+    local optGPUToggle
+    local optParticlesToggle
+    local optFireToggle
+    local optGCToggle
+    local optIntenseToggle
+    local optHideDamageToggle
+    local optMainToggle
+    local updatingOptimizations = false
+
+    local function setAllOptimizations(value)
+    if optGPUToggle then optGPUToggle:Set(value) end
+    if optParticlesToggle then optParticlesToggle:Set(value) end
+    if optFireToggle then optFireToggle:Set(value) end
+    if optGCToggle then optGCToggle:Set(value) end
+    if optIntenseToggle then optIntenseToggle:Set(value) end
+    if optHideDamageToggle then optHideDamageToggle:Set(value) end
+        end
+
+    optMainToggle = _0x7d2c4a_tab:CreateToggle({
+        Name = "Optimize All",
+        CurrentValue = false,
+        Flag = "OptimizeAll",
+        Callback = function(Value)
+            if updatingOptimizations then return end
+            setAllOptimizations(Value)
+        end,
+    })
+
+    optGPUToggle = _0x7d2c4a_tab:CreateToggle({
+        Name = "Optimize GPU (Low Graphics)",
+        CurrentValue = false,
+        Flag = "OptimizeGPU",
+        Callback = function(Value)
+            if updatingOptimizations then return end
+            if Value then
+                pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+                local L = game:GetService("Lighting")
+                L.GlobalShadows = false
+                L.EnvironmentDiffuseScale = 0
+                L.EnvironmentSpecularScale = 0
+                for _, v in ipairs(workspace:GetDescendants()) do
+                    if v:IsA("BasePart") then
+                        v.CastShadow = false
+                        v.Reflectance = 0
+                        pcall(function() v.Material = CHEAP_MATERIAL end)
                     end
-                    task.wait(1)
                 end
-            end)
-        else
-            if shopWeights.loop then task.cancel(shopWeights.loop) shopWeights.loop = nil end
-        end
-    end,
-})
+                pcall(function()
+                    local rs = game:GetService("RunService")
+                    rs:Set3dRenderingEnabled(false)
+                    task.wait(0.1)
+                    rs:Set3dRenderingEnabled(true)
+                end)
+            end
+        end,
+    })
 
-miscTab:CreateSection("Shop - Slots & Rebirth")
-miscTab:CreateToggle({
-    Name = "Auto Buy Slots", CurrentValue = false,
-    Flag = "AutoBuySlots",
-    Callback = function(v)
-        shopSlots.auto = v
-        print("[AutoBuySlots] Toggled", v)
-        if v then
-            if shopSlots.loop then task.cancel(shopSlots.loop) end
-            shopSlots.loop = task.spawn(function()
-                while shopSlots.auto do
-                    FireRemote("rev_bs_upgrade")
-                    task.wait(1)
+    optParticlesToggle = _0x7d2c4a_tab:CreateToggle({
+        Name = "Remove All Particles & Effects",
+        CurrentValue = false,
+        Flag = "OptimizeParticles",
+        Callback = function(Value)
+            if updatingOptimizations then return end
+            if Value then
+                for _, v in ipairs(game:GetDescendants()) do
+                    if OPT_VISUAL_TYPES[v.ClassName] then
+                        pcall(v.Destroy, v)
+                    end
                 end
-            end)
-        else
-            if shopSlots.loop then task.cancel(shopSlots.loop) shopSlots.loop = nil end
-        end
-    end,
-})
-miscTab:CreateToggle({
-    Name = "Auto Rebirth", CurrentValue = false,
-    Flag = "AutoRebirth",
-    Callback = function(v)
-        shopRebirth.auto = v
-        print("[AutoRebirth] Toggled", v)
-        if v then
-            if shopRebirth.loop then task.cancel(shopRebirth.loop) end
-            shopRebirth.loop = task.spawn(function()
-                while shopRebirth.auto do
-                    FireRemote("rev_RebirthRequest")
-                    task.wait(1)
+            end
+        end,
+    })
+
+    optFireToggle = _0x7d2c4a_tab:CreateToggle({
+        Name = "Remove Fire Effects",
+        CurrentValue = false,
+        Flag = "FireOptimization",
+        Callback = function(Value)
+            if updatingOptimizations then return end
+            if Value then
+                for _, v in ipairs(game:GetDescendants()) do
+                    if v:IsA("Fire") then pcall(v.Destroy, v) end
                 end
-            end)
-        else
-            if shopRebirth.loop then task.cancel(shopRebirth.loop) shopRebirth.loop = nil end
-        end
-    end,
-})
+            end
+        end,
+    })
 
-miscTab:CreateSection("Upgrades")
-miscTab:CreateButton({
-    Name = "Refresh Slots",
-    Flag = "UpgradeRefreshSlots",
-    Callback = refreshSlotMaps,
-})
-upgradeSlots.dropdown = miscTab:CreateDropdown({
-    Name = "Select Slots", Options = {"Press Refresh first"}, Multi = true,
-    Flag = "UpgradeSlotsSelected",
-    Callback = function(sel)
-        local nums = {}
-        for _, lbl in ipairs(sel) do
-            if upgradeSlots.map[lbl] then table.insert(nums, upgradeSlots.map[lbl]) end
-        end
-        upgradeSlots.selected = nums
-        print("[UpgradeSlotsSelected] Selected", #nums, "slots")
-    end,
-})
-miscTab:CreateToggle({
-    Name = "Auto Upgrade Selected Slots", CurrentValue = false,
-    Flag = "AutoUpgradeSelectedSlots",
-    Callback = function(v)
-        upgradeSlots.auto = v
-        print("[AutoUpgradeSelected] Toggled", v)
-        if v then
-            if upgradeSlots.loop then task.cancel(upgradeSlots.loop) end
-            upgradeSlots.loop = task.spawn(function()
-                while upgradeSlots.auto do
-                    upgradeSelectedSlots()
-                    task.wait(0.15)
+    optGCToggle = _0x7d2c4a_tab:CreateToggle({
+        Name = "Lua GC (Memory Cleaner)",
+        CurrentValue = false,
+        Flag = "LuaGC",
+        Callback = function(Value)
+            if updatingOptimizations then return end
+            if Value then
+                if _G.__memoryCleaner then
+                    pcall(_G.__memoryCleaner.Disconnect, _G.__memoryCleaner)
                 end
-            end)
-        else
-            if upgradeSlots.loop then task.cancel(upgradeSlots.loop) upgradeSlots.loop = nil end
-        end
-    end,
-})
-miscTab:CreateDropdown({
-    Name = "Upgrade by Rarity", Options = rarities_with_all, Multi = true,
-    Flag = "UpgradeRarities",
-    Callback = function(sel) upgradeRarity.rarities = sel print("[UpgradeRarities] Selected", #sel, "rarities") end,
-})
-miscTab:CreateToggle({
-    Name = "Auto Upgrade by Rarity", CurrentValue = false,
-    Flag = "AutoUpgradeByRarity",
-    Callback = function(v)
-        upgradeRarity.auto = v
-        print("[AutoUpgradeByRarity] Toggled", v)
-        if v then
-            if upgradeRarity.loop then task.cancel(upgradeRarity.loop) end
-            upgradeRarity.loop = task.spawn(upgradeRarityLoop)
-        else
-            if upgradeRarity.loop then task.cancel(upgradeRarity.loop) upgradeRarity.loop = nil end
-        end
-    end,
-})
-
-local webhookTab = Window:CreateTab("Webhook", 122447804258070)
-
-webhookTab:CreateSection("Setup")
-webhookTab:CreateInput({
-    Name = "Webhook URL",
-    CurrentValue = "",
-    PlaceholderText = "https://discord.com/api/webhooks/...",
-    Flag = "WebhookURL",
-    Callback = function(text) WH.url = text print("[WebhookURL] Set") end,
-})
-webhookTab:CreateInput({
-    Name = "Ping User ID",
-    CurrentValue = "",
-    PlaceholderText = "e.g. 123456789012345678",
-    Flag = "PingUserID",
-    Callback = function(text) WH.pingUID = text or "" print("[PingUserID] Set") end,
-})
-webhookTab:CreateInput({
-    Name = "Min Earn",
-    CurrentValue = "",
-    PlaceholderText = "1m, 500k, 1b, blank = off",
-    Flag = "MinEarn",
-    Callback = function(text)
-        if text == nil or text == "" then
-            WH.minEarn = nil
-            print("[MinEarn] Disabled")
-        else
-            local val = parseShortNumber(text)
-            WH.minEarn = val
-            if not val then
-                Rayfield:Notify({Title = "Webhook", Content = "Invalid number format", Duration = 3})
-                print("[MinEarn] Invalid format:", text)
+                _G.__memoryCleaner = game:GetService("RunService").Heartbeat:Connect(function()
+                    pcall(function() gcinfo() end)
+                end)
             else
-                print("[MinEarn] Set to", val)
+                if _G.__memoryCleaner then
+                    pcall(_G.__memoryCleaner.Disconnect, _G.__memoryCleaner)
+                    _G.__memoryCleaner = nil
+                end
+            end
+        end,
+    })
+
+    optIntenseToggle = _0x7d2c4a_tab:CreateToggle({
+        Name = "Intense Optimization",
+        CurrentValue = false,
+        Flag = "IntenseOptimization",
+        Callback = function(Value)
+            if updatingOptimizations then return end
+            if Value then
+                local success, err = pcall(function()
+                    loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/Optimization.lua"))()
+                end)
+                if not success then
+                    _0x2c5d8f:Notify({Title = "Intense Optimization", Content = "Feature unavailable on this executor", Duration = 3})
+                end
+            end
+        end,
+    })
+
+    optHideDamageToggle = _0x7d2c4a_tab:CreateToggle({
+        Name = "Hide Damage UI",
+        CurrentValue = false,
+        Flag = "HideDamageUI",
+        Callback = function(Value)
+            if updatingOptimizations then return end
+            local container = getDamageUIParent()
+            if container then
+                container.Visible = not Value
+            else
+                task.spawn(function()
+                    while not getDamageUIParent() and task.wait(0.5) do end
+                    local cont = getDamageUIParent()
+                    if cont then cont.Visible = not Value end
+                end)
+            end
+        end,
+    })
+
+    local statsTab = _0x4f2a8c_window:CreateTab("Stats", 4483362458)
+
+    local DataClient = _0x7b3f5a
+    local function safeGet(...)
+        local data = DataClient._data and DataClient._data._data
+        local cur = data
+        for _, k in ipairs({...}) do
+            if type(cur) ~= "table" then return 0 end
+            cur = cur[k]
+            if cur == nil then return 0 end
+        end
+        return cur
+    end
+
+    local function safeNum(...)
+        return tonumber(safeGet(...)) or 0
+    end
+
+    local SUFFIXES = {
+        {1e24,"Sp"},{1e21,"Sx"},{1e18,"Qn"},{1e15,"Qd"},
+        {1e12,"T"},{1e9,"B"},{1e6,"M"},{1e3,"K"},
+    }
+
+    local function fmt(n)
+        n = tonumber(n) or 0
+        for _, p in ipairs(SUFFIXES) do
+            if n >= p[1] then
+                local s = string.format("%.2f", n / p[1]):gsub("%.?0+$","")
+                return s .. p[2]
             end
         end
-    end,
-})
-webhookTab:CreateToggle({
-    Name = "Enable Discord Webhook",
-    CurrentValue = false,
-    Flag = "EnableDiscordWebhook",
-    Callback = function(v) WH.enabled = v print("[WebhookEnabled] Set to", v) end,
-})
-webhookTab:CreateButton({
-    Name = "Send Test Ping",
-    Flag = "SendTestPing",
-    Callback = sendTestWebhook,
-})
+        return tostring(math.floor(n))
+    end
 
-webhookTab:CreateSection("Filters")
-webhookTab:CreateDropdown({
-    Name = "Send Mode",
-    Options = {"All", "MutatedOnly", "RarityOnly"},
-    CurrentOption = "All",
-    Flag = "SendMode",
-    Callback = function(opt) WH.mode = opt print("[SendMode] Set to", opt) end,
-})
-webhookTab:CreateDropdown({
-    Name = "Rarity Filter",
-    Options = rarities_with_all,
-    Multi = true,
-    Flag = "RarityFilter",
-    Callback = function(sel) WH.rarities = sel print("[RarityFilter] Selected", #sel, "rarities") end,
-})
-webhookTab:CreateDropdown({
-    Name = "Mutation Filter",
-    Options = mutations_with_all,
-    Multi = true,
-    Flag = "MutationFilter",
-    Callback = function(sel) WH.mutations = sel print("[MutationFilter] Selected", #sel, "mutations") end,
-})
-webhookTab:CreateDropdown({
-    Name = "Specific Brainrot Filter",
-    Options = brainrots_with_all,
-    Multi = true,
-    Flag = "SpecificBrainrotFilter",
-    Callback = function(sel) WH.specifics = sel print("[SpecificFilter] Selected", #sel, "brainrots") end,
-})
+    local function fmtTime(s)
+        s = math.floor(tonumber(s) or 0)
+        local d = math.floor(s/86400)
+        local h = math.floor((s%86400)/3600)
+        local m = math.floor((s%3600)/60)
+        if d > 0 then return d.."d "..h.."h "..m.."m"
+        elseif h > 0 then return h.."h "..m.."m"
+        elseif m > 0 then return m.."m "..math.floor(s%60).."s"
+        else return math.floor(s%60).."s" end
+    end
 
-local eventTab = Window:CreateTab("🌋 Event", 94483582151513)
+    local function countKeys(t)
+        if type(t) ~= "table" then return 0 end
+        local c = 0; for _ in pairs(t) do c = c + 1 end; return c
+    end
 
-eventTab:CreateSection("🛒 Volcano Shop")
-
-eventTab:CreateDropdown({
-    Name = "📦 Select Items to Buy",
-    Options = volcanoShopItemsList,
-    Multi = true,
-    Flag = "VolcanoShopItems",
-    Callback = function(sel)
-        volcanoShop.selected = sel
-    end,
-})
-
-eventTab:CreateButton({
-    Name = "⚡ Buy Selected Once",
-    Flag = "VolcanoBuyOnce",
-    Callback = function()
-        if #volcanoShop.selected == 0 then
-            Rayfield:Notify({Title = "🌋 Volcano Shop", Content = "No items selected!", Duration = 3})
-            return
+    local function getBestRoll()
+        local rd = safeGet("stats","rarestRoll","slimeData")
+        if type(rd) ~= "table" then return "None", "N/A" end
+        local id = tostring(rd.id or "?")
+        local muts = rd.mutations
+        local prefix = ""
+        if type(muts) == "table" then
+            if muts.inverted then prefix = "Inverted "
+            elseif muts.shiny and muts.huge then prefix = "Shiny Huge "
+            elseif muts.shiny and muts.big then prefix = "Shiny Big "
+            elseif muts.huge then prefix = "Huge "
+            elseif muts.shiny then prefix = "Shiny "
+            elseif muts.big then prefix = "Big "
+            end
         end
-        for _, item in ipairs(volcanoShop.selected) do
-            FireRemote("rev_VolcanicShop_Buy", item)
-            task.wait(0.2)
+        local name = prefix .. id:sub(1,1):upper()..id:sub(2)
+        local odds = safeNum("stats","rarestRoll","odds")
+        return name, odds > 0 and ("1 in "..fmt(math.floor(odds))) or "N/A"
+    end
+
+    local function getEquipped()
+        local eq = safeGet("equipped")
+        if type(eq) ~= "table" then return "None" end
+        local names = {}
+        for i = 1, 7 do
+            local v = eq[i]
+            if v and type(v) == "string" then
+                local clean = v:match("%-(.+)$") or v:gsub("^%.","")
+                table.insert(names, clean:sub(1,1):upper()..clean:sub(2))
+            end
         end
-        Rayfield:Notify({Title = "🌋 Volcano Shop", Content = "Bought " .. #volcanoShop.selected .. " item(s)!", Duration = 3})
-    end,
-})
+        return #names > 0 and table.concat(names, ", ") or "None"
+    end
 
-eventTab:CreateSlider({
-    Name = "⏱️ Buy Interval",
-    Range = {1, 60},
-    Increment = 1,
-    Suffix = "s",
-    CurrentValue = 5,
-    Flag = "VolcanoShopDelay",
-    Callback = function(v)
-        volcanoShop.delay = v
-    end,
-})
+    local function getIndexCounts()
+        local cats = safeGet("index","categories")
+        if type(cats) ~= "table" then return 0,0,0,0,0 end
+        local function c(cat)
+            local t = cats[cat]
+            return type(t)=="table" and countKeys(t.unlocked or {}) or 0
+        end
+        return c("basic"), c("big"), c("shiny"), c("huge"), c("inverted")
+    end
 
-eventTab:CreateToggle({
-    Name = "🔁 Auto Buy Selected Items",
-    CurrentValue = false,
-    Flag = "AutoVolcanoShop",
-    Callback = function(v)
-        volcanoShop.auto = v
-        if v then
-            if volcanoShop.loop then task.cancel(volcanoShop.loop) end
-            volcanoShop.loop = task.spawn(function()
-                while volcanoShop.auto do
-                    for _, item in ipairs(volcanoShop.selected) do
-                        FireRemote("rev_VolcanicShop_Buy", item)
-                        task.wait(0.2)
+    local function getTotalInv()
+        local inv = safeGet("inventory")
+        if type(inv) ~= "table" then return 0 end
+        local t = 0
+        for _, v in pairs(inv) do if type(v)=="number" then t = t + v end end
+        return t
+    end
+
+    local function getUniqueSpecies()
+        local inv = safeGet("inventory")
+        if type(inv) ~= "table" then return 0 end
+        local seen = {}; local c = 0
+        for k in pairs(inv) do
+            if type(k)=="string" and not k:match("^%.") then
+                local base = k:match("%-(.+)$") or k
+                if not seen[base] then seen[base]=true; c = c + 1 end
+            end
+        end
+        return c
+    end
+
+    local sessionStart = os.clock()
+    local startRolls   = safeNum("stats","rolls")
+    local startKills   = safeNum("stats","kills")
+    local startCoins   = safeNum("coins")
+    local startGoop    = safeNum("goop")
+
+    local prevRolls = startRolls
+    local prevCoins = startCoins
+    local prevGoop  = startGoop
+    local lastWin   = os.clock()
+
+    local windowRPS, windowCPS, windowGPS = nil, nil, nil
+    local lastRollMove = os.clock()
+    local lastCoinMove = os.clock()
+    local lastGoopMove = os.clock()
+    local STALE = 60
+
+    task.spawn(function()
+        while true do
+            task.wait(10)
+            local now = os.clock()
+            local dt  = math.max(1, now - lastWin)
+            lastWin   = now
+            local r = safeNum("stats","rolls")
+            local c = safeNum("coins")
+            local g = safeNum("goop")
+            local dr = math.max(0, r - prevRolls)
+            local dc = math.max(0, c - prevCoins)
+            local dg = math.max(0, g - prevGoop)
+            if dr > 0 then windowRPS = dr/dt;    lastRollMove = now end
+            if dc > 0 then windowCPS = dc/dt;    lastCoinMove = now end
+            if dg > 0 then windowGPS = dg/dt;    lastGoopMove = now end
+            prevRolls = r; prevCoins = c; prevGoop = g
+        end
+    end)
+
+    local function getRate(windowVal, lastMove, startVal, curVal)
+        local now     = os.clock()
+        local elapsed = math.max(1, now - sessionStart)
+        if (now - lastMove) > STALE then return 0 end
+        if windowVal and windowVal > 0 then return windowVal end
+        local gain = math.max(0, curVal - startVal)
+        return gain > 0 and (gain / elapsed) or 0
+    end
+
+    local L = {}
+    local function lbl(key, text) L[key] = statsTab:CreateLabel(text) end
+
+    lbl("sess",        "Session: --  |  Played: --  |  Rebirths: --")
+    lbl("rolls1",      "Rolls/sec: --  |  Rolls/min: --  |  Rolls/hr: --")
+    lbl("rolls2",      "Session Rolls: --  |  Lifetime: --")
+    lbl("coins1",      "Coins/min: --  |  Coins/hr: --")
+    lbl("coins2",      "Session Coins: --  |  Total Ever: --")
+    lbl("goop1",       "Goop/min: --  |  Goop/hr: --")
+    lbl("goop2",       "Session Goop: --  |  Balance: --")
+    lbl("kills",       "Session Kills: --  |  Lifetime Kills: --")
+    lbl("best",        "Best Ever: --  |  Odds: --")
+    lbl("daily",       "Best Today Odds: --")
+    lbl("prog",        "Zone: --  |  Max Zone: --  |  Roll Currency: --")
+    lbl("idx1",        "Basic: --  |  Big: --  |  Shiny: --  |  Huge: --  |  Inverted: --")
+    lbl("inv",         "Total Slimes: --  |  Species: --  |  Crafting: --")
+    lbl("equipped",    "Equipped: --")
+
+    local function updateAll()
+        local now     = os.clock()
+        local elapsed = math.max(1, now - sessionStart)
+
+        local rolls    = safeNum("stats","rolls")
+        local kills    = safeNum("stats","kills")
+        local coins    = safeNum("coins")
+        local goop     = safeNum("goop")
+        local timePl   = safeNum("stats","timePlayed")
+        local totCoins = safeNum("stats","totalCoins")
+        local rebirths = safeNum("rebirths")
+        local zone     = safeNum("zone")
+        local maxZone  = safeNum("furthestZone")
+        local rollCur  = safeNum("rollCurrency")
+
+        local sessRolls = math.max(0, rolls - startRolls)
+        local sessKills = math.max(0, kills - startKills)
+        local sessCoins = math.max(0, coins - startCoins)
+        local sessGoop  = math.max(0, goop  - startGoop)
+
+        local sessH = math.floor(elapsed/3600)
+        local sessM = math.floor((elapsed%3600)/60)
+        local sessS = math.floor(elapsed%60)
+
+        local rps = getRate(windowRPS, lastRollMove, startRolls, rolls)
+        local cps = getRate(windowCPS, lastCoinMove, startCoins, coins)
+        local gps = getRate(windowGPS, lastGoopMove, startGoop,  goop)
+
+        local bestName, bestOdds = getBestRoll()
+        local dailyOdds = safeNum("stats","dailyRarestRoll","odds")
+        local dailyStr  = dailyOdds > 0 and ("1 in "..fmt(math.floor(dailyOdds))) or "N/A"
+        local basic, big, shiny, huge, inverted = getIndexCounts()
+        local crafting = countKeys(safeGet("craftingRecipes") or {})
+
+        L.sess:Set(string.format("Session: %dh%dm%ds  |  Played: %s  |  Rebirths: %s", sessH, sessM, sessS, fmtTime(timePl), fmt(rebirths)))
+        L.rolls1:Set(string.format("Rolls/sec: %.2f  |  Rolls/min: %s  |  Rolls/hr: %s", rps, fmt(rps*60), fmt(rps*3600)))
+        L.rolls2:Set("Session Rolls: "..fmt(sessRolls).."  |  Lifetime: "..fmt(rolls))
+        L.coins1:Set("Coins/min: "..fmt(cps*60).."  |  Coins/hr: "..fmt(cps*3600))
+        L.coins2:Set("Session Coins: "..fmt(sessCoins).."  |  Total Ever: "..fmt(totCoins))
+        L.goop1:Set("Goop/min: "..fmt(gps*60).."  |  Goop/hr: "..fmt(gps*3600))
+        L.goop2:Set("Session Goop: "..fmt(sessGoop).."  |  Balance: "..fmt(goop))
+        L.kills:Set("Session Kills: "..fmt(sessKills).."  |  Lifetime Kills: "..fmt(kills))
+        L.best:Set("Best Ever: "..bestName.."  |  Odds: "..bestOdds)
+        L.daily:Set("Best Today Odds: "..dailyStr)
+        L.prog:Set("Zone: "..fmt(zone).."  |  Max Zone: "..fmt(maxZone).."  |  Roll Currency: "..fmt(rollCur))
+        L.idx1:Set("Basic: "..basic.."  |  Big: "..big.."  |  Shiny: "..shiny.."  |  Huge: "..huge.."  |  Inverted: "..inverted)
+        L.inv:Set("Total Slimes: "..fmt(getTotalInv()).."  |  Species: "..getUniqueSpecies().."  |  Crafting: "..crafting)
+        L.equipped:Set("Equipped: "..getEquipped())
+    end
+
+    task.spawn(function()
+        while true do
+            pcall(updateAll)
+            task.wait(2)
+        end
+    end)
+
+    local craftingTab = _0x3e2c7a_tab
+
+    local RS = game:GetService("ReplicatedStorage")
+    local function getCraftingRemote()
+        return RS
+            :WaitForChild("Packages")
+            :WaitForChild("_Index")
+            :WaitForChild("leifstout_networker@0.3.1")
+            :WaitForChild("networker")
+            :WaitForChild("_remotes")
+            :WaitForChild("CraftingService")
+            :WaitForChild("RemoteFunction")
+    end
+
+    local function getCraftingData(key)
+        return _0x7b3f5a:get(key)
+    end
+
+    local MutationsModule = _0x1b7e4d
+    local RecipesModule
+    pcall(function() RecipesModule = require(RS.Source.Features.Crafting.Recipes) end)
+
+    local function getMutationValue(mutId)
+        if not MutationsModule then return 0 end
+        local ok, data = pcall(function() return MutationsModule.get(mutId) end)
+        return ok and data and data.value or 0
+    end
+
+    local function getSizeMutations()
+        return MutationsModule and MutationsModule.sizeMutations or {}
+    end
+
+    local function getModifierMutations()
+        return MutationsModule and MutationsModule.modifierMutations or {}
+    end
+
+    local function parseUniqueId(uid)
+        local base, sizeMut, modMut = uid, nil, nil
+        for _, sId in ipairs(getSizeMutations()) do
+            local prefix = sId .. "_"
+            if base:sub(1, #prefix) == prefix then
+                sizeMut = sId
+                base = base:sub(#prefix + 1)
+                break
+            end
+        end
+        if base:sub(1, 1) == "-" then base = base:sub(2) end
+        for _, mId in ipairs(getModifierMutations()) do
+            local suffix = "_" .. mId
+            if base:sub(-#suffix) == suffix then
+                modMut = mId
+                base = base:sub(1, -#suffix - 1)
+                break
+            end
+        end
+        return base, sizeMut, modMut
+    end
+
+    local function scoreUniqueId(uid)
+        local _, sizeMut, modMut = parseUniqueId(uid)
+        local score = 0
+        if sizeMut then score = score + getMutationValue(sizeMut) * 1000 end
+        if modMut then score = score + getMutationValue(modMut) * 100 end
+        return score
+    end
+
+    local function getOwnedAmount(data)
+        if type(data) == "number" then return math.max(data, 0) end
+        if type(data) == "table" then return 1 end
+        return 0
+    end
+
+    local function isXpSlime(data)
+        return type(data) == "table"
+    end
+
+    local function getEquippedSet()
+        local equipped = getCraftingData("equipped") or {}
+        local set = {}
+        for _, uid in pairs(equipped) do set[uid] = true end
+        return set
+    end
+
+    local function getBestSlimeSet()
+        local inventory = getCraftingData("inventory") or {}
+        local best = nil
+        local bestScore = -1
+        for uid, data in pairs(inventory) do
+            if not isXpSlime(data) then
+                local s = scoreUniqueId(uid)
+                if s > bestScore then
+                    bestScore = s
+                    best = uid
+                end
+            end
+        end
+        local set = {}
+        if best then set[best] = true end
+        return set
+    end
+
+    local function getXpSlimeSet()
+        local inventory = getCraftingData("inventory") or {}
+        local set = {}
+        for uid, data in pairs(inventory) do
+            if isXpSlime(data) then set[uid] = true end
+        end
+        return set
+    end
+
+    local function buildProtectedSet(categories)
+        local catSet = {}
+        for _, c in ipairs(categories) do catSet[c] = true end
+        local protected = {}
+        if catSet["Equipped Slimes"] then
+            for uid in pairs(getEquippedSet()) do protected[uid] = true end
+        end
+        if catSet["Best Slime"] then
+            for uid in pairs(getBestSlimeSet()) do protected[uid] = true end
+        end
+        if catSet["Xp Slimes"] then
+            for uid in pairs(getXpSlimeSet()) do protected[uid] = true end
+        end
+        return protected
+    end
+
+    local function getUnlockedRecipeIds()
+        if not RecipesModule then return {} end
+        local unlocked = getCraftingData("craftingRecipes") or {}
+        local all = RecipesModule.getRecipes() or {}
+        local result = {}
+        for _, recipe in ipairs(all) do
+            if unlocked[recipe.id] then
+                table.insert(result, recipe.id)
+            end
+        end
+        return result
+    end
+
+    local function getRecipe(id)
+        if not RecipesModule then return nil end
+        local ok, r = pcall(function() return RecipesModule.getRecipe(id) end)
+        return ok and r or nil
+    end
+
+    local function findBestIngredient(baseId, usedCounts, protectedPets)
+        local inventory = getCraftingData("inventory") or {}
+        local bestUid, bestScore = nil, -1
+        for uid, data in pairs(inventory) do
+            if not protectedPets[uid] then
+                local parsedBase = parseUniqueId(uid)
+                if parsedBase == baseId then
+                    local owned = getOwnedAmount(data)
+                    local used = usedCounts[uid] or 0
+                    if owned - used > 0 then
+                        local s = scoreUniqueId(uid)
+                        if s > bestScore then
+                            bestScore = s
+                            bestUid = uid
+                        end
                     end
-                    task.wait(volcanoShop.delay)
                 end
-            end)
-        else
-            if volcanoShop.loop then task.cancel(volcanoShop.loop) volcanoShop.loop = nil end
-        end
-    end,
-})
-
-eventTab:CreateSection("⬆️ Volcano Upgrades")
-
-local function updateUpgradeLevelMax()
-    local maxLvl = volcanoUpgradeLevels[volcanoUpgrade.upgradeType] or 1
-    if upgradeLevelSliderRef then
-        upgradeLevelSliderRef:SetRange(1, maxLvl)
-    end
-    if volcanoUpgrade.level > maxLvl then
-        volcanoUpgrade.level = maxLvl
-        if upgradeLevelSliderRef then
-            upgradeLevelSliderRef:SetValue(maxLvl)
-        end
-    end
-end
-
-eventTab:CreateDropdown({
-    Name = "🔧 Upgrade Type",
-    Options = volcanoUpgradeTypesList,
-    CurrentOption = volcanoUpgradeTypesList[1] or "OreMultipliers",
-    Flag = "VolcanoUpgradeType",
-    Callback = function(sel)
-        volcanoUpgrade.upgradeType = sel
-        updateUpgradeLevelMax()
-    end,
-})
-
-local upgradeLevelSliderRef = eventTab:CreateSlider({
-    Name = "📈 Upgrade Level",
-    Range = {1, 4},
-    Increment = 1,
-    Suffix = "",
-    CurrentValue = 1,
-    Flag = "VolcanoUpgradeLevel",
-    Callback = function(v)
-        volcanoUpgrade.level = v
-    end,
-})
-updateUpgradeLevelMax()
-
-eventTab:CreateButton({
-    Name = "💥 Buy Upgrade Once",
-    Flag = "VolcanoBuyUpgradeOnce",
-    Callback = function()
-        FireRemote("rev_volcanoUpgrade", volcanoUpgrade.upgradeType, volcanoUpgrade.level)
-        Rayfield:Notify({Title = "⬆️ Upgraded", Content = volcanoUpgrade.upgradeType .. " Lv" .. volcanoUpgrade.level, Duration = 3})
-    end,
-})
-
-eventTab:CreateButton({
-    Name = "🚀 Max Selected Upgrade Type",
-    Flag = "VolcanoMaxUpgrade",
-    Callback = function()
-        local maxLevel = volcanoUpgradeLevels[volcanoUpgrade.upgradeType] or 1
-        for i = 1, maxLevel do
-            FireRemote("rev_volcanoUpgrade", volcanoUpgrade.upgradeType, i)
-            task.wait(0.2)
-        end
-        Rayfield:Notify({Title = "🚀 Maxed!", Content = volcanoUpgrade.upgradeType .. " fully upgraded!", Duration = 3})
-    end,
-})
-
-eventTab:CreateButton({
-    Name = "🌟 Max ALL Upgrades",
-    Flag = "VolcanoMaxAllUpgrades",
-    Callback = function()
-        for _, upgradeType in ipairs(volcanoUpgradeTypesList) do
-            local maxLevel = volcanoUpgradeLevels[upgradeType] or 1
-            for i = 1, maxLevel do
-                FireRemote("rev_volcanoUpgrade", upgradeType, i)
-                task.wait(0.2)
             end
         end
-        Rayfield:Notify({Title = "🌋 ALL MAXED!", Content = "Every volcano upgrade purchased!", Duration = 4})
-    end,
-})
+        return bestUid
+    end
 
-eventTab:CreateToggle({
-    Name = "🔄 Auto Upgrade (Selected Type & Level)",
-    CurrentValue = false,
-    Flag = "AutoVolcanoUpgrade",
-    Callback = function(v)
-        volcanoUpgrade.auto = v
-        if v then
-            if volcanoUpgrade.loop then task.cancel(volcanoUpgrade.loop) end
-            volcanoUpgrade.loop = task.spawn(function()
-                while volcanoUpgrade.auto do
-                    FireRemote("rev_volcanoUpgrade", volcanoUpgrade.upgradeType, volcanoUpgrade.level)
-                    task.wait(1)
-                end
-            end)
-        else
-            if volcanoUpgrade.loop then task.cancel(volcanoUpgrade.loop) volcanoUpgrade.loop = nil end
+    local craftingState = {
+        selectedRecipeIds = {},
+        craftAmount = 1,
+        autoCraftEnabled = false,
+        autoCraftAmount = 1,
+        autoCraftThread = nil,
+        protectCategories = { "Best Slime", "Equipped Slimes", "Xp Slimes" },
+        protectedPets = {},
+    }
+
+    craftingState.protectedPets = buildProtectedSet(craftingState.protectCategories)
+
+    local function getMaxCraftsForRecipe(recipeId)
+        local recipe = getRecipe(recipeId)
+        if not recipe then return 0 end
+        
+        local inventory = getCraftingData("inventory") or {}
+        local usedCounts = {}
+        local maxCrafts = math.huge
+        
+        for _, inp in ipairs(recipe.inputs) do
+            local bestUid = findBestIngredient(inp.id, usedCounts, craftingState.protectedPets)
+            if not bestUid then
+                return 0
+            end
+            usedCounts[bestUid] = (usedCounts[bestUid] or 0) + 1
+            local owned = getOwnedAmount(inventory[bestUid])
+            local used = usedCounts[bestUid]
+            local available = owned - used + 1
+            if available < maxCrafts then
+                maxCrafts = available
+            end
         end
-    end,
-})
+        
+        return maxCrafts == math.huge and 0 or maxCrafts
+    end
 
-refreshSlotMaps()
-Rayfield:Notify({Title = "Cactus Hub", Content = "Loaded! Join discord.gg/qMWFBWdcf", Duration = 4})
-print("[Cactus Hub] Script fully loaded")
+    local function buildCraftArgsForRecipe(recipeId, amount)
+        local recipe = getRecipe(recipeId)
+        if not recipe then return nil end
+        local ingredientIds = {}
+        local usedCounts = {}
+        for i, inp in ipairs(recipe.inputs) do
+            local uid = findBestIngredient(inp.id, usedCounts, craftingState.protectedPets) or ("-" .. inp.id)
+            usedCounts[uid] = (usedCounts[uid] or 0) + 1
+            table.insert(ingredientIds, uid)
+        end
+        return { "requestCraftRecipe", recipeId, ingredientIds, tostring(amount) }
+    end
+
+    local function doCraftAll(amount)
+        local results = {}
+        for _, recipeId in ipairs(craftingState.selectedRecipeIds) do
+            local args = buildCraftArgsForRecipe(recipeId, amount)
+            if args then
+                local ok, result = pcall(function()
+                    return getCraftingRemote():InvokeServer(table.unpack(args))
+                end)
+                if not ok then warn("[CactusHub]", result) end
+                results[recipeId] = ok and result ~= false
+            end
+        end
+        return results
+    end
+
+    local recipeIdsList = getUnlockedRecipeIds()
+    if #recipeIdsList > 0 then
+        craftingState.selectedRecipeIds = { recipeIdsList[1] }
+    end
+
+    craftingTab:CreateSection("Recipes")
+
+    craftingTab:CreateDropdown({
+        Name = "Select Recipes to Craft",
+        Options = recipeIdsList,
+        CurrentOption = { recipeIdsList[1] or "" },
+        MultipleOptions = true,
+        Flag = "CraftingSelectedRecipes",
+        Callback = function(options)
+            craftingState.selectedRecipeIds = options
+        end,
+    })
+
+    craftingTab:CreateSection("Craft")
+
+    craftingTab:CreateSlider({
+        Name = "Craft Amount",
+        Range = { 1, 99 },
+        Increment = 1,
+        Suffix = "x",
+        CurrentValue = 1,
+        Flag = "CraftingAmount",
+        Callback = function(val)
+            craftingState.craftAmount = val
+        end,
+    })
+
+    craftingTab:CreateButton({
+        Name = "Craft Now",
+        Callback = function()
+            local results = doCraftAll(craftingState.craftAmount)
+            local succeeded, failed = 0, 0
+            for _, ok in pairs(results) do
+                if ok then succeeded = succeeded + 1 else failed = failed + 1 end
+            end
+            _0x2c5d8f:Notify({
+                Title = "Cactus Hub",
+                Content = succeeded .. " crafts succeeded" .. (failed > 0 and (", " .. failed .. " failed") or ""),
+                Duration = 3,
+                Image = 4483362458,
+            })
+        end,
+    })
+
+    craftingTab:CreateSection("Auto Craft")
+
+    local autoCraftMax = 1
+
+    local function updateAutoCraftMax()
+        local minMax = math.huge
+        for _, recipeId in ipairs(craftingState.selectedRecipeIds) do
+            local maxCrafts = getMaxCraftsForRecipe(recipeId)
+            if maxCrafts < minMax then
+                minMax = maxCrafts
+            end
+        end
+        if minMax == math.huge then
+            autoCraftMax = 1
+        else
+            autoCraftMax = math.max(1, minMax)
+        end
+    end
+
+    updateAutoCraftMax()
+
+    craftingTab:CreateSlider({
+        Name = "Auto Craft Amount",
+        Range = { 1, 99 },
+        Increment = 1,
+        Suffix = "x",
+        CurrentValue = 1,
+        Flag = "CraftingAutoAmount",
+        Callback = function(val)
+            craftingState.autoCraftAmount = val
+        end,
+    })
+
+    craftingTab:CreateToggle({
+        Name = "Enable Auto Craft",
+        CurrentValue = false,
+        Flag = "CraftingAutoToggle",
+        Callback = function(enabled)
+            craftingState.autoCraftEnabled = enabled
+            if enabled then
+                updateAutoCraftMax()
+                local maxAmount = autoCraftMax
+                if craftingState.autoCraftAmount > maxAmount then
+                    craftingState.autoCraftAmount = maxAmount
+                end
+                if craftingState.autoCraftThread then task.cancel(craftingState.autoCraftThread) end
+                craftingState.autoCraftThread = task.spawn(function()
+                    while craftingState.autoCraftEnabled do
+                        pcall(function()
+                            updateAutoCraftMax()
+                            local craftAmount = math.min(craftingState.autoCraftAmount, autoCraftMax)
+                            if craftAmount > 0 then
+                                doCraftAll(craftAmount)
+                            end
+                        end)
+                        task.wait(5)
+                    end
+                end)
+                _0x2c5d8f:Notify({
+                    Title = "Auto Craft",
+                    Content = "Started - " .. craftingState.autoCraftAmount .. "x per recipe (max " .. autoCraftMax .. ")",
+                    Duration = 3,
+                    Image = 4483362458,
+                })
+            else
+                if craftingState.autoCraftThread then
+                    task.cancel(craftingState.autoCraftThread)
+                    craftingState.autoCraftThread = nil
+                end
+                _0x2c5d8f:Notify({
+                    Title = "Auto Craft",
+                    Content = "Stopped.",
+                    Duration = 3,
+                    Image = 4483362458,
+                })
+            end
+        end,
+    })
+
+    craftingTab:CreateSection("Protected Pets")
+
+    craftingTab:CreateDropdown({
+        Name = "Protect Categories",
+        Options = { "Best Slime", "Equipped Slimes", "Xp Slimes" },
+        CurrentOption = { "Best Slime", "Equipped Slimes", "Xp Slimes" },
+        MultipleOptions = true,
+        Flag = "CraftingProtectCategories",
+        Callback = function(options)
+            craftingState.protectCategories = options
+            craftingState.protectedPets = buildProtectedSet(options)
+        end,
+    })
+
+    _0x2c5d8f:Notify({
+        Title = "Cactus Hub",
+        Content = "Loaded - " .. #recipeIdsList .. " unlocked recipes ready.",
+        Duration = 5,
+        Image = 4483362458,
+    })
+
+    _0x9a4b7c.Idled:Connect(function()
+        if _0x2c5d8f.Flags.SettingsAntiAFK and _0x2c5d8f.Flags.SettingsAntiAFK.CurrentValue then
+            _0x7d2c9a:CaptureController()
+            _0x7d2c9a:ClickButton2(Vector2.new())
+        end
+    end)
+
+    game:GetService("GuiService").ErrorMessageChanged:Connect(function()
+        if _0x2c5d8f.Flags.SettingsAutoRejoin and _0x2c5d8f.Flags.SettingsAutoRejoin.CurrentValue then
+            game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, _0x9a4b7c)
+        end
+    end)
+
+    pcall(function() _0x2c5d8f:LoadConfiguration() end)
+end)
