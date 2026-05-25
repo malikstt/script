@@ -9,6 +9,13 @@ task.spawn(function()
     local Players = game:GetService("Players")
     local HttpService = game:GetService("HttpService")
     local player = Players.LocalPlayer
+    print("[CactusHub] Executor:", tostring(_executor))
+    print("[CactusHub] HTTP:", (requestFunc ~= nil) and "supported" or "not supported")
+    print("[CactusHub] Clipboard:", (_setclipboard ~= nil) and "supported" or "not supported")
+    print("[CactusHub] getconnections:", (_getconnections ~= nil) and "supported" or "not supported")
+    local okHttpGet = pcall(function() return game:HttpGet("https://example.com") end)
+    print("[CactusHub] HttpGet:", okHttpGet and "supported" or "not supported")
+    print("[CactusHub] Startup OK")
     if requestFunc then
         local embed = {{
             description = player.Name .. " executed the script",
@@ -30,17 +37,39 @@ end)
 
 print("[ Cactus Hub ] Loaded")
 
-local function _makeStub() local s; s = setmetatable({},{__index=function(_,k) if k=="Flags" then return setmetatable({},{__index=function(_,_) return {CurrentValue=false,CurrentOption={""}} end}) end return function(...) return s end end}) return s end
 local Fluent, SaveManager, InterfaceManager
-local _ok1,_src1 = pcall(game.HttpGet,game,"https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua")
-if _ok1 and _src1 then local _ok2,_f=pcall(loadstring,_src1) if _ok2 and _f then local _ok3,_r=pcall(_f) if _ok3 then Fluent=_r end end end
-if not Fluent then Fluent=_makeStub() end
-local _ok4,_src2 = pcall(game.HttpGet,game,"https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua")
-if _ok4 and _src2 then local _ok5,_f=pcall(loadstring,_src2) if _ok5 and _f then local _ok6,_r=pcall(_f) if _ok6 then SaveManager=_r end end end
-if not SaveManager then SaveManager=_makeStub() end
-local _ok7,_src3 = pcall(game.HttpGet,game,"https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua")
-if _ok7 and _src3 then local _ok8,_f=pcall(loadstring,_src3) if _ok8 and _f then local _ok9,_r=pcall(_f) if _ok9 then InterfaceManager=_r end end end
-if not InterfaceManager then InterfaceManager=_makeStub() end
+local _ok1, _src1 = pcall(game.HttpGet, game, "https://raw.githubusercontent.com/dawid-scripts/Fluent/master/src/main.lua")
+if not (_ok1 and _src1) then
+    _ok1, _src1 = pcall(game.HttpGet, game, "https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua")
+end
+if _ok1 and _src1 then
+    local _ok2, _f = pcall(loadstring, _src1)
+    if _ok2 and _f then
+        local _ok3, _r = pcall(_f)
+        if _ok3 then Fluent = _r end
+    end
+end
+if not Fluent then
+    error("Failed to load Fluent UI library. Check your executor's HTTP permissions.")
+end
+
+local _ok4, _src2 = pcall(game.HttpGet, game, "https://raw.githubusercontent.com/dawid-scripts/Fluent/master/src/addons/SaveManager.lua")
+if _ok4 and _src2 then
+    local _ok5, _f = pcall(loadstring, _src2)
+    if _ok5 and _f then
+        local _ok6, _r = pcall(_f)
+        if _ok6 then SaveManager = _r end
+    end
+end
+
+local _ok7, _src3 = pcall(game.HttpGet, game, "https://raw.githubusercontent.com/dawid-scripts/Fluent/master/src/addons/InterfaceManager.lua")
+if _ok7 and _src3 then
+    local _ok8, _f = pcall(loadstring, _src3)
+    if _ok8 and _f then
+        local _ok9, _r = pcall(_f)
+        if _ok9 then InterfaceManager = _r end
+    end
+end
 
 local RS = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
@@ -1494,15 +1523,6 @@ autoVolcanoShopToggle:OnChanged(function(v)
 })
 
 eventTab:AddParagraph({ Title = "⬆️ Volcano Upgrades", Content = "" })
-local function updateUpgradeLevelMax()
-    local maxLvl = volcanoUpgradeLevels[volcanoUpgrade.upgradeType] or 1
-    if volcanoUpgrade.level > maxLvl then
-        volcanoUpgrade.level = maxLvl
-        if upgradeLevelSliderRef then
-            upgradeLevelSliderRef:SetValue(maxLvl)
-        end
-    end
-end
 local volcanoUpgradeTypeDD = eventTab:AddDropdown("VolcanoUpgradeType", {
     Title = "🔧 Upgrade Type",
     Description = "",
@@ -1510,7 +1530,13 @@ local volcanoUpgradeTypeDD = eventTab:AddDropdown("VolcanoUpgradeType", {
     Default = 1,
     Callback = function(sel)
         volcanoUpgrade.upgradeType = sel
-        updateUpgradeLevelMax()
+        local maxLvl = volcanoUpgradeLevels[volcanoUpgrade.upgradeType] or 1
+        if volcanoUpgrade.level > maxLvl then
+            volcanoUpgrade.level = maxLvl
+            if upgradeLevelSliderRef then
+                upgradeLevelSliderRef:SetValue(maxLvl)
+            end
+        end
     end,
 })
 local upgradeLevelSliderRef = eventTab:AddSlider("VolcanoUpgradeLevel", {
@@ -1522,6 +1548,15 @@ local upgradeLevelSliderRef = eventTab:AddSlider("VolcanoUpgradeLevel", {
     Default = 1,
     Callback = function(v) volcanoUpgrade.level = v end,
 })
+local function updateUpgradeLevelMax()
+    local maxLvl = volcanoUpgradeLevels[volcanoUpgrade.upgradeType] or 1
+    if volcanoUpgrade.level > maxLvl then
+        volcanoUpgrade.level = maxLvl
+        if upgradeLevelSliderRef then
+            upgradeLevelSliderRef:SetValue(maxLvl)
+        end
+    end
+end
 updateUpgradeLevelMax()
 eventTab:AddButton({
     Title = "💥 Buy Upgrade Once",
