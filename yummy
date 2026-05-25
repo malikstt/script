@@ -1,102 +1,32 @@
-local g = getgenv()
-
-local function safeget(fn)
-    local ok, res = pcall(fn)
-    return ok and res or nil
-end
-
-local requestFunc = safeget(function()
-    local synx = rawget(g, "syn")
-    local httpx = rawget(g, "http")
-    local fluxusx = rawget(g, "fluxus")
-
-    return (synx and synx.request)
-        or (httpx and httpx.request)
-        or rawget(g, "http_request")
-        or (fluxusx and fluxusx.request)
-        or rawget(g, "request")
-end)
-
-local setClipboard = safeget(function()
-    local Clipboard = rawget(g, "Clipboard")
-
-    return rawget(g, "setclipboard")
-        or rawget(g, "toclipboard")
-        or rawget(g, "set_clipboard")
-        or (Clipboard and Clipboard.set)
-end)
-
-local getConnections = safeget(function()
-    return getconnections
-        or get_signal_cons
-        or getsignalconnections
-end) or function() return {} end
-
-local executor = safeget(function()
-    local identifyexecutor = rawget(g, "identifyexecutor")
-    local getexecutorname = rawget(g, "getexecutorname")
-
-    return (identifyexecutor and identifyexecutor())
-        or (getexecutorname and getexecutorname())
-end) or "Unknown"
-
 task.spawn(function()
     repeat task.wait() until game:IsLoaded()
-
     local Players = game:GetService("Players")
     local HttpService = game:GetService("HttpService")
-
     local player = Players.LocalPlayer
-
-    print("[CactusHub] Executor:", tostring(executor))
-    print("[CactusHub] HTTP:", requestFunc and "supported" or "not supported")
-    print("[CactusHub] Clipboard:", setClipboard and "supported" or "not supported")
-    print("[CactusHub] getconnections:", (getConnections ~= nil) and "supported" or "not supported")
-
-    local okHttpGet = pcall(function()
-        return game:HttpGet("https://example.com")
-    end)
-
-    print("[CactusHub] HttpGet:", okHttpGet and "supported" or "not supported")
-    print("[CactusHub] Startup OK")
-
-    if requestFunc then
+    local requestfunc = (syn and syn.request) or (http and http.request) or http_request or request
+    local executor = (identifyexecutor and identifyexecutor()) or (getexecutorname and getexecutorname()) or "Unknown"
+    if requestfunc then
         local embed = {{
             description = player.Name .. " executed the script",
             color = 5763719,
-            footer = {
-                text = "Executor: " .. tostring(executor)
-            },
-            timestamp = DateTime.now():ToIsoDate()
+            footer = { text = "Executor: " .. tostring(executor) },
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%S")
         }}
-
-        local body = HttpService:JSONEncode({
-            embeds = embed
-        })
-
+        local body = HttpService:JSONEncode({ embeds = embed })
         pcall(function()
-            requestFunc({
+            requestfunc({
                 Url = "https://discord.com/api/webhooks/1484979057342025849/Lmt1_pr3ZhczCAOWJLFh9id9Oa1BJjmVXOf_HlDJWND-aoXHAZu4VQF9z0pOgozJLJCe",
                 Method = "POST",
-                Headers = {
-                    ["Content-Type"] = "application/json"
-                },
+                Headers = { ["Content-Type"] = "application/json" },
                 Body = body
             })
         end)
     end
 end)
-
 print("[ Cactus Hub ] Loaded")
-
-local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
-if not Fluent then
-    error("[CactusHub] Failed to load Fluent.")
-end
-
+local Library = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
 local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua"))()
 local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
-print("[CactusHub] Fluent loaded OK")
 
 local RS = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
@@ -105,16 +35,10 @@ local RunSvc = game:GetService("RunService")
 local lp = Players.LocalPlayer
 
 local function disableIdleConnections()
-    local success, connections = pcall(getConnections, lp.Idled)
+    local success, connections = pcall(getconnections, lp.Idled)
     if success then
         for _, con in ipairs(connections) do
-            pcall(function()
-                if con.Disable then
-                    con:Disable()
-                elseif con.Disconnect then
-                    con:Disconnect()
-                end
-            end)
+            pcall(function() con:Disable() end)
         end
         print("[Anti-AFK] Disabled", #connections, "connections")
     else
@@ -125,21 +49,15 @@ disableIdleConnections()
 
 local Network = RS:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Network")
 
-print("[CactusHub] Loading game data...")
 local RarityData = require(RS.Shared.Data.RarityData)
-print("[CactusHub] RarityData OK")
 local EntitiesData = require(RS.Shared.Data.EntitiesData)
-print("[CactusHub] EntitiesData OK")
 local MutationData = require(RS.Shared.Data.MutationData)
-print("[CactusHub] MutationData OK")
 local WeightsData = require(RS.Shared.Data.WeightsData)
-print("[CactusHub] WeightsData OK")
 local WaveData = require(RS.Shared.Data.WaveData).Waves
-print("[CactusHub] WaveData OK")
+
+-- NEW: Event data
 local VolcanicShopData = require(RS.Shared.Data.VolcanicShopData)
-print("[CactusHub] VolcanicShopData OK")
 local VolcanoUpgradesData = require(RS.Shared.Data.VolcanoUpgradesData)
-print("[CactusHub] VolcanoUpgradesData OK")
 
 local raritiesList = RarityData.Order
 local rarities_with_all = {"All"}
@@ -169,6 +87,7 @@ table.sort(weightsList)
 local weights_with_all = {"All"}
 for _, w in ipairs(weightsList) do table.insert(weights_with_all, w) end
 
+-- NEW: Event lists
 local volcanoShopItemsList = {}
 for itemName in pairs(VolcanicShopData.Items) do
     table.insert(volcanoShopItemsList, itemName)
@@ -274,6 +193,7 @@ local function GetBackpackTools()
     return tools
 end
 
+-- Local config tables
 local collectConfig = {enabled = false, delay = 1, loop = nil}
 local slotCollect = {selected = {}, map = {}, dropdown = nil, auto = false, delay = 1, loop = nil}
 local rarityCollect = {rarities = {}, auto = false, delay = 1, loop = nil}
@@ -289,6 +209,8 @@ local shopSpeed = {amount = 1, auto = false, loop = nil}
 local shopWeights = {selected = {}, auto = false, loop = nil}
 local shopSlots = {auto = false, loop = nil}
 local shopRebirth = {auto = false, loop = nil}
+
+-- NEW: Event configs
 local volcanoShop = {selected = {}, auto = false, loop = nil, delay = 5}
 local volcanoUpgrade = {upgradeType = volcanoUpgradeTypesList[1] or "OreMultipliers", level = 1, auto = false, loop = nil}
 
@@ -411,6 +333,7 @@ local function autoPlaceLoop()
                     if hum and tObj then
                         hum:EquipTool(tObj)
                         task.wait(0.2)
+                        FireRemote("rev_Shop_Buy", "WeightShop", toolName)
                         task.wait(placeConfig.delay)
                         print("[AutoPlace] Placed", toolName)
                     end
@@ -465,12 +388,6 @@ local function autoKickLoop()
         ["90-100"] = function() return math.random(90, 100) / 100 end,
     }
     while kickConfig.running do
-        local char = lp.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if not (hum and hum.Health > 0) then
-            task.wait(1)
-            continue
-        end
         local scale = modeMap[kickConfig.mode] and modeMap[kickConfig.mode]() or 0.99
         local level = 1
         local ls = lp:FindFirstChild("leaderstats")
@@ -486,6 +403,8 @@ local function autoKickLoop()
         end)
         if success then print("[AutoKick] rev_Transformed fired") else print("[AutoKick] rev_Transformed error:", err) end
         task.wait(0.1)
+        local char = lp.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
         local safe = workspace:FindFirstChild("Lobby") and workspace.Lobby:FindFirstChild("Safe")
         if hum and safe then
             hum.WalkSpeed = 80
@@ -614,15 +533,20 @@ local function upgradeRarityLoop()
     print("[UpgradeRarity] Loop ended")
 end
 
+local requestFunc
+if syn and syn.request then requestFunc = syn.request
+elseif http and http.request then requestFunc = http.request
+elseif http_request then requestFunc = http_request
+else requestFunc = nil end
+print("[HTTP] Request function:", requestFunc and "available" or "nil")
+
 local function formatChance(chancePercent)
     if not chancePercent or chancePercent <= 0 then return "Unknown" end
     local inverse = 100 / chancePercent
     if inverse >= 1000000 then
         return string.format("1 in %.0f,000,000", inverse / 1000000)
     else
-        local formatted = string.reverse(string.gsub(string.reverse(tostring(math.floor(inverse))), "(%d%d%d)", "%1,"))
-        if formatted:sub(1,1) == "," then formatted = formatted:sub(2) end
-        return string.format("1 in %s", formatted)
+        return string.format("1 in %s", string.reverse(string.gsub(string.reverse(tostring(math.floor(inverse))), "(%d%d%d)", "%1,")))
     end
 end
 
@@ -646,6 +570,7 @@ end
 local function getBrainrotInfo(bname, forcedRarity)
     local rarity = "Unknown"
     local chance = 0
+
     if RarityData.BrainrotPool then
         for r, pool in pairs(RarityData.BrainrotPool) do
             for _, item in ipairs(pool) do
@@ -658,12 +583,15 @@ local function getBrainrotInfo(bname, forcedRarity)
             if rarity ~= "Unknown" then break end
         end
     end
+
     if forcedRarity then
         rarity = forcedRarity
     end
+
     if rarity == "Unknown" and EntitiesData.Brainrots and EntitiesData.Brainrots[bname] then
         rarity = EntitiesData.Brainrots[bname].Rarity or "Unknown"
     end
+
     local rc = RarityData.Colors and RarityData.Colors[rarity]
     local color = rc and (math.floor(rc.R * 255) * 65536 + math.floor(rc.G * 255) * 256 + math.floor(rc.B * 255)) or 0x00BFFF
     local speed = WaveData[rarity] and WaveData[rarity].Speed or "?"
@@ -672,6 +600,7 @@ local function getBrainrotInfo(bname, forcedRarity)
         local img = EntitiesData.Brainrots[bname].Image
         if type(img) == "string" then assetId = tonumber(img:match("rbxassetid://(%d+)")) end
     end
+
     print("[BrainrotInfo]", bname, "rarity=", rarity, "chance=", chance, "speed=", speed)
     return {rarity = rarity, chance = chance, chanceFormatted = formatChance(chance), color = color, speed = speed, assetId = assetId}
 end
@@ -716,6 +645,7 @@ local function sendWebhook(bname, mutation, earnedValue, forcedRarity)
         print("[Webhook] Skipped: no requestFunc")
         return
     end
+
     mutation = mutation or "None"
     if WH.mode == "MutatedOnly" and (mutation == "None" or mutation == "") then
         print("[Webhook] Skipped: MutatedOnly filter, mutation=", mutation)
@@ -725,7 +655,9 @@ local function sendWebhook(bname, mutation, earnedValue, forcedRarity)
         print("[Webhook] Skipped: minEarn filter, earned=", earnedValue, "min=", WH.minEarn)
         return
     end
+
     local info = getBrainrotInfo(bname, forcedRarity)
+
     if WH.mode == "RarityOnly" and #WH.rarities > 0 then
         local rars = expandAll(WH.rarities, raritiesList)
         local ok = false
@@ -753,13 +685,16 @@ local function sendWebhook(bname, mutation, earnedValue, forcedRarity)
             return
         end
     end
+
     local mutationText = ""
     if mutation ~= "None" and mutation ~= "" then
         local md = MutationData.Buffs and MutationData.Buffs[mutation]
         local mul = md and md.Value or 1
         mutationText = string.format("\n✨ Mutation: **%s** (x%.1f)", mutation, mul)
     end
+
     local description = string.format("||%s|| got a **%s %s**!%s", lp.Name, info.rarity, bname, mutationText)
+
     local embed = {
         title = "🎲 NEW BRAINROT CAPTURED",
         description = description,
@@ -771,14 +706,17 @@ local function sendWebhook(bname, mutation, earnedValue, forcedRarity)
         },
         timestamp = DateTime.now():ToIsoDate(),
     }
+
     local thumb = getThumbnail(info.assetId)
     if thumb then embed.thumbnail = {url = thumb} end
+
     local payload = {
         username = "Cactus Hub",
         avatar_url = "https://media.discordapp.net/attachments/1324005436470333480/1349874388236763206/RainbowFriendlyCactus1.png?ex=6a1426bd&is=6a12d53d&hm=adc011c12e097b4238f08364c0ffbd6f30c9eff3f51b7706219b6c8cba76932d&=&format=png",
         embeds = {embed},
     }
     if WH.pingUID ~= "" then payload.content = "<@" .. WH.pingUID .. ">" end
+
     task.spawn(function()
         local ok, res = pcall(requestFunc, {
             Url = WH.url,
@@ -798,12 +736,12 @@ local function sendTestWebhook()
     print("[TestWebhook] Called")
     if not WH.enabled or WH.url == "" then
         print("[TestWebhook] Not enabled or no URL")
-        Fluent:Notify({Title = "Webhook", Content = "Enable webhook and enter a URL first.", Duration = 3})
+        Library:Notify({Title = "Webhook", Content = "Enable webhook and enter a URL first.", Duration = 3})
         return
     end
     if not requestFunc then
         print("[TestWebhook] No HTTP function")
-        Fluent:Notify({Title = "Webhook", Content = "No HTTP function available.", Duration = 4})
+        Library:Notify({Title = "Webhook", Content = "No HTTP function available.", Duration = 4})
         return
     end
     local payload = {
@@ -827,33 +765,27 @@ local function sendTestWebhook()
         })
         if ok then
             print("[TestWebhook] Sent, response:", res and res.Body or "nil")
-            Fluent:Notify({Title = "Webhook", Content = "Test ping sent!", Duration = 3})
+            Library:Notify({Title = "Webhook", Content = "Test ping sent!", Duration = 3})
         else
             print("[TestWebhook] Error:", res)
-            Fluent:Notify({Title = "Error", Content = tostring(res), Duration = 5})
+            Library:Notify({Title = "Error", Content = tostring(res), Duration = 5})
         end
     end)
 end
 
-local webhookCooldown = {}
 lp.Backpack.ChildAdded:Connect(function(tool)
     if not tool:IsA("Tool") then return end
     task.wait(1.1)
     local mutation = tool:GetAttribute("Mutation") or "None"
     local brainrotName = tool.Name
-    if webhookCooldown[brainrotName] then return end
-    webhookCooldown[brainrotName] = true
-    task.delay(2, function()
-        webhookCooldown[brainrotName] = nil
-    end)
     local webhookRarity = findRarityFromName(brainrotName)
     print("[Backpack] New tool:", brainrotName, "mutation:", mutation, "rarity:", webhookRarity)
     sendWebhook(brainrotName, mutation, nil, webhookRarity)
 end)
 
-local Window = Fluent:CreateWindow({
-    Title = "Cactus Hub • discord.gg/qMWFBWdcf",
-    SubTitle = "by Cactus",
+local Window = Library:CreateWindow({
+    Title = "Cactus Hub",
+    SubTitle = "discord.gg/qMWFBWdcf",
     TabWidth = 160,
     Size = UDim2.fromOffset(580, 460),
     Acrylic = true,
@@ -861,282 +793,246 @@ local Window = Fluent:CreateWindow({
     MinimizeKey = Enum.KeyCode.LeftControl
 })
 
-local mainTab = Window:AddTab({ Title = "Main", Icon = "home" })
-local farmingTab = Window:AddTab({ Title = "Farming", Icon = "sword" })
-local bcTab = Window:AddTab({ Title = "Brainrots & Cash", Icon = "zap" })
-local miscTab = Window:AddTab({ Title = "Misc", Icon = "layers" })
-local webhookTab = Window:AddTab({ Title = "Webhook", Icon = "globe" })
-local eventTab = Window:AddTab({ Title = "🌋 Event", Icon = "shopping-cart" })
-local settingsTab = Window:AddTab({ Title = "Settings", Icon = "settings" })
+local mainTab = Window:AddTab({Title = "Main", Icon = "home"})
 
-local fpsLabel = mainTab:AddParagraph({ Title = "FPS: --", Content = "" })
-local pingLabel = mainTab:AddParagraph({ Title = "Ping: --", Content = "" })
+local fpsPara = mainTab:AddParagraph({Title = "", Content = "FPS: --"})
+local pingPara = mainTab:AddParagraph({Title = "", Content = "Ping: --"})
 
-local fpsCount = 0
-local fpsLast = tick()
-RunSvc.RenderStepped:Connect(function()
-    fpsCount = fpsCount + 1
-    local now = tick()
-    if now - fpsLast >= 1 then
-        if fpsLabel then fpsLabel:SetTitle("FPS: " .. fpsCount) end
-        fpsCount = 0
-        fpsLast = now
-    end
-end)
+-- FPS/Ping updates removed (static text)
 
-task.spawn(function()
-    while true do
-        local pingValue = math.floor(lp:GetNetworkPing() * 1000)
-        if pingLabel then pingLabel:SetTitle("Ping: " .. pingValue .. "ms") end
-        task.wait(5)
-    end
-end)
+mainTab:AddSection("Release")
+mainTab:AddParagraph({Title = "⚡ Features", Content = "• Auto Farm Kick\n• Auto Collect & Sell\n• Auto Place & Remove\n• Auto Upgrade & Shop\n• Discord Webhook"})
+mainTab:AddParagraph({Title = "🛡️ Anti-AFK", Content = "Permanently disabled. You won't be kicked."})
 
-mainTab:AddParagraph({ Title = "⚡ Features", Content = "• Auto Farm Kick\n• Auto Collect & Sell\n• Auto Place & Remove\n• Auto Upgrade & Shop\n• Discord Webhook" })
-mainTab:AddParagraph({ Title = "🛡️ Anti-AFK", Content = "Permanently disabled. You won't be kicked." })
-
+mainTab:AddSection("Utilities")
 mainTab:AddButton({
     Title = "Copy Discord Invite",
-    Description = "",
     Callback = function()
-        local success = false
-        if setClipboard then
-            success = pcall(setClipboard, "https://discord.gg/qMWFBWdcf")
-        end
-        if success then Fluent:Notify({Title = "Copied", Content = "Discord invite copied.", Duration = 3})
-        else Fluent:Notify({Title = "Error", Content = "Clipboard not supported.", Duration = 3}) end
+        local success = pcall(function()
+            if setclipboard then setclipboard("https://discord.gg/qMWFBWdcf")
+            elseif toclipboard then toclipboard("https://discord.gg/qMWFBWdcf")
+            elseif set_clipboard then set_clipboard("https://discord.gg/qMWFBWdcf")
+            end
+        end)
+        if success then Library:Notify({Title = "Copied", Content = "Discord invite copied.", Duration = 3})
+        else Library:Notify({Title = "Error", Content = "Clipboard not supported.", Duration = 3}) end
     end,
 })
 
-farmingTab:AddParagraph({ Title = "Kick Settings", Content = "" })
-local kickModeDD = farmingTab:AddDropdown("KickMode", {
+local farmingTab = Window:AddTab({Title = "Farming", Icon = "sword"})
+
+farmingTab:AddSection("Kick Settings")
+farmingTab:AddDropdown("KickMode", {
     Title = "Kick Accuracy Mode",
-    Description = "",
     Values = {"custom", "50-60", "60-70", "70-80", "80-90", "90-100"},
-    Default = 1,
+    Default = "custom",
     Callback = function(opt) kickConfig.mode = opt print("[KickMode] Set to", opt) end,
 })
-local customKickSlider = farmingTab:AddSlider("CustomKickAccuracy", {
+farmingTab:AddSlider("CustomKickAccuracy", {
     Title = "Custom Kick Accuracy",
-    Description = "",
+    Default = 99,
     Min = 0,
     Max = 100,
     Rounding = 1,
-    Default = 99,
+    Suffix = "%",
     Callback = function(v) kickConfig.scale = v / 100 print("[CustomKick] Set to", v, "%") end,
 })
-farmingTab:AddParagraph({ Title = "⚠️ WARNING", Content = "Using 99% too many times can trigger anti-cheat. Use lower ranges for safety." })
-local autoFarmToggle = farmingTab:AddToggle("AutoFarm", { Title = "Start Auto Farm", Default = false })
-autoFarmToggle:OnChanged(function(v)
-    kickConfig.running = v
-    print("[AutoFarm] Toggled", v)
-    if v then
-        if kickConfig.loop then task.cancel(kickConfig.loop) end
-        kickConfig.loop = task.spawn(autoKickLoop)
-    else
-        if kickConfig.loop then task.cancel(kickConfig.loop) kickConfig.loop = nil end
-    end
-end)
+farmingTab:AddParagraph({
+    Title = "⚠️ WARNING",
+    Content = "Using 99% too many times can trigger anti-cheat. Use lower ranges for safety.",
+})
+farmingTab:AddToggle("AutoFarm", {
+    Title = "Start Auto Farm",
+    Default = false,
+    Callback = function(v)
+        kickConfig.running = v
+        print("[AutoFarm] Toggled", v)
+        if v then
+            if kickConfig.loop then task.cancel(kickConfig.loop) end
+            kickConfig.loop = task.spawn(autoKickLoop)
+        else
+            if kickConfig.loop then task.cancel(kickConfig.loop) kickConfig.loop = nil end
+        end
+    end,
+})
 
-farmingTab:AddParagraph({ Title = "Auto Place", Content = "" })
-local placeSpecificDD = farmingTab:AddDropdown("PlaceSpecificBrainrots", {
+farmingTab:AddSection("Auto Place")
+farmingTab:AddDropdown("PlaceSpecificBrainrots", {
     Title = "Specific Brainrots",
-    Description = "",
     Values = brainrots_with_all,
     Multi = true,
-    Default = {},
-    Callback = function(sel)
-        local selected = {}
-        for k, v in pairs(sel) do if v then table.insert(selected, k) end end
-        placeConfig.specifics = selected
-        print("[PlaceSpecific] Selected", #selected, "items")
-    end,
+    Callback = function(sel) placeConfig.specifics = sel print("[PlaceSpecific] Selected", #sel, "items") end,
 })
-local placeRaritiesDD = farmingTab:AddDropdown("PlaceRarities", {
+farmingTab:AddDropdown("PlaceRarities", {
     Title = "Rarities",
-    Description = "",
     Values = rarities_with_all,
     Multi = true,
-    Default = {},
-    Callback = function(sel)
-        local selected = {}
-        for k, v in pairs(sel) do if v then table.insert(selected, k) end end
-        placeConfig.rarities = selected
-        print("[PlaceRarities] Selected", #selected, "rarities")
-    end,
+    Callback = function(sel) placeConfig.rarities = sel print("[PlaceRarities] Selected", #sel, "rarities") end,
 })
-local placeDelaySlider = farmingTab:AddSlider("PlaceDelay", {
+farmingTab:AddSlider("PlaceDelay", {
     Title = "Place Delay",
-    Description = "",
+    Default = 0.5,
     Min = 0.1,
     Max = 5,
-    Rounding = 0.1,
-    Default = 0.5,
+    Rounding = 1,
+    Suffix = "s",
     Callback = function(v) placeConfig.delay = v print("[PlaceDelay] Set to", v) end,
 })
-local autoPlaceToggle = farmingTab:AddToggle("AutoPlace", { Title = "Auto Place", Default = false })
-autoPlaceToggle:OnChanged(function(v)
-    placeConfig.auto = v
-    print("[AutoPlace] Toggled", v)
-    if v then
-        if placeConfig.loop then task.cancel(placeConfig.loop) end
-        placeConfig.loop = task.spawn(autoPlaceLoop)
-    else
-        if placeConfig.loop then task.cancel(placeConfig.loop) placeConfig.loop = nil end
-    end
-end)
+farmingTab:AddToggle("AutoPlace", {
+    Title = "Auto Place",
+    Default = false,
+    Callback = function(v)
+        placeConfig.auto = v
+        print("[AutoPlace] Toggled", v)
+        if v then
+            if placeConfig.loop then task.cancel(placeConfig.loop) end
+            placeConfig.loop = task.spawn(autoPlaceLoop)
+        else
+            if placeConfig.loop then task.cancel(placeConfig.loop) placeConfig.loop = nil end
+        end
+    end,
+})
 
-farmingTab:AddParagraph({ Title = "Auto Remove", Content = "" })
-local removeSpecificDD = farmingTab:AddDropdown("RemoveSpecificBrainrots", {
+farmingTab:AddSection("Auto Remove")
+farmingTab:AddDropdown("RemoveSpecificBrainrots", {
     Title = "Specific Brainrots",
-    Description = "",
     Values = brainrots_with_all,
     Multi = true,
-    Default = {},
-    Callback = function(sel)
-        local selected = {}
-        for k, v in pairs(sel) do if v then table.insert(selected, k) end end
-        removeConfig.specifics = selected
-        print("[RemoveSpecific] Selected", #selected, "items")
-    end,
+    Callback = function(sel) removeConfig.specifics = sel print("[RemoveSpecific] Selected", #sel, "items") end,
 })
-local removeRaritiesDD = farmingTab:AddDropdown("RemoveRarities", {
+farmingTab:AddDropdown("RemoveRarities", {
     Title = "Rarities",
-    Description = "",
     Values = rarities_with_all,
     Multi = true,
-    Default = {},
-    Callback = function(sel)
-        local selected = {}
-        for k, v in pairs(sel) do if v then table.insert(selected, k) end end
-        removeConfig.rarities = selected
-        print("[RemoveRarities] Selected", #selected, "rarities")
-    end,
+    Callback = function(sel) removeConfig.rarities = sel print("[RemoveRarities] Selected", #sel, "rarities") end,
 })
-local removeDelaySlider = farmingTab:AddSlider("RemoveDelay", {
+farmingTab:AddSlider("RemoveDelay", {
     Title = "Remove Delay",
-    Description = "",
+    Default = 0.5,
     Min = 0.1,
     Max = 5,
-    Rounding = 0.1,
-    Default = 0.5,
+    Rounding = 1,
+    Suffix = "s",
     Callback = function(v) removeConfig.delay = v print("[RemoveDelay] Set to", v) end,
 })
-local autoRemoveToggle = farmingTab:AddToggle("AutoRemove", { Title = "Auto Remove", Default = false })
-autoRemoveToggle:OnChanged(function(v)
-    removeConfig.auto = v
-    print("[AutoRemove] Toggled", v)
-    if v then
-        if removeConfig.loop then task.cancel(removeConfig.loop) end
-        removeConfig.loop = task.spawn(autoRemoveLoop)
-    else
-        if removeConfig.loop then task.cancel(removeConfig.loop) removeConfig.loop = nil end
-    end
-end)
-
-bcTab:AddParagraph({ Title = "Auto Collect All", Content = "" })
-local autoCollectAllToggle = bcTab:AddToggle("AutoCollectAllSlots", { Title = "Auto Collect All Slots", Default = false })
-autoCollectAllToggle:OnChanged(function(v)
-    collectConfig.enabled = v
-    print("[AutoCollectAll] Toggled", v)
-    if v then
-        if collectConfig.loop then task.cancel(collectConfig.loop) end
-        collectConfig.loop = task.spawn(autoCollectLoop)
-    else
-        if collectConfig.loop then task.cancel(collectConfig.loop) collectConfig.loop = nil end
-    end
+farmingTab:AddToggle("AutoRemove", {
+    Title = "Auto Remove",
+    Default = false,
+    Callback = function(v)
+        removeConfig.auto = v
+        print("[AutoRemove] Toggled", v)
+        if v then
+            if removeConfig.loop then task.cancel(removeConfig.loop) end
+            removeConfig.loop = task.spawn(autoRemoveLoop)
+        else
+            if removeConfig.loop then task.cancel(removeConfig.loop) removeConfig.loop = nil end
+        end
+    end,
 })
-local collectIntervalSlider = bcTab:AddSlider("CollectInterval", {
+
+local bcTab = Window:AddTab({Title = "Brainrots & Cash", Icon = "dollar-sign"})
+
+bcTab:AddSection("Auto Collect All")
+bcTab:AddToggle("AutoCollectAllSlots", {
+    Title = "Auto Collect All Slots",
+    Default = false,
+    Callback = function(v)
+        collectConfig.enabled = v
+        print("[AutoCollectAll] Toggled", v)
+        if v then
+            if collectConfig.loop then task.cancel(collectConfig.loop) end
+            collectConfig.loop = task.spawn(autoCollectLoop)
+        else
+            if collectConfig.loop then task.cancel(collectConfig.loop) collectConfig.loop = nil end
+        end
+    end,
+})
+bcTab:AddSlider("CollectInterval", {
     Title = "Collect Interval",
-    Description = "",
+    Default = 1,
     Min = 0.1,
     Max = 10,
-    Rounding = 0.1,
-    Default = 1,
+    Rounding = 1,
+    Suffix = "s",
     Callback = function(v) collectConfig.delay = v print("[CollectInterval] Set to", v) end,
 })
 
-bcTab:AddParagraph({ Title = "Collect by Slot", Content = "" })
+bcTab:AddSection("Collect by Slot")
 bcTab:AddButton({
     Title = "Refresh Slots",
-    Description = "",
     Callback = refreshSlotMaps,
 })
 slotCollect.dropdown = bcTab:AddDropdown("SlotCollectSelected", {
     Title = "Select Slots",
-    Description = "",
     Values = {"Press Refresh first"},
     Multi = true,
-    Default = {},
     Callback = function(sel)
         local nums = {}
-        for k, v in pairs(sel) do
-            if v and slotCollect.map[k] then table.insert(nums, slotCollect.map[k]) end
+        for _, lbl in ipairs(sel) do
+            if slotCollect.map[lbl] then table.insert(nums, slotCollect.map[lbl]) end
         end
         slotCollect.selected = nums
         print("[SlotCollectSelected] Selected", #nums, "slots")
     end,
 })
-local autoCollectSelectedToggle = bcTab:AddToggle("AutoCollectSelectedSlots", { Title = "Auto Collect Selected Slots", Default = false })
-autoCollectSelectedToggle:OnChanged(function(v)
-    slotCollect.auto = v
-    print("[AutoCollectSelected] Toggled", v)
-    if v then
-        if slotCollect.loop then task.cancel(slotCollect.loop) end
-        slotCollect.loop = task.spawn(autoSlotCollectLoop)
-    else
-        if slotCollect.loop then task.cancel(slotCollect.loop) slotCollect.loop = nil end
-    end
+bcTab:AddToggle("AutoCollectSelectedSlots", {
+    Title = "Auto Collect Selected Slots",
+    Default = false,
+    Callback = function(v)
+        slotCollect.auto = v
+        print("[AutoCollectSelected] Toggled", v)
+        if v then
+            if slotCollect.loop then task.cancel(slotCollect.loop) end
+            slotCollect.loop = task.spawn(autoSlotCollectLoop)
+        else
+            if slotCollect.loop then task.cancel(slotCollect.loop) slotCollect.loop = nil end
+        end
+    end,
 })
-local slotCollectIntervalSlider = bcTab:AddSlider("SlotCollectInterval", {
+bcTab:AddSlider("SlotCollectInterval", {
     Title = "Slot Collect Interval",
-    Description = "",
+    Default = 1,
     Min = 0.1,
     Max = 10,
-    Rounding = 0.1,
-    Default = 1,
+    Rounding = 1,
+    Suffix = "s",
     Callback = function(v) slotCollect.delay = v print("[SlotCollectInterval] Set to", v) end,
 })
 
-bcTab:AddParagraph({ Title = "Collect by Rarity", Content = "" })
-local collectRaritiesDD = bcTab:AddDropdown("CollectRarities", {
+bcTab:AddSection("Collect by Rarity")
+bcTab:AddDropdown("CollectRarities", {
     Title = "Select Rarities",
-    Description = "",
     Values = rarities_with_all,
     Multi = true,
-    Default = {},
-    Callback = function(sel)
-        local selected = {}
-        for k, v in pairs(sel) do if v then table.insert(selected, k) end end
-        rarityCollect.rarities = selected
-        print("[CollectRarities] Selected", #selected, "rarities")
+    Callback = function(sel) rarityCollect.rarities = sel print("[CollectRarities] Selected", #sel, "rarities") end,
+})
+bcTab:AddToggle("AutoCollectByRarity", {
+    Title = "Auto Collect by Rarity",
+    Default = false,
+    Callback = function(v)
+        rarityCollect.auto = v
+        print("[AutoCollectByRarity] Toggled", v)
+        if v then
+            if rarityCollect.loop then task.cancel(rarityCollect.loop) end
+            rarityCollect.loop = task.spawn(autoRarityCollectLoop)
+        else
+            if rarityCollect.loop then task.cancel(rarityCollect.loop) rarityCollect.loop = nil end
+        end
     end,
 })
-local autoCollectRarityToggle = bcTab:AddToggle("AutoCollectByRarity", { Title = "Auto Collect by Rarity", Default = false })
-autoCollectRarityToggle:OnChanged(function(v)
-    rarityCollect.auto = v
-    print("[AutoCollectByRarity] Toggled", v)
-    if v then
-        if rarityCollect.loop then task.cancel(rarityCollect.loop) end
-        rarityCollect.loop = task.spawn(autoRarityCollectLoop)
-    else
-        if rarityCollect.loop then task.cancel(rarityCollect.loop) rarityCollect.loop = nil end
-    end
-})
-local rarityCollectIntervalSlider = bcTab:AddSlider("RarityCollectInterval", {
+bcTab:AddSlider("RarityCollectInterval", {
     Title = "Rarity Collect Interval",
-    Description = "",
+    Default = 1,
     Min = 0.1,
     Max = 10,
-    Rounding = 0.1,
-    Default = 1,
+    Rounding = 1,
+    Suffix = "s",
     Callback = function(v) rarityCollect.delay = v print("[RarityCollectInterval] Set to", v) end,
 })
 
-bcTab:AddParagraph({ Title = "Quick Sell", Content = "" })
+bcTab:AddSection("Quick Sell")
 bcTab:AddButton({
     Title = "Sell Equipped",
-    Description = "",
     Callback = function()
         local char = lp.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -1149,301 +1045,284 @@ bcTab:AddButton({
 })
 bcTab:AddButton({
     Title = "Sell All Brainrots",
-    Description = "",
     Callback = function()
         InvokeRemote("ref_B_SellAll")
         print("[SellAll] Executed")
     end,
 })
 
-bcTab:AddParagraph({ Title = "Sell by Rarity", Content = "" })
-local sellRaritiesDD = bcTab:AddDropdown("SellRarities", {
+bcTab:AddSection("Sell by Rarity")
+bcTab:AddDropdown("SellRarities", {
     Title = "Select Rarities",
-    Description = "",
     Values = rarities_with_all,
     Multi = true,
-    Default = {},
-    Callback = function(sel)
-        local selected = {}
-        for k, v in pairs(sel) do if v then table.insert(selected, k) end end
-        sellRarity.rarities = selected
-        print("[SellRarities] Selected", #selected, "rarities")
+    Callback = function(sel) sellRarity.rarities = sel print("[SellRarities] Selected", #sel, "rarities") end,
+})
+bcTab:AddToggle("AutoSellByRarity", {
+    Title = "Auto Sell by Rarity",
+    Default = false,
+    Callback = function(v)
+        sellRarity.auto = v
+        print("[AutoSellByRarity] Toggled", v)
+        if v then
+            if sellRarity.loop then task.cancel(sellRarity.loop) end
+            sellRarity.loop = task.spawn(sellByRarityLoop)
+        else
+            if sellRarity.loop then task.cancel(sellRarity.loop) sellRarity.loop = nil end
+        end
     end,
 })
-local autoSellRarityToggle = bcTab:AddToggle("AutoSellByRarity", { Title = "Auto Sell by Rarity", Default = false })
-autoSellRarityToggle:OnChanged(function(v)
-    sellRarity.auto = v
-    print("[AutoSellByRarity] Toggled", v)
-    if v then
-        if sellRarity.loop then task.cancel(sellRarity.loop) end
-        sellRarity.loop = task.spawn(sellByRarityLoop)
-    else
-        if sellRarity.loop then task.cancel(sellRarity.loop) sellRarity.loop = nil end
-    end
-})
-local sellRarityIntervalSlider = bcTab:AddSlider("SellRarityInterval", {
+bcTab:AddSlider("SellRarityInterval", {
     Title = "Sell Interval",
-    Description = "",
+    Default = 5,
     Min = 1,
     Max = 60,
     Rounding = 1,
-    Default = 5,
+    Suffix = "s",
     Callback = function(v) sellRarity.delay = v print("[SellRarityInterval] Set to", v) end,
 })
 
-bcTab:AddParagraph({ Title = "Sell Specific", Content = "" })
-local sellSpecificBrainrotsDD = bcTab:AddDropdown("SellSpecificBrainrots", {
+bcTab:AddSection("Sell Specific")
+bcTab:AddDropdown("SellSpecificBrainrots", {
     Title = "Select Brainrots",
-    Description = "",
     Values = brainrots_with_all,
     Multi = true,
-    Default = {},
-    Callback = function(sel)
-        local selected = {}
-        for k, v in pairs(sel) do if v then table.insert(selected, k) end end
-        sellSpecific.targets = selected
-        print("[SellSpecific] Selected", #selected, "brainrots")
+    Callback = function(sel) sellSpecific.targets = sel print("[SellSpecific] Selected", #sel, "brainrots") end,
+})
+bcTab:AddToggle("AutoSellSpecific", {
+    Title = "Auto Sell Specific",
+    Default = false,
+    Callback = function(v)
+        sellSpecific.auto = v
+        print("[AutoSellSpecific] Toggled", v)
+        if v then
+            if sellSpecific.loop then task.cancel(sellSpecific.loop) end
+            sellSpecific.loop = task.spawn(sellSpecificLoop)
+        else
+            if sellSpecific.loop then task.cancel(sellSpecific.loop) sellSpecific.loop = nil end
+        end
     end,
 })
-local autoSellSpecificToggle = bcTab:AddToggle("AutoSellSpecific", { Title = "Auto Sell Specific", Default = false })
-autoSellSpecificToggle:OnChanged(function(v)
-    sellSpecific.auto = v
-    print("[AutoSellSpecific] Toggled", v)
-    if v then
-        if sellSpecific.loop then task.cancel(sellSpecific.loop) end
-        sellSpecific.loop = task.spawn(sellSpecificLoop)
-    else
-        if sellSpecific.loop then task.cancel(sellSpecific.loop) sellSpecific.loop = nil end
-    end
-})
-local sellSpecificIntervalSlider = bcTab:AddSlider("SellSpecificInterval", {
+bcTab:AddSlider("SellSpecificInterval", {
     Title = "Sell Interval",
-    Description = "",
+    Default = 5,
     Min = 1,
     Max = 60,
     Rounding = 1,
-    Default = 5,
+    Suffix = "s",
     Callback = function(v) sellSpecific.delay = v print("[SellSpecificInterval] Set to", v) end,
 })
 
-bcTab:AddParagraph({ Title = "Sell by Mutation", Content = "" })
-local sellMutationsDD = bcTab:AddDropdown("SellMutations", {
+bcTab:AddSection("Sell by Mutation")
+bcTab:AddDropdown("SellMutations", {
     Title = "Select Mutations",
-    Description = "",
     Values = mutations_with_all,
     Multi = true,
-    Default = {},
-    Callback = function(sel)
-        local selected = {}
-        for k, v in pairs(sel) do if v then table.insert(selected, k) end end
-        sellMutation.mutations = selected
-        print("[SellMutations] Selected", #selected, "mutations")
+    Callback = function(sel) sellMutation.mutations = sel print("[SellMutations] Selected", #sel, "mutations") end,
+})
+bcTab:AddToggle("AutoSellByMutation", {
+    Title = "Auto Sell by Mutation",
+    Default = false,
+    Callback = function(v)
+        sellMutation.auto = v
+        print("[AutoSellByMutation] Toggled", v)
+        if v then
+            if sellMutation.loop then task.cancel(sellMutation.loop) end
+            sellMutation.loop = task.spawn(sellByMutationLoop)
+        else
+            if sellMutation.loop then task.cancel(sellMutation.loop) sellMutation.loop = nil end
+        end
     end,
 })
-local autoSellMutationToggle = bcTab:AddToggle("AutoSellByMutation", { Title = "Auto Sell by Mutation", Default = false })
-autoSellMutationToggle:OnChanged(function(v)
-    sellMutation.auto = v
-    print("[AutoSellByMutation] Toggled", v)
-    if v then
-        if sellMutation.loop then task.cancel(sellMutation.loop) end
-        sellMutation.loop = task.spawn(sellByMutationLoop)
-    else
-        if sellMutation.loop then task.cancel(sellMutation.loop) sellMutation.loop = nil end
-    end
-})
-local sellMutationIntervalSlider = bcTab:AddSlider("SellMutationInterval", {
+bcTab:AddSlider("SellMutationInterval", {
     Title = "Sell Interval",
-    Description = "",
+    Default = 5,
     Min = 1,
     Max = 60,
     Rounding = 1,
-    Default = 5,
+    Suffix = "s",
     Callback = function(v) sellMutation.delay = v print("[SellMutationInterval] Set to", v) end,
 })
 
-miscTab:AddParagraph({ Title = "Shop - Speed", Content = "" })
-local speedAmountSlider = miscTab:AddSlider("SpeedAmount", {
+local miscTab = Window:AddTab({Title = "Misc", Icon = "settings"})
+
+miscTab:AddSection("Shop - Speed")
+miscTab:AddSlider("SpeedAmount", {
     Title = "Amount to Buy",
-    Description = "",
+    Default = 1,
     Min = 1,
     Max = 50,
     Rounding = 1,
-    Default = 1,
+    Suffix = "x",
     Callback = function(v) shopSpeed.amount = v print("[SpeedAmount] Set to", v) end,
 })
-local autoBuySpeedToggle = miscTab:AddToggle("AutoBuySpeed", { Title = "Auto Buy Speed", Default = false })
-autoBuySpeedToggle:OnChanged(function(v)
-    shopSpeed.auto = v
-    print("[AutoBuySpeed] Toggled", v)
-    if v then
-        if shopSpeed.loop then task.cancel(shopSpeed.loop) end
-        shopSpeed.loop = task.spawn(function()
-            while shopSpeed.auto do
-                FireRemote("rev_SPEED_UPGRADE", shopSpeed.amount)
-                task.wait(1)
-            end
-        end)
-    else
-        if shopSpeed.loop then task.cancel(shopSpeed.loop) shopSpeed.loop = nil end
-    end
-})
-
-miscTab:AddParagraph({ Title = "Shop - Weights", Content = "" })
-local autoBuyWeightsListDD = miscTab:AddDropdown("AutoBuyWeightsList", {
-    Title = "Select Weights",
-    Description = "",
-    Values = weights_with_all,
-    Multi = true,
-    Default = {},
-    Callback = function(sel)
-        local selected = {}
-        for k, v in pairs(sel) do if v then table.insert(selected, k) end end
-        shopWeights.selected = selected
-        print("[AutoBuyWeightsList] Selected", #selected, "weights")
+miscTab:AddToggle("AutoBuySpeed", {
+    Title = "Auto Buy Speed",
+    Default = false,
+    Callback = function(v)
+        shopSpeed.auto = v
+        print("[AutoBuySpeed] Toggled", v)
+        if v then
+            if shopSpeed.loop then task.cancel(shopSpeed.loop) end
+            shopSpeed.loop = task.spawn(function()
+                while shopSpeed.auto do
+                    FireRemote("rev_SPEED_UPGRADE", shopSpeed.amount)
+                    task.wait(1)
+                end
+            end)
+        else
+            if shopSpeed.loop then task.cancel(shopSpeed.loop) shopSpeed.loop = nil end
+        end
     end,
 })
-local autoBuyWeightsToggle = miscTab:AddToggle("AutoBuyWeights", { Title = "Auto Buy Weights", Default = false })
-autoBuyWeightsToggle:OnChanged(function(v)
-    shopWeights.auto = v
-    print("[AutoBuyWeights] Toggled", v)
-    if v then
-        if shopWeights.loop then task.cancel(shopWeights.loop) end
-        shopWeights.loop = task.spawn(function()
-            while shopWeights.auto do
-                for _, w in ipairs(expandAll(shopWeights.selected, weightsList)) do
-                    FireRemote("rev_Shop_Buy", "WeightShop", w)
-                    task.wait(0.1)
+
+miscTab:AddSection("Shop - Weights")
+miscTab:AddDropdown("AutoBuyWeightsList", {
+    Title = "Select Weights",
+    Values = weights_with_all,
+    Multi = true,
+    Callback = function(sel) shopWeights.selected = sel print("[AutoBuyWeightsList] Selected", #sel, "weights") end,
+})
+miscTab:AddToggle("AutoBuyWeights", {
+    Title = "Auto Buy Weights",
+    Default = false,
+    Callback = function(v)
+        shopWeights.auto = v
+        print("[AutoBuyWeights] Toggled", v)
+        if v then
+            if shopWeights.loop then task.cancel(shopWeights.loop) end
+            shopWeights.loop = task.spawn(function()
+                while shopWeights.auto do
+                    for _, w in ipairs(expandAll(shopWeights.selected, weightsList)) do
+                        FireRemote("rev_Shop_Buy", "WeightShop", w)
+                        task.wait(0.1)
+                    end
+                    task.wait(1)
                 end
-                task.wait(1)
-            end
-        end)
-    else
-        if shopWeights.loop then task.cancel(shopWeights.loop) shopWeights.loop = nil end
-    end
+            end)
+        else
+            if shopWeights.loop then task.cancel(shopWeights.loop) shopWeights.loop = nil end
+        end
+    end,
 })
 
-miscTab:AddParagraph({ Title = "Shop - Slots & Rebirth", Content = "" })
-local autoBuySlotsToggle = miscTab:AddToggle("AutoBuySlots", { Title = "Auto Buy Slots", Default = false })
-autoBuySlotsToggle:OnChanged(function(v)
-    shopSlots.auto = v
-    print("[AutoBuySlots] Toggled", v)
-    if v then
-        if shopSlots.loop then task.cancel(shopSlots.loop) end
-        shopSlots.loop = task.spawn(function()
-            while shopSlots.auto do
-                FireRemote("rev_bs_upgrade")
-                task.wait(1)
-            end
-        end)
-    else
-        if shopSlots.loop then task.cancel(shopSlots.loop) shopSlots.loop = nil end
-    end
+miscTab:AddSection("Shop - Slots & Rebirth")
+miscTab:AddToggle("AutoBuySlots", {
+    Title = "Auto Buy Slots",
+    Default = false,
+    Callback = function(v)
+        shopSlots.auto = v
+        print("[AutoBuySlots] Toggled", v)
+        if v then
+            if shopSlots.loop then task.cancel(shopSlots.loop) end
+            shopSlots.loop = task.spawn(function()
+                while shopSlots.auto do
+                    FireRemote("rev_bs_upgrade")
+                    task.wait(1)
+                end
+            end)
+        else
+            if shopSlots.loop then task.cancel(shopSlots.loop) shopSlots.loop = nil end
+        end
+    end,
 })
-local autoRebirthToggle = miscTab:AddToggle("AutoRebirth", { Title = "Auto Rebirth", Default = false })
-autoRebirthToggle:OnChanged(function(v)
-    shopRebirth.auto = v
-    print("[AutoRebirth] Toggled", v)
-    if v then
-        if shopRebirth.loop then task.cancel(shopRebirth.loop) end
-        shopRebirth.loop = task.spawn(function()
-            while shopRebirth.auto do
-                FireRemote("rev_RebirthRequest")
-                task.wait(1)
-            end
-        end)
-    else
-        if shopRebirth.loop then task.cancel(shopRebirth.loop) shopRebirth.loop = nil end
-    end
+miscTab:AddToggle("AutoRebirth", {
+    Title = "Auto Rebirth",
+    Default = false,
+    Callback = function(v)
+        shopRebirth.auto = v
+        print("[AutoRebirth] Toggled", v)
+        if v then
+            if shopRebirth.loop then task.cancel(shopRebirth.loop) end
+            shopRebirth.loop = task.spawn(function()
+                while shopRebirth.auto do
+                    FireRemote("rev_RebirthRequest")
+                    task.wait(1)
+                end
+            end)
+        else
+            if shopRebirth.loop then task.cancel(shopRebirth.loop) shopRebirth.loop = nil end
+        end
+    end,
 })
 
-miscTab:AddParagraph({ Title = "Upgrades", Content = "" })
+miscTab:AddSection("Upgrades")
 miscTab:AddButton({
     Title = "Refresh Slots",
-    Description = "",
     Callback = refreshSlotMaps,
 })
 upgradeSlots.dropdown = miscTab:AddDropdown("UpgradeSlotsSelected", {
     Title = "Select Slots",
-    Description = "",
     Values = {"Press Refresh first"},
     Multi = true,
-    Default = {},
     Callback = function(sel)
         local nums = {}
-        for k, v in pairs(sel) do
-            if v and upgradeSlots.map[k] then table.insert(nums, upgradeSlots.map[k]) end
+        for _, lbl in ipairs(sel) do
+            if upgradeSlots.map[lbl] then table.insert(nums, upgradeSlots.map[lbl]) end
         end
         upgradeSlots.selected = nums
         print("[UpgradeSlotsSelected] Selected", #nums, "slots")
     end,
 })
-local autoUpgradeSelectedToggle = miscTab:AddToggle("AutoUpgradeSelectedSlots", { Title = "Auto Upgrade Selected Slots", Default = false })
-autoUpgradeSelectedToggle:OnChanged(function(v)
-    upgradeSlots.auto = v
-    print("[AutoUpgradeSelected] Toggled", v)
-    if v then
-        if upgradeSlots.loop then task.cancel(upgradeSlots.loop) end
-        upgradeSlots.loop = task.spawn(function()
-            while upgradeSlots.auto do
-                upgradeSelectedSlots()
-                task.wait(0.15)
-            end
-        end)
-    else
-        if upgradeSlots.loop then task.cancel(upgradeSlots.loop) upgradeSlots.loop = nil end
-    end
-})
-local upgradeRaritiesDD = miscTab:AddDropdown("UpgradeRarities", {
-    Title = "Upgrade by Rarity",
-    Description = "",
-    Values = rarities_with_all,
-    Multi = true,
-    Default = {},
-    Callback = function(sel)
-        local selected = {}
-        for k, v in pairs(sel) do if v then table.insert(selected, k) end end
-        upgradeRarity.rarities = selected
-        print("[UpgradeRarities] Selected", #selected, "rarities")
+miscTab:AddToggle("AutoUpgradeSelectedSlots", {
+    Title = "Auto Upgrade Selected Slots",
+    Default = false,
+    Callback = function(v)
+        upgradeSlots.auto = v
+        print("[AutoUpgradeSelected] Toggled", v)
+        if v then
+            if upgradeSlots.loop then task.cancel(upgradeSlots.loop) end
+            upgradeSlots.loop = task.spawn(function()
+                while upgradeSlots.auto do
+                    upgradeSelectedSlots()
+                    task.wait(0.15)
+                end
+            end)
+        else
+            if upgradeSlots.loop then task.cancel(upgradeSlots.loop) upgradeSlots.loop = nil end
+        end
     end,
 })
-local autoUpgradeRarityToggle = miscTab:AddToggle("AutoUpgradeByRarity", { Title = "Auto Upgrade by Rarity", Default = false })
-autoUpgradeRarityToggle:OnChanged(function(v)
-    upgradeRarity.auto = v
-    print("[AutoUpgradeByRarity] Toggled", v)
-    if v then
-        if upgradeRarity.loop then task.cancel(upgradeRarity.loop) end
-        upgradeRarity.loop = task.spawn(upgradeRarityLoop)
-    else
-        if upgradeRarity.loop then task.cancel(upgradeRarity.loop) upgradeRarity.loop = nil end
-    end
+miscTab:AddDropdown("UpgradeRarities", {
+    Title = "Upgrade by Rarity",
+    Values = rarities_with_all,
+    Multi = true,
+    Callback = function(sel) upgradeRarity.rarities = sel print("[UpgradeRarities] Selected", #sel, "rarities") end,
+})
+miscTab:AddToggle("AutoUpgradeByRarity", {
+    Title = "Auto Upgrade by Rarity",
+    Default = false,
+    Callback = function(v)
+        upgradeRarity.auto = v
+        print("[AutoUpgradeByRarity] Toggled", v)
+        if v then
+            if upgradeRarity.loop then task.cancel(upgradeRarity.loop) end
+            upgradeRarity.loop = task.spawn(upgradeRarityLoop)
+        else
+            if upgradeRarity.loop then task.cancel(upgradeRarity.loop) upgradeRarity.loop = nil end
+        end
+    end,
 })
 
-webhookTab:AddParagraph({ Title = "Setup", Content = "" })
-local webhookURLInput = webhookTab:AddInput("WebhookURL", {
+local webhookTab = Window:AddTab({Title = "Webhook", Icon = "webhook"})
+
+webhookTab:AddSection("Setup")
+webhookTab:AddInput("WebhookURL", {
     Title = "Webhook URL",
-    Description = "",
     Default = "",
     Placeholder = "https://discord.com/api/webhooks/...",
-    Numeric = false,
-    Finished = false,
     Callback = function(text) WH.url = text print("[WebhookURL] Set") end,
 })
-local pingUserIDInput = webhookTab:AddInput("PingUserID", {
+webhookTab:AddInput("PingUserID", {
     Title = "Ping User ID",
-    Description = "",
     Default = "",
     Placeholder = "e.g. 123456789012345678",
-    Numeric = false,
-    Finished = false,
     Callback = function(text) WH.pingUID = text or "" print("[PingUserID] Set") end,
 })
-local minEarnInput = webhookTab:AddInput("MinEarn", {
+webhookTab:AddInput("MinEarn", {
     Title = "Min Earn",
-    Description = "",
     Default = "",
     Placeholder = "1m, 500k, 1b, blank = off",
-    Numeric = false,
-    Finished = false,
     Callback = function(text)
         if text == nil or text == "" then
             WH.minEarn = nil
@@ -1452,7 +1331,7 @@ local minEarnInput = webhookTab:AddInput("MinEarn", {
             local val = parseShortNumber(text)
             WH.minEarn = val
             if not val then
-                Fluent:Notify({Title = "Webhook", Content = "Invalid number format", Duration = 3})
+                Library:Notify({Title = "Webhook", Content = "Invalid number format", Duration = 3})
                 print("[MinEarn] Invalid format:", text)
             else
                 print("[MinEarn] Set to", val)
@@ -1460,145 +1339,107 @@ local minEarnInput = webhookTab:AddInput("MinEarn", {
         end
     end,
 })
-local enableWebhookToggle = webhookTab:AddToggle("EnableDiscordWebhook", { Title = "Enable Discord Webhook", Default = false })
-enableWebhookToggle:OnChanged(function(v) WH.enabled = v print("[WebhookEnabled] Set to", v) end)
+webhookTab:AddToggle("EnableDiscordWebhook", {
+    Title = "Enable Discord Webhook",
+    Default = false,
+    Callback = function(v) WH.enabled = v print("[WebhookEnabled] Set to", v) end,
+})
 webhookTab:AddButton({
     Title = "Send Test Ping",
-    Description = "",
     Callback = sendTestWebhook,
 })
 
-webhookTab:AddParagraph({ Title = "Filters", Content = "" })
-local sendModeDD = webhookTab:AddDropdown("SendMode", {
+webhookTab:AddSection("Filters")
+webhookTab:AddDropdown("SendMode", {
     Title = "Send Mode",
-    Description = "",
     Values = {"All", "MutatedOnly", "RarityOnly"},
-    Default = 1,
+    Default = "All",
     Callback = function(opt) WH.mode = opt print("[SendMode] Set to", opt) end,
 })
-local rarityFilterDD = webhookTab:AddDropdown("RarityFilter", {
+webhookTab:AddDropdown("RarityFilter", {
     Title = "Rarity Filter",
-    Description = "",
     Values = rarities_with_all,
     Multi = true,
-    Default = {},
-    Callback = function(sel)
-        local selected = {}
-        for k, v in pairs(sel) do if v then table.insert(selected, k) end end
-        WH.rarities = selected
-        print("[RarityFilter] Selected", #selected, "rarities")
-    end,
+    Callback = function(sel) WH.rarities = sel print("[RarityFilter] Selected", #sel, "rarities") end,
 })
-local mutationFilterDD = webhookTab:AddDropdown("MutationFilter", {
+webhookTab:AddDropdown("MutationFilter", {
     Title = "Mutation Filter",
-    Description = "",
     Values = mutations_with_all,
     Multi = true,
-    Default = {},
-    Callback = function(sel)
-        local selected = {}
-        for k, v in pairs(sel) do if v then table.insert(selected, k) end end
-        WH.mutations = selected
-        print("[MutationFilter] Selected", #selected, "mutations")
-    end,
+    Callback = function(sel) WH.mutations = sel print("[MutationFilter] Selected", #sel, "mutations") end,
 })
-local specificBrainrotFilterDD = webhookTab:AddDropdown("SpecificBrainrotFilter", {
+webhookTab:AddDropdown("SpecificBrainrotFilter", {
     Title = "Specific Brainrot Filter",
-    Description = "",
     Values = brainrots_with_all,
     Multi = true,
-    Default = {},
+    Callback = function(sel) WH.specifics = sel print("[SpecificFilter] Selected", #sel, "brainrots") end,
+})
+
+-- 🌋 EVENT TAB (NEW - Fully working)
+local eventTab = Window:AddTab({Title = "🌋 Event", Icon = "flame"})
+
+eventTab:AddSection("🛒 Volcano Shop")
+
+eventTab:AddDropdown("VolcanoShopItems", {
+    Title = "📦 Select Items to Buy",
+    Values = volcanoShopItemsList,
+    Multi = true,
     Callback = function(sel)
-        local selected = {}
-        for k, v in pairs(sel) do if v then table.insert(selected, k) end end
-        WH.specifics = selected
-        print("[SpecificFilter] Selected", #selected, "brainrots")
+        volcanoShop.selected = sel
     end,
 })
 
-eventTab:AddParagraph({ Title = "🛒 Volcano Shop", Content = "" })
-local volcanoShopItemsDD = eventTab:AddDropdown("VolcanoShopItems", {
-    Title = "📦 Select Items to Buy",
-    Description = "",
-    Values = volcanoShopItemsList,
-    Multi = true,
-    Default = {},
-    Callback = function(sel)
-        local selected = {}
-        for k, v in pairs(sel) do if v then table.insert(selected, k) end end
-        volcanoShop.selected = selected
-    end,
-})
 eventTab:AddButton({
     Title = "⚡ Buy Selected Once",
-    Description = "",
     Callback = function()
         if #volcanoShop.selected == 0 then
-            Fluent:Notify({Title = "🌋 Volcano Shop", Content = "No items selected!", Duration = 3})
+            Library:Notify({Title = "🌋 Volcano Shop", Content = "No items selected!", Duration = 3})
             return
         end
         for _, item in ipairs(volcanoShop.selected) do
             FireRemote("rev_VolcanicShop_Buy", item)
             task.wait(0.2)
         end
-        Fluent:Notify({Title = "🌋 Volcano Shop", Content = "Bought " .. #volcanoShop.selected .. " item(s)!", Duration = 3})
+        Library:Notify({Title = "🌋 Volcano Shop", Content = "Bought " .. #volcanoShop.selected .. " item(s)!", Duration = 3})
     end,
 })
-local volcanoShopDelaySlider = eventTab:AddSlider("VolcanoShopDelay", {
+
+eventTab:AddSlider("VolcanoShopDelay", {
     Title = "⏱️ Buy Interval",
-    Description = "",
+    Default = 5,
     Min = 1,
     Max = 60,
     Rounding = 1,
-    Default = 5,
-    Callback = function(v) volcanoShop.delay = v end,
-})
-local autoVolcanoShopToggle = eventTab:AddToggle("AutoVolcanoShop", { Title = "🔁 Auto Buy Selected Items", Default = false })
-autoVolcanoShopToggle:OnChanged(function(v)
-    volcanoShop.auto = v
-    if v then
-        if volcanoShop.loop then task.cancel(volcanoShop.loop) end
-        volcanoShop.loop = task.spawn(function()
-            while volcanoShop.auto do
-                for _, item in ipairs(volcanoShop.selected) do
-                    FireRemote("rev_VolcanicShop_Buy", item)
-                    task.wait(0.2)
-                end
-                task.wait(volcanoShop.delay)
-            end
-        end)
-    else
-        if volcanoShop.loop then task.cancel(volcanoShop.loop) volcanoShop.loop = nil end
-    end
+    Suffix = "s",
+    Callback = function(v)
+        volcanoShop.delay = v
+    end,
 })
 
-eventTab:AddParagraph({ Title = "⬆️ Volcano Upgrades", Content = "" })
-local upgradeLevelSliderRef = nil
-local volcanoUpgradeTypeDD = eventTab:AddDropdown("VolcanoUpgradeType", {
-    Title = "🔧 Upgrade Type",
-    Description = "",
-    Values = volcanoUpgradeTypesList,
-    Default = 1,
-    Callback = function(sel)
-        volcanoUpgrade.upgradeType = sel
-        local maxLvl = volcanoUpgradeLevels[volcanoUpgrade.upgradeType] or 1
-        if volcanoUpgrade.level > maxLvl then
-            volcanoUpgrade.level = maxLvl
-            if upgradeLevelSliderRef then
-                upgradeLevelSliderRef:SetValue(maxLvl)
-            end
+eventTab:AddToggle("AutoVolcanoShop", {
+    Title = "🔁 Auto Buy Selected Items",
+    Default = false,
+    Callback = function(v)
+        volcanoShop.auto = v
+        if v then
+            if volcanoShop.loop then task.cancel(volcanoShop.loop) end
+            volcanoShop.loop = task.spawn(function()
+                while volcanoShop.auto do
+                    for _, item in ipairs(volcanoShop.selected) do
+                        FireRemote("rev_VolcanicShop_Buy", item)
+                        task.wait(0.2)
+                    end
+                    task.wait(volcanoShop.delay)
+                end
+            end)
+        else
+            if volcanoShop.loop then task.cancel(volcanoShop.loop) volcanoShop.loop = nil end
         end
     end,
 })
-upgradeLevelSliderRef = eventTab:AddSlider("VolcanoUpgradeLevel", {
-    Title = "📈 Upgrade Level",
-    Description = "",
-    Min = 1,
-    Max = 4,
-    Rounding = 1,
-    Default = 1,
-    Callback = function(v) volcanoUpgrade.level = v end,
-})
+
+eventTab:AddSection("⬆️ Volcano Upgrades")
+
 local function updateUpgradeLevelMax()
     local maxLvl = volcanoUpgradeLevels[volcanoUpgrade.upgradeType] or 1
     if volcanoUpgrade.level > maxLvl then
@@ -1608,30 +1449,52 @@ local function updateUpgradeLevelMax()
         end
     end
 end
-updateUpgradeLevelMax()
-eventTab:AddButton({
-    Title = "💥 Buy Upgrade Once",
-    Description = "",
-    Callback = function()
-        FireRemote("rev_volcanoUpgrade", volcanoUpgrade.upgradeType, volcanoUpgrade.level)
-        Fluent:Notify({Title = "⬆️ Upgraded", Content = volcanoUpgrade.upgradeType .. " Lv" .. volcanoUpgrade.level, Duration = 3})
+
+eventTab:AddDropdown("VolcanoUpgradeType", {
+    Title = "🔧 Upgrade Type",
+    Values = volcanoUpgradeTypesList,
+    Default = volcanoUpgradeTypesList[1] or "OreMultipliers",
+    Callback = function(sel)
+        volcanoUpgrade.upgradeType = sel
+        updateUpgradeLevelMax()
     end,
 })
+
+local upgradeLevelSliderRef = eventTab:AddSlider("VolcanoUpgradeLevel", {
+    Title = "📈 Upgrade Level",
+    Default = 1,
+    Min = 1,
+    Max = 4,
+    Rounding = 1,
+    Suffix = "",
+    Callback = function(v)
+        volcanoUpgrade.level = v
+    end,
+})
+updateUpgradeLevelMax()
+
+eventTab:AddButton({
+    Title = "💥 Buy Upgrade Once",
+    Callback = function()
+        FireRemote("rev_volcanoUpgrade", volcanoUpgrade.upgradeType, volcanoUpgrade.level)
+        Library:Notify({Title = "⬆️ Upgraded", Content = volcanoUpgrade.upgradeType .. " Lv" .. volcanoUpgrade.level, Duration = 3})
+    end,
+})
+
 eventTab:AddButton({
     Title = "🚀 Max Selected Upgrade Type",
-    Description = "",
     Callback = function()
         local maxLevel = volcanoUpgradeLevels[volcanoUpgrade.upgradeType] or 1
         for i = 1, maxLevel do
             FireRemote("rev_volcanoUpgrade", volcanoUpgrade.upgradeType, i)
             task.wait(0.2)
         end
-        Fluent:Notify({Title = "🚀 Maxed!", Content = volcanoUpgrade.upgradeType .. " fully upgraded!", Duration = 3})
+        Library:Notify({Title = "🚀 Maxed!", Content = volcanoUpgrade.upgradeType .. " fully upgraded!", Duration = 3})
     end,
 })
+
 eventTab:AddButton({
     Title = "🌟 Max ALL Upgrades",
-    Description = "",
     Callback = function()
         for _, upgradeType in ipairs(volcanoUpgradeTypesList) do
             local maxLevel = volcanoUpgradeLevels[upgradeType] or 1
@@ -1640,40 +1503,35 @@ eventTab:AddButton({
                 task.wait(0.2)
             end
         end
-        Fluent:Notify({Title = "🌋 ALL MAXED!", Content = "Every volcano upgrade purchased!", Duration = 4})
+        Library:Notify({Title = "🌋 ALL MAXED!", Content = "Every volcano upgrade purchased!", Duration = 4})
     end,
 })
-local autoVolcanoUpgradeToggle = eventTab:AddToggle("AutoVolcanoUpgrade", { Title = "🔄 Auto Upgrade (Selected Type & Level)", Default = false })
-autoVolcanoUpgradeToggle:OnChanged(function(v)
-    volcanoUpgrade.auto = v
-    if v then
-        if volcanoUpgrade.loop then task.cancel(volcanoUpgrade.loop) end
-        volcanoUpgrade.loop = task.spawn(function()
-            while volcanoUpgrade.auto do
-                FireRemote("rev_volcanoUpgrade", volcanoUpgrade.upgradeType, volcanoUpgrade.level)
-                task.wait(1)
-            end
-        end)
-    else
-        if volcanoUpgrade.loop then task.cancel(volcanoUpgrade.loop) volcanoUpgrade.loop = nil end
-    end
+
+eventTab:AddToggle("AutoVolcanoUpgrade", {
+    Title = "🔄 Auto Upgrade (Selected Type & Level)",
+    Default = false,
+    Callback = function(v)
+        volcanoUpgrade.auto = v
+        if v then
+            if volcanoUpgrade.loop then task.cancel(volcanoUpgrade.loop) end
+            volcanoUpgrade.loop = task.spawn(function()
+                while volcanoUpgrade.auto do
+                    FireRemote("rev_volcanoUpgrade", volcanoUpgrade.upgradeType, volcanoUpgrade.level)
+                    task.wait(1)
+                end
+            end)
+        else
+            if volcanoUpgrade.loop then task.cancel(volcanoUpgrade.loop) volcanoUpgrade.loop = nil end
+        end
+    end,
 })
 
-if SaveManager and InterfaceManager then
-    SaveManager:SetLibrary(Fluent)
-    InterfaceManager:SetLibrary(Fluent)
-    SaveManager:IgnoreThemeSettings()
-    SaveManager:SetIgnoreFlags({"InterfaceManagerTheme"})
-    InterfaceManager:BuildInterfaceSection(settingsTab)
-    SaveManager:BuildConfigSection(settingsTab)
-end
-
 refreshSlotMaps()
-Window:SelectTab(mainTab)
+SaveManager:SetLibrary(Library)
+InterfaceManager:SetLibrary(Library)
+SaveManager:BuildConfigSection(Window)
+InterfaceManager:BuildInterfaceSection(Window)
+SaveManager:LoadAutoLoad()
 
-if SaveManager then
-    SaveManager:LoadAutoloadConfig()
-end
-
-Fluent:Notify({Title = "Cactus Hub", Content = "Loaded! Join discord.gg/qMWFBWdcf", Duration = 4})
+Library:Notify({Title = "Cactus Hub", Content = "Loaded! Join discord.gg/qMWFBWdcf", Duration = 4})
 print("[Cactus Hub] Script fully loaded")
