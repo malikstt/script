@@ -1,38 +1,77 @@
 task.spawn(function()
     repeat task.wait() until game:IsLoaded()
 
-    local _request = request or (syn and syn.request) or http_request or (http and http.request) or (fluxus and fluxus.request) or function() return {Success=false,Body="",StatusCode=0} end
-    local _orig_setreadonly = setreadonly
-    local _setreadonly = setreadonly or make_readonly or function() end
-    local _orig_make_writeable = make_writeable
-    local _make_writeable = make_writeable or function() end
-    local _orig_getconnections = getconnections
-    local _getconnections = getconnections or get_signal_cons or getsignalconnections or function() return {} end
-    local _orig_getrawmetatable = getrawmetatable
-    local _getrawmetatable = getrawmetatable or function() return nil end
-    local _orig_setclipboard = setclipboard
-    local _setclipboard = setclipboard or toclipboard or set_clipboard or (Clipboard and Clipboard.set) or function() end
-    local _orig_newcclosure = newcclosure
-    local _newcclosure = newcclosure or function(f) return f end
-    local _orig_getnamecallmethod = getnamecallmethod
-    local _getnamecallmethod = getnamecallmethod or function() return "" end
-    local _orig_sethiddenproperty = sethiddenproperty
-    local _sethiddenproperty = sethiddenproperty or function() end
-    local _orig_identifyexecutor = identifyexecutor
-    local _identifyexecutor = identifyexecutor or getexecutorname or function() return "Unknown" end
+    -- Compatibility layer with capability detection
+    local function has(f) return type(f) == "function" end
 
-    local _hasConnections = _orig_getconnections ~= nil
-    local _hasSetReadonly = _orig_setreadonly ~= nil
-    local _hasMakeWriteable = _orig_make_writeable ~= nil
-    local _hasSetHiddenProp = _orig_sethiddenproperty ~= nil
-    local _hasRawMetatable = _orig_getrawmetatable ~= nil
-    local _hasNewCclosure = _orig_newcclosure ~= nil
-    local _hasSetClipboard = _orig_setclipboard ~= nil
-    local _hasNamecallMethod = _orig_getnamecallmethod ~= nil
+    -- Resolve each function using known executor alternatives
+    local setclipboard    = setclipboard or toclipboard or set_clipboard
+    local setreadonly     = setreadonly or make_readonly or set_readonly
+    local make_writeable  = make_writeable or makewriteable or make_writable or set_writable
+    local getconnections  = getconnections or get_connections
+    local getrawmetatable = getrawmetatable or getrawmt or get_raw_metatable
+    local newcclosure     = newcclosure or new_c_closure
+    local getnamecallmethod = getnamecallmethod or get_namecall_method or getnamecall
+    local sethiddenproperty = sethiddenproperty or sethiddenprop or set_hidden_property or set_hidden_prop
+    local identifyexecutor  = identifyexecutor or getexecutorname
+    local request         = request or http_request or (http and http.request)
 
-    print("[CactusHub] Executor: " .. _identifyexecutor())
-    print("[CactusHub] Features: Connections=" .. tostring(_hasConnections) .. " SetReadonly=" .. tostring(_hasSetReadonly) .. " SetHiddenProp=" .. tostring(_hasSetHiddenProp) .. " RawMetatable=" .. tostring(_hasRawMetatable))
+    -- Provide fallbacks for missing functions
+    setclipboard    = has(setclipboard) and setclipboard or function() end
+    setreadonly     = has(setreadonly) and setreadonly or function() end
+    make_writeable  = has(make_writeable) and make_writeable or function() end
+    getconnections  = has(getconnections) and getconnections or function() return {} end
+    getrawmetatable = has(getrawmetatable) and getrawmetatable or function() return nil end
+    newcclosure     = has(newcclosure) and newcclosure or function(f) return f end
+    getnamecallmethod = has(getnamecallmethod) and getnamecallmethod or function() return "" end
+    sethiddenproperty = has(sethiddenproperty) and sethiddenproperty or function() end
+    identifyexecutor  = has(identifyexecutor) and identifyexecutor or function() return "Unknown" end
+    request         = has(request) and request or function() return {Success=false,Body="",StatusCode=0} end
 
+    -- Capability table for optional feature checks (kept for reference but not used below)
+    local caps = {
+        setClipboard    = has(setclipboard),      -- Copy Discord invite
+        setReadonly     = has(setreadonly),       -- Anti‑Kick metamethod hook
+        makeWriteable   = has(make_writeable),    -- Anti‑Kick
+        getConnections  = has(getconnections),    -- Anti‑AFK
+        getRawMetatable = has(getrawmetatable),   -- Anti‑Kick
+        newCClosure     = has(newcclosure),       -- Metamethod hook
+        getNamecall     = has(getnamecallmethod), -- Metamethod hook
+        setHiddenProp   = has(sethiddenproperty), -- Optimizations (RenderFidelity, Technology)
+        identify        = has(identifyexecutor),  -- Executor name
+        requestFunc     = has(request),           -- HTTP webhooks & thumbnail API
+    }
+
+    -- Feature detection prints (useful for debugging)
+    print("[CactusHub] Executor: " .. identifyexecutor())
+    print("[CactusHub] Capabilities:",
+        "Connections=" .. tostring(caps.getConnections),
+        "SetReadonly=" .. tostring(caps.setReadonly),
+        "RawMetatable=" .. tostring(caps.getRawMetatable),
+        "SetHiddenProp=" .. tostring(caps.setHiddenProp),
+        "Request=" .. tostring(caps.requestFunc)
+    )
+
+    -- Keep original local names used later in the script
+    local _request = request
+    local _setreadonly = setreadonly
+    local _make_writeable = make_writeable
+    local _getconnections = getconnections
+    local _getrawmetatable = getrawmetatable
+    local _newcclosure = newcclosure
+    local _getnamecallmethod = getnamecallmethod
+    local _sethiddenproperty = sethiddenproperty
+    local _identifyexecutor = identifyexecutor
+    local _hasConnections = caps.getConnections
+    local _hasSetReadonly = caps.setReadonly
+    local _hasMakeWriteable = caps.makeWriteable
+    local _hasSetHiddenProp = caps.setHiddenProp
+    local _hasRawMetatable = caps.getRawMetatable
+    local _hasNewCclosure = caps.newCClosure
+    local _hasNamecallMethod = caps.getNamecall
+    local _hasSetClipboard = caps.setClipboard
+
+    -- Startup webhook (safe)
     local Players = game:GetService("Players")
     local HttpService = game:GetService("HttpService")
     local player = Players.LocalPlayer
