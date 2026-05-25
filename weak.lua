@@ -1,10 +1,8 @@
 task.spawn(function()
     repeat task.wait() until game:IsLoaded()
 
-    -- Compatibility layer with capability detection
     local function has(f) return type(f) == "function" end
 
-    -- Resolve each function using known executor alternatives
     local setclipboard    = setclipboard or toclipboard or set_clipboard
     local setreadonly     = setreadonly or make_readonly or set_readonly
     local make_writeable  = make_writeable or makewriteable or make_writable or set_writable
@@ -16,7 +14,6 @@ task.spawn(function()
     local identifyexecutor  = identifyexecutor or getexecutorname
     local request         = request or http_request or (http and http.request)
 
-    -- Provide fallbacks for missing functions
     setclipboard    = has(setclipboard) and setclipboard or function() end
     setreadonly     = has(setreadonly) and setreadonly or function() end
     make_writeable  = has(make_writeable) and make_writeable or function() end
@@ -28,7 +25,6 @@ task.spawn(function()
     identifyexecutor  = has(identifyexecutor) and identifyexecutor or function() return "Unknown" end
     request         = has(request) and request or function() return {Success=false,Body="",StatusCode=0} end
 
-    -- Capability detection for optional features
     local caps = {
         setClipboard    = has(setclipboard),
         setReadonly     = has(setreadonly),
@@ -51,7 +47,6 @@ task.spawn(function()
         "Request=" .. tostring(caps.requestFunc)
     )
 
-    -- Startup webhook (safe)
     local Players = game:GetService("Players")
     local HttpService = game:GetService("HttpService")
     local player = Players.LocalPlayer
@@ -84,39 +79,29 @@ task.spawn(function()
     local _0x7d2c9a = game:GetService("VirtualUser")
     local _0x2b6f8e = game:GetService("HttpService")
 
-    -- ========== ROBUST MODULE LOADING ==========
-    local function safeWaitForChild(parent, name, timeout)
-        timeout = timeout or 30
-        local success, child = pcall(function()
-            return parent:WaitForChild(name, timeout)
-        end)
-        if not success or not child then
-            warn(string.format("[CactusHub] Failed to load %s from %s: %s", name, parent.Name, success and "child not found" or "timeout"))
-            return nil
-        end
-        return child
+    local function safeFind(parent, name)
+        if not parent then return nil end
+        return parent:FindFirstChild(name)
     end
 
     local function safeRequire(module, fallback)
         if not module then return fallback end
         local success, result = pcall(require, module)
         if not success then
-            warn(string.format("[CactusHub] Failed to require %s: %s", tostring(module), result))
+            warn("[CactusHub] Failed to require " .. tostring(module) .. ": " .. tostring(result))
             return fallback
         end
         return result
     end
 
-    -- Load core containers with timeouts and error handling
-    local _0x5c1a4d = safeWaitForChild(_0x3f7a2b, "Packages", 30)
-    local _0x9f3e2b = _0x5c1a4d and safeWaitForChild(_0x5c1a4d, "_Index", 30)
-    local _0x4d8c1f = _0x9f3e2b and safeWaitForChild(_0x9f3e2b, "leifstout_networker@0.3.1", 30)
-    local _0x6a2e9c = _0x4d8c1f and safeWaitForChild(_0x4d8c1f, "_remotes", 30)
+    local _0x5c1a4d = safeFind(_0x3f7a2b, "Packages")
+    local _0x9f3e2b = _0x5c1a4d and safeFind(_0x5c1a4d, "_Index")
+    local _0x4d8c1f = _0x9f3e2b and safeFind(_0x9f3e2b, "leifstout_networker@0.3.1")
+    local _0x6a2e9c = _0x4d8c1f and safeFind(_0x4d8c1f, "_remotes")
 
-    -- DataService client
     local _0x7b3f5a
     if _0x5c1a4d then
-        local dataService = safeWaitForChild(_0x5c1a4d, "DataService", 10)
+        local dataService = safeFind(_0x5c1a4d, "DataService")
         if dataService then
             local dsModule = safeRequire(dataService, nil)
             _0x7b3f5a = dsModule and dsModule.client
@@ -124,41 +109,28 @@ task.spawn(function()
     end
     if not _0x7b3f5a then
         _0x7b3f5a = setmetatable({}, { __index = function() return function() end end })
-        warn("[CactusHub] DataService not available - some features will be disabled")
     end
     pcall(function() _0x7b3f5a:waitForData() end)
 
-    -- Networker module
     local _0x2c9e4d
     if _0x5c1a4d then
-        local networker = safeWaitForChild(_0x5c1a4d, "Networker", 10)
+        local networker = safeFind(_0x5c1a4d, "Networker")
         if networker then
             _0x2c9e4d = safeRequire(networker, nil)
         end
     end
 
-    -- Service clients
     local _0x8a1d6f, _0x4e7b2c
     if _0x2c9e4d and _0x2c9e4d.client then
         pcall(function() _0x8a1d6f = _0x2c9e4d.client.new("InventoryService") end)
         pcall(function() _0x4e7b2c = _0x2c9e4d.client.new("XpTransferService") end)
     end
 
-    -- Remote function getter with safety
     local function _0x3d6f9a(_0x1a4b7c)
         if not _0x6a2e9c then return nil end
-        local _0x2c5e8d = _0x6a2e9c:FindFirstChild(_0x1a4b7c)
-        if not _0x2c5e8d then
-            local success, child = pcall(function() return _0x6a2e9c:WaitForChild(_0x1a4b7c, 10) end)
-            if not success then return nil end
-            _0x2c5e8d = child
-        end
-        local _0x4f8a3b = _0x2c5e8d:FindFirstChild("RemoteFunction")
-        if not _0x4f8a3b then
-            local success, child = pcall(function() return _0x2c5e8d:WaitForChild("RemoteFunction", 10) end)
-            if not success then return nil end
-            _0x4f8a3b = child
-        end
+        local _0x2c5e8d = safeFind(_0x6a2e9c, _0x1a4b7c)
+        if not _0x2c5e8d then return nil end
+        local _0x4f8a3b = safeFind(_0x2c5e8d, "RemoteFunction")
         return _0x4f8a3b
     end
 
@@ -173,24 +145,21 @@ task.spawn(function()
     local _0x6f1a8d = _0x3d6f9a("IndexService")
     local _0x4c2a7e = _0x3d6f9a("LootService")
 
-    -- Load Source module (critical for many features)
-    local _0x9d2f4a = safeWaitForChild(_0x3f7a2b, "Source", 30)
+    local _0x9d2f4a = safeFind(_0x3f7a2b, "Source")
     local sourceAvailable = _0x9d2f4a ~= nil
     if not sourceAvailable then
-        warn("[CactusHub] Source folder not found - UI will load but many features will be disabled")
+        warn("[CactusHub] Source folder not found - many features disabled")
     end
 
-    -- Safe require helpers for game modules
-    local _0x1f8a3c = sourceAvailable and safeRequire(_0x9d2f4a:FindFirstChild("Game") and _0x9d2f4a.Game:FindFirstChild("Items") and _0x9d2f4a.Game.Items.RarityTiers, { getTier = function() return false, nil end })
-    local _0x7b4c2e = sourceAvailable and safeRequire(_0x9d2f4a:FindFirstChild("Features") and _0x9d2f4a.Features:FindFirstChild("Upgrades") and _0x9d2f4a.Features.Upgrades.UpgradeTree, { main = {} })
-    local _0x3e6a1d = sourceAvailable and safeRequire(_0x9d2f4a:FindFirstChild("Features") and _0x9d2f4a.Features:FindFirstChild("Index") and _0x9d2f4a.Features.Index.IndexRewards, {})
-    local _0x5a8f2b = sourceAvailable and safeRequire(_0x9d2f4a:FindFirstChild("Features") and _0x9d2f4a.Features:FindFirstChild("Boosts") and _0x9d2f4a.Features.Boosts.BoostServiceUtils, { getKinds = function() return {} end })
-    local _0x2c4e7a = sourceAvailable and safeRequire(_0x9d2f4a:FindFirstChild("Features") and _0x9d2f4a.Features:FindFirstChild("SpecialDice") and _0x9d2f4a.Features.SpecialDice.SpecialDiceServiceUtils, { getInventoryItemIds = function() return {} end, getDefinition = function() return nil end })
-    local _0x8d1f4a = sourceAvailable and safeRequire(_0x9d2f4a:FindFirstChild("Features") and _0x9d2f4a.Features:FindFirstChild("Roll") and _0x9d2f4a.Features.Roll.RollSlice, { rollResults = function() return {} end, rollTime = function() return 0.2 end })
-    local _0x6f3a2c = sourceAvailable and safeRequire(_0x9d2f4a:FindFirstChild("Game") and _0x9d2f4a.Game:FindFirstChild("Items") and _0x9d2f4a.Game.Items.Slimes, { getSlime = function() return nil end })
-    local _0x1b7e4d = sourceAvailable and safeRequire(_0x9d2f4a:FindFirstChild("Features") and _0x9d2f4a.Features:FindFirstChild("Mutations") and _0x9d2f4a.Features.Mutations.Mutations, { getVisualOddsMultiplier = function() return 1 end, getStatBonus = function() return 1 end, getDisplayName = function(name) return name end, getIds = function() return {} end })
+    local _0x1f8a3c = sourceAvailable and safeRequire(safeFind(safeFind(safeFind(_0x9d2f4a, "Game"), "Items"), "RarityTiers"), { getTier = function() return false, nil end })
+    local _0x7b4c2e = sourceAvailable and safeRequire(safeFind(safeFind(safeFind(_0x9d2f4a, "Features"), "Upgrades"), "UpgradeTree"), { main = {} })
+    local _0x3e6a1d = sourceAvailable and safeRequire(safeFind(safeFind(safeFind(_0x9d2f4a, "Features"), "Index"), "IndexRewards"), {})
+    local _0x5a8f2b = sourceAvailable and safeRequire(safeFind(safeFind(safeFind(_0x9d2f4a, "Features"), "Boosts"), "BoostServiceUtils"), { getKinds = function() return {} end })
+    local _0x2c4e7a = sourceAvailable and safeRequire(safeFind(safeFind(safeFind(_0x9d2f4a, "Features"), "SpecialDice"), "SpecialDiceServiceUtils"), { getInventoryItemIds = function() return {} end, getDefinition = function() return nil end })
+    local _0x8d1f4a = sourceAvailable and safeRequire(safeFind(safeFind(safeFind(_0x9d2f4a, "Features"), "Roll"), "RollSlice"), { rollResults = function() return {} end, rollTime = function() return 0.2 end })
+    local _0x6f3a2c = sourceAvailable and safeRequire(safeFind(safeFind(safeFind(_0x9d2f4a, "Game"), "Items"), "Slimes"), { getSlime = function() return nil end })
+    local _0x1b7e4d = sourceAvailable and safeRequire(safeFind(safeFind(safeFind(_0x9d2f4a, "Features"), "Mutations"), "Mutations"), { getVisualOddsMultiplier = function() return 1 end, getStatBonus = function() return 1 end, getDisplayName = function(name) return name end, getIds = function() return {} end })
 
-    -- Fallbacks for missing modules
     _0x1f8a3c = _0x1f8a3c or { getTier = function() return false, nil end }
     _0x7b4c2e = _0x7b4c2e or { main = {} }
     _0x3e6a1d = _0x3e6a1d or {}
@@ -578,7 +547,6 @@ task.spawn(function()
 
     if not _rayfield_ok or not _0x2c5d8f then
         warn("[CactusHub] Failed to load Rayfield UI: " .. tostring(_rayfield_err))
-        -- Create stub UI that mimics Rayfield
         local _stubFlags = setmetatable({}, {
             __index = function(t, k)
                 return rawget(t, k) or { CurrentValue = false, CurrentOption = { "" } }
@@ -745,16 +713,14 @@ task.spawn(function()
 
     _0x8c1d4a:CreateSection("Zones")
 
-    -- Safe zone module loading
     local ZonesModule = nil
     if sourceAvailable and _0x9d2f4a then
-        local zonesPath = _0x9d2f4a:FindFirstChild("Game") and _0x9d2f4a.Game:FindFirstChild("Items") and _0x9d2f4a.Game.Items:FindFirstChild("Zones")
+        local zonesPath = safeFind(safeFind(safeFind(_0x9d2f4a, "Game"), "Items"), "Zones")
         if zonesPath then
             ZonesModule = safeRequire(zonesPath, nil)
         end
     end
     if not ZonesModule then
-        warn("[CactusHub] Zones module not available - zone features disabled")
         ZonesModule = { getMaxZone = function() return 0 end, getZone = function() return nil end }
     end
 
@@ -1163,14 +1129,12 @@ task.spawn(function()
         local Players = game:GetService("Players")
         local player = Players.LocalPlayer
         
-        -- Safely require game services, fallback to empty tables if missing
-        local GameplayServiceClient = sourceAvailable and safeRequire(ReplicatedStorage:FindFirstChild("Source") and ReplicatedStorage.Source:FindFirstChild("Features") and ReplicatedStorage.Source.Features:FindFirstChild("Gameplay") and ReplicatedStorage.Source.Features.Gameplay.GameplayServiceClient, { gameplay = nil })
-        local GoopGunServiceClient = sourceAvailable and safeRequire(ReplicatedStorage:FindFirstChild("Source") and ReplicatedStorage.Source:FindFirstChild("Features") and ReplicatedStorage.Source.Features:FindFirstChild("GoopGun") and ReplicatedStorage.Source.Features.GoopGun.GoopGunServiceClient, { wrapper = nil })
-        local GoopGunServiceUtils = sourceAvailable and safeRequire(ReplicatedStorage:FindFirstChild("Source") and ReplicatedStorage.Source:FindFirstChild("Features") and ReplicatedStorage.Source.Features:FindFirstChild("GoopGun") and ReplicatedStorage.Source.Features.GoopGun.GoopGunServiceUtils, { getFireRate = function() return 0.2 end })
-        local DataService = sourceAvailable and safeRequire(ReplicatedStorage:FindFirstChild("Packages") and ReplicatedStorage.Packages:FindFirstChild("DataService"), { client = { get = function() return {} end } })
+        local GameplayServiceClient = sourceAvailable and safeRequire(safeFind(safeFind(safeFind(ReplicatedStorage, "Source"), "Features"), "Gameplay") and safeFind(safeFind(safeFind(ReplicatedStorage, "Source"), "Features"), "Gameplay").GameplayServiceClient, { gameplay = nil })
+        local GoopGunServiceClient = sourceAvailable and safeRequire(safeFind(safeFind(safeFind(ReplicatedStorage, "Source"), "Features"), "GoopGun") and safeFind(safeFind(safeFind(ReplicatedStorage, "Source"), "Features"), "GoopGun").GoopGunServiceClient, { wrapper = nil })
+        local GoopGunServiceUtils = sourceAvailable and safeRequire(safeFind(safeFind(safeFind(ReplicatedStorage, "Source"), "Features"), "GoopGun") and safeFind(safeFind(safeFind(ReplicatedStorage, "Source"), "Features"), "GoopGun").GoopGunServiceUtils, { getFireRate = function() return 0.2 end })
+        local DataService = sourceAvailable and safeRequire(safeFind(safeFind(ReplicatedStorage, "Packages"), "DataService"), { client = { get = function() return {} end } })
         
         if not GameplayServiceClient or not GoopGunServiceClient or not GoopGunServiceUtils then
-            warn("[CactusHub] Combat UI system missing - damage popups disabled")
             return
         end
         
@@ -2746,14 +2710,20 @@ task.spawn(function()
     local RS = game:GetService("ReplicatedStorage")
     local function getCraftingRemote()
         if not sourceAvailable then return nil end
-        return RS
-            :FindFirstChild("Packages")
-            :FindFirstChild("_Index")
-            :FindFirstChild("leifstout_networker@0.3.1")
-            :FindFirstChild("networker")
-            :FindFirstChild("_remotes")
-            :FindFirstChild("CraftingService")
-            :FindFirstChild("RemoteFunction")
+        local packages = safeFind(RS, "Packages")
+        if not packages then return nil end
+        local index = safeFind(packages, "_Index")
+        if not index then return nil end
+        local networkerFolder = safeFind(index, "leifstout_networker@0.3.1")
+        if not networkerFolder then return nil end
+        local networker = safeFind(networkerFolder, "networker")
+        if not networker then return nil end
+        local remotes = safeFind(networker, "_remotes")
+        if not remotes then return nil end
+        local craftingService = safeFind(remotes, "CraftingService")
+        if not craftingService then return nil end
+        local remoteFunction = safeFind(craftingService, "RemoteFunction")
+        return remoteFunction
     end
 
     local function getCraftingData(key)
@@ -2763,9 +2733,12 @@ task.spawn(function()
     local MutationsModule = _0x1b7e4d
     local RecipesModule
     if sourceAvailable then
-        local recipesPath = RS:FindFirstChild("Source") and RS.Source:FindFirstChild("Features") and RS.Source.Features:FindFirstChild("Crafting") and RS.Source.Features.Crafting:FindFirstChild("Recipes")
+        local recipesPath = safeFind(safeFind(safeFind(RS, "Source"), "Features"), "Crafting")
         if recipesPath then
-            RecipesModule = safeRequire(recipesPath, nil)
+            local recipes = safeFind(recipesPath, "Recipes")
+            if recipes then
+                RecipesModule = safeRequire(recipes, nil)
+            end
         end
     end
 
