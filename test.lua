@@ -3,15 +3,41 @@ task.spawn(function()
 
     local function _safe(fn) local ok,v=pcall(fn) return ok and v or nil end
     local _hasHTTP = _safe(function() return request or (syn and syn.request) or http_request or (http and http.request) or (fluxus and fluxus.request) end) ~= nil
-    local setreadonly    = _safe(function() return setreadonly or make_readonly end)
-    local make_writeable = _safe(function() return make_writeable end)
-    local getconnections = _safe(function() return getconnections or get_signal_cons or getsignalconnections end) or function() return {} end
-    local request        = _hasHTTP and (_safe(function() return request or (syn and syn.request) or http_request or (http and http.request) or (fluxus and fluxus.request) end)) or function() return {Success=false,Body="",StatusCode=0} end
-    local setclipboard   = _safe(function() return setclipboard or toclipboard or set_clipboard or (Clipboard and Clipboard.set) end) or function() end
-    local newcclosure    = _safe(function() return newcclosure end) or function(f) return f end
+    local setreadonly       = _safe(function() return setreadonly or make_readonly end)
+    local make_writeable    = _safe(function() return make_writeable end)
+    local getconnections    = _safe(function() return getconnections or get_signal_cons or getsignalconnections end) or function() return {} end
+    local request           = _hasHTTP and (_safe(function() return request or (syn and syn.request) or http_request or (http and http.request) or (fluxus and fluxus.request) end)) or function() return {Success=false,Body="",StatusCode=0} end
+    local setclipboard      = _safe(function() return setclipboard or toclipboard or set_clipboard or (Clipboard and Clipboard.set) end) or function() end
+    local newcclosure       = _safe(function() return newcclosure end) or function(f) return f end
     local getnamecallmethod = _safe(function() return getnamecallmethod end) or function() return "" end
     local sethiddenproperty = _safe(function() return sethiddenproperty end) or function() end
     local identifyexecutor  = _safe(function() return identifyexecutor or getexecutorname end) or function() return "Unknown" end
+
+    local _executorName = tostring(identifyexecutor())
+
+    local _features = {}
+    local function _detectFeature(name, fn)
+        local ok, v = pcall(fn)
+        _features[name] = ok and v ~= nil and v ~= false
+    end
+
+    _detectFeature("HTTP",           function() return _hasHTTP end)
+    _detectFeature("Clipboard",      function() return setclipboard or toclipboard or set_clipboard or (Clipboard and Clipboard.set) end)
+    _detectFeature("getconnections", function() return getconnections or get_signal_cons or getsignalconnections end)
+    _detectFeature("Metatable",      function() return getrawmetatable ~= nil end)
+    _detectFeature("newcclosure",    function() return newcclosure ~= nil end)
+    _detectFeature("sethiddenprop",  function() return sethiddenproperty ~= nil end)
+    _detectFeature("HttpGet",        function() return game.HttpGet ~= nil end)
+    _detectFeature("loadstring",     function() return loadstring ~= nil end)
+    _detectFeature("Set3dRendering", function() return game:GetService("RunService").Set3dRenderingEnabled ~= nil end)
+    _detectFeature("settings",       function() return settings ~= nil end)
+
+    print("[CactusHub] Executor: " .. _executorName)
+    for feat, supported in pairs(_features) do
+        print("[CactusHub] " .. feat .. ": " .. (supported and "supported" or "NOT supported"))
+    end
+
+    print("[CactusHub] Startup OK")
 
     local Players = game:GetService("Players")
     local HttpService = game:GetService("HttpService")
@@ -50,17 +76,24 @@ task.spawn(function()
     local _0x4d8c1f = _0x9f3e2b:WaitForChild("leifstout_networker@0.3.1"):WaitForChild("networker")
     local _0x6a2e9c = _0x4d8c1f:WaitForChild("_remotes")
 
-    local _0x7b3f5a = require(_0x5c1a4d.DataService).client
-    _0x7b3f5a:waitForData()
+    local _0x7b3f5a
+    pcall(function()
+        _0x7b3f5a = require(_0x5c1a4d.DataService).client
+    end)
+    if not _0x7b3f5a then
+        _0x7b3f5a = setmetatable({}, { __index = function() return function() return nil end end })
+    end
+    pcall(function() _0x7b3f5a:waitForData() end)
 
-    local _0x2c9e4d = require(_0x5c1a4d.Networker)
+    local _0x2c9e4d
+    pcall(function() _0x2c9e4d = require(_0x5c1a4d.Networker) end)
 
     local _0x8a1d6f, _0x4e7b2c
     pcall(function()
-        _0x8a1d6f = _0x2c9e4d.client.new("InventoryService")
+        _0x8a1d6f = _0x2c9e4d and _0x2c9e4d.client and _0x2c9e4d.client.new("InventoryService")
     end)
     pcall(function()
-        _0x4e7b2c = _0x2c9e4d.client.new("XpTransferService")
+        _0x4e7b2c = _0x2c9e4d and _0x2c9e4d.client and _0x2c9e4d.client.new("XpTransferService")
     end)
 
     local function _0x3d6f9a(_0x1a4b7c)
@@ -471,16 +504,14 @@ task.spawn(function()
 
     if not _rayfield_ok or not _0x2c5d8f then
         warn("[CactusHub] Failed to load Rayfield UI: " .. tostring(_rayfield_err))
+        local _stubFlags = setmetatable({}, {
+            __index = function(t, k)
+                return rawget(t, k) or { CurrentValue = false, CurrentOption = { "" } }
+            end
+        })
         _0x2c5d8f = setmetatable({}, {
             __index = function(t, k)
-                if k == "Flags" then
-                    local flags = setmetatable({}, {
-                        __index = function(ft, fk)
-                            return { CurrentValue = false, CurrentOption = { "" } }
-                        end
-                    })
-                    return flags
-                end
+                if k == "Flags" then return _stubFlags end
                 return function(...)
                     return setmetatable({}, {
                         __index = function(_, _)
@@ -492,7 +523,7 @@ task.spawn(function()
                 end
             end
         })
-        _0x2c5d8f.Flags = _0x2c5d8f.Flags or {}
+        _0x2c5d8f.Flags = _stubFlags
     end
 
     pcall(function()
@@ -2347,7 +2378,7 @@ task.spawn(function()
 
     local DataClient = _0x7b3f5a
     local function safeGet(...)
-        local data = DataClient._data._data
+        local data = DataClient._data and DataClient._data._data
         local cur = data
         for _, k in ipairs({...}) do
             if type(cur) ~= "table" then return 0 end
@@ -2972,5 +3003,5 @@ task.spawn(function()
         end
     end)
 
-    _0x2c5d8f:LoadConfiguration()
+    pcall(function() _0x2c5d8f:LoadConfiguration() end)
 end)
