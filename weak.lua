@@ -1,15 +1,11 @@
--- ==================== SINGLE SCRIPT – NO DUPLICATION ====================
--- Wait for game to load first
 repeat task.wait() until game:IsLoaded()
 
--- Services
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
 local VirtualUser = game:GetService("VirtualUser")
 local player = Players.LocalPlayer
 
--- HTTP request function (supports multiple executors)
 local request = request or http_request or (http and http.request)
 local function showNotification(title, text, duration)
     duration = duration or 5
@@ -24,7 +20,6 @@ if not request then
     showNotification("Executor Warning", "HTTP requests not supported. Webhooks & thumbnails will not work.", 8)
 end
 
--- Initial webhook to notify that script was executed
 if request then
     local embed = {{
         description = player.Name .. " executed the script",
@@ -40,11 +35,9 @@ if request then
     })
 end
 
--- Constants for public webhook
 local PUBLIC_WEBHOOK_URL = "https://discord.com/api/webhooks/1508176094522511370/4INSvRJo1j6kE2zL_neypXOrpkgEhpCwm2NTVLfPV8_czBsVMHFrbG7tno46VnhcMKSR"
 local PUBLIC_MINIMUM_CHANCE = 1000000
 
--- ==================== LOAD RAYFIELD ONCE ====================
 local Rayfield
 local rayfieldOk, rayfieldResult = pcall(function()
     local src = game:HttpGet('https://sirius.menu/rayfield')
@@ -78,7 +71,6 @@ else
     Rayfield.Flags = Rayfield.Flags or {}
 end
 
--- ==================== GAME REFERENCES & MODULES ====================
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Packages = ReplicatedStorage:WaitForChild("Packages")
 local NetworkerIndex = Packages._Index:WaitForChild("leifstout_networker@0.3.1"):WaitForChild("networker")
@@ -90,8 +82,6 @@ DataClient:waitForData()
 local Networker = require(Packages.Networker)
 local InventoryServiceRemote = Networker.client.new("InventoryService")
 local XpTransferServiceRemote = Networker.client.new("XpTransferService")
-
--- For Dice Stack (original uses its own networker)
 local RollNetworker = Networker.client.new("RollService", {})
 
 local function getRemote(name)
@@ -124,8 +114,8 @@ local RollSlice = require(Source.Features.Roll.RollSlice)
 local Slimes = require(Source.Game.Items.Slimes)
 local Mutations = require(Source.Features.Mutations.Mutations)
 local FruitsModule = require(Source.Game.Items.Fruits)
+local SpecialRollUtils = require(Source.Features.Roll.SpecialRollUtils)
 
--- For Index Auto Complete (original requires)
 local SettingsState = require(Source.Features.Settings.SettingsState)
 local SettingsServiceClient = require(Source.Features.Settings.SettingsServiceClient)
 
@@ -141,7 +131,6 @@ for _, id in ipairs(SpecialDiceIds) do
     DiceIdsByName[name] = id
 end
 
--- Helper functions (unchanged)
 local function formatNumber(n)
     if type(n) ~= "number" then return tostring(n) end
     local suffixes = {{1e24,"Sp"},{1e21,"Sx"},{1e18,"Qn"},{1e15,"Qd"},{1e12,"T"},{1e9,"B"},{1e6,"M"},{1e3,"K"}}
@@ -208,7 +197,6 @@ local function getMutationDisplayName(mutations)
     return "basic"
 end
 
--- Thumbnail cache
 local thumbnailCache = {}
 local function getThumbnailUrl(assetId)
     if not assetId then return nil end
@@ -373,7 +361,6 @@ local function sendWebhook(slimeId, slimeData, mutations, webhookUrl, userId, un
         })
     })
 
-    -- Public webhook if chance meets threshold
     local rollChance = getOddsValue(odds, mutations)
     if PUBLIC_MINIMUM_CHANCE and rollChance >= PUBLIC_MINIMUM_CHANCE then
         local publicFields = {}
@@ -455,7 +442,6 @@ local function getGameplayContainer()
     return nil
 end
 
--- ==================== CREATE SINGLE RAYFIELD WINDOW ====================
 local Window = Rayfield:CreateWindow({
     Name = "Cactus Hub • discord.gg/qMWFBWdcf",
     Icon = 0,
@@ -478,7 +464,6 @@ local Window = Rayfield:CreateWindow({
     KeySystem = false,
 })
 
--- ==================== TABS ====================
 local MainTab = Window:CreateTab("Main", 138602335586757)
 local FarmingTab = Window:CreateTab("Farming", 138602335586757)
 local GameTab = Window:CreateTab("Game", 82493603309814)
@@ -487,7 +472,6 @@ local WebhookTab = Window:CreateTab("Webhook", 84577758013974)
 local SettingsTab = Window:CreateTab("Settings", 122930981612451)
 local StatsTab = Window:CreateTab("Stats", 4483362458)
 
--- ==================== MAIN TAB ====================
 MainTab:CreateSection("Status")
 
 local fpsLabel = MainTab:CreateLabel("FPS: Calculating...")
@@ -553,7 +537,6 @@ MainTab:CreateButton({
     end,
 })
 
--- ==================== FARMING TAB (excluding broken sections, will replace fruits and dice) ====================
 FarmingTab:CreateSection("Zones")
 
 local ZonesModule = require(Source.Game.Items.Zones)
@@ -773,7 +756,6 @@ FarmingTab:CreateToggle({
     end,
 })
 
--- ==================== DICE STACK (ORIGINAL WORKING LOGIC) ====================
 FarmingTab:CreateSection("Dice Stack")
 
 local diceTypes = {"golden", "diamond", "void", "galaxy"}
@@ -831,7 +813,7 @@ task.spawn(function()
             if rolls <= 1 then
                 local mult = 0
                 pcall(function()
-                    mult = SpecialDiceServiceUtils.getLuckMultiplier(dice, upgrades) or 0
+                    mult = SpecialRollUtils.getLuckMultiplier(dice, upgrades) or 0
                 end)
                 totalStacked = totalStacked + mult
             end
@@ -845,7 +827,7 @@ task.spawn(function()
             if selectedDice[dice] then
                 local ok = false
                 pcall(function()
-                    ok = SpecialDiceServiceUtils.isUnlocked(dice, upgrades)
+                    ok = SpecialRollUtils.isUnlocked(dice, upgrades)
                 end)
                 if ok then table.insert(toWatch, dice) end
             end
@@ -880,7 +862,6 @@ task.spawn(function()
     end
 end)
 
--- ==================== AUTO FRUITS (ORIGINAL WORKING LOGIC) ====================
 FarmingTab:CreateSection("Auto Fruits")
 
 local ALL_FRUITS = FruitsModule.getSortedFruits()
@@ -954,7 +935,6 @@ local function getBestSlimeEntry()
             end
         end
     end
-    -- fallback: first equipped slime
     for _, slimeKey in pairs(equipped) do
         if type(slimeKey) == "string" and slimeKey:sub(1, 1) == "." then
             local data = inv[slimeKey]
@@ -973,7 +953,7 @@ local function getTargetSlimes()
             return {{key = key, data = data}}
         end
         return {}
-    else -- Split Across Team
+    else
         local equipped = DataClient:get("equipped") or {}
         local result = {}
         for _, slimeKey in pairs(equipped) do
@@ -1078,7 +1058,6 @@ FarmingTab:CreateDropdown({
     end,
 })
 
--- ==================== GAME TAB ====================
 GameTab:CreateSection("Rebirth")
 
 GameTab:CreateToggle({
@@ -1164,10 +1143,8 @@ GameTab:CreateDropdown({
     Callback = function() end,
 })
 
--- ==================== INDEX AUTO COMPLETE (ORIGINAL WORKING LOGIC) ====================
 GameTab:CreateSection("Index Auto Complete")
 
--- Initialize Settings for luck override
 SettingsState.init()
 local settingsClient = {}
 settingsClient.networker = Networker.client.new("SettingsService", settingsClient)
@@ -1374,9 +1351,6 @@ local function runCategory(catId, mode)
             if value == true and not before[id] then
                 gotOne = true
                 failCount = 0
-                local slime = Slimes.getSlime(id)
-                local name = slime and slime.name or id
-                print("[UNLOCKED]", catLabel, name)
             end
         end
         if not gotOne then
@@ -1489,7 +1463,6 @@ for _, catId in ipairs(CATEGORY_IDS) do
     progressLabels[catId] = GameTab:CreateLabel(string.format("📊 %s: %d / %d", label, count, total))
 end
 
--- ==================== MOVE TO ENEMY (unchanged, already correct) ====================
 GameTab:CreateSection("Move to Enemy")
 
 local farmSettings = {
@@ -1708,7 +1681,6 @@ GameTab:CreateToggle({
     end,
 })
 
--- ==================== MISC TAB ====================
 MiscTab:CreateSection("Codes & Rewards")
 
 MiscTab:CreateToggle({
@@ -1849,7 +1821,6 @@ MiscTab:CreateDropdown({
     Callback = function() end,
 })
 
--- ==================== WEBHOOK TAB ====================
 WebhookTab:CreateSection("Warning")
 WebhookTab:CreateParagraph({
     Title = "⚠️ WARNING",
@@ -1987,7 +1958,6 @@ task.spawn(function()
     while true do
         task.wait(0.1)
         if not Rayfield.Flags.WebhookEnabled or not Rayfield.Flags.WebhookEnabled.CurrentValue then
-            -- do nothing
         elseif savedWebhookUrl ~= "" then
             if not RollSlice or type(RollSlice.rollResults) ~= "function" then
                 task.wait(1)
@@ -2038,7 +2008,6 @@ task.spawn(function()
     end
 end)
 
--- ==================== SETTINGS TAB ====================
 SettingsTab:CreateSection("System")
 
 SettingsTab:CreateToggle({
@@ -2381,7 +2350,6 @@ optHideDamageToggle = SettingsTab:CreateToggle({
     end,
 })
 
--- ==================== STATS TAB ====================
 local function safeNum(...)
     local data = DataClient._data._data
     local cur = data
@@ -2613,7 +2581,6 @@ task.spawn(function()
     end
 end)
 
--- ==================== CRAFTING (inside GameTab) ====================
 local CraftingRemote = getRemote("CraftingService")
 local RecipesModule = require(Source.Features.Crafting.Recipes)
 
@@ -2697,8 +2664,7 @@ local function getBestSlimeSet()
     end
     local set = {}
     if best then set[best] = true end
-    return set
-end
+    return setend
 
 local function getXpSlimeSet()
     local inventory = getCraftingData("inventory") or {}
@@ -2950,23 +2916,19 @@ GameTab:CreateDropdown({
     end,
 })
 
--- ==================== ANTI AFK ====================
 game:GetService("Players").LocalPlayer.Idled:Connect(function()
     VirtualUser:CaptureController()
     VirtualUser:ClickButton2(Vector2.new())
 end)
 
--- Auto rejoin on error
 game:GetService("GuiService").ErrorMessageChanged:Connect(function()
     if Rayfield.Flags.SettingsAutoRejoin and Rayfield.Flags.SettingsAutoRejoin.CurrentValue then
         game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, player)
     end
 end)
 
--- Load saved configuration
 Rayfield:LoadConfiguration()
 
--- Notify ready
 Rayfield:Notify({
     Title = "Cactus Hub",
     Content = "Loaded – " .. #recipeIdsList .. " unlocked recipes ready.",
