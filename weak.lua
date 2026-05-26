@@ -540,7 +540,7 @@ task.spawn(function()
 
         _0x1b6d4a_main:CreateParagraph({
             Title = "Latest Update",
-            Content = "[+] Auto Send & Accept Friend Requests\n[+] Fixed Auto Collect Loot\n[+] Fixed Settings (Optimization Toggles)\n[+] Added Public Webhook in Discord\n[+] Hide Attack & Damage UI\n[+] Bug Fixes"
+            Content = "[+] Auto Complete Index\n[+] Auto Move to Enemy (Teleport/Tween)\n[+] Auto Stack Dice\n[+] Auto Feed Fruits\n[+] Removed Broken Float/Attack Systems\n[+] Bug Fixes & Performance"
         })
 
         local _dashboardBusy = false
@@ -807,8 +807,133 @@ task.spawn(function()
             end,
         })
 
-        -- ==================== FEATURE: AUTO FRUITS ====================
-        _0x8c1d4a:CreateSection("Fruits")
+        -- ==================== DICE STACK (WORKING VERSION) ====================
+        _0x8c1d4a:CreateSection("Dice Stack")
+
+        local SpecialRollUtils = require(_0x9d2f4a.Features.Roll.SpecialRollUtils)
+        local diceNetworker = _0x2c9e4d.client.new("RollService", {})
+
+        local DICE = {"golden", "diamond", "void", "galaxy"}
+        local selectedDice = {golden = true, diamond = true, void = true, galaxy = true}
+        local diceStackActive = false
+        local dicePaused = {golden = false, diamond = false, void = false, galaxy = false}
+
+        _0x8c1d4a:CreateToggle({
+            Name = "Auto Stack Dice",
+            CurrentValue = false,
+            Flag = "DiceStackToggle",
+            Callback = function(v)
+                diceStackActive = v
+                if not v then
+                    for _, dice in ipairs(DICE) do
+                        if dicePaused[dice] then
+                            pcall(function() diceNetworker:fetch("requestSetSpecialRollPaused", dice, false) end)
+                            dicePaused[dice] = false
+                        end
+                    end
+                end
+            end,
+        })
+
+        _0x8c1d4a:CreateDropdown({
+            Name = "Select Dice",
+            Options = {"All", "Golden", "Diamond", "Void", "Galaxy"},
+            CurrentOption = {"All"},
+            MultipleOptions = true,
+            Flag = "DiceSelection",
+            Callback = function(choices)
+                for _, dice in ipairs(DICE) do
+                    selectedDice[dice] = false
+                end
+                for _, choice in ipairs(choices) do
+                    if choice == "All" then
+                        for _, dice in ipairs(DICE) do
+                            selectedDice[dice] = true
+                        end
+                        break
+                    else
+                        selectedDice[choice:lower()] = true
+                    end
+                end
+            end,
+        })
+
+        local diceLuckLabel = _0x8c1d4a:CreateLabel("Total Stacked Luck: x0")
+
+        task.spawn(function()
+            while true do
+                task.wait(0.5)
+
+                local upgrades = _0x7b3f5a:get("upgrades") or {}
+                local progression = _0x7b3f5a:get("specialRollProgression") or {}
+
+                local totalStacked = 0
+                for _, dice in ipairs(DICE) do
+                    local prog = progression[dice]
+                    local rolls = prog and prog.rollsUntilNext or math.huge
+                    if rolls <= 1 then
+                        local mult = 0
+                        pcall(function()
+                            mult = SpecialRollUtils.getLuckMultiplier(dice, upgrades) or 0
+                        end)
+                        totalStacked = totalStacked + mult
+                    end
+                end
+
+                pcall(function()
+                    diceLuckLabel:Set("Total Stacked Luck: x" .. string.format("%.1f", totalStacked))
+                end)
+
+                if not diceStackActive then continue end
+
+                local toWatch = {}
+                for _, dice in ipairs(DICE) do
+                    if selectedDice[dice] then
+                        local ok = false
+                        pcall(function()
+                            ok = SpecialRollUtils.isUnlocked(dice, upgrades)
+                        end)
+                        if ok then
+                            table.insert(toWatch, dice)
+                        end
+                    end
+                end
+
+                if #toWatch == 0 then continue end
+
+                local allReady = true
+                for _, dice in ipairs(toWatch) do
+                    local prog = progression[dice]
+                    local rolls = prog and prog.rollsUntilNext or math.huge
+                    if rolls <= 1 then
+                        if not dicePaused[dice] then
+                            pcall(function() diceNetworker:fetch("requestSetSpecialRollPaused", dice, true) end)
+                            dicePaused[dice] = true
+                        end
+                    else
+                        allReady = false
+                    end
+                end
+
+                if allReady then
+                    for _, dice in ipairs(toWatch) do
+                        pcall(function() diceNetworker:fetch("requestSetSpecialRollPaused", dice, false) end)
+                        dicePaused[dice] = false
+                    end
+                    _0x2c5d8f:Notify({
+                        Title = "Dice Stack",
+                        Content = "All stacked — releasing now.",
+                        Duration = 3,
+                        Image = 4483362458,
+                    })
+                    task.wait(2)
+                end
+            end
+        end)
+        -- ==================== END DICE STACK ====================
+
+        -- ==================== AUTO FRUITS ====================
+        _0x8c1d4a:CreateSection("Auto Fruits")
 
         local sortedFruits = FruitsModule.getSortedFruits()
         local fruitNames = { "Any" }
@@ -976,707 +1101,31 @@ task.spawn(function()
             Callback = function(_0x4d8c1a) end,
         })
 
-        _0x3e2c7a_tab:CreateSection("Combat")
-
-        _0x3e2c7a_tab:CreateToggle({
-            Name = "Auto Shoot Enemies",
-            CurrentValue = false,
-            Flag = "CombatAutoShoot",
-            Content = "Auto Shoot is enabled but visual effects will not appear — damage is still dealt.",
-            Callback = function(_0x7a2c4e) end,
-        })
-
-        _0x3e2c7a_tab:CreateDropdown({
-            Name = "Target Priority",
-            Options = {"Closest", "Lowest HP", "Highest HP"},
-            CurrentOption = {"Closest"},
-            MultipleOptions = false,
-            Flag = "CombatTargetPriority",
-            Callback = function(_0x3c6a2d) end,
-        })
-
-        local function _0x1c6f4a_ensureEquipped()
-            local character = _0x9a4b7c.Character
-            if not character then return false end
-            local humanoid = character:FindFirstChildOfClass("Humanoid")
-            if not humanoid then return false end
-            local gun = character:FindFirstChild("SlimeGun") or _0x9a4b7c.Backpack:FindFirstChild("SlimeGun")
-            if gun and gun.Parent ~= character then
-                humanoid:EquipTool(gun)
-            end
-            return gun ~= nil
-        end
-
-        task.spawn(function()
-            while true do
-                _0x1c6f4a_ensureEquipped()
-                task.wait(2)
-            end
-        end)
-
-        local damageUIParent = nil
-        local function getDamageUIParent()
-            if damageUIParent and damageUIParent.Parent then return damageUIParent end
-            local playerGui = _0x9a4b7c.PlayerGui
-            local screenGui = playerGui:FindFirstChild("SlimeGunHUD")
-            if screenGui then
-                local container = screenGui:FindFirstChild("PopupContainer")
-                if container then
-                    damageUIParent = container
-                    return container
-                end
-            end
-            return nil
-        end
-
-        task.spawn(function()
-            local ReplicatedStorage = game:GetService("ReplicatedStorage")
-            local Players = game:GetService("Players")
-            local player = Players.LocalPlayer
-            
-            local GameplayServiceClient = require(ReplicatedStorage.Source.Features.Gameplay.GameplayServiceClient)
-            local GoopGunServiceClient = require(ReplicatedStorage.Source.Features.GoopGun.GoopGunServiceClient)
-            local GoopGunServiceUtils = require(ReplicatedStorage.Source.Features.GoopGun.GoopGunServiceUtils)
-            local DataService = require(ReplicatedStorage.Packages.DataService).client
-            
-            local screenGui = Instance.new("ScreenGui")
-            screenGui.Name = "SlimeGunHUD"
-            screenGui.ResetOnSpawn = false
-            screenGui.IgnoreGuiInset = true
-            screenGui.DisplayOrder = 999
-            screenGui.Parent = player.PlayerGui
-            
-            local container = Instance.new("Frame")
-            container.Name = "PopupContainer"
-            container.Position = UDim2.new(1, -276, 0, 48)
-            container.Size = UDim2.new(0, 260, 1, -96)
-            container.BackgroundTransparency = 1
-            container.Parent = screenGui
-            
-            local layout = Instance.new("UIListLayout")
-            layout.SortOrder = Enum.SortOrder.LayoutOrder
-            layout.VerticalAlignment = Enum.VerticalAlignment.Top
-            layout.Padding = UDim.new(0, 6)
-            layout.Parent = container
-            
-            local COLORS = {
-                normal   = Color3.fromRGB(120, 220, 255),
-                big      = Color3.fromRGB(255, 180, 50),
-                huge     = Color3.fromRGB(255, 80, 80),
-                shiny    = Color3.fromRGB(255, 230, 50),
-                inverted = Color3.fromRGB(180, 80, 255),
-            }
-            
-            local function getMutationColor(mutations)
-                if not mutations then return COLORS.normal end
-                if mutations.inverted then return COLORS.inverted end
-                if mutations.huge     then return COLORS.huge end
-                if mutations.shiny    then return COLORS.shiny end
-                if mutations.big      then return COLORS.big end
-                return COLORS.normal
-            end
-            
-            local function getEnemyLabel(enemy)
-                local tier = "Lv." .. tostring(enemy.enemyId or 1)
-                local uid = "#" .. tostring(enemy.uniqueId or "?")
-                if enemy.mutations then
-                    local tags = {}
-                    for mut in pairs(enemy.mutations) do
-                        table.insert(tags, mut:sub(1,1):upper() .. mut:sub(2))
-                    end
-                    if #tags > 0 then
-                        return table.concat(tags, " ") .. " Slime " .. tier .. " " .. uid
-                    end
-                end
-                return "Slime " .. tier .. " " .. uid
-            end
-            
-            local activePopups = {}
-            local popupOrder = 0
-            
-            local TweenService = game:GetService("TweenService")
-            
-            local function pulseFrame(frame, accentColor)
-                TweenService:Create(frame, TweenInfo.new(0.06, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                    BackgroundColor3 = accentColor
-                }):Play()
-                task.delay(0.06, function()
-                    TweenService:Create(frame, TweenInfo.new(0.12, Enum.EasingStyle.Quad), {
-                        BackgroundColor3 = Color3.fromRGB(10, 10, 18)
-                    }):Play()
-                end)
-            end
-            
-            local function destroyPopup(uid)
-                local p = activePopups[uid]
-                if not p then return end
-                activePopups[uid] = nil
-                local frame = p.frame
-                TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quint), {
-                    BackgroundTransparency = 1,
-                    Size = UDim2.new(1, 0, 0, 0)
-                }):Play()
-                for _, lbl in ipairs(p.labels) do
-                    TweenService:Create(lbl, TweenInfo.new(0.3), { TextTransparency = 1 }):Play()
-                end
-                TweenService:Create(p.accent, TweenInfo.new(0.3), { BackgroundTransparency = 1 }):Play()
-                task.delay(0.3, function() frame:Destroy() end)
-            end
-            
-            local function scheduleExpiry(uid)
-                local p = activePopups[uid]
-                if not p then return end
-                if p.expireTask then task.cancel(p.expireTask) end
-                p.expireTask = task.delay(2.5, function()
-                    destroyPopup(uid)
-                end)
-            end
-            
-            local function createPopup(uid, enemyLabel, dmg, hpAfter, accentColor)
-                popupOrder = popupOrder + 1
-            
-                local frame = Instance.new("Frame")
-                frame.Size = UDim2.new(1, 0, 0, 52)
-                frame.BackgroundColor3 = Color3.fromRGB(10, 10, 18)
-                frame.BackgroundTransparency = 0.1
-                frame.BorderSizePixel = 0
-                frame.ClipsDescendants = true
-                frame.LayoutOrder = popupOrder
-                frame.Parent = container
-            
-                Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
-            
-                local accent = Instance.new("Frame")
-                accent.Size = UDim2.new(0, 3, 1, 0)
-                accent.BackgroundColor3 = accentColor
-                accent.BorderSizePixel = 0
-                accent.Parent = frame
-                Instance.new("UICorner", accent).CornerRadius = UDim.new(0, 10)
-            
-                local nameLabel = Instance.new("TextLabel")
-                nameLabel.Position = UDim2.new(0, 14, 0, 5)
-                nameLabel.Size = UDim2.new(1, -90, 0, 18)
-                nameLabel.BackgroundTransparency = 1
-                nameLabel.Text = enemyLabel
-                nameLabel.TextColor3 = Color3.fromRGB(220, 220, 230)
-                nameLabel.TextXAlignment = Enum.TextXAlignment.Left
-                nameLabel.Font = Enum.Font.GothamBold
-                nameLabel.TextSize = 13
-                nameLabel.Parent = frame
-            
-                local hpLabel = Instance.new("TextLabel")
-                hpLabel.Position = UDim2.new(0, 14, 0, 25)
-                hpLabel.Size = UDim2.new(1, -90, 0, 14)
-                hpLabel.BackgroundTransparency = 1
-                hpLabel.Text = "HP: " .. tostring(math.max(0, math.floor(hpAfter)))
-                hpLabel.TextColor3 = Color3.fromRGB(130, 130, 150)
-                hpLabel.TextXAlignment = Enum.TextXAlignment.Left
-                hpLabel.Font = Enum.Font.Gotham
-                hpLabel.TextSize = 11
-                hpLabel.Parent = frame
-            
-                local hitsLabel = Instance.new("TextLabel")
-                hitsLabel.Position = UDim2.new(0, 14, 0, 38)
-                hitsLabel.Size = UDim2.new(1, -90, 0, 12)
-                hitsLabel.BackgroundTransparency = 1
-                hitsLabel.Text = "1 hit  •  " .. tostring(math.floor(dmg)) .. " total dmg"
-                hitsLabel.TextColor3 = Color3.fromRGB(90, 90, 110)
-                hitsLabel.TextXAlignment = Enum.TextXAlignment.Left
-                hitsLabel.Font = Enum.Font.Gotham
-                hitsLabel.TextSize = 10
-                hitsLabel.Parent = frame
-            
-                local dmgLabel = Instance.new("TextLabel")
-                dmgLabel.Position = UDim2.new(1, -80, 0, 0)
-                dmgLabel.Size = UDim2.new(0, 72, 1, 0)
-                dmgLabel.BackgroundTransparency = 1
-                dmgLabel.Text = "-" .. tostring(math.floor(dmg))
-                dmgLabel.TextColor3 = accentColor
-                dmgLabel.TextXAlignment = Enum.TextXAlignment.Right
-                dmgLabel.Font = Enum.Font.GothamBold
-                dmgLabel.TextSize = 20
-                dmgLabel.Parent = frame
-            
-                frame.Position = UDim2.new(-1, 0, 0, 0)
-                TweenService:Create(frame, TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-                    Position = UDim2.new(0, 0, 0, 0)
-                }):Play()
-            
-                activePopups[uid] = {
-                    frame      = frame,
-                    accent     = accent,
-                    labels     = { nameLabel, hpLabel, hitsLabel, dmgLabel },
-                    hpLabel    = hpLabel,
-                    hitsLabel  = hitsLabel,
-                    dmgLabel   = dmgLabel,
-                    totalDmg   = dmg,
-                    hits       = 1,
-                    accentColor = accentColor,
-                    expireTask = nil,
-                }
-            
-                scheduleExpiry(uid)
-            end
-            
-            local function updatePopup(uid, dmg, hpAfter)
-                local p = activePopups[uid]
-                if not p then return end
-            
-                p.totalDmg = p.totalDmg + dmg
-                p.hits = p.hits + 1
-            
-                p.hpLabel.Text   = "HP: " .. tostring(math.max(0, math.floor(hpAfter)))
-                p.hitsLabel.Text = p.hits .. " hits  •  " .. tostring(math.floor(p.totalDmg)) .. " total dmg"
-                p.dmgLabel.Text  = "-" .. tostring(math.floor(p.totalDmg))
-            
-                pulseFrame(p.frame, p.accentColor)
-                scheduleExpiry(uid)
-            end
-            
-            local function selectTarget()
-                local gameplay = GameplayServiceClient.gameplay
-                if not gameplay then return nil end
-                local character = player.Character
-                if not character then return nil end
-                local rootPart = character:FindFirstChild("HumanoidRootPart")
-                if not rootPart then return nil end
-            
-                local priority = _0x2c5d8f.Flags.CombatTargetPriority.CurrentOption[1]
-                local best, bestVal = nil, nil
-            
-                for uniqueId, enemy in pairs(gameplay.enemies) do
-                    if enemy.health and enemy.health > 0 then
-                        if priority == "Closest" then
-                            local dist = (enemy.pos - rootPart.Position).Magnitude
-                            if bestVal == nil or dist < bestVal then
-                                bestVal = dist
-                                best = uniqueId
-                            end
-                        elseif priority == "Lowest HP" then
-                            if bestVal == nil or enemy.health < bestVal then
-                                bestVal = enemy.health
-                                best = uniqueId
-                            end
-                        elseif priority == "Highest HP" then
-                            if bestVal == nil or enemy.health > bestVal then
-                                bestVal = enemy.health
-                                best = uniqueId
-                            end
-                        end
-                    end
-                end
-                return best
-            end
-            
-            while true do
-                if _0x2c5d8f.Flags.CombatAutoShoot and _0x2c5d8f.Flags.CombatAutoShoot.CurrentValue then
-                    local character = player.Character
-                    if character and character:FindFirstChildOfClass("Humanoid") and character:FindFirstChildOfClass("Humanoid").Health > 0 then
-                        _0x1c6f4a_ensureEquipped()
-                        local upgrades = DataService:get("upgrades") or {}
-                        local fireRate = GoopGunServiceUtils.getFireRate(upgrades)
-                        local targetId = selectTarget()
-                        if targetId then
-                            local gameplay = GameplayServiceClient.gameplay
-                            local enemy = gameplay and gameplay.enemies[targetId]
-                            local hpBefore = enemy and enemy.health or 0
-                            local enemyLabel = enemy and getEnemyLabel(enemy) or "Slime"
-                            local accentColor = enemy and getMutationColor(enemy.mutations) or COLORS.normal
-            
-                            local wrapper = GoopGunServiceClient.wrapper
-                            if wrapper and wrapper.onEnemyHit then
-                                wrapper.onEnemyHit(targetId)
-                            end
-            
-                            task.wait()
-                            local hpAfter = enemy and enemy.health or 0
-                            local dmg = hpBefore - hpAfter
-            
-                            if dmg > 0 then
-                                if activePopups[targetId] then
-                                    updatePopup(targetId, dmg, hpAfter)
-                                else
-                                    createPopup(targetId, enemyLabel, dmg, hpAfter, accentColor)
-                                end
-                            end
-                        end
-                        task.wait(fireRate)
-                    else
-                        task.wait(1)
-                    end
-                else
-                    task.wait(0.5)
-                end
-            end
-        end)
-
-        local function _0x2c7f4a(_0x3e2c4a)
-            return _0x3e2c4a.PrimaryPart
-                or _0x3e2c4a:FindFirstChild("HumanoidRootPart")
-                or _0x3e2c4a:FindFirstChild("RootPart")
-                or _0x3e2c4a:FindFirstChildWhichIsA("BasePart")
-        end
-
-        local _0x3a8c2d = false
-        local _0x5d2c4a    = false
-        local _0x4f2c7a   = false
-
-        local _0x8c1a3d = {}
-        local _0x2e4b7a = {}
-        local _0x1a6c4d  = 0
-
-        local function _0x9b4c2e()
-            local _0x1c4d8f = tick()
-            if _0x1c4d8f - _0x1a6c4d < 0.5 then return end
-            _0x1a6c4d = _0x1c4d8f
-
-            local _0x3e2c7a = _0x3e2c8f()
-            if not _0x3e2c7a then return end
-
-            local _0x4d2f8a = _0x3e2c7a:FindFirstChild("Enemies")
-            local _0x2b7c4e = _0x3e2c7a:FindFirstChild("Slimes")
-
-            _0x8c1a3d = {}
-            if _0x4d2f8a then
-                for _, _0x1c4a7e in ipairs(_0x4d2f8a:GetChildren()) do
-                    if _0x1c4a7e:IsA("Model") then
-                        local _0x3e8d2a = _0x2c7f4a(_0x1c4a7e)
-                        if _0x3e8d2a then
-                            table.insert(_0x8c1a3d, {model = _0x1c4a7e, root = _0x3e8d2a})
-                        end
-                    end
-                end
-            end
-
-            _0x2e4b7a = {}
-            if _0x2b7c4e then
-                for _, _0x1b7d2a in ipairs(_0x2b7c4e:GetChildren()) do
-                    if _0x1b7d2a:IsA("Model") then
-                        local _0x2a7e4c = _0x2c7f4a(_0x1b7d2a)
-                        if _0x2a7e4c then
-                            table.insert(_0x2e4b7a, {model = _0x1b7d2a, root = _0x2a7e4c, id = _0x1b7d2a.Name})
-                        end
-                    end
-                end
-            end
-        end
-
-        local _0x1c6f4a = nil
-
-        local function _0x5a8f2c(_0x3e2a6c)
-            if not _0x3e2a6c or not _0x3e2a6c.Parent then return false end
-            local _0x4d8f1a = _0x2c7f4a(_0x3e2a6c)
-            if not _0x4d8f1a then return false end
-            local _0x2e4b7a = _0x3e2a6c:FindFirstChildOfClass("Humanoid")
-            if _0x2e4b7a and _0x2e4b7a.Health <= 0 then return false end
-            return true
-        end
-
-        local function _0x3c4e2a(_0x1b4c7d)
-            local _0xgameplay = _0x3e2c8f()
-            if not _0xgameplay then return nil end
-            local _0x1a4b7c = _0xgameplay:FindFirstChild("Enemies")
-            if not _0x1a4b7c then return nil end
-            local _0x3d6f2a, _0x2c8e4a = nil, math.huge
-            for _, _0x1c7a2e in ipairs(_0x1a4b7c:GetChildren()) do
-                if _0x1c7a2e:IsA("Model") and _0x5a8f2c(_0x1c7a2e) then
-                    local _0x5a3b8c = _0x2c7f4a(_0x1c7a2e)
-                    if _0x5a3b8c then
-                        local _0x1f6c4a = (_0x5a3b8c.Position - _0x1b4c7d).Magnitude
-                        if _0x1f6c4a < _0x2c8e4a then
-                            _0x2c8e4a = _0x1f6c4a
-                            _0x3d6f2a     = _0x1c7a2e
-                        end
-                    end
-                end
-            end
-            return _0x3d6f2a
-        end
-
-        _0x3e2c7a_tab:CreateSection("Floating Enemies")
-
-        _0x3e2c7a_tab:CreateToggle({
-            Name = "Float Enemies Around Player",
-            CurrentValue = false,
-            Flag = "GameFloatEnemies",
-            Callback = function(_0x3c6a2d)
-                _0x5d2c4a = _0x3c6a2d
-            end,
-        })
-
-        _0x3e2c7a_tab:CreateSlider({
-            Name = "Float Radius",
-            Range = {5, 25},
-            Increment = 1,
-            Suffix = "studs",
-            CurrentValue = 12,
-            Flag = "GameFloatRadius",
-            Callback = function(_0x2a7b4c) end,
-        })
-
-        _0x3e2c7a_tab:CreateSlider({
-            Name = "Float Rotation Speed",
-            Range = {0.5, 5},
-            Increment = 0.1,
-            Suffix = "x",
-            CurrentValue = 1,
-            Flag = "GameFloatSpeed",
-            Callback = function(_0x4c2d7e) end,
-        })
-
-        _0x3e2c7a_tab:CreateSlider({
-            Name = "Float Wave Speed",
-            Range = {1, 10},
-            Increment = 0.5,
-            Suffix = "x",
-            CurrentValue = 3,
-            Flag = "GameFloatWaveSpeed",
-            Callback = function(_0x1c5f8a) end,
-        })
-
-        _0x3e2c7a_tab:CreateSlider({
-            Name = "Float Wave Height",
-            Range = {0.5, 5},
-            Increment = 0.5,
-            Suffix = "studs",
-            CurrentValue = 1.5,
-            Flag = "GameFloatWaveHeight",
-            Callback = function(_0x2d7e4a) end,
-        })
-
-        _0x3e2c7a_tab:CreateSection("Attack System")
-
-        _0x3e2c7a_tab:CreateToggle({
-            Name = "Attack Floating Enemies",
-            CurrentValue = false,
-            Flag = "GameAttackEnemies",
-            Callback = function(_0x8c3e2a)
-                _0x4f2c7a = _0x8c3e2a
-            end,
-        })
-
-        _0x3e2c7a_tab:CreateSlider({
-            Name = "Attack Range",
-            Range = {10, 50},
-            Increment = 1,
-            Suffix = "studs",
-            CurrentValue = 25,
-            Flag = "GameAttackRange",
-            Callback = function(_0x4c2e6a) end,
-        })
-
-        _0x3e2c7a_tab:CreateSlider({
-            Name = "Attack Lunge Speed",
-            Range = {5, 30},
-            Increment = 1,
-            Suffix = "x",
-            CurrentValue = 15,
-            Flag = "GameAttackLungeSpeed",
-            Callback = function(_0x3a7c2e) end,
-        })
-
-        local _0x4b2d7e = {}
-
-        local function _0x7c3e2a(_0x1f4c8a, _0x3a8d2c)
-            if not _0x1f4c8a or not _0x1f4c8a.Parent then return end
-            local _0x1c5f8a = _0x1f4c8a.PrimaryPart or _0x1f4c8a:FindFirstChildWhichIsA("BasePart")
-            if _0x1c5f8a and not _0x1c5f8a:IsA("UnionOperation") then
-                _0x1f4c8a:PivotTo(_0x3a8d2c)
-            end
-        end
-
-        _0x1e5f3d.RenderStepped:Connect(function()
-            if not _0x5d2c4a and not _0x4f2c7a then return end
-
-            _0x9b4c2e()
-
-            local _0x1c4f7a = _0x9a4b7c.Character
-            local _0x7c2e4a  = _0x1c4f7a and _0x1c4f7a:FindFirstChild("HumanoidRootPart")
-            if not _0x7c2e4a then return end
-
-            local _0x1a4c7d         = tick()
-            local _0x2a7b4c    = _0x2c5d8f.Flags.GameFloatRadius    and _0x2c5d8f.Flags.GameFloatRadius.CurrentValue    or 12
-            local _0x3c2e7a  = _0x2c5d8f.Flags.GameFloatSpeed     and _0x2c5d8f.Flags.GameFloatSpeed.CurrentValue     or 1
-            local _0x4d7e2a = _0x2c5d8f.Flags.GameFloatWaveSpeed and _0x2c5d8f.Flags.GameFloatWaveSpeed.CurrentValue or 3
-            local _0x5a2c8f= _0x2c5d8f.Flags.GameFloatWaveHeight and _0x2c5d8f.Flags.GameFloatWaveHeight.CurrentValue or 1.5
-
-            if _0x5d2c4a and #_0x8c1a3d > 0 then
-                local _0x1b7c4d = #_0x8c1a3d
-                for _0x1a3c6d, _0x3e7a2c in ipairs(_0x8c1a3d) do
-                    local _0x2c7e4a        = ((_0x1a3c6d / _0x1b7c4d) * math.pi * 2) + (_0x1a4c7d * _0x3c2e7a)
-                    local _0x4d2f8a = math.sin((_0x1a4c7d * _0x4d7e2a) + _0x1a3c6d) * _0x5a2c8f
-
-                    local _0x3f6a2c = _0x7c2e4a.Position + Vector3.new(
-                        math.cos(_0x2c7e4a) * _0x2a7b4c,
-                        _0x4d2f8a + 2,
-                        math.sin(_0x2c7e4a) * _0x2a7b4c
-                    )
-
-                    local _0x2e4c7a = (_0x3f6a2c - _0x7c2e4a.Position).Unit
-                    _0x7c3e2a(_0x3e7a2c.model, CFrame.lookAt(_0x3f6a2c, _0x3f6a2c + _0x2e4c7a))
-                end
-            end
-
-            if _0x4f2c7a and #_0x2e4b7a > 0 and #_0x8c1a3d > 0 then
-                local _0x3c6d2a = _0x2c5d8f.Flags.GameAttackRange     and _0x2c5d8f.Flags.GameAttackRange.CurrentValue     or 25
-                local _0x6b2c4f  = _0x2c5d8f.Flags.GameAttackLungeSpeed and _0x2c5d8f.Flags.GameAttackLungeSpeed.CurrentValue or 15
-
-                local _0x1e4c6a = #_0x2e4b7a
-                for _0x1a3c6d, _0x2e4c7a in ipairs(_0x2e4b7a) do
-                    local _0x1c4d8f   = ((_0x1a3c6d / _0x1e4c6a) * math.pi * 2) + (_0x1a4c7d * _0x3c2e7a)
-                    local _0x7d2c4e = math.sin((_0x1a4c7d * _0x4d7e2a) + _0x1a3c6d) * _0x5a2c8f
-
-                    local _0x3f6a2c = _0x7c2e4a.Position + Vector3.new(
-                        math.cos(_0x1c4d8f) * _0x2a7b4c,
-                        _0x7d2c4e + 2,
-                        math.sin(_0x1c4d8f) * _0x2a7b4c
-                    )
-
-                    local _0x5c2d7a, _0x1c7d3a = nil, _0x3c6d2a
-                    for _, _0x1c4a7e in ipairs(_0x8c1a3d) do
-                        local _0x2a6d4c = (_0x3f6a2c - _0x1c4a7e.root.Position).Magnitude
-                        if _0x2a6d4c < _0x1c7d3a then
-                            _0x1c7d3a  = _0x2a6d4c
-                            _0x5c2d7a = _0x1c4a7e
-                        end
-                    end
-
-                    local _0x7e2a4c  = _0x3f6a2c
-                    local _0x1b6d4a = _0x3f6a2c + (_0x3f6a2c - _0x7c2e4a.Position).Unit
-
-                    if _0x5c2d7a then
-                        if not _0x4b2d7e[_0x2e4c7a.id] then
-                            _0x4b2d7e[_0x2e4c7a.id] = _0x1a4c7d
-                        end
-
-                        local _0x5f2c7a   = _0x1a4c7d - _0x4b2d7e[_0x2e4c7a.id]
-                        local _0x8c3e2a = math.sin(_0x5f2c7a * _0x6b2c4f)
-
-                        if _0x8c3e2a > 0 then
-                            _0x7e2a4c   = _0x3f6a2c:Lerp(_0x5c2d7a.root.Position, _0x8c3e2a * 0.85)
-                            _0x1b6d4a = _0x5c2d7a.root.Position
-                        else
-                            _0x4b2d7e[_0x2e4c7a.id] = _0x1a4c7d
-                        end
-                    else
-                        _0x4b2d7e[_0x2e4c7a.id] = nil
-                    end
-
-                    _0x7c3e2a(_0x2e4c7a.model, CFrame.lookAt(_0x7e2a4c, _0x1b6d4a))
-                end
-            end
-        end)
-
-        -- ==================== FEATURE: MOVE PLAYER ====================
-        _0x3e2c7a_tab:CreateSection("Player")
-
-        local xInput = _0x3e2c7a_tab:CreateInput({
-            Name = "X Coordinate",
-            CurrentValue = "",
-            PlaceholderText = "X",
-            RemoveTextAfterFocusLost = false,
-            Flag = "TeleportX",
-            Callback = function() end,
-        })
-        local yInput = _0x3e2c7a_tab:CreateInput({
-            Name = "Y Coordinate",
-            CurrentValue = "",
-            PlaceholderText = "Y",
-            RemoveTextAfterFocusLost = false,
-            Flag = "TeleportY",
-            Callback = function() end,
-        })
-        local zInput = _0x3e2c7a_tab:CreateInput({
-            Name = "Z Coordinate",
-            CurrentValue = "",
-            PlaceholderText = "Z",
-            RemoveTextAfterFocusLost = false,
-            Flag = "TeleportZ",
-            Callback = function() end,
-        })
-
-        _0x3e2c7a_tab:CreateButton({
-            Name = "Teleport",
-            Callback = function()
-                local x = tonumber(_0x2c5d8f.Flags.TeleportX.CurrentValue)
-                local y = tonumber(_0x2c5d8f.Flags.TeleportY.CurrentValue)
-                local z = tonumber(_0x2c5d8f.Flags.TeleportZ.CurrentValue)
-                if not x or not y or not z then
-                    _0x2c5d8f:Notify({
-                        Title = "Teleport",
-                        Content = "Invalid coordinates. Please enter numbers for X, Y, Z.",
-                        Duration = 3,
-                        Image = 4483362458,
-                    })
-                    return
-                end
-                local character = _0x9a4b7c.Character
-                if not character then
-                    _0x2c5d8f:Notify({
-                        Title = "Teleport",
-                        Content = "Character not found.",
-                        Duration = 3,
-                        Image = 4483362458,
-                    })
-                    return
-                end
-                local hrp = character:FindFirstChild("HumanoidRootPart")
-                if not hrp then
-                    _0x2c5d8f:Notify({
-                        Title = "Teleport",
-                        Content = "HumanoidRootPart not found.",
-                        Duration = 3,
-                        Image = 4483362458,
-                    })
-                    return
-                end
-                local success, err = pcall(function()
-                    hrp.CFrame = CFrame.new(x, y, z)
-                end)
-                if success then
-                    _0x2c5d8f:Notify({
-                        Title = "Teleport",
-                        Content = string.format("Teleported to (%.1f, %.1f, %.1f)", x, y, z),
-                        Duration = 3,
-                        Image = 4483362458,
-                    })
-                else
-                    _0x2c5d8f:Notify({
-                        Title = "Teleport",
-                        Content = "Teleport failed: " .. tostring(err),
-                        Duration = 3,
-                        Image = 4483362458,
-                    })
-                end
-            end,
-        })
-        -- ==================== END MOVE PLAYER ====================
-
-        -- ==================== FEATURE: AUTO COMPLETE INDEX ====================
-        _0x3e2c7a_tab:CreateSection("Index Completion")
+        -- ==================== INDEX AUTO COMPLETE ====================
+        _0x3e2c7a_tab:CreateSection("Index Auto Complete")
 
         local indexData = _0x7b3f5a:get("index") or {}
-        local categoriesList = { "All (Recommended)", "Basic", "Shiny", "Big", "Huge", "Inverted" }
-        local categoryCounts = { Basic = 0, Shiny = 0, Big = 0, Huge = 0, Inverted = 0 }
+        local idxCategoriesList = { "All (Recommended)", "Basic", "Shiny", "Big", "Huge", "Inverted" }
+        local idxCategoryCounts = { Basic = 0, Shiny = 0, Big = 0, Huge = 0, Inverted = 0 }
 
-        local function updateCategoryCounts()
+        local function idxUpdateCategoryCounts()
             local cats = indexData.categories or {}
-            for cat in pairs(categoryCounts) do
+            for cat in pairs(idxCategoryCounts) do
                 local lower = cat:lower()
                 local catInfo = cats[lower]
                 if catInfo then
                     local unlocked = catInfo.unlocked or {}
                     local count = 0
                     for _, v in pairs(unlocked) do if v == true then count = count + 1 end end
-                    categoryCounts[cat] = count
+                    idxCategoryCounts[cat] = count
                 else
-                    categoryCounts[cat] = 0
+                    idxCategoryCounts[cat] = 0
                 end
             end
         end
-        updateCategoryCounts()
+        idxUpdateCategoryCounts()
 
-        local function getCategoryMissingList(category)
+        local function idxGetMissingList(category)
             local allSlimes = _0x6f3a2c.getSortedSlimes()
             local cats = indexData.categories or {}
             local targetCat = nil
@@ -1713,7 +1162,7 @@ task.spawn(function()
             return missing
         end
 
-        local function getRarestMissing(missingList)
+        local function idxGetRarestMissing(missingList)
             if #missingList == 0 then return nil end
             local rarest = missingList[1]
             for _, m in ipairs(missingList) do
@@ -1722,43 +1171,43 @@ task.spawn(function()
             return rarest
         end
 
-        local currentTargetLabel = _0x3e2c7a_tab:CreateLabel("Target: None")
-        local targetOddsLabel = _0x3e2c7a_tab:CreateLabel("Odds: N/A")
-        local progressLabel = _0x3e2c7a_tab:CreateLabel("Progress: Calculating...")
+        local idxTargetLabel = _0x3e2c7a_tab:CreateLabel("Target: None")
+        local idxOddsLabel = _0x3e2c7a_tab:CreateLabel("Odds: N/A")
+        local idxProgressLabel = _0x3e2c7a_tab:CreateLabel("Progress: Calculating...")
 
-        local function updateProgressLabels()
-            updateCategoryCounts()
+        local function idxUpdateProgressLabels()
+            idxUpdateCategoryCounts()
             local totalBasic = #_0x6f3a2c.getSortedSlimes()
-            local progressText = string.format("Basic: %d/%d", categoryCounts.Basic, totalBasic)
-            for cat, count in pairs(categoryCounts) do
+            local progressText = string.format("Basic: %d/%d", idxCategoryCounts.Basic, totalBasic)
+            for cat, count in pairs(idxCategoryCounts) do
                 if cat ~= "Basic" then
                     progressText = progressText .. string.format("  |  %s: %d/%d", cat, count, totalBasic)
                 end
             end
-            progressLabel:Set(progressText)
+            idxProgressLabel:Set(progressText)
         end
 
-        local selectedCategory = "All (Recommended)"
-        local currentMissingList = getCategoryMissingList(selectedCategory)
-        local currentTarget = getRarestMissing(currentMissingList)
+        local idxSelectedCategory = "All (Recommended)"
+        local idxCurrentMissing = idxGetMissingList(idxSelectedCategory)
+        local idxCurrentTarget = idxGetRarestMissing(idxCurrentMissing)
 
         _0x3e2c7a_tab:CreateDropdown({
             Name = "Category",
-            Options = categoriesList,
-            CurrentOption = { selectedCategory },
+            Options = idxCategoriesList,
+            CurrentOption = { idxSelectedCategory },
             MultipleOptions = false,
             Flag = "IndexCategory",
             Callback = function(opt)
-                selectedCategory = opt[1]
-                currentMissingList = getCategoryMissingList(selectedCategory)
-                currentTarget = getRarestMissing(currentMissingList)
-                if currentTarget then
-                    currentTargetLabel:Set("Target: " .. currentTarget.id .. " (" .. currentTarget.category .. ")")
-                    local oddsFormatted = currentTarget.odds > 0 and ("1 in " .. _0x6c2f8a(currentTarget.odds)) or "Unknown"
-                    targetOddsLabel:Set("Odds: " .. oddsFormatted)
+                idxSelectedCategory = opt[1]
+                idxCurrentMissing = idxGetMissingList(idxSelectedCategory)
+                idxCurrentTarget = idxGetRarestMissing(idxCurrentMissing)
+                if idxCurrentTarget then
+                    idxTargetLabel:Set("Target: " .. idxCurrentTarget.id .. " (" .. idxCurrentTarget.category .. ")")
+                    local oddsFormatted = idxCurrentTarget.odds > 0 and ("1 in " .. _0x6c2f8a(idxCurrentTarget.odds)) or "Unknown"
+                    idxOddsLabel:Set("Odds: " .. oddsFormatted)
                 else
-                    currentTargetLabel:Set("Target: None (complete!)")
-                    targetOddsLabel:Set("Odds: N/A")
+                    idxTargetLabel:Set("Target: None (complete!)")
+                    idxOddsLabel:Set("Odds: N/A")
                 end
             end,
         })
@@ -1782,9 +1231,9 @@ task.spawn(function()
                 if not enabled then return end
                 autoIndexThread = task.spawn(function()
                     while _0x2c5d8f.Flags.AutoIndexToggle.CurrentValue do
-                        updateProgressLabels()
+                        idxUpdateProgressLabels()
                         local strategy = _0x2c5d8f.Flags.IndexStrategy.CurrentOption[1] or "Rarest First"
-                        local missing = getCategoryMissingList(selectedCategory)
+                        local missing = idxGetMissingList(idxSelectedCategory)
                         if #missing == 0 then
                             _0x2c5d8f:Notify({
                                 Title = "Index Completion",
@@ -1799,30 +1248,259 @@ task.spawn(function()
                             table.sort(missing, function(a,b) return a.odds < b.odds end)
                             target = missing[1]
                         else
-                            target = getRarestMissing(missing)
+                            target = idxGetRarestMissing(missing)
                         end
                         if target then
-                            currentTargetLabel:Set("Target: " .. target.id .. " (" .. target.category .. ")")
+                            idxTargetLabel:Set("Target: " .. target.id .. " (" .. target.category .. ")")
                             local oddsFormatted = target.odds > 0 and ("1 in " .. _0x6c2f8a(target.odds)) or "Unknown"
-                            targetOddsLabel:Set("Odds: " .. oddsFormatted)
+                            idxOddsLabel:Set("Odds: " .. oddsFormatted)
                         end
                         _0x7e2a4c:InvokeServer("requestRoll")
                         task.wait(_0x8d1f4a.rollTime() + 0.25)
                         indexData = _0x7b3f5a:get("index") or {}
-                        updateCategoryCounts()
-                        currentMissingList = getCategoryMissingList(selectedCategory)
+                        idxUpdateCategoryCounts()
+                        idxCurrentMissing = idxGetMissingList(idxSelectedCategory)
                     end
                 end)
             end,
         })
 
-        updateProgressLabels()
-        if currentTarget then
-            currentTargetLabel:Set("Target: " .. currentTarget.id .. " (" .. currentTarget.category .. ")")
-            local oddsFormatted = currentTarget.odds > 0 and ("1 in " .. _0x6c2f8a(currentTarget.odds)) or "Unknown"
-            targetOddsLabel:Set("Odds: " .. oddsFormatted)
+        idxUpdateProgressLabels()
+        if idxCurrentTarget then
+            idxTargetLabel:Set("Target: " .. idxCurrentTarget.id .. " (" .. idxCurrentTarget.category .. ")")
+            local oddsFormatted = idxCurrentTarget.odds > 0 and ("1 in " .. _0x6c2f8a(idxCurrentTarget.odds)) or "Unknown"
+            idxOddsLabel:Set("Odds: " .. oddsFormatted)
         end
-        -- ==================== END AUTO COMPLETE INDEX ====================
+        -- ==================== END INDEX AUTO COMPLETE ====================
+
+        -- ==================== MOVE TO ENEMY (AUTO FARM) ====================
+        _0x3e2c7a_tab:CreateSection("Move to Enemy")
+
+        local farmSettings = {
+            TeleportStyle = "Teleport",
+            TargetPriorities = { ["Most Coins & Goop"] = true },
+            AutoFarm = false,
+            MutationFilter = "Any",
+        }
+        local FARM_RANGE = 50
+        local farmCache = {}
+        local farmLastCache = 0
+        local farmCurrentTarget = nil
+        local farmTweenConn = nil
+
+        local function getGameplayContainer()
+            for _, child in ipairs(workspace:GetChildren()) do
+                if child.Name:match("^Gameplay") then
+                    return child
+                end
+            end
+            return nil
+        end
+
+        local function getEnemyRoot(enemy)
+            return enemy:FindFirstChild("HumanoidRootPart") or enemy.PrimaryPart or enemy:FindFirstChildWhichIsA("BasePart")
+        end
+
+        local function getEnemyMutation(enemy)
+            for _, mut in ipairs({"inverted", "huge", "shiny", "big"}) do
+                local ok, val = pcall(function() return enemy:GetAttribute(mut) end)
+                if ok and val then return mut end
+                if enemy:FindFirstChild(mut) then return mut end
+                local m = enemy:FindFirstChild("Mutation")
+                if m and m.Value == mut then return mut end
+                if enemy.Name:lower():find(mut) then return mut end
+            end
+            return nil
+        end
+
+        local function getEnemyValue(enemy, rootPart)
+            local coins = enemy:GetAttribute("reward") or enemy:GetAttribute("coins") or enemy:GetAttribute("coinReward")
+            local goop = enemy:GetAttribute("goop") or enemy:GetAttribute("goopReward")
+            local health = enemy:GetAttribute("health") or enemy:GetAttribute("maxHealth")
+            local humanoid = enemy:FindFirstChildWhichIsA("Humanoid")
+            if humanoid then health = health or humanoid.MaxHealth end
+            local valueObj = enemy:FindFirstChild("Reward") or enemy:FindFirstChild("Coins") or enemy:FindFirstChild("Value")
+            if valueObj and valueObj:IsA("NumberValue") then coins = coins or valueObj.Value end
+            local goopObj = enemy:FindFirstChild("Goop") or enemy:FindFirstChild("GoopReward")
+            if goopObj and goopObj:IsA("NumberValue") then goop = goop or goopObj.Value end
+            local healthObj = enemy:FindFirstChild("Health") or enemy:FindFirstChild("MaxHealth")
+            if healthObj and healthObj:IsA("NumberValue") then health = health or healthObj.Value end
+            local dist = math.huge
+            local char = _0x9a4b7c.Character
+            if char and rootPart then
+                local rp = char:FindFirstChild("HumanoidRootPart")
+                if rp then dist = (rootPart.Position - rp.Position).Magnitude end
+            end
+            return {
+                coins = coins or 0,
+                goop = goop or 0,
+                health = health or 0,
+                mutation = getEnemyMutation(enemy),
+                distance = dist,
+            }
+        end
+
+        local function isEnemyAlive(enemy)
+            if not enemy or not enemy.Parent then return false end
+            local humanoid = enemy:FindFirstChildWhichIsA("Humanoid")
+            if humanoid and humanoid.Health <= 0 then return false end
+            local hp = enemy:GetAttribute("health") or enemy:GetAttribute("currentHealth")
+            if hp and hp <= 0 then return false end
+            return true
+        end
+
+        local function refreshEnemyCache()
+            if tick() - farmLastCache < 2 then return end
+            farmLastCache = tick()
+            farmCache = {}
+            local container = getGameplayContainer()
+            if not container then return end
+            local enemyFolder = container:FindFirstChild("Enemies")
+            if not enemyFolder then return end
+            for _, enemy in ipairs(enemyFolder:GetChildren()) do
+                if enemy:IsA("Model") then
+                    table.insert(farmCache, enemy)
+                end
+            end
+        end
+
+        local function matchesMutationFilter(enemy)
+            if farmSettings.MutationFilter == "Any" then return true end
+            return getEnemyMutation(enemy) == farmSettings.MutationFilter:lower()
+        end
+
+        local function computeScores()
+            local char = _0x9a4b7c.Character
+            if not char then return {} end
+            local rp = char:FindFirstChild("HumanoidRootPart")
+            if not rp then return {} end
+            local entries = {}
+            for _, enemy in ipairs(farmCache) do
+                if not isEnemyAlive(enemy) then continue end
+                if not matchesMutationFilter(enemy) then continue end
+                local root = getEnemyRoot(enemy)
+                if not root then continue end
+                local dist = (root.Position - rp.Position).Magnitude
+                if dist > FARM_RANGE then continue end
+                local data = getEnemyValue(enemy, root)
+                table.insert(entries, { enemy = enemy, data = data })
+            end
+            if #entries == 0 then return {} end
+            local maxCoins, maxGoop, maxHealth, maxDist = 0, 0, 0, 0
+            for _, e in ipairs(entries) do
+                if e.data.coins > maxCoins then maxCoins = e.data.coins end
+                if e.data.goop > maxGoop then maxGoop = e.data.goop end
+                if e.data.health > maxHealth then maxHealth = e.data.health end
+                if e.data.distance > maxDist then maxDist = e.data.distance end
+            end
+            local scores = {}
+            local priorities = farmSettings.TargetPriorities
+            for _, e in ipairs(entries) do
+                local s = 0
+                if priorities["Most Coins & Goop"] then
+                    local coinsNorm = maxCoins > 0 and e.data.coins / maxCoins or 0
+                    local goopNorm = maxGoop > 0 and e.data.goop / maxGoop or 0
+                    s = s + (coinsNorm + goopNorm) / 2
+                end
+                if priorities["Closest"] then s = s + (maxDist > 0 and 1 - e.data.distance / maxDist or 0) end
+                if priorities["Lowest HP"] then s = s + (maxHealth > 0 and 1 - e.data.health / maxHealth or 0) end
+                if priorities["Mutations Only"] then s = s + (e.data.mutation and 1 or 0) end
+                scores[e.enemy] = s
+            end
+            return scores
+        end
+
+        local function selectTarget()
+            local scores = computeScores()
+            local best, bestScore = nil, -math.huge
+            for enemy, score in pairs(scores) do
+                if score > bestScore then
+                    bestScore = score
+                    best = enemy
+                end
+            end
+            return best
+        end
+
+        local function moveToEnemy(enemy)
+            local char = _0x9a4b7c.Character
+            if not char then return end
+            local root = getEnemyRoot(enemy)
+            if not root then return end
+            local target = root.CFrame * CFrame.new(0, 3, 0)
+            if farmSettings.TeleportStyle == "Teleport" then
+                char:PivotTo(target)
+            elseif farmSettings.TeleportStyle == "Tween" then
+                if farmTweenConn then farmTweenConn:Disconnect() farmTweenConn = nil end
+                local start = char:GetPivot()
+                local startTime = tick()
+                local duration = 0.25
+                farmTweenConn = _0x1e5f3d.RenderStepped:Connect(function()
+                    local alpha = math.clamp((tick() - startTime) / duration, 0, 1)
+                    char:PivotTo(start:Lerp(target, alpha))
+                    if alpha >= 1 then farmTweenConn:Disconnect() farmTweenConn = nil end
+                end)
+            end
+        end
+
+        _0x1e5f3d.Heartbeat:Connect(function()
+            refreshEnemyCache()
+            if not farmSettings.AutoFarm then
+                farmCurrentTarget = nil
+                return
+            end
+            if farmCurrentTarget and isEnemyAlive(farmCurrentTarget) and farmCurrentTarget.Parent then
+                return
+            end
+            local newTarget = selectTarget()
+            if newTarget and newTarget ~= farmCurrentTarget then
+                farmCurrentTarget = newTarget
+                moveToEnemy(farmCurrentTarget)
+            end
+        end)
+
+        _0x3e2c7a_tab:CreateDropdown({
+            Name = "Teleport Style",
+            Options = {"Teleport", "Tween"},
+            CurrentOption = {"Teleport"},
+            MultipleOptions = false,
+            Flag = "FarmTeleportStyle",
+            Callback = function(option) farmSettings.TeleportStyle = option[1] end,
+        })
+
+        _0x3e2c7a_tab:CreateDropdown({
+            Name = "Target Priority",
+            Options = {"Most Coins & Goop", "Closest", "Lowest HP", "Mutations Only"},
+            CurrentOption = {"Most Coins & Goop"},
+            MultipleOptions = true,
+            Flag = "FarmTargetPriority",
+            Callback = function(options)
+                farmSettings.TargetPriorities = {}
+                for _, opt in ipairs(options) do
+                    farmSettings.TargetPriorities[opt] = true
+                end
+            end,
+        })
+
+        _0x3e2c7a_tab:CreateDropdown({
+            Name = "Mutation Filter",
+            Options = {"Any", "Inverted", "Huge", "Shiny", "Big"},
+            CurrentOption = {"Any"},
+            MultipleOptions = true,
+            Flag = "FarmMutationFilter",
+            Callback = function(option) farmSettings.MutationFilter = option[1] end,
+        })
+
+        _0x3e2c7a_tab:CreateToggle({
+            Name = "Auto Farm",
+            CurrentValue = false,
+            Flag = "AutoFarmToggle",
+            Callback = function(value)
+                farmSettings.AutoFarm = value
+                if not value then farmCurrentTarget = nil end
+            end,
+        })
+        -- ==================== END MOVE TO ENEMY ====================
 
         local _0x4c2e7a_tab = _0x4f2a8c_window:CreateTab("Misc", 96334002390551)
 
