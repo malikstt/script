@@ -58,7 +58,7 @@ task.spawn(function()
         local _0x8a1d6f, _0x4e7b2c
         _0x8a1d6f = _0x2c9e4d.client.new("InventoryService")
         _0x4e7b2c = _0x2c9e4d.client.new("XpTransferService")
-        local _0x_diceNetworker = _0x2c9e4d.client.new("SpecialDiceService") -- for Dice Stack feature
+        local _0x_diceNetworker = _0x2c9e4d.client.new("SpecialDiceService")
 
         local function _0x3d6f9a(_0x1a4b7c)
             local _0x2c5e8d = _0x6a2e9c:FindFirstChild(_0x1a4b7c) or _0x6a2e9c:WaitForChild(_0x1a4b7c, 10)
@@ -89,7 +89,6 @@ task.spawn(function()
         local _0x8d1f4a = require(_0x9d2f4a.Features.Roll.RollSlice)
         local _0x6f3a2c = require(_0x9d2f4a.Game.Items.Slimes)
         local _0x1b7e4d = require(_0x9d2f4a.Features.Mutations.Mutations)
-        local FruitsModule = require(_0x9d2f4a.Game.Items.Fruits) -- for Auto Fruits
 
         local _0x4a8d2f = _0x5a8f2b.getKinds()
         local _0x7c2e5a = _0x2c4e7a.getInventoryItemIds()
@@ -899,88 +898,6 @@ task.spawn(function()
             end,
         })
         -- ==================== END FEATURE 1 ====================
-
-        -- ==================== FEATURE 2: AUTO FRUITS ====================
-        _0x8c1d4a:CreateSection("Fruits")
-
-        local sortedFruits = FruitsModule.getSortedFruits()
-        local fruitNames = { "Any" }
-        for _, fruit in ipairs(sortedFruits) do
-            table.insert(fruitNames, fruit.name)
-        end
-
-        _0x8c1d4a:CreateDropdown({
-            Name = "Fruits to Feed",
-            Options = fruitNames,
-            CurrentOption = { "Any" },
-            MultipleOptions = true,
-            Flag = "FruitsSelection",
-            Callback = function() end,
-        })
-
-        _0x8c1d4a:CreateDropdown({
-            Name = "Slimes to Feed",
-            Options = { "Best Slime", "Split Across Team" },
-            CurrentOption = { "Best Slime" },
-            MultipleOptions = false,
-            Flag = "FruitsTargetSlime",
-            Callback = function() end,
-        })
-
-        local autoFruitsThread = nil
-        _0x8c1d4a:CreateToggle({
-            Name = "Auto Feed Fruits",
-            CurrentValue = false,
-            Flag = "AutoFruitsToggle",
-            Callback = function(enabled)
-                if autoFruitsThread then task.cancel(autoFruitsThread) end
-                if not enabled then return end
-                autoFruitsThread = task.spawn(function()
-                    while _0x2c5d8f.Flags.AutoFruitsToggle.CurrentValue do
-                        local selectedFruitNames = _0x2c5d8f.Flags.FruitsSelection.CurrentOption or {}
-                        local anyFruit = false
-                        for _, name in ipairs(selectedFruitNames) do
-                            if name == "Any" then anyFruit = true; break end
-                        end
-                        local targetMode = _0x2c5d8f.Flags.FruitsTargetSlime.CurrentOption[1] or "Best Slime"
-                        local inventory = _0x7b3f5a:get("inventory") or {}
-                        local equipped = _0x7b3f5a:get("equipped") or {}
-                        local items = _0x7b3f5a:get("items") or {}
-                        local slimeTargets = {}
-                        if targetMode == "Best Slime" then
-                            local bestUid = _0x2f8c4a()
-                            if bestUid then slimeTargets = { bestUid } end
-                        else
-                            slimeTargets = equipped
-                        end
-                        for _, slimeUid in ipairs(slimeTargets) do
-                            local slimeData = inventory[slimeUid]
-                            if type(slimeData) == "table" then
-                                local unlockedTrees = slimeData.unlockedTrees or {}
-                                for _, fruitDef in ipairs(sortedFruits) do
-                                    local shouldFeed = anyFruit or false
-                                    if not anyFruit then
-                                        for _, fname in ipairs(selectedFruitNames) do
-                                            if fname == fruitDef.name then shouldFeed = true; break end
-                                        end
-                                    end
-                                    if shouldFeed and not unlockedTrees[fruitDef.treeId] then
-                                        local fruitId = fruitDef.id
-                                        local amount = items[fruitId]
-                                        if amount and amount > 0 then
-                                            _0x9c3a2e:InvokeServer("requestUseFruit", fruitId, slimeUid)
-                                            task.wait(0.2)
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                        task.wait(1)
-                    end
-                end)
-            end,
-        })
-        -- ==================== END FEATURE 2 ====================
 
         local _0x3e2c7a_tab = _0x4f2a8c_window:CreateTab("Game", 82493603309814)
 
@@ -1900,10 +1817,8 @@ task.spawn(function()
                             local oddsFormatted = target.odds > 0 and ("1 in " .. _0x6c2f8a(target.odds)) or "Unknown"
                             targetOddsLabel:Set("Odds: " .. oddsFormatted)
                         end
-                        -- Roll once
                         _0x7e2a4c:InvokeServer("requestRoll")
                         task.wait(_0x8d1f4a.rollTime() + 0.25)
-                        -- Refresh index data
                         indexData = _0x7b3f5a:get("index") or {}
                         updateCategoryCounts()
                         currentMissingList = getCategoryMissingList(selectedCategory)
@@ -1912,7 +1827,6 @@ task.spawn(function()
             end,
         })
 
-        -- Initial progress display
         updateProgressLabels()
         if currentTarget then
             currentTargetLabel:Set("Target: " .. currentTarget.id .. " (" .. currentTarget.category .. ")")
