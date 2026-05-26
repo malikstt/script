@@ -1,19 +1,11 @@
--- Cactus Hub - All-in-One
 loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
-
 local Rayfield = rayfield
-
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
-
--- ================================
--- DATA SERVICE SETUP
--- ================================
 local DataService = require(ReplicatedStorage.Packages.DataService).client
 DataService:waitForData()
-
 local SettingsState = require(ReplicatedStorage.Source.Features.Settings.SettingsState)
 local SettingsServiceClient = require(ReplicatedStorage.Source.Features.Settings.SettingsServiceClient)
 local Networker = require(ReplicatedStorage.Packages.Networker)
@@ -21,133 +13,77 @@ local RollSlice = require(ReplicatedStorage.Source.Features.Roll.RollSlice)
 local Slimes = require(ReplicatedStorage.Source.Game.Items.Slimes)
 local FruitsModule = require(ReplicatedStorage.Source.Game.Items.Fruits)
 local SpecialRollUtils = require(ReplicatedStorage.Source.Features.Roll.SpecialRollUtils)
-
--- ================================
--- REMOTE REFERENCES
--- ================================
-local RollRemote = ReplicatedStorage
-    :WaitForChild("Packages")
-    :WaitForChild("_Index")
-    :WaitForChild("leifstout_networker@0.3.1")
-    :WaitForChild("networker")
-    :WaitForChild("_remotes")
-    :WaitForChild("RollService")
-    :WaitForChild("RemoteFunction")
-
-local FruitRemote = ReplicatedStorage
-    :WaitForChild("Packages")
-    :WaitForChild("_Index")
-    :WaitForChild("leifstout_networker@0.3.1")
-    :WaitForChild("networker")
-    :WaitForChild("_remotes")
-    :WaitForChild("InventoryService")
-    :WaitForChild("RemoteFunction")
-
--- ================================
--- CONSTANTS
--- ================================
+local _Index = ReplicatedStorage:WaitForChild("Packages"):WaitForChild("_Index")
+local networkerFolder
+for _, child in ipairs(_Index:GetChildren()) do
+    if child.Name:find("leifstout_networker") then
+        networkerFolder = child
+        break
+    end
+end
+local networkerRemotes = networkerFolder:WaitForChild("networker"):WaitForChild("_remotes")
+local RollRemote = networkerRemotes:WaitForChild("RollService"):WaitForChild("RemoteFunction")
+local FruitRemote = networkerRemotes:WaitForChild("InventoryService"):WaitForChild("RemoteFunction")
 local CATEGORY_IDS = {"basic", "shiny", "big", "huge", "inverted"}
-local MUTATION_ODDS = {
-    basic    = nil,
-    shiny    = 0.004,
-    big      = 0.01,
-    huge     = 0.001,
-    inverted = 0.0004,
-}
+local MUTATION_ODDS = {basic = nil, shiny = 0.004, big = 0.01, huge = 0.001, inverted = 0.0004}
 local DICE = {"golden", "diamond", "void", "galaxy"}
 local ALL_FRUITS = FruitsModule.getSortedFruits()
-
--- ================================
--- INDEX AUTO COMPLETE VARIABLES
--- ================================
 local indexRunning = false
 local indexThread = nil
 local luckPollThread = nil
 local selectedCategoryOption = nil
 local progressLabels = {}
 local luckValueLocal = 1
-
--- ================================
--- MOVE TO ENEMY VARIABLES
--- ================================
-local enemySettings = {
-    TeleportStyle = "Teleport",
-    TargetPriorities = { ["Most Coins & Goop"] = true },
-    AutoFarm = false,
-    MutationFilter = "Any",
-}
+local enemySettings = {TeleportStyle = "Teleport", TargetPriorities = {["Most Coins & Goop"] = true}, AutoFarm = false, MutationFilter = "Any"}
 local RANGE = 50
 local cachedContainer = nil
 local cachedEnemies = {}
 local lastCacheTime = 0
 local currentTarget = nil
 local tweenConn = nil
-
--- ================================
--- STACK DICE VARIABLES
--- ================================
 local selectedDice = {golden = true, diamond = true, void = true, galaxy = true}
 local stackActive = false
 local paused = {golden = false, diamond = false, void = false, galaxy = false}
 local networker = Networker.client.new("RollService", {})
-
--- ================================
--- AUTO FEED FRUITS VARIABLES
--- ================================
 local autoFeedEnabled = false
 local selectedFruitIds = {"ANY"}
 local selectedSlimeMode = "Best"
 local feedConnection = nil
-
--- ================================
--- UTILITY FUNCTIONS
--- ================================
 local function getLive(key)
     local v = SettingsState.get(key)
     if type(v) == "function" then return v() end
     return v
 end
-
 SettingsState.init()
 local settingsClient = {}
 settingsClient.networker = Networker.client.new("SettingsService", settingsClient)
 SettingsServiceClient.init(settingsClient)
-
 repeat task.wait() until getLive("luckOverrideEnabled") ~= nil
-
--- ================================
--- INDEX AUTO COMPLETE FUNCTIONS
--- ================================
 local function calcOptimalLuck(effectiveOdds)
     if not effectiveOdds or effectiveOdds <= 0 then return 16384 end
     local n = 1 / effectiveOdds
     return math.min(math.max(1, math.floor(n * 0.63)), 16384)
 end
-
 local function setLuckEnabled(enabled)
     SettingsServiceClient.set(settingsClient, "luckOverrideEnabled", enabled)
     task.wait(0.3)
 end
-
 local function setLuck(value)
     local clamped = math.min(value, 16384)
     SettingsServiceClient.set(settingsClient, "luckOverrideValue", clamped)
     luckValueLocal = clamped
     task.wait(0.3)
 end
-
 local function applyLuckSettings()
     setLuck(1)
     task.wait(0.3)
     setLuckEnabled(true)
     task.wait(0.3)
 end
-
 local function applyLuckForTarget(effectiveOdds)
     local optimal = calcOptimalLuck(effectiveOdds)
     setLuck(optimal)
 end
-
 local function formatOdds(odds)
     if not odds or odds <= 0 then return "N/A" end
     local n = math.floor(1 / odds + 0.5)
@@ -157,22 +93,18 @@ local function formatOdds(odds)
     end
     return "1 in " .. n
 end
-
 local function getEffectiveOdds(slime, catId)
     local mutOdds = MUTATION_ODDS[catId]
     if mutOdds then return slime.rollOdds * mutOdds end
     return slime.rollOdds
 end
-
 local function getUnlocked(catId)
     local data = DataService:get("index") or {}
     return ((data.categories or {})[catId] or {}).unlocked or {}
 end
-
 local function getTotalSlimes()
     return #Slimes.getSortedSlimes()
 end
-
 local function getUnlockedCount(catId)
     local unlocked = getUnlocked(catId)
     local count = 0
@@ -181,7 +113,6 @@ local function getUnlockedCount(catId)
     end
     return count
 end
-
 local function getMissingSlimes(catId)
     local unlocked = getUnlocked(catId)
     local sorted = Slimes.getSortedSlimes()
@@ -196,24 +127,17 @@ local function getMissingSlimes(catId)
     end)
     return missing
 end
-
 local function getSortedCategoriesByPriority()
     local cats = {}
     for _, catId in ipairs(CATEGORY_IDS) do
         local missing = getMissingSlimes(catId)
         if #missing > 0 then
-            table.insert(cats, {
-                id = catId,
-                easiestEffectiveOdds = getEffectiveOdds(missing[1], catId),
-            })
+            table.insert(cats, {id = catId, easiestEffectiveOdds = getEffectiveOdds(missing[1], catId)})
         end
     end
-    table.sort(cats, function(a, b)
-        return a.easiestEffectiveOdds > b.easiestEffectiveOdds
-    end)
+    table.sort(cats, function(a, b) return a.easiestEffectiveOdds > b.easiestEffectiveOdds end)
     return cats
 end
-
 local function getCatIdFromOption(option)
     for _, catId in ipairs(CATEGORY_IDS) do
         local label = catId:sub(1,1):upper() .. catId:sub(2)
@@ -221,35 +145,28 @@ local function getCatIdFromOption(option)
     end
     return nil
 end
-
 local function runCategory(catId, mode, labels)
     local failCount = 0
     local catLabel = catId:sub(1,1):upper() .. catId:sub(2)
     local lastTargetId = nil
-
     while indexRunning do
         local missing = getMissingSlimes(catId)
         if #missing == 0 then return true end
-
         local target = mode == "🎯 Rarest First" and missing[#missing] or missing[1]
         local effOdds = getEffectiveOdds(target, catId)
-
         if target.id ~= lastTargetId then
             lastTargetId = target.id
             applyLuckForTarget(effOdds)
         end
-
         if labels then
             labels.lTarget:Set("🎯 Target: " .. catLabel .. " " .. target.name)
             labels.lOdds:Set("🎲 Odds: " .. formatOdds(effOdds))
             labels.lCategory:Set(string.format("📂 %s (%d left)", catLabel, #missing))
         end
-
         local before = getUnlocked(catId)
         RollRemote:InvokeServer("requestRoll")
         task.wait(RollSlice.rollTime() + 0.25)
         local after = getUnlocked(catId)
-
         local gotOne = false
         for id, value in pairs(after) do
             if value == true and not before[id] then
@@ -260,22 +177,16 @@ local function runCategory(catId, mode, labels)
                 print("[UNLOCKED]", catLabel, name)
             end
         end
-
         if not gotOne then
             failCount += 1
             if failCount % 100 == 0 then
                 warn("[STUCK]", failCount, "rolls |", catLabel, target.name)
             end
         end
-
         task.wait()
     end
     return false
 end
-
--- ================================
--- MOVE TO ENEMY FUNCTIONS
--- ================================
 local function getGameplayContainer()
     if cachedContainer and cachedContainer.Parent then return cachedContainer end
     for _, child in ipairs(workspace:GetChildren()) do
@@ -286,13 +197,9 @@ local function getGameplayContainer()
     end
     return nil
 end
-
 local function getEnemyRoot(enemy)
-    return enemy:FindFirstChild("HumanoidRootPart")
-        or enemy.PrimaryPart
-        or enemy:FindFirstChildWhichIsA("BasePart")
+    return enemy:FindFirstChild("HumanoidRootPart") or enemy.PrimaryPart or enemy:FindFirstChildWhichIsA("BasePart")
 end
-
 local function getMutation(enemy)
     for _, mut in ipairs({"inverted", "huge", "shiny", "big"}) do
         local ok, val = pcall(function() return enemy:GetAttribute(mut) end)
@@ -304,40 +211,26 @@ local function getMutation(enemy)
     end
     return nil
 end
-
 local function getEnemyValue(enemy, rootPart)
-    local coins  = enemy:GetAttribute("reward") or enemy:GetAttribute("coins") or enemy:GetAttribute("coinReward")
-    local goop   = enemy:GetAttribute("goop")   or enemy:GetAttribute("goopReward")
+    local coins = enemy:GetAttribute("reward") or enemy:GetAttribute("coins") or enemy:GetAttribute("coinReward")
+    local goop = enemy:GetAttribute("goop") or enemy:GetAttribute("goopReward")
     local health = enemy:GetAttribute("health") or enemy:GetAttribute("maxHealth")
-
     local humanoid = enemy:FindFirstChildWhichIsA("Humanoid")
     if humanoid then health = health or humanoid.MaxHealth end
-
     local valueObj = enemy:FindFirstChild("Reward") or enemy:FindFirstChild("Coins") or enemy:FindFirstChild("Value")
     if valueObj and valueObj:IsA("NumberValue") then coins = coins or valueObj.Value end
-
     local goopObj = enemy:FindFirstChild("Goop") or enemy:FindFirstChild("GoopReward")
     if goopObj and goopObj:IsA("NumberValue") then goop = goop or goopObj.Value end
-
     local healthObj = enemy:FindFirstChild("Health") or enemy:FindFirstChild("MaxHealth")
     if healthObj and healthObj:IsA("NumberValue") then health = health or healthObj.Value end
-
     local dist = math.huge
     local char = player.Character
     if char and rootPart then
         local rp = char:FindFirstChild("HumanoidRootPart")
         if rp then dist = (rootPart.Position - rp.Position).Magnitude end
     end
-
-    return {
-        coins    = coins  or 0,
-        goop     = goop   or 0,
-        health   = health or 0,
-        mutation = getMutation(enemy),
-        distance = dist,
-    }
+    return {coins = coins or 0, goop = goop or 0, health = health or 0, mutation = getMutation(enemy), distance = dist}
 end
-
 local function isAlive(enemy)
     if not enemy or not enemy.Parent then return false end
     local humanoid = enemy:FindFirstChildWhichIsA("Humanoid")
@@ -346,7 +239,6 @@ local function isAlive(enemy)
     if hp and hp <= 0 then return false end
     return true
 end
-
 local function refreshEnemyCache()
     if tick() - lastCacheTime < 2 then return end
     lastCacheTime = tick()
@@ -361,18 +253,15 @@ local function refreshEnemyCache()
         end
     end
 end
-
 local function matchesMutationFilter(enemy)
     if enemySettings.MutationFilter == "Any" then return true end
     return getMutation(enemy) == enemySettings.MutationFilter:lower()
 end
-
 local function computeScores()
     local char = player.Character
     if not char then return {} end
     local rp = char:FindFirstChild("HumanoidRootPart")
     if not rp then return {} end
-
     local entries = {}
     for _, enemy in ipairs(cachedEnemies) do
         if not isAlive(enemy) then continue end
@@ -382,36 +271,32 @@ local function computeScores()
         local dist = (root.Position - rp.Position).Magnitude
         if dist > RANGE then continue end
         local data = getEnemyValue(enemy, root)
-        table.insert(entries, { enemy = enemy, data = data })
+        table.insert(entries, {enemy = enemy, data = data})
     end
-
     if #entries == 0 then return {} end
-
     local maxCoins, maxGoop, maxHealth, maxDist = 0, 0, 0, 0
     for _, e in ipairs(entries) do
-        if e.data.coins    > maxCoins  then maxCoins  = e.data.coins  end
-        if e.data.goop     > maxGoop   then maxGoop   = e.data.goop   end
-        if e.data.health   > maxHealth then maxHealth = e.data.health end
-        if e.data.distance > maxDist   then maxDist   = e.data.distance end
+        if e.data.coins > maxCoins then maxCoins = e.data.coins end
+        if e.data.goop > maxGoop then maxGoop = e.data.goop end
+        if e.data.health > maxHealth then maxHealth = e.data.health end
+        if e.data.distance > maxDist then maxDist = e.data.distance end
     end
-
     local scores = {}
     local priorities = enemySettings.TargetPriorities
     for _, e in ipairs(entries) do
         local s = 0
         if priorities["Most Coins & Goop"] then
             local coinsNorm = maxCoins > 0 and e.data.coins / maxCoins or 0
-            local goopNorm  = maxGoop  > 0 and e.data.goop  / maxGoop  or 0
+            local goopNorm = maxGoop > 0 and e.data.goop / maxGoop or 0
             s = s + (coinsNorm + goopNorm) / 2
         end
-        if priorities["Closest"]        then s = s + (maxDist   > 0 and 1 - e.data.distance / maxDist   or 0) end
-        if priorities["Lowest HP"]      then s = s + (maxHealth > 0 and 1 - e.data.health   / maxHealth or 0) end
+        if priorities["Closest"] then s = s + (maxDist > 0 and 1 - e.data.distance / maxDist or 0) end
+        if priorities["Lowest HP"] then s = s + (maxHealth > 0 and 1 - e.data.health / maxHealth or 0) end
         if priorities["Mutations Only"] then s = s + (e.data.mutation and 1 or 0) end
         scores[e.enemy] = s
     end
     return scores
 end
-
 local function selectTarget()
     local scores = computeScores()
     local best, bestScore = nil, -math.huge
@@ -423,14 +308,12 @@ local function selectTarget()
     end
     return best
 end
-
 local function moveToEnemy(enemy)
     local char = player.Character
     if not char then return end
     local root = getEnemyRoot(enemy)
     if not root then return end
     local target = root.CFrame * CFrame.new(0, 3, 0)
-
     if enemySettings.TeleportStyle == "Teleport" then
         char:PivotTo(target)
     elseif enemySettings.TeleportStyle == "Tween" then
@@ -445,10 +328,6 @@ local function moveToEnemy(enemy)
         end)
     end
 end
-
--- ================================
--- AUTO FEED FRUITS FUNCTIONS
--- ================================
 local function getOwnedFruitIds()
     local items = DataService:get("items") or {}
     local owned = {}
@@ -459,7 +338,6 @@ local function getOwnedFruitIds()
     end
     return owned
 end
-
 local function slimeHasFruit(slimeData, fruitId)
     if type(slimeData) ~= "table" then return false end
     local fruitDef = FruitsModule.getFruit(fruitId)
@@ -468,7 +346,6 @@ local function slimeHasFruit(slimeData, fruitId)
     if type(trees) ~= "table" then return false end
     return trees[fruitDef.treeId] == true
 end
-
 local function getSlimeDataFromKey(key)
     if type(key) ~= "string" then return nil, nil end
     if key:sub(1, 1) == "." then
@@ -480,17 +357,14 @@ local function getSlimeDataFromKey(key)
     end
     return nil, nil
 end
-
 local function getBestSlimeEntry()
     local stats = DataService:get("stats") or {}
     local rarest = stats.rarestRoll
     if not rarest or not rarest.slimeData then return nil, nil end
     local rarestId = rarest.slimeData.id
     local rarestMutations = rarest.slimeData.mutations or {}
-
     local equipped = DataService:get("equipped") or {}
     local inv = DataService:get("inventory") or {}
-
     for _, slimeKey in pairs(equipped) do
         if type(slimeKey) == "string" and slimeKey:sub(1, 1) == "." then
             local data = inv[slimeKey]
@@ -508,7 +382,6 @@ local function getBestSlimeEntry()
             end
         end
     end
-
     for _, slimeKey in pairs(equipped) do
         if type(slimeKey) == "string" and slimeKey:sub(1, 1) == "." then
             local data = inv[slimeKey]
@@ -519,7 +392,6 @@ local function getBestSlimeEntry()
     end
     return nil, nil
 end
-
 local function getTargetSlimes()
     if selectedSlimeMode == "Best" then
         local key, data = getBestSlimeEntry()
@@ -539,7 +411,6 @@ local function getTargetSlimes()
         return result
     end
 end
-
 local function resolveFruitList()
     local owned = getOwnedFruitIds()
     if selectedFruitIds[1] == "ANY" then
@@ -560,13 +431,10 @@ local function resolveFruitList()
         return result
     end
 end
-
 local function doFeed()
     local targets = getTargetSlimes()
     local fruitsToFeed = resolveFruitList()
-
     if #targets == 0 or #fruitsToFeed == 0 then return end
-
     for _, entry in ipairs(targets) do
         local slimeKey = entry.key
         local slimeData = entry.data
@@ -579,10 +447,6 @@ local function doFeed()
         end
     end
 end
-
--- ================================
--- CREATE WINDOW
--- ================================
 local Window = Rayfield:CreateWindow({
     Name = "Cactus Hub",
     Icon = 0,
@@ -592,19 +456,12 @@ local Window = Rayfield:CreateWindow({
     ToggleUIKeybind = "K",
     DisableRayfieldPrompts = false,
     DisableBuildWarnings = true,
-    ConfigurationSaving = { Enabled = false },
+    ConfigurationSaving = {Enabled = false},
     KeySystem = false,
 })
-
--- ================================
--- TAB 1: INDEX AUTO COMPLETE
--- ================================
 local IndexTab = Window:CreateTab("📖 Index", 4483362458)
-
 local indexLabels = {}
-
 IndexTab:CreateSection("Controls")
-
 IndexTab:CreateToggle({
     Name = "Start Auto Complete",
     CurrentValue = false,
@@ -614,7 +471,6 @@ IndexTab:CreateToggle({
             indexRunning = true
             indexThread = task.spawn(function()
                 applyLuckSettings()
-                
                 luckPollThread = task.spawn(function()
                     while indexRunning do
                         if indexLabels.lLuck then
@@ -623,10 +479,8 @@ IndexTab:CreateToggle({
                         task.wait(1)
                     end
                 end)
-
                 local modeFlag = Rayfield.Flags.IndexRollMode
                 local mode = modeFlag and (type(modeFlag.CurrentOption) == "table" and modeFlag.CurrentOption[1] or modeFlag.CurrentOption) or "🌱 Easiest First"
-
                 if selectedCategoryOption == nil or selectedCategoryOption == "🎲 All (Recommended)" then
                     while indexRunning do
                         local sorted = getSortedCategoriesByPriority()
@@ -652,7 +506,6 @@ IndexTab:CreateToggle({
                     end
                     indexRunning = false
                 end
-
                 if luckPollThread then task.cancel(luckPollThread) end
                 setLuckEnabled(false)
             end)
@@ -668,9 +521,7 @@ IndexTab:CreateToggle({
         end
     end,
 })
-
 IndexTab:CreateSection("Settings")
-
 local categoryOptions = {"🎲 All (Recommended)"}
 for _, catId in ipairs(CATEGORY_IDS) do
     local missing = getMissingSlimes(catId)
@@ -683,50 +534,38 @@ for _, catId in ipairs(CATEGORY_IDS) do
     end
 end
 selectedCategoryOption = categoryOptions[1]
-
 IndexTab:CreateDropdown({
     Name = "Category",
     Options = categoryOptions,
-    CurrentOption = { categoryOptions[1] },
+    CurrentOption = {categoryOptions[1]},
     MultipleOptions = false,
     Flag = "IndexCategory",
     Callback = function(option)
         selectedCategoryOption = type(option) == "table" and option[1] or option
     end,
 })
-
 IndexTab:CreateDropdown({
     Name = "Roll Mode",
-    Options = { "🌱 Easiest First", "🎯 Rarest First" },
-    CurrentOption = { "🌱 Easiest First" },
+    Options = {"🌱 Easiest First", "🎯 Rarest First"},
+    CurrentOption = {"🌱 Easiest First"},
     MultipleOptions = false,
     Flag = "IndexRollMode",
     Callback = function() end,
 })
-
 IndexTab:CreateSection("Status")
-
 indexLabels.lTarget = IndexTab:CreateLabel("🎯 Target: —")
 indexLabels.lOdds = IndexTab:CreateLabel("🎲 Odds: —")
 indexLabels.lLuck = IndexTab:CreateLabel("🍀 Luck: —")
 indexLabels.lCategory = IndexTab:CreateLabel("📂 Category: —")
-
 IndexTab:CreateSection("Index Progress")
-
 local total = getTotalSlimes()
 for _, catId in ipairs(CATEGORY_IDS) do
     local label = catId:sub(1,1):upper() .. catId:sub(2)
     local count = getUnlockedCount(catId)
     progressLabels[catId] = IndexTab:CreateLabel(string.format("📊 %s: %d / %d", label, count, total))
 end
-
--- ================================
--- TAB 2: AUTO FARM
--- ================================
 local FarmTab = Window:CreateTab("⚔️ Auto Farm", 4483362458)
-
 FarmTab:CreateSection("Movement")
-
 FarmTab:CreateDropdown({
     Name = "Teleport Style",
     Options = {"Teleport", "Tween"},
@@ -735,9 +574,7 @@ FarmTab:CreateDropdown({
     Flag = "TeleportStyle",
     Callback = function(option) enemySettings.TeleportStyle = option[1] end,
 })
-
 FarmTab:CreateSection("Targeting")
-
 FarmTab:CreateDropdown({
     Name = "Target Priority",
     Options = {"Most Coins & Goop", "Closest", "Lowest HP", "Mutations Only"},
@@ -751,7 +588,6 @@ FarmTab:CreateDropdown({
         end
     end,
 })
-
 FarmTab:CreateDropdown({
     Name = "Mutation Filter",
     Options = {"Any", "Inverted", "Huge", "Shiny", "Big"},
@@ -760,9 +596,7 @@ FarmTab:CreateDropdown({
     Flag = "MutationFilter",
     Callback = function(option) enemySettings.MutationFilter = option[1] end,
 })
-
 FarmTab:CreateSection("Controls")
-
 FarmTab:CreateToggle({
     Name = "Auto Farm",
     CurrentValue = false,
@@ -772,8 +606,6 @@ FarmTab:CreateToggle({
         if not value then currentTarget = nil end
     end,
 })
-
--- Auto Farm Heartbeat
 RunService.Heartbeat:Connect(function()
     refreshEnemyCache()
     if not enemySettings.AutoFarm then
@@ -789,14 +621,8 @@ RunService.Heartbeat:Connect(function()
         moveToEnemy(currentTarget)
     end
 end)
-
--- ================================
--- TAB 3: STACK DICE
--- ================================
 local DiceTab = Window:CreateTab("🎲 Stack Dice", 4483362458)
-
 DiceTab:CreateSection("Auto Stack")
-
 DiceTab:CreateToggle({
     Name = "Auto Stack Dice",
     CurrentValue = false,
@@ -813,9 +639,7 @@ DiceTab:CreateToggle({
         end
     end,
 })
-
 DiceTab:CreateSection("Dice to Stack")
-
 DiceTab:CreateDropdown({
     Name = "Select Dice",
     Options = {"All", "Golden", "Diamond", "Void", "Galaxy"},
@@ -838,11 +662,8 @@ DiceTab:CreateDropdown({
         end
     end,
 })
-
 DiceTab:CreateSection("Total Stacked Luck")
-
 local DiceLuckLabel = DiceTab:CreateLabel("Total Stacked: x0")
-
 task.spawn(function()
     while true do
         task.wait(0.5)
@@ -898,14 +719,8 @@ task.spawn(function()
         end
     end
 end)
-
--- ================================
--- TAB 4: AUTO FEED FRUITS
--- ================================
 local FruitTab = Window:CreateTab("🍎 Auto Feed", 4483362458)
-
 FruitTab:CreateSection("Fruit Settings")
-
 FruitTab:CreateToggle({
     Name = "Auto Feed Fruits to Slime(s)",
     CurrentValue = false,
@@ -925,7 +740,6 @@ FruitTab:CreateToggle({
         end
     end,
 })
-
 FruitTab:CreateDropdown({
     Name = "Slimes to Feed",
     Options = {"Best", "Split Across Team"},
@@ -936,14 +750,12 @@ FruitTab:CreateDropdown({
         selectedSlimeMode = type(option) == "table" and option[1] or option
     end,
 })
-
 local fruitOptions = {"Any"}
 local labelToId = {}
 for _, f in ipairs(ALL_FRUITS) do
     table.insert(fruitOptions, f.powerName)
     labelToId[f.powerName] = f.id
 end
-
 FruitTab:CreateDropdown({
     Name = "Fruits to Feed",
     Options = fruitOptions,
@@ -966,8 +778,6 @@ FruitTab:CreateDropdown({
         end
     end,
 })
-
--- Progress refresh for Index tab
 task.spawn(function()
     while true do
         task.wait(2)
@@ -983,5 +793,4 @@ task.spawn(function()
         end
     end
 end)
-
 print("Cactus Hub loaded successfully!")
