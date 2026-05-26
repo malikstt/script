@@ -1344,7 +1344,7 @@ local function runCategory(catId, mode)
         lCategory:Set(string.format("📂 %s (%d left)", catLabel, #missing))
         local before = getUnlocked(catId)
         RollRemote:InvokeServer("requestRoll")
-        task.wait(RollSlice.rollTime() + 0.25)
+        task.wait((RollSlice.rollTime or 1) + 0.25)
         local after = getUnlocked(catId)
         local gotOne = false
         for id, value in pairs(after) do
