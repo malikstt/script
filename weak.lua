@@ -543,18 +543,6 @@ task.spawn(function()
             Content = "[+] Auto Send & Accept Friend Requests\n[+] Fixed Auto Collect Loot\n[+] Fixed Settings (Optimization Toggles)\n[+] Added Public Webhook in Discord\n[+] Hide Attack & Damage UI\n[+] Bug Fixes"
         })
 
-        _0x1b6d4a_main:CreateParagraph({
-            Title = "",
-            Content = "Report bugs in the Discord\nhttps://discord.gg/qMWFBWdcf"
-        })
-
-        _0x1b6d4a_main:CreateButton({
-            Name = "Save Config Manually",
-            Callback = function()
-                _0x2c5d8f:SaveConfiguration()
-            end,
-        })
-
         local _dashboardBusy = false
         _0x1b6d4a_main:CreateToggle({
             Name = "Dashboard",
@@ -577,6 +565,13 @@ task.spawn(function()
                     _0x2c5d8f:Notify({Title = "Dashboard", Content = "Dashboard closed!", Duration = 3})
                     _dashboardBusy = false
                 end
+            end,
+        })
+
+        _0x1b6d4a_main:CreateButton({
+            Name = "Save Config Manually",
+            Callback = function()
+                _0x2c5d8f:SaveConfiguration()
             end,
         })
 
