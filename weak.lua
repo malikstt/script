@@ -2664,7 +2664,8 @@ local function getBestSlimeSet()
     end
     local set = {}
     if best then set[best] = true end
-    return setend
+    return set
+end
 
 local function getXpSlimeSet()
     local inventory = getCraftingData("inventory") or {}
