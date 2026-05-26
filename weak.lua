@@ -82,7 +82,8 @@ DataClient:waitForData()
 local Networker = require(Packages.Networker)
 local InventoryServiceRemote = Networker.client.new("InventoryService")
 local XpTransferServiceRemote = Networker.client.new("XpTransferService")
-local RollNetworker = Networker.client.new("RollService")
+local RollNetworker = Networker.client.new("RollService", {})
+
 local function getRemote(name)
     local remoteFolder = Remotes:FindFirstChild(name) or Remotes:WaitForChild(name, 10)
     if not remoteFolder then return nil end
@@ -771,7 +772,7 @@ FarmingTab:CreateToggle({
         if not v then
             for _, dice in ipairs(diceTypes) do
                 if dicePaused[dice] then
-                    pcall(function() RollNetworker.networker:fetch("requestSetSpecialRollPaused", dice, false) end)
+                    RollNetworker.networker:fetch("requestSetSpecialRollPaused", dice, false)
                     dicePaused[dice] = false
                 end
             end
@@ -810,24 +811,16 @@ task.spawn(function()
             local prog = progression[dice]
             local rolls = prog and prog.rollsUntilNext or math.huge
             if rolls <= 1 then
-                local mult = 0
-                pcall(function()
-                    mult = SpecialRollUtils.getLuckMultiplier(dice, upgrades) or 0
-                end)
+                local mult = SpecialRollUtils.getLuckMultiplier(dice, upgrades) or 0
                 totalStacked = totalStacked + mult
             end
         end
-        pcall(function()
-            diceLuckLabel:Set("Total Stacked Luck: x" .. string.format("%.1f", totalStacked))
-        end)
+        diceLuckLabel:Set("Total Stacked Luck: x" .. string.format("%.1f", totalStacked))
         if not diceStackActive then continue end
         local toWatch = {}
         for _, dice in ipairs(diceTypes) do
             if selectedDice[dice] then
-                local ok = false
-                pcall(function()
-                    ok = SpecialRollUtils.isUnlocked(dice, upgrades)
-                end)
+                local ok = SpecialRollUtils.isUnlocked(dice, upgrades)
                 if ok then table.insert(toWatch, dice) end
             end
         end
@@ -838,7 +831,7 @@ task.spawn(function()
             local rolls = prog and prog.rollsUntilNext or math.huge
             if rolls <= 1 then
                 if not dicePaused[dice] then
-                    pcall(function() RollNetworker.networker:fetch("requestSetSpecialRollPaused", dice, true) end)
+                    RollNetworker.networker:fetch("requestSetSpecialRollPaused", dice, true)
                     dicePaused[dice] = true
                 end
             else
@@ -847,7 +840,7 @@ task.spawn(function()
         end
         if allReady then
             for _, dice in ipairs(toWatch) do
-                pcall(function() RollNetworker.networker:fetch("requestSetSpecialRollPaused", dice, false) end)
+                RollNetworker.networker:fetch("requestSetSpecialRollPaused", dice, false)
                 dicePaused[dice] = false
             end
             Rayfield:Notify({
@@ -995,9 +988,7 @@ local function doFeed()
         local slimeData = entry.data
         for _, fruitId in ipairs(fruitsToFeed) do
             if not slimeHasFruit(slimeData, fruitId) then
-                pcall(function()
-                    InventoryRemote:InvokeServer("requestUseFruit", fruitId, slimeKey)
-                end)
+                InventoryRemote:InvokeServer("requestUseFruit", fruitId, slimeKey)
             end
         end
     end
@@ -1012,7 +1003,7 @@ FarmingTab:CreateToggle({
         if autoFeedEnabled then
             if feedConnection then feedConnection:Disconnect() end
             feedConnection = RunService.Heartbeat:Connect(function()
-                if autoFeedEnabled then pcall(doFeed) end
+                if autoFeedEnabled then doFeed() end
             end)
         else
             if feedConnection then
@@ -1208,9 +1199,10 @@ local function formatOdds(odds)
 end
 
 local function getEffectiveOdds(slime, catId)
+    local baseOdds = slime.rollOdds or slime.odds or 0
     local mutOdds = MUTATION_ODDS[catId]
-    if mutOdds then return slime.rollOdds * mutOdds end
-    return slime.rollOdds
+    if mutOdds then return baseOdds * mutOdds end
+    return baseOdds
 end
 
 local function getUnlocked(catId)
@@ -1983,8 +1975,7 @@ task.spawn(function()
                                     local isNew = isNewIndexEntry(slimeId, mutations)
                                     local shouldSend = sendAll or (sendNew and isNew) or (sendMutated and isMutated and webhookMutationFilter(mutations))
                                     if shouldSend and minChanceNum then
-                                        local ok, slimeDef = pcall(Slimes.getSlime, slimeId)
-                                        if not ok then slimeDef = nil end
+                                        local slimeDef = Slimes.getSlime(slimeId)
                                         local odds = slimeDef and slimeDef.odds or 0
                                         local chanceValue = odds > 0 and (1 / odds) or 0
                                         if chanceValue > minChanceNum then
@@ -1994,9 +1985,8 @@ task.spawn(function()
                                     if shouldSend then
                                         local userId = Rayfield.Flags.WebhookUserID.CurrentValue
                                         local uniqueId = hash .. "_" .. slimeId .. "_" .. tostring(mutations and Mutations.getIds(mutations) or "")
-                                        local ok2, slimeDef2 = pcall(Slimes.getSlime, slimeId)
-                                        if not ok2 then slimeDef2 = nil end
-                                        task.spawn(sendWebhook, slimeId, slimeDef2, mutations, savedWebhookUrl, userId, uniqueId)
+                                        local slimeDef = Slimes.getSlime(slimeId)
+                                        task.spawn(sendWebhook, slimeId, slimeDef, mutations, savedWebhookUrl, userId, uniqueId)
                                     end
                                 end
                             end
