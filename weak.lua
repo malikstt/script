@@ -91,6 +91,9 @@ local Networker = require(Packages.Networker)
 local InventoryServiceRemote = Networker.client.new("InventoryService")
 local XpTransferServiceRemote = Networker.client.new("XpTransferService")
 
+-- For Dice Stack (original uses its own networker)
+local RollNetworker = Networker.client.new("RollService", {})
+
 local function getRemote(name)
     local remoteFolder = Remotes:FindFirstChild(name) or Remotes:WaitForChild(name, 10)
     if not remoteFolder then return nil end
@@ -121,6 +124,10 @@ local RollSlice = require(Source.Features.Roll.RollSlice)
 local Slimes = require(Source.Game.Items.Slimes)
 local Mutations = require(Source.Features.Mutations.Mutations)
 local FruitsModule = require(Source.Game.Items.Fruits)
+
+-- For Index Auto Complete (original requires)
+local SettingsState = require(Source.Features.Settings.SettingsState)
+local SettingsServiceClient = require(Source.Features.Settings.SettingsServiceClient)
 
 local BoostKinds = BoostServiceUtils.getKinds()
 local SpecialDiceIds = SpecialDiceServiceUtils.getInventoryItemIds()
@@ -479,7 +486,6 @@ local MiscTab = Window:CreateTab("Misc", 96334002390551)
 local WebhookTab = Window:CreateTab("Webhook", 84577758013974)
 local SettingsTab = Window:CreateTab("Settings", 122930981612451)
 local StatsTab = Window:CreateTab("Stats", 4483362458)
--- Crafting will be added as a section inside GameTab (or separate tab, but original had it under GameTab)
 
 -- ==================== MAIN TAB ====================
 MainTab:CreateSection("Status")
@@ -547,7 +553,7 @@ MainTab:CreateButton({
     end,
 })
 
--- ==================== FARMING TAB ====================
+-- ==================== FARMING TAB (excluding broken sections, will replace fruits and dice) ====================
 FarmingTab:CreateSection("Zones")
 
 local ZonesModule = require(Source.Game.Items.Zones)
@@ -729,7 +735,7 @@ FarmingTab:CreateToggle({
     Callback = function(enabled)
         if enabled then
             task.spawn(function()
-                local rollTime = require(Source.Features.Roll.RollSlice).rollTime()
+                local rollTime = RollSlice.rollTime()
                 while Rayfield.Flags.FarmingFastRoll and Rayfield.Flags.FarmingFastRoll.CurrentValue do
                     RollRemote:InvokeServer("requestRoll")
                     task.wait(rollTime)
@@ -767,10 +773,9 @@ FarmingTab:CreateToggle({
     end,
 })
 
--- ==================== DICE STACK (FIXED SCOPING) ====================
+-- ==================== DICE STACK (ORIGINAL WORKING LOGIC) ====================
 FarmingTab:CreateSection("Dice Stack")
 
-local SpecialRollUtils = require(Source.Features.Roll.SpecialRollUtils)
 local diceTypes = {"golden", "diamond", "void", "galaxy"}
 local selectedDice = {golden = true, diamond = true, void = true, galaxy = true}
 local diceStackActive = false
@@ -785,7 +790,7 @@ FarmingTab:CreateToggle({
         if not v then
             for _, dice in ipairs(diceTypes) do
                 if dicePaused[dice] then
-                    pcall(function() RollRemote:InvokeServer("requestSetSpecialRollPaused", dice, false) end)
+                    pcall(function() RollNetworker:fetch("requestSetSpecialRollPaused", dice, false) end)
                     dicePaused[dice] = false
                 end
             end
@@ -814,156 +819,262 @@ FarmingTab:CreateDropdown({
 
 local diceLuckLabel = FarmingTab:CreateLabel("Total Stacked Luck: x0")
 
-local function isDiceDataReady()
-    local prog = DataClient:get("specialRollProgression")
-    if not prog then return false end
-    if type(SpecialRollUtils.getLuckMultiplier) ~= "function" then return false end
-    return true
-end
-
 task.spawn(function()
-    while not isDiceDataReady() do task.wait(1) end
     while true do
-        local success, err = pcall(function()
-            task.wait(0.5)
-            local upgrades = DataClient:get("upgrades") or {}
-            local progression = DataClient:get("specialRollProgression") or {}
-            local totalStacked = 0
-            for _, dice in ipairs(diceTypes) do
-                local prog = progression[dice]
-                local rolls = prog and prog.rollsUntilNext or math.huge
-                if rolls <= 1 then
-                    local mult = SpecialRollUtils.getLuckMultiplier(dice, upgrades) or 0
-                    totalStacked = totalStacked + mult
-                end
+        task.wait(0.5)
+        local upgrades = DataClient:get("upgrades") or {}
+        local progression = DataClient:get("specialRollProgression") or {}
+        local totalStacked = 0
+        for _, dice in ipairs(diceTypes) do
+            local prog = progression[dice]
+            local rolls = prog and prog.rollsUntilNext or math.huge
+            if rolls <= 1 then
+                local mult = 0
+                pcall(function()
+                    mult = SpecialDiceServiceUtils.getLuckMultiplier(dice, upgrades) or 0
+                end)
+                totalStacked = totalStacked + mult
             end
-            pcall(function()
-                diceLuckLabel:Set("Total Stacked Luck: x" .. string.format("%.1f", totalStacked))
-            end)
-            if not diceStackActive then return end
-            local toWatch = {}
-            for _, dice in ipairs(diceTypes) do
-                if selectedDice[dice] and SpecialRollUtils.isUnlocked(dice, upgrades) then
-                    table.insert(toWatch, dice)
-                end
-            end
-            if #toWatch == 0 then return end
-            local allReady = true
-            for _, dice in ipairs(toWatch) do
-                local prog = progression[dice]
-                local rolls = prog and prog.rollsUntilNext or math.huge
-                if rolls <= 1 then
-                    if not dicePaused[dice] then
-                        pcall(function() RollRemote:InvokeServer("requestSetSpecialRollPaused", dice, true) end)
-                        dicePaused[dice] = true
-                    end
-                else
-                    allReady = false
-                end
-            end
-            if allReady then
-                for _, dice in ipairs(toWatch) do
-                    pcall(function() RollRemote:InvokeServer("requestSetSpecialRollPaused", dice, false) end)
-                    dicePaused[dice] = false
-                end
-                if Rayfield and Rayfield.Notify then
-                    Rayfield:Notify({
-                        Title = "Dice Stack",
-                        Content = "All stacked — releasing now.",
-                        Duration = 3,
-                        Image = 4483362458,
-                    })
-                else
-                    showNotification("Dice Stack", "All stacked — releasing now.", 3)
-                end
-                task.wait(2)
-            end
+        end
+        pcall(function()
+            diceLuckLabel:Set("Total Stacked Luck: x" .. string.format("%.1f", totalStacked))
         end)
-        if not success then
-            warn("[Dice Stack] Error: ", err)
-            task.wait(5)
+        if not diceStackActive then continue end
+        local toWatch = {}
+        for _, dice in ipairs(diceTypes) do
+            if selectedDice[dice] then
+                local ok = false
+                pcall(function()
+                    ok = SpecialDiceServiceUtils.isUnlocked(dice, upgrades)
+                end)
+                if ok then table.insert(toWatch, dice) end
+            end
+        end
+        if #toWatch == 0 then continue end
+        local allReady = true
+        for _, dice in ipairs(toWatch) do
+            local prog = progression[dice]
+            local rolls = prog and prog.rollsUntilNext or math.huge
+            if rolls <= 1 then
+                if not dicePaused[dice] then
+                    pcall(function() RollNetworker:fetch("requestSetSpecialRollPaused", dice, true) end)
+                    dicePaused[dice] = true
+                end
+            else
+                allReady = false
+            end
+        end
+        if allReady then
+            for _, dice in ipairs(toWatch) do
+                pcall(function() RollNetworker:fetch("requestSetSpecialRollPaused", dice, false) end)
+                dicePaused[dice] = false
+            end
+            Rayfield:Notify({
+                Title = "Dice Stack",
+                Content = "All stacked — releasing now.",
+                Duration = 3,
+                Image = 4483362458,
+            })
+            task.wait(2)
         end
     end
 end)
 
--- ==================== AUTO FRUITS ====================
+-- ==================== AUTO FRUITS (ORIGINAL WORKING LOGIC) ====================
 FarmingTab:CreateSection("Auto Fruits")
 
-local sortedFruits = FruitsModule.getSortedFruits()
-local fruitNames = { "Any" }
-for _, fruit in ipairs(sortedFruits) do
-    table.insert(fruitNames, fruit.name)
+local ALL_FRUITS = FruitsModule.getSortedFruits()
+local fruitOptions = {"Any"}
+local labelToId = {}
+for _, f in ipairs(ALL_FRUITS) do
+    table.insert(fruitOptions, f.powerName)
+    labelToId[f.powerName] = f.id
 end
 
-FarmingTab:CreateDropdown({
-    Name = "Fruits to Feed",
-    Options = fruitNames,
-    CurrentOption = { "Any" },
-    MultipleOptions = true,
-    Flag = "FruitsSelection",
-    Callback = function() end,
-})
+local autoFeedEnabled = false
+local selectedFruitIds = {"ANY"}
+local selectedSlimeMode = "Best"
+local feedConnection = nil
 
-FarmingTab:CreateDropdown({
-    Name = "Slimes to Feed",
-    Options = { "Best Slime", "Split Across Team" },
-    CurrentOption = { "Best Slime" },
-    MultipleOptions = false,
-    Flag = "FruitsTargetSlime",
-    Callback = function() end,
-})
+local function getOwnedFruitIds()
+    local items = DataClient:get("items") or {}
+    local owned = {}
+    for _, f in ipairs(ALL_FRUITS) do
+        if (items[f.id] or 0) > 0 then
+            owned[f.id] = true
+        end
+    end
+    return owned
+end
 
-local autoFruitsThread = nil
+local function slimeHasFruit(slimeData, fruitId)
+    if type(slimeData) ~= "table" then return false end
+    local fruitDef = FruitsModule.getFruit(fruitId)
+    if not fruitDef then return false end
+    local trees = slimeData.unlockedTrees
+    if type(trees) ~= "table" then return false end
+    return trees[fruitDef.treeId] == true
+end
+
+local function getSlimeDataFromKey(key)
+    if type(key) ~= "string" then return nil, nil end
+    if key:sub(1, 1) == "." then
+        local inv = DataClient:get("inventory") or {}
+        local data = inv[key]
+        if type(data) == "table" then
+            return key, data
+        end
+        return nil, nil
+    end
+    return nil, nil
+end
+
+local function getBestSlimeEntry()
+    local stats = DataClient:get("stats") or {}
+    local rarest = stats.rarestRoll
+    if not rarest or not rarest.slimeData then return nil, nil end
+    local rarestId = rarest.slimeData.id
+    local rarestMutations = rarest.slimeData.mutations or {}
+    local equipped = DataClient:get("equipped") or {}
+    local inv = DataClient:get("inventory") or {}
+    for _, slimeKey in pairs(equipped) do
+        if type(slimeKey) == "string" and slimeKey:sub(1, 1) == "." then
+            local data = inv[slimeKey]
+            if type(data) == "table" and data.id == rarestId then
+                local match = true
+                for mutKey, mutVal in pairs(rarestMutations) do
+                    if data.mutations == nil or data.mutations[mutKey] ~= mutVal then
+                        match = false
+                        break
+                    end
+                end
+                if match then
+                    return slimeKey, data
+                end
+            end
+        end
+    end
+    -- fallback: first equipped slime
+    for _, slimeKey in pairs(equipped) do
+        if type(slimeKey) == "string" and slimeKey:sub(1, 1) == "." then
+            local data = inv[slimeKey]
+            if type(data) == "table" then
+                return slimeKey, data
+            end
+        end
+    end
+    return nil, nil
+end
+
+local function getTargetSlimes()
+    if selectedSlimeMode == "Best" then
+        local key, data = getBestSlimeEntry()
+        if key and data then
+            return {{key = key, data = data}}
+        end
+        return {}
+    else -- Split Across Team
+        local equipped = DataClient:get("equipped") or {}
+        local result = {}
+        for _, slimeKey in pairs(equipped) do
+            local key, data = getSlimeDataFromKey(slimeKey)
+            if key and data then
+                table.insert(result, {key = key, data = data})
+            end
+        end
+        return result
+    end
+end
+
+local function resolveFruitList()
+    local owned = getOwnedFruitIds()
+    if selectedFruitIds[1] == "ANY" then
+        local result = {}
+        for _, f in ipairs(ALL_FRUITS) do
+            if owned[f.id] then
+                table.insert(result, f.id)
+            end
+        end
+        return result
+    else
+        local result = {}
+        for _, fid in ipairs(selectedFruitIds) do
+            if owned[fid] then
+                table.insert(result, fid)
+            end
+        end
+        return result
+    end
+end
+
+local function doFeed()
+    local targets = getTargetSlimes()
+    local fruitsToFeed = resolveFruitList()
+    if #targets == 0 or #fruitsToFeed == 0 then return end
+    for _, entry in ipairs(targets) do
+        local slimeKey = entry.key
+        local slimeData = entry.data
+        for _, fruitId in ipairs(fruitsToFeed) do
+            if not slimeHasFruit(slimeData, fruitId) then
+                pcall(function()
+                    InventoryRemote:InvokeServer("requestUseFruit", fruitId, slimeKey)
+                end)
+            end
+        end
+    end
+end
+
 FarmingTab:CreateToggle({
     Name = "Auto Feed Fruits",
     CurrentValue = false,
     Flag = "AutoFruitsToggle",
-    Callback = function(enabled)
-        if autoFruitsThread then task.cancel(autoFruitsThread) end
-        if not enabled then return end
-        autoFruitsThread = task.spawn(function()
-            while Rayfield.Flags.AutoFruitsToggle.CurrentValue do
-                local selectedFruitNames = Rayfield.Flags.FruitsSelection.CurrentOption or {}
-                local anyFruit = false
-                for _, name in ipairs(selectedFruitNames) do
-                    if name == "Any" then anyFruit = true; break end
-                end
-                local targetMode = Rayfield.Flags.FruitsTargetSlime.CurrentOption[1] or "Best Slime"
-                local inventory = DataClient:get("inventory") or {}
-                local equipped = DataClient:get("equipped") or {}
-                local items = DataClient:get("items") or {}
-                local slimeTargets = {}
-                if targetMode == "Best Slime" then
-                    local bestUid = getBestSlimeUid()
-                    if bestUid then slimeTargets = { bestUid } end
-                else
-                    slimeTargets = equipped
-                end
-                for _, slimeUid in ipairs(slimeTargets) do
-                    local slimeData = inventory[slimeUid]
-                    if type(slimeData) == "table" then
-                        local unlockedTrees = slimeData.unlockedTrees or {}
-                        for _, fruitDef in ipairs(sortedFruits) do
-                            local shouldFeed = anyFruit or false
-                            if not anyFruit then
-                                for _, fname in ipairs(selectedFruitNames) do
-                                    if fname == fruitDef.name then shouldFeed = true; break end
-                                end
-                            end
-                            if shouldFeed and not unlockedTrees[fruitDef.treeId] then
-                                local fruitId = fruitDef.id
-                                local amount = items[fruitId]
-                                if amount and amount > 0 then
-                                    InventoryRemote:InvokeServer("requestUseFruit", fruitId, slimeUid)
-                                    task.wait(0.2)
-                                end
-                            end
-                        end
-                    end
-                end
-                task.wait(1)
+    Callback = function(value)
+        autoFeedEnabled = value
+        if autoFeedEnabled then
+            if feedConnection then feedConnection:Disconnect() end
+            feedConnection = RunService.Heartbeat:Connect(function()
+                if autoFeedEnabled then pcall(doFeed) end
+            end)
+        else
+            if feedConnection then
+                feedConnection:Disconnect()
+                feedConnection = nil
             end
-        end)
+        end
+    end,
+})
+
+FarmingTab:CreateDropdown({
+    Name = "Slimes to Feed",
+    Options = {"Best", "Split Across Team"},
+    CurrentOption = {"Best"},
+    MultipleOptions = false,
+    Flag = "FruitsTargetSlime",
+    Callback = function(option)
+        selectedSlimeMode = type(option) == "table" and option[1] or option
+    end,
+})
+
+FarmingTab:CreateDropdown({
+    Name = "Fruits to Feed",
+    Options = fruitOptions,
+    CurrentOption = {"Any"},
+    MultipleOptions = true,
+    Flag = "FruitsSelection",
+    Callback = function(options)
+        local picked = type(options) == "table" and options or {options}
+        selectedFruitIds = {}
+        for _, label in ipairs(picked) do
+            if label == "Any" then
+                selectedFruitIds = {"ANY"}
+                return
+            else
+                table.insert(selectedFruitIds, labelToId[label])
+            end
+        end
+        if #selectedFruitIds == 0 then
+            selectedFruitIds = {"ANY"}
+        end
     end,
 })
 
@@ -1053,178 +1164,332 @@ GameTab:CreateDropdown({
     Callback = function() end,
 })
 
--- ==================== INDEX AUTO COMPLETE ====================
+-- ==================== INDEX AUTO COMPLETE (ORIGINAL WORKING LOGIC) ====================
 GameTab:CreateSection("Index Auto Complete")
 
-local indexData = DataClient:get("index") or {}
-local idxCategoriesList = { "All (Recommended)", "Basic", "Shiny", "Big", "Huge", "Inverted" }
-local idxCategoryCounts = { Basic = 0, Shiny = 0, Big = 0, Huge = 0, Inverted = 0 }
+-- Initialize Settings for luck override
+SettingsState.init()
+local settingsClient = {}
+settingsClient.networker = Networker.client.new("SettingsService", settingsClient)
+SettingsServiceClient.init(settingsClient)
 
-local function idxUpdateCategoryCounts()
-    local cats = indexData.categories or {}
-    for cat in pairs(idxCategoryCounts) do
-        local lower = cat:lower()
-        local catInfo = cats[lower]
-        if catInfo then
-            local unlocked = catInfo.unlocked or {}
-            local count = 0
-            for _, v in pairs(unlocked) do if v == true then count = count + 1 end end
-            idxCategoryCounts[cat] = count
-        else
-            idxCategoryCounts[cat] = 0
-        end
-    end
+local function getLive(key)
+    local v = SettingsState.get(key)
+    if type(v) == "function" then return v() end
+    return v
 end
-idxUpdateCategoryCounts()
 
-local function idxGetMissingList(category)
-    local allSlimes = Slimes.getSortedSlimes()
-    local cats = indexData.categories or {}
-    local targetCat = nil
-    if category == "Basic" then targetCat = "basic"
-    elseif category == "Shiny" then targetCat = "shiny"
-    elseif category == "Big" then targetCat = "big"
-    elseif category == "Huge" then targetCat = "huge"
-    elseif category == "Inverted" then targetCat = "inverted"
+repeat task.wait() until getLive("luckOverrideEnabled") ~= nil
+
+local CATEGORY_IDS = {"basic", "shiny", "big", "huge", "inverted"}
+local MUTATION_ODDS = {
+    basic    = nil,
+    shiny    = 0.004,
+    big      = 0.01,
+    huge     = 0.001,
+    inverted = 0.0004,
+}
+local luckValueLocal = 1
+
+local function calcOptimalLuck(effectiveOdds)
+    if not effectiveOdds or effectiveOdds <= 0 then return 16384 end
+    local n = 1 / effectiveOdds
+    return math.min(math.max(1, math.floor(n * 0.63)), 16384)
+end
+
+local function setLuckEnabled(enabled)
+    SettingsServiceClient.set(settingsClient, "luckOverrideEnabled", enabled)
+    task.wait(0.3)
+end
+
+local function setLuck(value)
+    local clamped = math.min(value, 16384)
+    SettingsServiceClient.set(settingsClient, "luckOverrideValue", clamped)
+    luckValueLocal = clamped
+    task.wait(0.3)
+end
+
+local function applyLuckSettings()
+    setLuck(1)
+    task.wait(0.3)
+    setLuckEnabled(true)
+    task.wait(0.3)
+end
+
+local function applyLuckForTarget(effectiveOdds)
+    local optimal = calcOptimalLuck(effectiveOdds)
+    setLuck(optimal)
+end
+
+local function formatOdds(odds)
+    if not odds or odds <= 0 then return "N/A" end
+    local n = math.floor(1 / odds + 0.5)
+    if n >= 1e9 then return string.format("1 in %.1fB", n / 1e9)
+    elseif n >= 1e6 then return string.format("1 in %.1fM", n / 1e6)
+    elseif n >= 1e3 then return string.format("1 in %.1fK", n / 1e3)
     end
-    if not targetCat then
-        local missingAll = {}
-        for _, slime in ipairs(allSlimes) do
-            for _, catName in ipairs({"basic","shiny","big","huge","inverted"}) do
-                local catInfo = cats[catName]
-                if catInfo then
-                    local unlocked = catInfo.unlocked or {}
-                    if not unlocked[slime.id] then
-                        table.insert(missingAll, {id = slime.id, category = catName, odds = slime.odds})
-                    end
-                end
-            end
-        end
-        return missingAll
+    return "1 in " .. n
+end
+
+local function getEffectiveOdds(slime, catId)
+    local mutOdds = MUTATION_ODDS[catId]
+    if mutOdds then return slime.rollOdds * mutOdds end
+    return slime.rollOdds
+end
+
+local function getUnlocked(catId)
+    local data = DataClient:get("index") or {}
+    return ((data.categories or {})[catId] or {}).unlocked or {}
+end
+
+local function getTotalSlimes()
+    return #Slimes.getSortedSlimes()
+end
+
+local function getUnlockedCount(catId)
+    local unlocked = getUnlocked(catId)
+    local count = 0
+    for _, v in pairs(unlocked) do
+        if v == true then count = count + 1 end
     end
-    local catInfo = cats[targetCat]
-    if not catInfo then return {} end
-    local unlocked = catInfo.unlocked or {}
+    return count
+end
+
+local function getMissingSlimes(catId)
+    local unlocked = getUnlocked(catId)
+    local sorted = Slimes.getSortedSlimes()
     local missing = {}
-    for _, slime in ipairs(allSlimes) do
+    for _, slime in ipairs(sorted) do
         if not unlocked[slime.id] then
-            table.insert(missing, {id = slime.id, category = targetCat, odds = slime.odds})
+            table.insert(missing, slime)
         end
     end
+    table.sort(missing, function(a, b)
+        return getEffectiveOdds(a, catId) > getEffectiveOdds(b, catId)
+    end)
     return missing
 end
 
-local function idxGetRarestMissing(missingList)
-    if #missingList == 0 then return nil end
-    local rarest = missingList[1]
-    for _, m in ipairs(missingList) do
-        if m.odds > rarest.odds then rarest = m end
-    end
-    return rarest
-end
-
-local idxTargetLabel = GameTab:CreateLabel("Target: None")
-local idxOddsLabel = GameTab:CreateLabel("Odds: N/A")
-local idxProgressLabel = GameTab:CreateLabel("Progress: Calculating...")
-
-local function idxUpdateProgressLabels()
-    idxUpdateCategoryCounts()
-    local totalBasic = #Slimes.getSortedSlimes()
-    local progressText = string.format("Basic: %d/%d", idxCategoryCounts.Basic, totalBasic)
-    for cat, count in pairs(idxCategoryCounts) do
-        if cat ~= "Basic" then
-            progressText = progressText .. string.format("  |  %s: %d/%d", cat, count, totalBasic)
+local function getSortedCategoriesByPriority()
+    local cats = {}
+    for _, catId in ipairs(CATEGORY_IDS) do
+        local missing = getMissingSlimes(catId)
+        if #missing > 0 then
+            table.insert(cats, {
+                id = catId,
+                easiestEffectiveOdds = getEffectiveOdds(missing[1], catId),
+            })
         end
     end
-    idxProgressLabel:Set(progressText)
+    table.sort(cats, function(a, b)
+        return a.easiestEffectiveOdds > b.easiestEffectiveOdds
+    end)
+    return cats
 end
 
-local idxSelectedCategory = "All (Recommended)"
-local idxCurrentMissing = idxGetMissingList(idxSelectedCategory)
-local idxCurrentTarget = idxGetRarestMissing(idxCurrentMissing)
+local function buildCategoryOptions()
+    local options = {"🎲 All (Recommended)"}
+    for _, catId in ipairs(CATEGORY_IDS) do
+        local missing = getMissingSlimes(catId)
+        local label = catId:sub(1,1):upper() .. catId:sub(2)
+        if #missing == 0 then
+            table.insert(options, "✅ " .. label .. " (Complete)")
+        else
+            local effOdds = getEffectiveOdds(missing[1], catId)
+            table.insert(options, string.format("%s (%d left | %s)", label, #missing, formatOdds(effOdds)))
+        end
+    end
+    return options
+end
+
+local function getCatIdFromOption(option)
+    for _, catId in ipairs(CATEGORY_IDS) do
+        local label = catId:sub(1,1):upper() .. catId:sub(2)
+        if option:find(label) then return catId end
+    end
+    return nil
+end
+
+local runningIndex = false
+local runIndexThread = nil
+local luckPollThread = nil
+local selectedCategoryOption = nil
+local progressLabels = {}
+
+local lTarget   = nil
+local lOdds     = nil
+local lLuck     = nil
+local lCategory = nil
+
+local function refreshProgress()
+    local total = getTotalSlimes()
+    for _, catId in ipairs(CATEGORY_IDS) do
+        if progressLabels[catId] then
+            local label = catId:sub(1,1):upper() .. catId:sub(2)
+            local count = getUnlockedCount(catId)
+            progressLabels[catId]:Set(string.format("📊 %s: %d / %d", label, count, total))
+        end
+    end
+end
+
+local function startLuckPoll()
+    luckPollThread = task.spawn(function()
+        while runningIndex do
+            lLuck:Set("🍀 Luck Override: x" .. tostring(luckValueLocal))
+            refreshProgress()
+            task.wait(1)
+        end
+    end)
+end
+
+local function stopLuckPoll()
+    if luckPollThread then
+        task.cancel(luckPollThread)
+        luckPollThread = nil
+    end
+end
+
+local function runCategory(catId, mode)
+    local failCount = 0
+    local catLabel = catId:sub(1,1):upper() .. catId:sub(2)
+    local lastTargetId = nil
+    while runningIndex do
+        local missing = getMissingSlimes(catId)
+        if #missing == 0 then return true end
+        local target = mode == "🎯 Rarest First" and missing[#missing] or missing[1]
+        local effOdds = getEffectiveOdds(target, catId)
+        if target.id ~= lastTargetId then
+            lastTargetId = target.id
+            applyLuckForTarget(effOdds)
+        end
+        lTarget:Set("🎯 Target: " .. catLabel .. " " .. target.name)
+        lOdds:Set("🎲 Odds: " .. formatOdds(effOdds))
+        lCategory:Set(string.format("📂 %s (%d left)", catLabel, #missing))
+        local before = getUnlocked(catId)
+        RollRemote:InvokeServer("requestRoll")
+        task.wait(RollSlice.rollTime() + 0.25)
+        local after = getUnlocked(catId)
+        local gotOne = false
+        for id, value in pairs(after) do
+            if value == true and not before[id] then
+                gotOne = true
+                failCount = 0
+                local slime = Slimes.getSlime(id)
+                local name = slime and slime.name or id
+                print("[UNLOCKED]", catLabel, name)
+            end
+        end
+        if not gotOne then
+            failCount = failCount + 1
+            if failCount % 100 == 0 then
+                warn("[STUCK]", failCount, "rolls |", catLabel, target.name)
+            end
+        end
+        task.wait()
+    end
+    return false
+end
+
+GameTab:CreateSection("Controls")
+GameTab:CreateToggle({
+    Name = "Start Auto Complete",
+    CurrentValue = false,
+    Flag = "IndexAutoComplete",
+    Callback = function(value)
+        if value then
+            runningIndex = true
+            runIndexThread = task.spawn(function()
+                applyLuckSettings()
+                startLuckPoll()
+                local modeFlag = Rayfield.Flags.IndexRollMode
+                local mode = modeFlag
+                    and (type(modeFlag.CurrentOption) == "table" and modeFlag.CurrentOption[1] or modeFlag.CurrentOption)
+                    or "🌱 Easiest First"
+                if selectedCategoryOption == nil or selectedCategoryOption == "🎲 All (Recommended)" then
+                    while runningIndex do
+                        local sorted = getSortedCategoriesByPriority()
+                        if #sorted == 0 then
+                            lCategory:Set("📂 ✅ All Complete!")
+                            lTarget:Set("🎯 Target: —")
+                            lOdds:Set("🎲 Odds: —")
+                            runningIndex = false
+                            break
+                        end
+                        local completed = runCategory(sorted[1].id, mode)
+                        if not completed then break end
+                    end
+                else
+                    local catId = getCatIdFromOption(selectedCategoryOption)
+                    if catId then
+                        runCategory(catId, mode)
+                        if runningIndex then
+                            lCategory:Set("📂 ✅ Complete!")
+                            lTarget:Set("🎯 Target: —")
+                            lOdds:Set("🎲 Odds: —")
+                        end
+                    end
+                    runningIndex = false
+                end
+                stopLuckPoll()
+                setLuckEnabled(false)
+                refreshProgress()
+            end)
+        else
+            runningIndex = false
+            stopLuckPoll()
+            if runIndexThread then
+                task.cancel(runIndexThread)
+                runIndexThread = nil
+            end
+            setLuckEnabled(false)
+            lTarget:Set("🎯 Target: —")
+            lOdds:Set("🎲 Odds: —")
+            lLuck:Set("🍀 Luck: —")
+            lCategory:Set("📂 Category: —")
+            refreshProgress()
+        end
+    end,
+})
+
+GameTab:CreateSection("Settings")
+local categoryOptions = buildCategoryOptions()
+selectedCategoryOption = categoryOptions[1]
 
 GameTab:CreateDropdown({
     Name = "Category",
-    Options = idxCategoriesList,
-    CurrentOption = { idxSelectedCategory },
+    Options = categoryOptions,
+    CurrentOption = { categoryOptions[1] },
     MultipleOptions = false,
     Flag = "IndexCategory",
-    Callback = function(opt)
-        idxSelectedCategory = opt[1]
-        idxCurrentMissing = idxGetMissingList(idxSelectedCategory)
-        idxCurrentTarget = idxGetRarestMissing(idxCurrentMissing)
-        if idxCurrentTarget then
-            idxTargetLabel:Set("Target: " .. idxCurrentTarget.id .. " (" .. idxCurrentTarget.category .. ")")
-            local oddsFormatted = idxCurrentTarget.odds > 0 and ("1 in " .. formatNumber(idxCurrentTarget.odds)) or "Unknown"
-            idxOddsLabel:Set("Odds: " .. oddsFormatted)
-        else
-            idxTargetLabel:Set("Target: None (complete!)")
-            idxOddsLabel:Set("Odds: N/A")
-        end
+    Callback = function(option)
+        selectedCategoryOption = type(option) == "table" and option[1] or option
     end,
 })
 
 GameTab:CreateDropdown({
-    Name = "Strategy",
-    Options = { "Easiest First", "Rarest First" },
-    CurrentOption = { "Rarest First" },
+    Name = "Roll Mode",
+    Options = { "🌱 Easiest First", "🎯 Rarest First" },
+    CurrentOption = { "🌱 Easiest First" },
     MultipleOptions = false,
-    Flag = "IndexStrategy",
+    Flag = "IndexRollMode",
     Callback = function() end,
 })
 
-local autoIndexThread = nil
-GameTab:CreateToggle({
-    Name = "Start Auto Complete Index",
-    CurrentValue = false,
-    Flag = "AutoIndexToggle",
-    Callback = function(enabled)
-        if autoIndexThread then task.cancel(autoIndexThread) end
-        if not enabled then return end
-        autoIndexThread = task.spawn(function()
-            while Rayfield.Flags.AutoIndexToggle.CurrentValue do
-                idxUpdateProgressLabels()
-                local strategy = Rayfield.Flags.IndexStrategy.CurrentOption[1] or "Rarest First"
-                local missing = idxGetMissingList(idxSelectedCategory)
-                if #missing == 0 then
-                    Rayfield:Notify({
-                        Title = "Index Completion",
-                        Content = "No missing slimes in selected category!",
-                        Duration = 3,
-                        Image = 4483362458,
-                    })
-                    break
-                end
-                local target = nil
-                if strategy == "Easiest First" then
-                    table.sort(missing, function(a,b) return a.odds < b.odds end)
-                    target = missing[1]
-                else
-                    target = idxGetRarestMissing(missing)
-                end
-                if target then
-                    idxTargetLabel:Set("Target: " .. target.id .. " (" .. target.category .. ")")
-                    local oddsFormatted = target.odds > 0 and ("1 in " .. formatNumber(target.odds)) or "Unknown"
-                    idxOddsLabel:Set("Odds: " .. oddsFormatted)
-                end
-                RollRemote:InvokeServer("requestRoll")
-                task.wait(RollSlice.rollTime() + 0.25)
-                indexData = DataClient:get("index") or {}
-                idxUpdateCategoryCounts()
-                idxCurrentMissing = idxGetMissingList(idxSelectedCategory)
-            end
-        end)
-    end,
-})
+GameTab:CreateSection("Status")
+lTarget   = GameTab:CreateLabel("🎯 Target: —")
+lOdds     = GameTab:CreateLabel("🎲 Odds: —")
+lLuck     = GameTab:CreateLabel("🍀 Luck: —")
+lCategory = GameTab:CreateLabel("📂 Category: —")
 
-idxUpdateProgressLabels()
-if idxCurrentTarget then
-    idxTargetLabel:Set("Target: " .. idxCurrentTarget.id .. " (" .. idxCurrentTarget.category .. ")")
-    local oddsFormatted = idxCurrentTarget.odds > 0 and ("1 in " .. formatNumber(idxCurrentTarget.odds)) or "Unknown"
-    idxOddsLabel:Set("Odds: " .. oddsFormatted)
+GameTab:CreateSection("Index Progress")
+local total = getTotalSlimes()
+for _, catId in ipairs(CATEGORY_IDS) do
+    local label = catId:sub(1,1):upper() .. catId:sub(2)
+    local count = getUnlockedCount(catId)
+    progressLabels[catId] = GameTab:CreateLabel(string.format("📊 %s: %d / %d", label, count, total))
 end
 
--- ==================== MOVE TO ENEMY (AUTO FARM) ====================
+-- ==================== MOVE TO ENEMY (unchanged, already correct) ====================
 GameTab:CreateSection("Move to Enemy")
 
 local farmSettings = {
@@ -1750,7 +2015,8 @@ task.spawn(function()
                                     local shouldSend = sendAll or (sendNew and isNew) or (sendMutated and isMutated and webhookMutationFilter(mutations))
                                     if shouldSend and minChanceNum then
                                         local slimeDef, ok = pcall(Slimes.getSlime, slimeId)
-                                        local odds = ok and slimeDef and slimeDef.odds or 0
+                                        if ok then slimeDef = slimeDef else slimeDef = nil end
+                                        local odds = slimeDef and slimeDef.odds or 0
                                         local chanceValue = odds > 0 and (1 / odds) or 0
                                         if chanceValue > minChanceNum then
                                             shouldSend = false
@@ -1759,6 +2025,7 @@ task.spawn(function()
                                     if shouldSend then
                                         local userId = Rayfield.Flags.WebhookUserID.CurrentValue
                                         local uniqueId = hash .. "_" .. slimeId .. "_" .. tostring(mutations and Mutations.getIds(mutations) or "")
+                                        local slimeDef, _ = pcall(Slimes.getSlime, slimeId)
                                         task.spawn(sendWebhook, slimeId, slimeDef, mutations, savedWebhookUrl, userId, uniqueId)
                                     end
                                 end
