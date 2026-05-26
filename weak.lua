@@ -718,7 +718,7 @@ FarmingTab:CreateToggle({
     Callback = function(enabled)
         if enabled then
             task.spawn(function()
-                local rollTime = RollSlice.rollTime()
+                local rollTime = RollSlice.rollTime or 1
                 while Rayfield.Flags.FarmingFastRoll and Rayfield.Flags.FarmingFastRoll.CurrentValue do
                     RollRemote:InvokeServer("requestRoll")
                     task.wait(rollTime)
