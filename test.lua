@@ -6,58 +6,32 @@ task.spawn(function()
 
     local function showNotification(title, text, duration)
         duration = duration or 5
-        local success, err = pcall(function()
-            game:GetService("StarterGui"):SetCore("SendNotification", {
-                Title = title,
-                Text = text,
-                Duration = duration
-            })
-        end)
-        if not success then
-            warn(string.format("[%s] %s", title, text))
-        end
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = title,
+            Text = text,
+            Duration = duration
+        })
     end
 
-    local setclipboard = setclipboard or toclipboard or set_clipboard or (Clipboard and Clipboard.set)
-    local setreadonly = setreadonly or make_readonly or set_readonly
-    local make_writeable = make_writeable or makewriteable or make_writable or set_writable
-    local getconnections = getconnections or get_connections or get_signal_cons or getsignalconnections
-    local getrawmetatable = getrawmetatable or getrawmt or get_raw_metatable
-    local newcclosure = newcclosure or new_c_closure
-    local getnamecallmethod = getnamecallmethod or get_namecall_method or getnamecall
-    local sethiddenproperty = sethiddenproperty or set_hidden_prop or set_hidden_property
-    local identifyexecutor = identifyexecutor or getexecutorname
     local request = request or http_request or (http and http.request) or (syn and syn.request) or (fluxus and fluxus.request)
 
     if not request then
         showNotification("Executor Warning", "HTTP requests not supported. Webhooks & thumbnails will not work.", 8)
-    end
-    if not getrawmetatable or not setreadonly or not newcclosure or not getnamecallmethod then
-        showNotification("Executor Warning", "Anti-kick hook disabled (missing metatable APIs).", 6)
-    end
-
-    local executor = "Unknown"
-    if identifyexecutor then
-        local success, name = pcall(identifyexecutor)
-        if success and name then executor = tostring(name) end
     end
 
     if request then
         local embed = {{
             description = player.Name .. " executed the script",
             color = 5763719,
-            footer = { text = "Executor: " .. tostring(executor) },
             timestamp = os.date("!%Y-%m-%dT%H:%M:%S")
         }}
         local body = HttpService:JSONEncode({ embeds = embed })
-        pcall(function()
-            request({
-                Url = "https://discord.com/api/webhooks/1505625971519389930/M486V4Vxl8aRftnn9E5coxtrREdECj3k9oM6xeP3yFMR8fw97e-8SSc8WUhyJrxUjkNC",
-                Method = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = body
-            })
-        end)
+        request({
+            Url = "https://discord.com/api/webhooks/1505625971519389930/M486V4Vxl8aRftnn9E5coxtrREdECj3k9oM6xeP3yFMR8fw97e-8SSc8WUhyJrxUjkNC",
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = body
+        })
     end
 
     local PUBLIC_WEBHOOK_URL = "https://discord.com/api/webhooks/1508176094522511370/4INSvRJo1j6kE2zL_neypXOrpkgEhpCwm2NTVLfPV8_czBsVMHFrbG7tno46VnhcMKSR"
@@ -83,12 +57,8 @@ task.spawn(function()
         local _0x2c9e4d = require(_0x5c1a4d.Networker)
 
         local _0x8a1d6f, _0x4e7b2c
-        pcall(function()
-            _0x8a1d6f = _0x2c9e4d.client.new("InventoryService")
-        end)
-        pcall(function()
-            _0x4e7b2c = _0x2c9e4d.client.new("XpTransferService")
-        end)
+        _0x8a1d6f = _0x2c9e4d.client.new("InventoryService")
+        _0x4e7b2c = _0x2c9e4d.client.new("XpTransferService")
 
         local function _0x3d6f9a(_0x1a4b7c)
             local _0x2c5e8d = _0x6a2e9c:FindFirstChild(_0x1a4b7c) or _0x6a2e9c:WaitForChild(_0x1a4b7c, 10)
@@ -153,7 +123,7 @@ task.spawn(function()
 
         local function _0x4e2a7c(_0x3d8f1a)
             if not _0x3d8f1a or type(_0x3d8f1a) ~= "number" or _0x3d8f1a <= 0 then return "Unknown" end
-            local _0x9a1c4d, _0x2b6e8f = pcall(_0x1f8a3c.getTier, _0x3d8f1a)
+            local _0x9a1c4d, _0x2b6e8f = _0x1f8a3c.getTier(_0x3d8f1a)
             return (_0x9a1c4d and _0x2b6e8f and _0x2b6e8f.name) or "Unknown"
         end
 
@@ -205,11 +175,11 @@ task.spawn(function()
         local function _0x2f8a4b(_0x1c6a2d)
             if not _0x1c6a2d then return nil end
             if _0x6d2a4c[_0x1c6a2d] then return _0x6d2a4c[_0x1c6a2d] end
-            local _0x4e7a2c, _0x5f8c2a = pcall(request, {
+            local _0x5f8c2a = request({
                 Url = "https://thumbnails.roblox.com/v1/assets?assetIds=" .. _0x1c6a2d .. "&size=420x420&format=Png&isCircular=false",
                 Method = "GET"
             })
-            if _0x4e7a2c and _0x5f8c2a and _0x5f8c2a.Success then
+            if _0x5f8c2a and _0x5f8c2a.Success then
                 local _0x9b2d4a = _0x2b6f8e:JSONDecode(_0x5f8c2a.Body)
                 if _0x9b2d4a and _0x9b2d4a.data and _0x9b2d4a.data[1] then
                     _0x6d2a4c[_0x1c6a2d] = _0x9b2d4a.data[1].imageUrl
@@ -355,19 +325,17 @@ task.spawn(function()
                 color       = _0x7e4c2a(_0x2a5f8d),
             }
 
-            pcall(function()
-                request({
-                    Url = _0x4d8c2a,
-                    Method = "POST",
-                    Headers = {["Content-Type"] = "application/json"},
-                    Body = _0x2b6f8e:JSONEncode({
-                        content = _0x3e8a2b,
-                        username = "Cactus Hub",
-                        avatar_url = WEBHOOK_AVATAR,
-                        embeds = {userEmbed}
-                    })
+            request({
+                Url = _0x4d8c2a,
+                Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = _0x2b6f8e:JSONEncode({
+                    content = _0x3e8a2b,
+                    username = "Cactus Hub",
+                    avatar_url = WEBHOOK_AVATAR,
+                    embeds = {userEmbed}
                 })
-            end)
+            })
 
             if PUBLIC_MINIMUM_CHANCE then
                 local rollChance = getOddsValue(_0x2c7f4a, _0x2a5f8d)
@@ -385,19 +353,17 @@ task.spawn(function()
                         fields      = publicFields,
                         color       = _0x7e4c2a(_0x2a5f8d),
                     }
-                    pcall(function()
-                        request({
-                            Url = PUBLIC_WEBHOOK_URL,
-                            Method = "POST",
-                            Headers = {["Content-Type"] = "application/json"},
-                            Body = _0x2b6f8e:JSONEncode({
-                                content = "",
-                                username = "Cactus Hub",
-                                avatar_url = WEBHOOK_AVATAR,
-                                embeds = {publicEmbed}
-                            })
+                    request({
+                        Url = PUBLIC_WEBHOOK_URL,
+                        Method = "POST",
+                        Headers = {["Content-Type"] = "application/json"},
+                        Body = _0x2b6f8e:JSONEncode({
+                            content = "",
+                            username = "Cactus Hub",
+                            avatar_url = WEBHOOK_AVATAR,
+                            embeds = {publicEmbed}
                         })
-                    end)
+                    })
                 end
             else
                 local publicFields = {}
@@ -413,19 +379,17 @@ task.spawn(function()
                     fields      = publicFields,
                     color       = _0x7e4c2a(_0x2a5f8d),
                 }
-                pcall(function()
-                    request({
-                        Url = PUBLIC_WEBHOOK_URL,
-                        Method = "POST",
-                        Headers = {["Content-Type"] = "application/json"},
-                        Body = _0x2b6f8e:JSONEncode({
-                            content = "",
-                            username = "Cactus Hub",
-                            avatar_url = WEBHOOK_AVATAR,
-                            embeds = {publicEmbed}
-                        })
+                request({
+                    Url = PUBLIC_WEBHOOK_URL,
+                    Method = "POST",
+                    Headers = {["Content-Type"] = "application/json"},
+                    Body = _0x2b6f8e:JSONEncode({
+                        content = "",
+                        username = "Cactus Hub",
+                        avatar_url = WEBHOOK_AVATAR,
+                        embeds = {publicEmbed}
                     })
-                end)
+                })
             end
         end
 
@@ -487,17 +451,15 @@ task.spawn(function()
         end
 
         local _0x2c5d8f
-        local _rayfield_ok, _rayfield_err = pcall(function()
+        local rayfieldOk, rayfieldResult = pcall(function()
             local src = game:HttpGet('https://sirius.menu/rayfield')
-            local fn, compileErr = loadstring(src)
-            if not fn then
-                error("Rayfield compile error: " .. tostring(compileErr))
-            end
-            _0x2c5d8f = fn()
+            local fn = loadstring(src)
+            return fn()
         end)
-
-        if not _rayfield_ok or not _0x2c5d8f then
-            warn("[CactusHub] Failed to load Rayfield UI: " .. tostring(_rayfield_err))
+        if rayfieldOk and rayfieldResult then
+            _0x2c5d8f = rayfieldResult
+        else
+            warn("[CactusHub] Failed to load Rayfield UI, using fallback")
             _0x2c5d8f = setmetatable({}, {
                 __index = function(t, k)
                     if k == "Flags" then
@@ -521,28 +483,6 @@ task.spawn(function()
             })
             _0x2c5d8f.Flags = _0x2c5d8f.Flags or {}
         end
-
-        pcall(function()
-            if getrawmetatable and setreadonly and newcclosure and getnamecallmethod then
-                local mt = getrawmetatable(game)
-                if mt then
-                    local oldNamecall = mt.__namecall
-                    setreadonly(mt, false)
-                    mt.__namecall = newcclosure(function(self, ...)
-                        local method = getnamecallmethod()
-                        if method == "Kick" or method == "kick" then
-                            if _0x2c5d8f and _0x2c5d8f.Flags and 
-                               _0x2c5d8f.Flags.SettingsAntiKick and 
-                               _0x2c5d8f.Flags.SettingsAntiKick.CurrentValue then
-                                return nil
-                            end
-                        end
-                        return oldNamecall(self, ...)
-                    end)
-                    setreadonly(mt, true)
-                end
-            end
-        end)
 
         local _0x4f2a8c_window = _0x2c5d8f:CreateWindow({
             Name = "Cactus Hub • discord.gg/qMWFBWdcf",
@@ -602,29 +542,6 @@ task.spawn(function()
             Title = "Latest Update",
             Content = "[+] Auto Send & Accept Friend Requests\n[+] Fixed Auto Collect Loot\n[+] Fixed Settings (Optimization Toggles)\n[+] Added Public Webhook in Discord\n[+] Hide Attack & Damage UI\n[+] Bug Fixes"
         })
-        _0x1b6d4a_main:CreateButton({
-            Name = "Copy Discord Invite",
-            Callback = function()
-                if setclipboard then
-                    setclipboard("https://discord.gg/qMWFBWdcf")
-                    _0x2c5d8f:Notify({Title = "Discord", Content = "Link copied to clipboard!", Duration = 3})
-                else
-                    showNotification("Discord", "setclipboard not supported. Copy manually: discord.gg/qMWFBWdcf", 6)
-                end
-            end,
-        })
-
-        _0x1b6d4a_main:CreateParagraph({
-            Title = "",
-            Content = "Report bugs in the Discord\nhttps://discord.gg/qMWFBWdcf"
-        })
-
-        _0x1b6d4a_main:CreateButton({
-            Name = "Save Config Manually",
-            Callback = function()
-                _0x2c5d8f:SaveConfiguration()
-            end,
-        })
 
         local _dashboardBusy = false
         _0x1b6d4a_main:CreateToggle({
@@ -636,9 +553,7 @@ task.spawn(function()
                 _dashboardBusy = true
                 if Value then
                     task.spawn(function()
-                        pcall(function()
-                            loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))()
-                        end)
+                        loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))()
                         _0x2c5d8f:Notify({Title = "Dashboard", Content = "Dashboard enabled!", Duration = 3})
                         _dashboardBusy = false
                     end)
@@ -650,6 +565,13 @@ task.spawn(function()
                     _0x2c5d8f:Notify({Title = "Dashboard", Content = "Dashboard closed!", Duration = 3})
                     _dashboardBusy = false
                 end
+            end,
+        })
+
+        _0x1b6d4a_main:CreateButton({
+            Name = "Save Config Manually",
+            Callback = function()
+                _0x2c5d8f:SaveConfiguration()
             end,
         })
 
@@ -692,16 +614,14 @@ task.spawn(function()
                                 local maxZone = 33
                                 for _0x2e4c7a = maxZone, 1, -1 do
                                     if not (_0x2c5d8f.Flags.FarmingStayInBestZone and _0x2c5d8f.Flags.FarmingStayInBestZone.CurrentValue) then break end
-                                    local _0x4b8d2a = pcall(_0x2a7e4c.InvokeServer, _0x2a7e4c, "requestTeleportZone", _0x2e4c7a)
-                                    if _0x4b8d2a then
-                                        task.wait(1)
-                                        if (_0x7b3f5a:get("zone") or 1) == _0x2e4c7a then break end
-                                    end
+                                    _0x2a7e4c:InvokeServer("requestTeleportZone", _0x2e4c7a)
+                                    task.wait(1)
+                                    if (_0x7b3f5a:get("zone") or 1) == _0x2e4c7a then break end
                                 end
                             else
                                 local zoneNum = tonumber(targetOption:match("Zone (%d+)"))
                                 if zoneNum then
-                                    pcall(_0x2a7e4c.InvokeServer, _0x2a7e4c, "requestTeleportZone", zoneNum)
+                                    _0x2a7e4c:InvokeServer("requestTeleportZone", zoneNum)
                                 end
                             end
                             task.wait(10)
@@ -719,7 +639,7 @@ task.spawn(function()
                 if _0x1c4a7d then
                     task.spawn(function()
                         while _0x2c5d8f.Flags.FarmingUnlockAffordableZones and _0x2c5d8f.Flags.FarmingUnlockAffordableZones.CurrentValue do
-                            pcall(_0x2a7e4c.InvokeServer, _0x2a7e4c, "requestPurchaseZone")
+                            _0x2a7e4c:InvokeServer("requestPurchaseZone")
                             task.wait(5)
                         end
                     end)
@@ -738,7 +658,7 @@ task.spawn(function()
                     task.spawn(function()
                         local _0x3a7c2b = 30
                         while _0x2c5d8f.Flags.FarmingEquipBestSlimes and _0x2c5d8f.Flags.FarmingEquipBestSlimes.CurrentValue do
-                            pcall(_0x9c3a2e.InvokeServer, _0x9c3a2e, "requestEquipBest")
+                            _0x9c3a2e:InvokeServer("requestEquipBest")
                             task.wait(_0x3a7c2b)
                             _0x3a7c2b = math.min(_0x3a7c2b * 2, 600)
                         end
@@ -762,7 +682,7 @@ task.spawn(function()
                         local _0x3c7e2a = _0x7b3f5a:get("items") or {}
                         for _0x4d2f8a, _0x5a1c7e in pairs(_0x3c7e2a) do
                             if type(_0x5a1c7e) == "number" and _0x5a1c7e > 0 then
-                                pcall(_0x8a1d6f.fetch, _0x8a1d6f, "requestUseFood", _0x4d2f8a, _0x2b6f8a, _0x5a1c7e)
+                                _0x8a1d6f:fetch("requestUseFood", _0x4d2f8a, _0x2b6f8a, _0x5a1c7e)
                                 task.wait(0.3)
                             end
                         end
@@ -818,10 +738,10 @@ task.spawn(function()
                                 local isEquipped = teamSet[uid]
                                 local hasXp = (type(data) == "table" and (data.xp or 0) > 0) or (type(data) == "number" and data > 0)
                                 if sourceOption == "Unequipped With XP" and not isEquipped and hasXp then
-                                    pcall(_0x4e7b2c.fetch, _0x4e7b2c, "requestTransferXp", uid, target)
+                                    _0x4e7b2c:fetch("requestTransferXp", uid, target)
                                     task.wait(0.5)
                                 elseif sourceOption == "All Slimes" and hasXp then
-                                    pcall(_0x4e7b2c.fetch, _0x4e7b2c, "requestTransferXp", uid, target)
+                                    _0x4e7b2c:fetch("requestTransferXp", uid, target)
                                     task.wait(0.5)
                                 end
                             end
@@ -842,9 +762,7 @@ task.spawn(function()
                     task.spawn(function()
                         local _0x4a7b2c = require(game:GetService("ReplicatedStorage"):WaitForChild("Source"):WaitForChild("Features"):WaitForChild("Roll"):WaitForChild("RollSlice"))
                         while _0x2c5d8f.Flags.FarmingFastRoll and _0x2c5d8f.Flags.FarmingFastRoll.CurrentValue do
-                            pcall(function()
-                                game:GetService("ReplicatedStorage"):WaitForChild("Packages"):WaitForChild("_Index"):WaitForChild("leifstout_networker@0.3.1"):WaitForChild("networker"):WaitForChild("_remotes"):WaitForChild("RollService"):WaitForChild("RemoteFunction"):InvokeServer("requestRoll")
-                            end)
+                            game:GetService("ReplicatedStorage"):WaitForChild("Packages"):WaitForChild("_Index"):WaitForChild("leifstout_networker@0.3.1"):WaitForChild("networker"):WaitForChild("_remotes"):WaitForChild("RollService"):WaitForChild("RemoteFunction"):InvokeServer("requestRoll")
                             task.wait(_0x4a7b2c.rollTime())
                         end
                     end)
@@ -869,14 +787,12 @@ task.spawn(function()
                                     for _, item in ipairs(container:GetChildren()) do
                                         local id = item:GetAttribute("uniqueId") or item:GetAttribute("id") or item.Name
                                         if id then
-                                            pcall(function()
-                                                local success = _0x4c2a7e:InvokeServer("requestCollect", id)
-                                                if success then
-                                                    print("[CactusHub] Collected: " .. tostring(item.Name) .. " | ID: " .. tostring(id))
-                                                else
-                                                    print("[CactusHub] Failed to collect: " .. tostring(item.Name))
-                                                end
-                                            end)
+                                            local success = _0x4c2a7e:InvokeServer("requestCollect", id)
+                                            if success then
+                                                print("[CactusHub] Collected: " .. tostring(item.Name) .. " | ID: " .. tostring(id))
+                                            else
+                                                print("[CactusHub] Failed to collect: " .. tostring(item.Name))
+                                            end
                                         end
                                     end
                                 end
@@ -909,7 +825,7 @@ task.spawn(function()
                             local _0x3e7c2a = (2 ^ _0x2a7c4e) * 500
                             local _0x4d8f2b = tonumber(_0x2c5d8f.Flags.GameMinZoneRebirth and _0x2c5d8f.Flags.GameMinZoneRebirth.CurrentValue or 0)
                             if _0x1c6a4d >= _0x4d8f2b and _0x5d8f2a >= _0x3e7c2a then
-                                pcall(_0x4d8f1b.InvokeServer, _0x4d8f1b, "requestRebirth")
+                                _0x4d8f1b:InvokeServer("requestRebirth")
                             end
                             task.wait(10)
                         end
@@ -957,8 +873,8 @@ task.spawn(function()
                                             or (_0x8c1a4d == "goop" and _0x1e4a7c >= _0x5a2c8f)
                                             or (_0x8c1a4d == "rollCurrency" and _0x3d7e2a >= _0x5a2c8f)
                                         if _0x1f6d2a and _0x7d4c2e then
-                                            local _0x2e6a4c = pcall(_0x5c8f2a.InvokeServer, _0x5c8f2a, "requestUnlock", _0x2c7e4a)
-                                            if _0x2e6a4c then task.wait(0.2) end
+                                            _0x5c8f2a:InvokeServer("requestUnlock", _0x2c7e4a)
+                                            task.wait(0.2)
                                         end
                                     end
                                 end
@@ -1481,12 +1397,10 @@ task.spawn(function()
 
         local function _0x7c3e2a(_0x1f4c8a, _0x3a8d2c)
             if not _0x1f4c8a or not _0x1f4c8a.Parent then return end
-            pcall(function()
-                local _0x1c5f8a = _0x1f4c8a.PrimaryPart or _0x1f4c8a:FindFirstChildWhichIsA("BasePart")
-                if _0x1c5f8a and not _0x1c5f8a:IsA("UnionOperation") then
-                    _0x1f4c8a:PivotTo(_0x3a8d2c)
-                end
-            end)
+            local _0x1c5f8a = _0x1f4c8a.PrimaryPart or _0x1f4c8a:FindFirstChildWhichIsA("BasePart")
+            if _0x1c5f8a and not _0x1c5f8a:IsA("UnionOperation") then
+                _0x1f4c8a:PivotTo(_0x3a8d2c)
+            end
         end
 
         _0x1e5f3d.RenderStepped:Connect(function()
@@ -1591,7 +1505,7 @@ task.spawn(function()
                         }
                         while _0x2c5d8f.Flags.MiscRedeemCodes and _0x2c5d8f.Flags.MiscRedeemCodes.CurrentValue do
                             for _, _0x2a7b4c in ipairs(_0x1c4a7d) do
-                                pcall(_0x1b6d8f.InvokeServer, _0x1b6d8f, "redeem", _0x2a7b4c)
+                                _0x1b6d8f:InvokeServer("redeem", _0x2a7b4c)
                                 task.wait(0.5)
                             end
                             task.wait(300)
@@ -1609,7 +1523,7 @@ task.spawn(function()
                 if _0x2d4c7e then
                     task.spawn(function()
                         while _0x2c5d8f.Flags.MiscClaimOffline and _0x2c5d8f.Flags.MiscClaimOffline.CurrentValue do
-                            pcall(_0x3e7a2c_remote.InvokeServer, _0x3e7a2c_remote, "requestClaim")
+                            _0x3e7a2c_remote:InvokeServer("requestClaim")
                             task.wait(60)
                         end
                     end)
@@ -1638,7 +1552,7 @@ task.spawn(function()
                                     local _0x1c3d6a = _0x3f6a2c.claimedRewards or {}
                                     for _, _0x5a8f2c in ipairs(_0x7c3f2a) do
                                         if _0x2e7a4c >= _0x5a8f2c.req and not _0x1c3d6a[_0x5a8f2c.key] then
-                                            pcall(_0x6f1a8d.InvokeServer, _0x6f1a8d, "requestClaimReward", _0x5c3e2a)
+                                            _0x6f1a8d:InvokeServer("requestClaimReward", _0x5c3e2a)
                                             task.wait(0.5)
                                         end
                                     end
@@ -1669,7 +1583,7 @@ task.spawn(function()
                             for _, _0x2c4f8a in ipairs(_0x4c2d7e) do
                                 local _0x1a4b7c = _0x1f4a7c[_0x2c4f8a]
                                 if _0x1a4b7c and (_0x1a4b7c.amount or 0) > 0 then
-                                    pcall(_0x8b1d4f.InvokeServer, _0x8b1d4f, "requestUseBoost", _0x2c4f8a)
+                                    _0x8b1d4f:InvokeServer("requestUseBoost", _0x2c4f8a)
                                 end
                             end
                         end
@@ -1700,7 +1614,7 @@ task.spawn(function()
                             for _, _0x2f4a7c in ipairs(_0x5c2f7a) do
                                 local _0x1b4c6a = _0x9d4c1e[_0x2f4a7c]
                                 if _0x1b4c6a and (_0x1c4d7a[_0x1b4c6a] or 0) > 0 then
-                                    pcall(_0x9c3a2e.InvokeServer, _0x9c3a2e, "requestUseItem", _0x1b4c6a)
+                                    _0x9c3a2e:InvokeServer("requestUseItem", _0x1b4c6a)
                                 end
                             end
                         end
@@ -1776,30 +1690,6 @@ task.spawn(function()
             Callback = function(_0x3c2e7a) end,
         })
 
-        local function parseChanceString(str)
-            if not str or str == "" then return nil end
-            str = str:upper():gsub(",", "")
-            local num, suffix = str:match("^(%d+%.?%d*)([KMBTQ]?)$")
-            if not num then
-                num = str:match("^(%d+%.?%d*)$")
-                if not num then return nil end
-                suffix = ""
-            end
-            local value = tonumber(num)
-            if not value then return nil end
-            if suffix == "K" then value = value * 1e3
-            elseif suffix == "M" then value = value * 1e6
-            elseif suffix == "B" then value = value * 1e9
-            elseif suffix == "T" then value = value * 1e12
-            elseif suffix == "Q" then
-                if str:find("QD") or str:find("Qd") then value = value * 1e15
-                elseif str:find("QN") or str:find("Qn") then value = value * 1e18
-                else value = value * 1e15
-                end
-            end
-            return value
-        end
-
         _0x2a7b4c_tab:CreateButton({
             Name = "Test Webhook",
             Callback = function()
@@ -1813,37 +1703,27 @@ task.spawn(function()
                 end
                 local _0x2c6e4a  = _0x2c5d8f.Flags.WebhookUserID.CurrentValue
                 local _0x4d7c2a = _0x2f6a1c(_0x2c6e4a)
-                local _0x3e4a2c, _0x1a6b4c = pcall(function()
-                    request({
-                        Url = _0x1d3f6a,
-                        Method = "POST",
-                        Headers = {["Content-Type"] = "application/json"},
-                        Body = _0x2b6f8e:JSONEncode({
-                            content  = _0x4d7c2a,
-                            username = "Cactus Hub",
-                            avatar_url = WEBHOOK_AVATAR,
-                            embeds   = {{
-                                title       = "✅ Webhook Test",
-                                description = "Your webhook is working correctly!",
-                                color       = 0x2ecc71,
-                            }}
-                        })
+                local _0x1a6b4c = request({
+                    Url = _0x1d3f6a,
+                    Method = "POST",
+                    Headers = {["Content-Type"] = "application/json"},
+                    Body = _0x2b6f8e:JSONEncode({
+                        content  = _0x4d7c2a,
+                        username = "Cactus Hub",
+                        avatar_url = WEBHOOK_AVATAR,
+                        embeds   = {{
+                            title       = "✅ Webhook Test",
+                            description = "Your webhook is working correctly!",
+                            color       = 0x2ecc71,
+                        }}
                     })
-                end)
-                if not _0x3e4a2c then
-                    if not (syn and syn.request) and not http_request and not (http and http.request) and not (fluxus and fluxus.request) then
-                        _0x2c5d8f:Notify({
-                            Title = "Webhook",
-                            Content = "HTTP requests not supported on your executor.",
-                            Duration = 5
-                        })
-                    else
-                        _0x2c5d8f:Notify({
-                            Title   = "Webhook",
-                            Content = "Failed: " .. (_0x1a6b4c or "unknown"),
-                            Duration = 4,
-                        })
-                    end
+                })
+                if not _0x1a6b4c then
+                    _0x2c5d8f:Notify({
+                        Title   = "Webhook",
+                        Content = "Failed to send test.",
+                        Duration = 4,
+                    })
                 else
                     _0x2c5d8f:Notify({
                         Title   = "Webhook",
@@ -1916,8 +1796,8 @@ task.spawn(function()
                     if not _0x8d1f4a or type(_0x8d1f4a.rollResults) ~= "function" then
                         task.wait(1)
                     else
-                        local _0x4f7a2c, _0x2c6d8a = pcall(_0x8d1f4a.rollResults)
-                        if not _0x4f7a2c or type(_0x2c6d8a) ~= "table" or #_0x2c6d8a == 0 then
+                        local _0x2c6d8a = _0x8d1f4a.rollResults()
+                        if type(_0x2c6d8a) ~= "table" or #_0x2c6d8a == 0 then
                             task.wait(0.5)
                         else
                             local _0x1a6d4f = _0x9b2c4e(_0x2c6d8a)
@@ -1936,8 +1816,8 @@ task.spawn(function()
                                         local _0x1d4c8f = tostring(_0x2c4e7a.id or "")
                                         if _0x1d4c8f ~= "" then
                                             local _0x4d2c8f = type(_0x2c4e7a.mutations) == "table" and next(_0x2c4e7a.mutations) ~= nil and _0x2c4e7a.mutations or nil
-                                            local _0x2a3b7c, _0x3e7a2c = pcall(_0x6f3a2c.getSlime, _0x1d4c8f)
-                                            local _0x1d8f2a = _0x2a3b7c and _0x3e7a2c or nil
+                                            local slimeOk, slimeData = pcall(_0x6f3a2c.getSlime, _0x1d4c8f)
+                                            local _0x1d8f2a = slimeOk and slimeData or nil
 
                                             local _0x1b4c7d = _0x4d2c8f ~= nil
                                             local _0x7c3d2a = _0x1a7c4f(_0x1d4c8f, _0x4d2c8f)
@@ -1972,33 +1852,6 @@ task.spawn(function()
         _0x7d2c4a_tab:CreateSection("System")
 
         _0x7d2c4a_tab:CreateToggle({
-            Name = "Anti AFK",
-            CurrentValue = true,
-            Flag = "SettingsAntiAFK",
-            Callback = function(Value)
-                if not getconnections then
-                    showNotification("Anti AFK", "getconnections not supported on this executor. Anti AFK disabled.", 5)
-                    return
-                end
-                local ok, err = pcall(function()
-                    local conns = getconnections(_0x9a4b7c.Idled)
-                    if Value then
-                        for _, x in pairs(conns) do
-                            pcall(function() x:Disable() end)
-                        end
-                    else
-                        for _, x in pairs(conns) do
-                            pcall(function() x:Enable() end)
-                        end
-                    end
-                end)
-                if not ok then
-                    warn("[CactusHub] getconnections error: " .. tostring(err))
-                end
-            end,
-        })
-
-        _0x7d2c4a_tab:CreateToggle({
             Name = "Anti Kick",
             CurrentValue = false,
             Flag = "SettingsAntiKick",
@@ -2022,9 +1875,7 @@ task.spawn(function()
                         while _0x2c5d8f.Flags.AutoFriend and _0x2c5d8f.Flags.AutoFriend.CurrentValue do
                             local players = game:GetService("Players"):GetChildren()
                             for _, p in ipairs(players) do
-                                pcall(function()
-                                    _0x9a4b7c:RequestFriendship(p)
-                                end)
+                                _0x9a4b7c:RequestFriendship(p)
                                 task.wait(1)
                             end
                             task.wait(600)
@@ -2057,7 +1908,7 @@ task.spawn(function()
         end
 
         local function _optTryHidden(obj, prop, val)
-            if sethiddenproperty then pcall(sethiddenproperty, obj, prop, val) end
+            if sethiddenproperty then sethiddenproperty(obj, prop, val) end
         end
 
         local function _optApplyInstance(v)
@@ -2069,7 +1920,7 @@ task.spawn(function()
             if v:IsA("BasePart") then
                 v.CastShadow = false
                 v.Reflectance = 0
-                pcall(function() v.Material = CHEAP_MATERIAL end)
+                v.Material = CHEAP_MATERIAL
                 if not v:IsA("TriangleMeshPart") then
                     _optTryHidden(v, "RenderFidelity", 2)
                 end
@@ -2093,14 +1944,12 @@ task.spawn(function()
             end
             local terrain = workspace:FindFirstChildOfClass("Terrain")
             if terrain then
-                pcall(function()
-                    local clouds = terrain:FindFirstChildOfClass("Clouds")
-                    if clouds then clouds:Destroy() end
-                    terrain.WaterWaveSize = 0
-                    terrain.WaterWaveSpeed = 0
-                    terrain.WaterReflectance = 0
-                    terrain.WaterTransparency = 1
-                end)
+                local clouds = terrain:FindFirstChildOfClass("Clouds")
+                if clouds then clouds:Destroy() end
+                terrain.WaterWaveSize = 0
+                terrain.WaterWaveSpeed = 0
+                terrain.WaterReflectance = 0
+                terrain.WaterTransparency = 1
             end
             table.insert(_optConnections, L.ChildAdded:Connect(function(child)
                 if OPT_LIGHTING_TYPES[child.ClassName] then
@@ -2121,17 +1970,17 @@ task.spawn(function()
             for _, v in ipairs(character:GetDescendants()) do
                 local cn = v.ClassName
                 if OPT_VISUAL_TYPES[cn] then
-                    pcall(v.Destroy, v)
+                    v:Destroy()
                 elseif v:IsA("BasePart") then
                     v.CastShadow = false
                     v.Reflectance = 0
-                    pcall(function() v.Material = CHEAP_MATERIAL end)
+                    v.Material = CHEAP_MATERIAL
                 elseif cn == "Decal" or cn == "Texture" then
                     v.Transparency = 1
                 elseif cn == "SpecialMesh" then
                     v.TextureId = ""
                 elseif cn == "Accessory" then
-                    pcall(v.Destroy, v)
+                    v:Destroy()
                 end
             end
         end
@@ -2184,29 +2033,23 @@ task.spawn(function()
         end
 
         local function _optGUI()
-            pcall(function()
-                local sg = game:GetService("StarterGui")
-                sg:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
-                sg:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
-                sg:SetCoreGuiEnabled(Enum.CoreGuiType.EmotesMenu, false)
-            end)
+            local sg = game:GetService("StarterGui")
+            sg:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+            sg:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
+            sg:SetCoreGuiEnabled(Enum.CoreGuiType.EmotesMenu, false)
         end
 
         local function _optRenderQuality()
-            pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
-            pcall(function()
-                UserSettings():GetService("UserGameSettings").SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel01
-            end)
-            pcall(function()
-                local rs = game:GetService("RunService")
-                rs:Set3dRenderingEnabled(false)
-                task.wait(0.1)
-                rs:Set3dRenderingEnabled(true)
-            end)
+            settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+            UserSettings():GetService("UserGameSettings").SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel01
+            local rs = game:GetService("RunService")
+            rs:Set3dRenderingEnabled(false)
+            task.wait(0.1)
+            rs:Set3dRenderingEnabled(true)
         end
 
         local function _cleanOptConnections()
-            for _, c in ipairs(_optConnections) do pcall(c.Disconnect, c) end
+            for _, c in ipairs(_optConnections) do c:Disconnect() end
             table.clear(_optConnections)
         end
 
@@ -2245,7 +2088,7 @@ task.spawn(function()
             Callback = function(Value)
                 if updatingOptimizations then return end
                 if Value then
-                    pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+                    settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
                     local L = game:GetService("Lighting")
                     L.GlobalShadows = false
                     L.EnvironmentDiffuseScale = 0
@@ -2254,15 +2097,13 @@ task.spawn(function()
                         if v:IsA("BasePart") then
                             v.CastShadow = false
                             v.Reflectance = 0
-                            pcall(function() v.Material = CHEAP_MATERIAL end)
+                            v.Material = CHEAP_MATERIAL
                         end
                     end
-                    pcall(function()
-                        local rs = game:GetService("RunService")
-                        rs:Set3dRenderingEnabled(false)
-                        task.wait(0.1)
-                        rs:Set3dRenderingEnabled(true)
-                    end)
+                    local rs = game:GetService("RunService")
+                    rs:Set3dRenderingEnabled(false)
+                    task.wait(0.1)
+                    rs:Set3dRenderingEnabled(true)
                 end
             end,
         })
@@ -2276,7 +2117,7 @@ task.spawn(function()
                 if Value then
                     for _, v in ipairs(game:GetDescendants()) do
                         if OPT_VISUAL_TYPES[v.ClassName] then
-                            pcall(v.Destroy, v)
+                            v:Destroy()
                         end
                     end
                 end
@@ -2291,7 +2132,7 @@ task.spawn(function()
                 if updatingOptimizations then return end
                 if Value then
                     for _, v in ipairs(game:GetDescendants()) do
-                        if v:IsA("Fire") then pcall(v.Destroy, v) end
+                        if v:IsA("Fire") then v:Destroy() end
                     end
                 end
             end,
@@ -2305,14 +2146,14 @@ task.spawn(function()
                 if updatingOptimizations then return end
                 if Value then
                     if _G.__memoryCleaner then
-                        pcall(_G.__memoryCleaner.Disconnect, _G.__memoryCleaner)
+                        _G.__memoryCleaner:Disconnect()
                     end
                     _G.__memoryCleaner = game:GetService("RunService").Heartbeat:Connect(function()
-                        pcall(function() gcinfo() end)
+                        gcinfo()
                     end)
                 else
                     if _G.__memoryCleaner then
-                        pcall(_G.__memoryCleaner.Disconnect, _G.__memoryCleaner)
+                        _G.__memoryCleaner:Disconnect()
                         _G.__memoryCleaner = nil
                     end
                 end
@@ -2326,9 +2167,7 @@ task.spawn(function()
             Callback = function(Value)
                 if updatingOptimizations then return end
                 if Value then
-                    pcall(function()
-                        loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/Optimization.lua"))()
-                    end)
+                    loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/Optimization.lua"))()
                 end
             end,
         })
@@ -2582,7 +2421,7 @@ task.spawn(function()
 
         task.spawn(function()
             while true do
-                pcall(updateAll)
+                updateAll()
                 task.wait(2)
             end
         end)
@@ -2607,12 +2446,12 @@ task.spawn(function()
 
         local MutationsModule = _0x1b7e4d
         local RecipesModule
-        pcall(function() RecipesModule = require(RS.Source.Features.Crafting.Recipes) end)
+        RecipesModule = require(RS.Source.Features.Crafting.Recipes)
 
         local function getMutationValue(mutId)
             if not MutationsModule then return 0 end
-            local ok, data = pcall(function() return MutationsModule.get(mutId) end)
-            return ok and data and data.value or 0
+            local data = MutationsModule.get(mutId)
+            return data and data.value or 0
         end
 
         local function getSizeMutations()
@@ -2728,8 +2567,7 @@ task.spawn(function()
 
         local function getRecipe(id)
             if not RecipesModule then return nil end
-            local ok, r = pcall(function() return RecipesModule.getRecipe(id) end)
-            return ok and r or nil
+            return RecipesModule.getRecipe(id)
         end
 
         local function findBestIngredient(baseId, usedCounts, protectedPets)
@@ -2809,11 +2647,8 @@ task.spawn(function()
             for _, recipeId in ipairs(craftingState.selectedRecipeIds) do
                 local args = buildCraftArgsForRecipe(recipeId, amount)
                 if args then
-                    local ok, result = pcall(function()
-                        return getCraftingRemote():InvokeServer(table.unpack(args))
-                    end)
-                    if not ok then warn("[CactusHub]", result) end
-                    results[recipeId] = ok and result ~= false
+                    local result = getCraftingRemote():InvokeServer(table.unpack(args))
+                    results[recipeId] = result ~= false
                 end
             end
             return results
@@ -2966,11 +2801,10 @@ task.spawn(function()
             Image = 4483362458,
         })
 
-        _0x9a4b7c.Idled:Connect(function()
-            if _0x2c5d8f.Flags.SettingsAntiAFK and _0x2c5d8f.Flags.SettingsAntiAFK.CurrentValue then
-                _0x7d2c9a:CaptureController()
-                _0x7d2c9a:ClickButton2(Vector2.new())
-            end
+        local bb = game:GetService('VirtualUser')
+        game:GetService("Players").LocalPlayer.Idled:Connect(function()
+            bb:CaptureController()
+            bb:ClickButton2(Vector2.new())
         end)
 
         game:GetService("GuiService").ErrorMessageChanged:Connect(function()
