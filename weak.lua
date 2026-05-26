@@ -82,8 +82,7 @@ DataClient:waitForData()
 local Networker = require(Packages.Networker)
 local InventoryServiceRemote = Networker.client.new("InventoryService")
 local XpTransferServiceRemote = Networker.client.new("XpTransferService")
-local RollNetworker = Networker.client.new("RollService", {})
-
+local RollNetworker = Networker.client.new("RollService")
 local function getRemote(name)
     local remoteFolder = Remotes:FindFirstChild(name) or Remotes:WaitForChild(name, 10)
     if not remoteFolder then return nil end
