@@ -13,8 +13,7 @@ task.spawn(function()
         })
     end
 
-    local request = request or http_request or (http and http.request) or (syn and syn.request) or (fluxus and fluxus.request)
-
+    local request = request or http_request or (http and http.request) 
     if not request then
         showNotification("Executor Warning", "HTTP requests not supported. Webhooks & thumbnails will not work.", 8)
     end
