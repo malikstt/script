@@ -1,4 +1,4 @@
-loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+local rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 local Rayfield = rayfield
 
 local Players = game:GetService("Players")
