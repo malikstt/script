@@ -539,7 +539,7 @@ task.spawn(function()
 
         _0x1b6d4a_main:CreateParagraph({
             Title = "Latest Update",
-            Content = "[+] Auto Send & Accept Friend Requests\n[+] Fixed Auto Collect Loot\n[+] Fixed Settings (Optimization Toggles)\n[+] Added Public Webhook in Discord\n[+] Hide Attack & Damage UI\n[+] Bug Fixes"
+            Content = "[+] Auto Complete Index\n[+] Auto Move to Enemy (Teleport/Tween)\n[+] Auto Stack Dice\n[+] Auto Feed Fruits\n[+] Removed Broken Float/Attack Systems\n[+] Bug Fixes & Performance"
         })
 
         local _dashboardBusy = false
@@ -806,25 +806,25 @@ task.spawn(function()
             end,
         })
 
-        -- ==================== DICE STACK (START) ====================
+        -- Dice Stack Section (Farming tab)
         _0x8c1d4a:CreateSection("Dice Stack")
 
-        local stackActive = false
-        local selected = {golden = true, diamond = true, void = true, galaxy = true}
-        local paused = {golden = false, diamond = false, void = false, galaxy = false}
-        local DICE = {"golden", "diamond", "void", "galaxy"}
+        local diceStack_DICE = {"golden", "diamond", "void", "galaxy"}
+        local diceStack_selected = {golden = true, diamond = true, void = true, galaxy = true}
+        local diceStack_stackActive = false
+        local diceStack_paused = {golden = false, diamond = false, void = false, galaxy = false}
 
         _0x8c1d4a:CreateToggle({
             Name = "Auto Stack Dice",
             CurrentValue = false,
             Flag = "autostack",
             Callback = function(v)
-                stackActive = v
+                diceStack_stackActive = v
                 if not v then
-                    for _, dice in ipairs(DICE) do
-                        if paused[dice] then
+                    for _, dice in ipairs(diceStack_DICE) do
+                        if diceStack_paused[dice] then
                             pcall(function() _0x2c9e4d.client.new("RollService"):fetch("requestSetSpecialRollPaused", dice, false) end)
-                            paused[dice] = false
+                            diceStack_paused[dice] = false
                         end
                     end
                 end
@@ -838,25 +838,26 @@ task.spawn(function()
             MultipleOptions = true,
             Flag = "diceDropdown",
             Callback = function(choices)
-                for _, dice in ipairs(DICE) do
-                    selected[dice] = false
+                for _, dice in ipairs(diceStack_DICE) do
+                    diceStack_selected[dice] = false
                 end
                 for _, choice in ipairs(choices) do
                     if choice == "All" then
-                        for _, dice in ipairs(DICE) do
-                            selected[dice] = true
+                        for _, dice in ipairs(diceStack_DICE) do
+                            diceStack_selected[dice] = true
                         end
                         break
                     else
-                        selected[choice:lower()] = true
+                        diceStack_selected[choice:lower()] = true
                     end
                 end
             end,
         })
 
-        local LuckLabel = _0x8c1d4a:CreateLabel("Total Stacked: x0")
+        local diceStack_LuckLabel = _0x8c1d4a:CreateLabel("Total Stacked: x0")
 
         task.spawn(function()
+            local diceStack_networker = _0x2c9e4d.client.new("RollService", {})
             while true do
                 task.wait(0.5)
 
@@ -864,7 +865,7 @@ task.spawn(function()
                 local progression = _0x7b3f5a:get("specialRollProgression") or {}
 
                 local totalStacked = 0
-                for _, dice in ipairs(DICE) do
+                for _, dice in ipairs(diceStack_DICE) do
                     local prog = progression[dice]
                     local rolls = prog and prog.rollsUntilNext or math.huge
                     if rolls <= 1 then
@@ -877,14 +878,14 @@ task.spawn(function()
                 end
 
                 pcall(function()
-                    LuckLabel:Set("Total Stacked: x" .. string.format("%.1f", totalStacked))
+                    diceStack_LuckLabel:Set("Total Stacked: x" .. string.format("%.1f", totalStacked))
                 end)
 
-                if not stackActive then continue end
+                if not diceStack_stackActive then continue end
 
                 local toWatch = {}
-                for _, dice in ipairs(DICE) do
-                    if selected[dice] then
+                for _, dice in ipairs(diceStack_DICE) do
+                    if diceStack_selected[dice] then
                         local ok = false
                         pcall(function()
                             ok = _0x2c4e7a.isUnlocked(dice, upgrades)
@@ -902,9 +903,9 @@ task.spawn(function()
                     local prog = progression[dice]
                     local rolls = prog and prog.rollsUntilNext or math.huge
                     if rolls <= 1 then
-                        if not paused[dice] then
-                            pcall(function() _0x2c9e4d.client.new("RollService"):fetch("requestSetSpecialRollPaused", dice, true) end)
-                            paused[dice] = true
+                        if not diceStack_paused[dice] then
+                            pcall(function() diceStack_networker:fetch("requestSetSpecialRollPaused", dice, true) end)
+                            diceStack_paused[dice] = true
                         end
                     else
                         allReady = false
@@ -913,8 +914,8 @@ task.spawn(function()
 
                 if allReady then
                     for _, dice in ipairs(toWatch) do
-                        pcall(function() _0x2c9e4d.client.new("RollService"):fetch("requestSetSpecialRollPaused", dice, false) end)
-                        paused[dice] = false
+                        pcall(function() diceStack_networker:fetch("requestSetSpecialRollPaused", dice, false) end)
+                        diceStack_paused[dice] = false
                     end
                     _0x2c5d8f:Notify({
                         Title = "Unleashed!",
@@ -926,9 +927,8 @@ task.spawn(function()
                 end
             end
         end)
-        -- ==================== DICE STACK (END) ====================
 
-        -- ==================== AUTO FRUITS (START) ====================
+        -- Auto Fruits Section (Farming tab)
         _0x8c1d4a:CreateSection("Auto Fruits")
 
         local autoFeedEnabled = false
@@ -936,7 +936,9 @@ task.spawn(function()
         local selectedSlimeMode = "Best"
         local feedConnection = nil
 
-        local FruitsModule = require(_0x9d2f4a.Game.Items.Fruits)
+        local Remote = _0x6a2e9c:FindFirstChild("InventoryService") and _0x6a2e9c.InventoryService:FindFirstChild("RemoteFunction") or _0x9c3a2e
+
+        local FruitsModule = require(_0x3f7a2b:WaitForChild("Source").Game.Items.Fruits)
         local ALL_FRUITS = FruitsModule.getSortedFruits()
 
         local fruitOptions = {"Any"}
@@ -1076,7 +1078,7 @@ task.spawn(function()
                 for _, fruitId in ipairs(fruitsToFeed) do
                     if not slimeHasFruit(slimeData, fruitId) then
                         local ok, err = pcall(function()
-                            _0x9c3a2e:InvokeServer("requestUseFruit", fruitId, slimeKey)
+                            Remote:InvokeServer("requestUseFruit", fruitId, slimeKey)
                         end)
                         if not ok then
                             warn(string.format("[AutoFeed] Failed %s -> %s: %s", fruitId, tostring(slimeKey), tostring(err)))
@@ -1139,7 +1141,6 @@ task.spawn(function()
                 end
             end,
         })
-        -- ==================== AUTO FRUITS (END) ====================
 
         local _0x3e2c7a_tab = _0x4f2a8c_window:CreateTab("Game", 82493603309814)
 
@@ -1228,17 +1229,15 @@ task.spawn(function()
             Callback = function(_0x4d8c1a) end,
         })
 
-        -- ==================== INDEX AUTO COMPLETE (START) ====================
+        -- Index Auto Complete Section (Game tab)
         _0x3e2c7a_tab:CreateSection("Index Auto Complete")
 
-        local DataService_index = require(_0x5c1a4d.DataService).client
-        DataService_index:waitForData()
-
+        local DataService = _0x7b3f5a
         local SettingsState = require(_0x9d2f4a.Features.Settings.SettingsState)
         local SettingsServiceClient = require(_0x9d2f4a.Features.Settings.SettingsServiceClient)
-        local Networker_index = require(_0x5c1a4d.Networker)
-        local RollSlice = require(_0x9d2f4a.Features.Roll.RollSlice)
-        local Slimes = require(_0x9d2f4a.Game.Items.Slimes)
+        local Networker = _0x2c9e4d
+        local RollSlice = _0x8d1f4a
+        local Slimes = _0x6f3a2c
 
         local function getLive(key)
             local v = SettingsState.get(key)
@@ -1249,12 +1248,12 @@ task.spawn(function()
         SettingsState.init()
 
         local settingsClient = {}
-        settingsClient.networker = Networker_index.client.new("SettingsService", settingsClient)
+        settingsClient.networker = Networker.client.new("SettingsService", settingsClient)
         SettingsServiceClient.init(settingsClient)
 
         repeat task.wait() until getLive("luckOverrideEnabled") ~= nil
 
-        local RollRemote = _0x6a2e9c:FindFirstChild("RollService") and (_0x6a2e9c.RollService:FindFirstChild("RemoteFunction") or _0x6a2e9c.RollService:WaitForChild("RemoteFunction", 10))
+        local RollRemote = _0x6a2e9c:FindFirstChild("RollService") and _0x6a2e9c.RollService:FindFirstChild("RemoteFunction") or _0x7e2a4c
 
         local CATEGORY_IDS = {"basic", "shiny", "big", "huge", "inverted"}
 
@@ -1315,7 +1314,7 @@ task.spawn(function()
         end
 
         local function getUnlocked(catId)
-            local data = DataService_index:get("index") or {}
+            local data = DataService:get("index") or {}
             return ((data.categories or {})[catId] or {}).unlocked or {}
         end
 
@@ -1387,11 +1386,11 @@ task.spawn(function()
             return nil
         end
 
-        local running = false
-        local runThread = nil
-        local luckPollThread = nil
-        local selectedOption = nil
-        local progressLabels = {}
+        local indexRunning = false
+        local indexRunThread = nil
+        local indexLuckPollThread = nil
+        local indexSelectedOption = nil
+        local indexProgressLabels = {}
 
         local lTarget   = nil
         local lOdds     = nil
@@ -1401,17 +1400,17 @@ task.spawn(function()
         local function refreshProgress()
             local total = getTotalSlimes()
             for _, catId in ipairs(CATEGORY_IDS) do
-                if progressLabels[catId] then
+                if indexProgressLabels[catId] then
                     local label = catId:sub(1,1):upper() .. catId:sub(2)
                     local count = getUnlockedCount(catId)
-                    progressLabels[catId]:Set(string.format("📊 %s: %d / %d", label, count, total))
+                    indexProgressLabels[catId]:Set(string.format("📊 %s: %d / %d", label, count, total))
                 end
             end
         end
 
         local function startLuckPoll()
-            luckPollThread = task.spawn(function()
-                while running do
+            indexLuckPollThread = task.spawn(function()
+                while indexRunning do
                     lLuck:Set("🍀 Luck Override: x" .. tostring(luckValueLocal))
                     refreshProgress()
                     task.wait(1)
@@ -1420,9 +1419,9 @@ task.spawn(function()
         end
 
         local function stopLuckPoll()
-            if luckPollThread then
-                task.cancel(luckPollThread)
-                luckPollThread = nil
+            if indexLuckPollThread then
+                task.cancel(indexLuckPollThread)
+                indexLuckPollThread = nil
             end
         end
 
@@ -1431,7 +1430,7 @@ task.spawn(function()
             local catLabel = catId:sub(1,1):upper() .. catId:sub(2)
             local lastTargetId = nil
 
-            while running do
+            while indexRunning do
                 local missing = getMissingSlimes(catId)
                 if #missing == 0 then return true end
 
@@ -1476,17 +1475,14 @@ task.spawn(function()
             return false
         end
 
-        local categoryOptions_built = buildCategoryOptions()
-        selectedOption = categoryOptions_built[1]
-
         _0x3e2c7a_tab:CreateToggle({
             Name = "Start Auto Complete",
             CurrentValue = false,
             Flag = "IndexAutoComplete",
             Callback = function(value)
                 if value then
-                    running = true
-                    runThread = task.spawn(function()
+                    indexRunning = true
+                    indexRunThread = task.spawn(function()
                         applyLuckSettings()
                         startLuckPoll()
 
@@ -1495,30 +1491,30 @@ task.spawn(function()
                             and (type(modeFlag.CurrentOption) == "table" and modeFlag.CurrentOption[1] or modeFlag.CurrentOption)
                             or "🌱 Easiest First"
 
-                        if selectedOption == nil or selectedOption == "🎲 All (Recommended)" then
-                            while running do
+                        if indexSelectedOption == nil or indexSelectedOption == "🎲 All (Recommended)" then
+                            while indexRunning do
                                 local sorted = getSortedCategoriesByPriority()
                                 if #sorted == 0 then
                                     lCategory:Set("📂 ✅ All Complete!")
                                     lTarget:Set("🎯 Target: —")
                                     lOdds:Set("🎲 Odds: —")
-                                    running = false
+                                    indexRunning = false
                                     break
                                 end
                                 local completed = runCategory(sorted[1].id, mode)
                                 if not completed then break end
                             end
                         else
-                            local catId = getCatIdFromOption(selectedOption)
+                            local catId = getCatIdFromOption(indexSelectedOption)
                             if catId then
                                 runCategory(catId, mode)
-                                if running then
+                                if indexRunning then
                                     lCategory:Set("📂 ✅ Complete!")
                                     lTarget:Set("🎯 Target: —")
                                     lOdds:Set("🎲 Odds: —")
                                 end
                             end
-                            running = false
+                            indexRunning = false
                         end
 
                         stopLuckPoll()
@@ -1526,30 +1522,33 @@ task.spawn(function()
                         refreshProgress()
                     end)
                 else
-                    running = false
+                    indexRunning = false
                     stopLuckPoll()
-                    if runThread then
-                        task.cancel(runThread)
-                        runThread = nil
+                    if indexRunThread then
+                        task.cancel(indexRunThread)
+                        indexRunThread = nil
                     end
                     setLuckEnabled(false)
-                    if lTarget then lTarget:Set("🎯 Target: —") end
-                    if lOdds then lOdds:Set("🎲 Odds: —") end
-                    if lLuck then lLuck:Set("🍀 Luck: —") end
-                    if lCategory then lCategory:Set("📂 Category: —") end
+                    lTarget:Set("🎯 Target: —")
+                    lOdds:Set("🎲 Odds: —")
+                    lLuck:Set("🍀 Luck: —")
+                    lCategory:Set("📂 Category: —")
                     refreshProgress()
                 end
             end,
         })
 
+        local categoryOptionsIdx = buildCategoryOptions()
+        indexSelectedOption = categoryOptionsIdx[1]
+
         _0x3e2c7a_tab:CreateDropdown({
             Name = "Category",
-            Options = categoryOptions_built,
-            CurrentOption = { categoryOptions_built[1] },
+            Options = categoryOptionsIdx,
+            CurrentOption = { categoryOptionsIdx[1] },
             MultipleOptions = false,
             Flag = "IndexCategory",
             Callback = function(option)
-                selectedOption = type(option) == "table" and option[1] or option
+                indexSelectedOption = type(option) == "table" and option[1] or option
             end,
         })
 
@@ -1567,18 +1566,17 @@ task.spawn(function()
         lLuck     = _0x3e2c7a_tab:CreateLabel("🍀 Luck: —")
         lCategory = _0x3e2c7a_tab:CreateLabel("📂 Category: —")
 
-        local total = getTotalSlimes()
+        local totalSlimes = getTotalSlimes()
         for _, catId in ipairs(CATEGORY_IDS) do
             local label = catId:sub(1,1):upper() .. catId:sub(2)
             local count = getUnlockedCount(catId)
-            progressLabels[catId] = _0x3e2c7a_tab:CreateLabel(string.format("📊 %s: %d / %d", label, count, total))
+            indexProgressLabels[catId] = _0x3e2c7a_tab:CreateLabel(string.format("📊 %s: %d / %d", label, count, totalSlimes))
         end
-        -- ==================== INDEX AUTO COMPLETE (END) ====================
 
-        -- ==================== MOVE TO ENEMY (START) ====================
+        -- Move to Enemy Section (Game tab)
         _0x3e2c7a_tab:CreateSection("Move to Enemy")
 
-        local Settings_move = {
+        local moveSettings = {
             TeleportStyle = "Teleport",
             TargetPriorities = { ["Most Coins & Goop"] = true },
             AutoFarm = false,
@@ -1591,8 +1589,9 @@ task.spawn(function()
         local cachedEnemies = {}
         local lastCacheTime = 0
         local currentTarget = nil
+        local tweenConn = nil
 
-        local function getGameplayContainer_move()
+        local function getGameplayContainerMove()
             if cachedContainer and cachedContainer.Parent then return cachedContainer end
             for _, child in ipairs(workspace:GetChildren()) do
                 if child.Name:match("^Gameplay") then
@@ -1667,7 +1666,7 @@ task.spawn(function()
             if tick() - lastCacheTime < 2 then return end
             lastCacheTime = tick()
             cachedEnemies = {}
-            local container = getGameplayContainer_move()
+            local container = getGameplayContainerMove()
             if not container then return end
             local enemyFolder = container:FindFirstChild("Enemies")
             if not enemyFolder then return end
@@ -1679,8 +1678,8 @@ task.spawn(function()
         end
 
         local function matchesMutationFilter(enemy)
-            if Settings_move.MutationFilter == "Any" then return true end
-            return getMutation(enemy) == Settings_move.MutationFilter:lower()
+            if moveSettings.MutationFilter == "Any" then return true end
+            return getMutation(enemy) == moveSettings.MutationFilter:lower()
         end
 
         local function computeScores()
@@ -1712,7 +1711,7 @@ task.spawn(function()
             end
 
             local scores = {}
-            local priorities = Settings_move.TargetPriorities
+            local priorities = moveSettings.TargetPriorities
             for _, e in ipairs(entries) do
                 local s = 0
                 if priorities["Most Coins & Goop"] then
@@ -1729,7 +1728,7 @@ task.spawn(function()
             return scores
         end
 
-        local function selectTarget_move()
+        local function selectTargetMove()
             local scores = computeScores()
             local best, bestScore = nil, -math.huge
             for enemy, score in pairs(scores) do
@@ -1741,8 +1740,6 @@ task.spawn(function()
             return best
         end
 
-        local tweenConn = nil
-
         local function moveToEnemy(enemy)
             local char = _0x9a4b7c.Character
             if not char then return end
@@ -1750,9 +1747,9 @@ task.spawn(function()
             if not root then return end
             local target = root.CFrame * CFrame.new(0, 3, 0)
 
-            if Settings_move.TeleportStyle == "Teleport" then
+            if moveSettings.TeleportStyle == "Teleport" then
                 char:PivotTo(target)
-            elseif Settings_move.TeleportStyle == "Tween" then
+            elseif moveSettings.TeleportStyle == "Tween" then
                 if tweenConn then tweenConn:Disconnect() tweenConn = nil end
                 local start = char:GetPivot()
                 local startTime = tick()
@@ -1768,7 +1765,7 @@ task.spawn(function()
         _0x1e5f3d.Heartbeat:Connect(function()
             refreshEnemyCache()
 
-            if not Settings_move.AutoFarm then
+            if not moveSettings.AutoFarm then
                 currentTarget = nil
                 return
             end
@@ -1777,7 +1774,7 @@ task.spawn(function()
                 return
             end
 
-            local newTarget = selectTarget_move()
+            local newTarget = selectTargetMove()
             if newTarget and newTarget ~= currentTarget then
                 currentTarget = newTarget
                 moveToEnemy(currentTarget)
@@ -1790,7 +1787,7 @@ task.spawn(function()
             CurrentOption = {"Teleport"},
             MultipleOptions = false,
             Flag = "TeleportStyle",
-            Callback = function(option) Settings_move.TeleportStyle = option[1] end,
+            Callback = function(option) moveSettings.TeleportStyle = option[1] end,
         })
 
         _0x3e2c7a_tab:CreateDropdown({
@@ -1800,9 +1797,9 @@ task.spawn(function()
             MultipleOptions = true,
             Flag = "TargetPriority",
             Callback = function(options)
-                Settings_move.TargetPriorities = {}
+                moveSettings.TargetPriorities = {}
                 for _, opt in ipairs(options) do
-                    Settings_move.TargetPriorities[opt] = true
+                    moveSettings.TargetPriorities[opt] = true
                 end
             end,
         })
@@ -1811,9 +1808,9 @@ task.spawn(function()
             Name = "Mutation Filter",
             Options = {"Any", "Inverted", "Huge", "Shiny", "Big"},
             CurrentOption = {"Any"},
-            MultipleOptions = true,
+            MultipleOptions = false,
             Flag = "MutationFilter",
-            Callback = function(option) Settings_move.MutationFilter = option[1] end,
+            Callback = function(option) moveSettings.MutationFilter = option[1] end,
         })
 
         _0x3e2c7a_tab:CreateToggle({
@@ -1821,11 +1818,10 @@ task.spawn(function()
             CurrentValue = false,
             Flag = "AutoFarm",
             Callback = function(value)
-                Settings_move.AutoFarm = value
+                moveSettings.AutoFarm = value
                 if not value then currentTarget = nil end
             end,
         })
-        -- ==================== MOVE TO ENEMY (END) ====================
 
         _0x3e2c7a_tab:CreateSection("Combat")
 
@@ -2157,263 +2153,6 @@ task.spawn(function()
                     end
                 else
                     task.wait(0.5)
-                end
-            end
-        end)
-
-        local function _0x2c7f4a(_0x3e2c4a)
-            return _0x3e2c4a.PrimaryPart
-                or _0x3e2c4a:FindFirstChild("HumanoidRootPart")
-                or _0x3e2c4a:FindFirstChild("RootPart")
-                or _0x3e2c4a:FindFirstChildWhichIsA("BasePart")
-        end
-
-        local _0x3a8c2d = false
-        local _0x5d2c4a    = false
-        local _0x4f2c7a   = false
-
-        local _0x8c1a3d = {}
-        local _0x2e4b7a = {}
-        local _0x1a6c4d  = 0
-
-        local function _0x9b4c2e()
-            local _0x1c4d8f = tick()
-            if _0x1c4d8f - _0x1a6c4d < 0.5 then return end
-            _0x1a6c4d = _0x1c4d8f
-
-            local _0x3e2c7a = _0x3e2c8f()
-            if not _0x3e2c7a then return end
-
-            local _0x4d2f8a = _0x3e2c7a:FindFirstChild("Enemies")
-            local _0x2b7c4e = _0x3e2c7a:FindFirstChild("Slimes")
-
-            _0x8c1a3d = {}
-            if _0x4d2f8a then
-                for _, _0x1c4a7e in ipairs(_0x4d2f8a:GetChildren()) do
-                    if _0x1c4a7e:IsA("Model") then
-                        local _0x3e8d2a = _0x2c7f4a(_0x1c4a7e)
-                        if _0x3e8d2a then
-                            table.insert(_0x8c1a3d, {model = _0x1c4a7e, root = _0x3e8d2a})
-                        end
-                    end
-                end
-            end
-
-            _0x2e4b7a = {}
-            if _0x2b7c4e then
-                for _, _0x1b7d2a in ipairs(_0x2b7c4e:GetChildren()) do
-                    if _0x1b7d2a:IsA("Model") then
-                        local _0x2a7e4c = _0x2c7f4a(_0x1b7d2a)
-                        if _0x2a7e4c then
-                            table.insert(_0x2e4b7a, {model = _0x1b7d2a, root = _0x2a7e4c, id = _0x1b7d2a.Name})
-                        end
-                    end
-                end
-            end
-        end
-
-        local _0x1c6f4a = nil
-
-        local function _0x5a8f2c(_0x3e2a6c)
-            if not _0x3e2a6c or not _0x3e2a6c.Parent then return false end
-            local _0x4d8f1a = _0x2c7f4a(_0x3e2a6c)
-            if not _0x4d8f1a then return false end
-            local _0x2e4b7a = _0x3e2a6c:FindFirstChildOfClass("Humanoid")
-            if _0x2e4b7a and _0x2e4b7a.Health <= 0 then return false end
-            return true
-        end
-
-        local function _0x3c4e2a(_0x1b4c7d)
-            local _0xgameplay = _0x3e2c8f()
-            if not _0xgameplay then return nil end
-            local _0x1a4b7c = _0xgameplay:FindFirstChild("Enemies")
-            if not _0x1a4b7c then return nil end
-            local _0x3d6f2a, _0x2c8e4a = nil, math.huge
-            for _, _0x1c7a2e in ipairs(_0x1a4b7c:GetChildren()) do
-                if _0x1c7a2e:IsA("Model") and _0x5a8f2c(_0x1c7a2e) then
-                    local _0x5a3b8c = _0x2c7f4a(_0x1c7a2e)
-                    if _0x5a3b8c then
-                        local _0x1f6c4a = (_0x5a3b8c.Position - _0x1b4c7d).Magnitude
-                        if _0x1f6c4a < _0x2c8e4a then
-                            _0x2c8e4a = _0x1f6c4a
-                            _0x3d6f2a     = _0x1c7a2e
-                        end
-                    end
-                end
-            end
-            return _0x3d6f2a
-        end
-
-        _0x3e2c7a_tab:CreateSection("Floating Enemies")
-
-        _0x3e2c7a_tab:CreateToggle({
-            Name = "Float Enemies Around Player",
-            CurrentValue = false,
-            Flag = "GameFloatEnemies",
-            Callback = function(_0x3c6a2d)
-                _0x5d2c4a = _0x3c6a2d
-            end,
-        })
-
-        _0x3e2c7a_tab:CreateSlider({
-            Name = "Float Radius",
-            Range = {5, 25},
-            Increment = 1,
-            Suffix = "studs",
-            CurrentValue = 12,
-            Flag = "GameFloatRadius",
-            Callback = function(_0x2a7b4c) end,
-        })
-
-        _0x3e2c7a_tab:CreateSlider({
-            Name = "Float Rotation Speed",
-            Range = {0.5, 5},
-            Increment = 0.1,
-            Suffix = "x",
-            CurrentValue = 1,
-            Flag = "GameFloatSpeed",
-            Callback = function(_0x4c2d7e) end,
-        })
-
-        _0x3e2c7a_tab:CreateSlider({
-            Name = "Float Wave Speed",
-            Range = {1, 10},
-            Increment = 0.5,
-            Suffix = "x",
-            CurrentValue = 3,
-            Flag = "GameFloatWaveSpeed",
-            Callback = function(_0x1c5f8a) end,
-        })
-
-        _0x3e2c7a_tab:CreateSlider({
-            Name = "Float Wave Height",
-            Range = {0.5, 5},
-            Increment = 0.5,
-            Suffix = "studs",
-            CurrentValue = 1.5,
-            Flag = "GameFloatWaveHeight",
-            Callback = function(_0x2d7e4a) end,
-        })
-
-        _0x3e2c7a_tab:CreateSection("Attack System")
-
-        _0x3e2c7a_tab:CreateToggle({
-            Name = "Attack Floating Enemies",
-            CurrentValue = false,
-            Flag = "GameAttackEnemies",
-            Callback = function(_0x8c3e2a)
-                _0x4f2c7a = _0x8c3e2a
-            end,
-        })
-
-        _0x3e2c7a_tab:CreateSlider({
-            Name = "Attack Range",
-            Range = {10, 50},
-            Increment = 1,
-            Suffix = "studs",
-            CurrentValue = 25,
-            Flag = "GameAttackRange",
-            Callback = function(_0x4c2e6a) end,
-        })
-
-        _0x3e2c7a_tab:CreateSlider({
-            Name = "Attack Lunge Speed",
-            Range = {5, 30},
-            Increment = 1,
-            Suffix = "x",
-            CurrentValue = 15,
-            Flag = "GameAttackLungeSpeed",
-            Callback = function(_0x3a7c2e) end,
-        })
-
-        local _0x4b2d7e = {}
-
-        local function _0x7c3e2a(_0x1f4c8a, _0x3a8d2c)
-            if not _0x1f4c8a or not _0x1f4c8a.Parent then return end
-            local _0x1c5f8a = _0x1f4c8a.PrimaryPart or _0x1f4c8a:FindFirstChildWhichIsA("BasePart")
-            if _0x1c5f8a and not _0x1c5f8a:IsA("UnionOperation") then
-                _0x1f4c8a:PivotTo(_0x3a8d2c)
-            end
-        end
-
-        _0x1e5f3d.RenderStepped:Connect(function()
-            if not _0x5d2c4a and not _0x4f2c7a then return end
-
-            _0x9b4c2e()
-
-            local _0x1c4f7a = _0x9a4b7c.Character
-            local _0x7c2e4a  = _0x1c4f7a and _0x1c4f7a:FindFirstChild("HumanoidRootPart")
-            if not _0x7c2e4a then return end
-
-            local _0x1a4c7d         = tick()
-            local _0x2a7b4c    = _0x2c5d8f.Flags.GameFloatRadius    and _0x2c5d8f.Flags.GameFloatRadius.CurrentValue    or 12
-            local _0x3c2e7a  = _0x2c5d8f.Flags.GameFloatSpeed     and _0x2c5d8f.Flags.GameFloatSpeed.CurrentValue     or 1
-            local _0x4d7e2a = _0x2c5d8f.Flags.GameFloatWaveSpeed and _0x2c5d8f.Flags.GameFloatWaveSpeed.CurrentValue or 3
-            local _0x5a2c8f= _0x2c5d8f.Flags.GameFloatWaveHeight and _0x2c5d8f.Flags.GameFloatWaveHeight.CurrentValue or 1.5
-
-            if _0x5d2c4a and #_0x8c1a3d > 0 then
-                local _0x1b7c4d = #_0x8c1a3d
-                for _0x1a3c6d, _0x3e7a2c in ipairs(_0x8c1a3d) do
-                    local _0x2c7e4a        = ((_0x1a3c6d / _0x1b7c4d) * math.pi * 2) + (_0x1a4c7d * _0x3c2e7a)
-                    local _0x4d2f8a = math.sin((_0x1a4c7d * _0x4d7e2a) + _0x1a3c6d) * _0x5a2c8f
-
-                    local _0x3f6a2c = _0x7c2e4a.Position + Vector3.new(
-                        math.cos(_0x2c7e4a) * _0x2a7b4c,
-                        _0x4d2f8a + 2,
-                        math.sin(_0x2c7e4a) * _0x2a7b4c
-                    )
-
-                    local _0x2e4c7a = (_0x3f6a2c - _0x7c2e4a.Position).Unit
-                    _0x7c3e2a(_0x3e7a2c.model, CFrame.lookAt(_0x3f6a2c, _0x3f6a2c + _0x2e4c7a))
-                end
-            end
-
-            if _0x4f2c7a and #_0x2e4b7a > 0 and #_0x8c1a3d > 0 then
-                local _0x3c6d2a = _0x2c5d8f.Flags.GameAttackRange     and _0x2c5d8f.Flags.GameAttackRange.CurrentValue     or 25
-                local _0x6b2c4f  = _0x2c5d8f.Flags.GameAttackLungeSpeed and _0x2c5d8f.Flags.GameAttackLungeSpeed.CurrentValue or 15
-
-                local _0x1e4c6a = #_0x2e4b7a
-                for _0x1a3c6d, _0x2e4c7a in ipairs(_0x2e4b7a) do
-                    local _0x1c4d8f   = ((_0x1a3c6d / _0x1e4c6a) * math.pi * 2) + (_0x1a4c7d * _0x3c2e7a)
-                    local _0x7d2c4e = math.sin((_0x1a4c7d * _0x4d7e2a) + _0x1a3c6d) * _0x5a2c8f
-
-                    local _0x3f6a2c = _0x7c2e4a.Position + Vector3.new(
-                        math.cos(_0x1c4d8f) * _0x2a7b4c,
-                        _0x7d2c4e + 2,
-                        math.sin(_0x1c4d8f) * _0x2a7b4c
-                    )
-
-                    local _0x5c2d7a, _0x1c7d3a = nil, _0x3c6d2a
-                    for _, _0x1c4a7e in ipairs(_0x8c1a3d) do
-                        local _0x2a6d4c = (_0x3f6a2c - _0x1c4a7e.root.Position).Magnitude
-                        if _0x2a6d4c < _0x1c7d3a then
-                            _0x1c7d3a  = _0x2a6d4c
-                            _0x5c2d7a = _0x1c4a7e
-                        end
-                    end
-
-                    local _0x7e2a4c  = _0x3f6a2c
-                    local _0x1b6d4a = _0x3f6a2c + (_0x3f6a2c - _0x7c2e4a.Position).Unit
-
-                    if _0x5c2d7a then
-                        if not _0x4b2d7e[_0x2e4c7a.id] then
-                            _0x4b2d7e[_0x2e4c7a.id] = _0x1a4c7d
-                        end
-
-                        local _0x5f2c7a   = _0x1a4c7d - _0x4b2d7e[_0x2e4c7a.id]
-                        local _0x8c3e2a = math.sin(_0x5f2c7a * _0x6b2c4f)
-
-                        if _0x8c3e2a > 0 then
-                            _0x7e2a4c   = _0x3f6a2c:Lerp(_0x5c2d7a.root.Position, _0x8c3e2a * 0.85)
-                            _0x1b6d4a = _0x5c2d7a.root.Position
-                        else
-                            _0x4b2d7e[_0x2e4c7a.id] = _0x1a4c7d
-                        end
-                    else
-                        _0x4b2d7e[_0x2e4c7a.id] = nil
-                    end
-
-                    _0x7c3e2a(_0x2e4c7a.model, CFrame.lookAt(_0x7e2a4c, _0x1b6d4a))
                 end
             end
         end)
