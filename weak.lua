@@ -711,6 +711,7 @@ end)
 
 FarmingTab:CreateSection("Rolling")
 
+local rollTimeValue = RollSlice.rollTime or 3
 FarmingTab:CreateToggle({
     Name = "Auto Fast Roll",
     CurrentValue = false,
@@ -718,10 +719,9 @@ FarmingTab:CreateToggle({
     Callback = function(enabled)
         if enabled then
             task.spawn(function()
-                local rollTime = RollSlice.rollTime or 1
                 while Rayfield.Flags.FarmingFastRoll and Rayfield.Flags.FarmingFastRoll.CurrentValue do
                     RollRemote:InvokeServer("requestRoll")
-                    task.wait(rollTime)
+                    task.wait(rollTimeValue)
                 end
             end)
         end
@@ -772,7 +772,7 @@ FarmingTab:CreateToggle({
         if not v then
             for _, dice in ipairs(diceTypes) do
                 if dicePaused[dice] then
-                    pcall(function() RollNetworker:fetch("requestSetSpecialRollPaused", dice, false) end)
+                    pcall(function() RollNetworker.networker:fetch("requestSetSpecialRollPaused", dice, false) end)
                     dicePaused[dice] = false
                 end
             end
@@ -839,7 +839,7 @@ task.spawn(function()
             local rolls = prog and prog.rollsUntilNext or math.huge
             if rolls <= 1 then
                 if not dicePaused[dice] then
-                    pcall(function() RollNetworker:fetch("requestSetSpecialRollPaused", dice, true) end)
+                    pcall(function() RollNetworker.networker:fetch("requestSetSpecialRollPaused", dice, true) end)
                     dicePaused[dice] = true
                 end
             else
@@ -848,7 +848,7 @@ task.spawn(function()
         end
         if allReady then
             for _, dice in ipairs(toWatch) do
-                pcall(function() RollNetworker:fetch("requestSetSpecialRollPaused", dice, false) end)
+                pcall(function() RollNetworker.networker:fetch("requestSetSpecialRollPaused", dice, false) end)
                 dicePaused[dice] = false
             end
             Rayfield:Notify({
@@ -1344,7 +1344,7 @@ local function runCategory(catId, mode)
         lCategory:Set(string.format("📂 %s (%d left)", catLabel, #missing))
         local before = getUnlocked(catId)
         RollRemote:InvokeServer("requestRoll")
-        task.wait((RollSlice.rollTime or 1) + 0.25)
+        task.wait(rollTimeValue + 0.25)
         local after = getUnlocked(catId)
         local gotOne = false
         for id, value in pairs(after) do
@@ -2564,7 +2564,7 @@ local function updateAll()
     L.rolls2:Set("Session Rolls: "..fmt(sessRolls).."  |  Lifetime: "..fmt(rolls))
     L.coins1:Set("Coins/min: "..fmt(cps*60).."  |  Coins/hr: "..fmt(cps*3600))
     L.coins2:Set("Session Coins: "..fmt(sessCoins).."  |  Total Ever: "..fmt(totCoins))
-    L.goop1:Set("Goop/min: "..fmt(gps*60).."  |  Goop/hr: "..fmt(gps*3600))
+    L.goop1:Set("Goop/min: "..fmt(gps*60).."  |  Coins/hr: "..fmt(gps*3600))
     L.goop2:Set("Session Goop: "..fmt(sessGoop).."  |  Balance: "..fmt(goop))
     L.kills:Set("Session Kills: "..fmt(sessKills).."  |  Lifetime Kills: "..fmt(kills))
     L.best:Set("Best Ever: "..bestName.."  |  Odds: "..bestOdds)
