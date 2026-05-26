@@ -807,11 +807,12 @@ task.spawn(function()
             end,
         })
 
-        -- ==================== DICE STACK (WORKING VERSION) ====================
+        -- ==================== DICE STACK (FIXED) ====================
         _0x8c1d4a:CreateSection("Dice Stack")
 
         local SpecialRollUtils = require(_0x9d2f4a.Features.Roll.SpecialRollUtils)
-        local diceNetworker = _0x2c9e4d.client.new("RollService", {})
+        -- Use the existing RollService remote instead of creating a new networker
+        local rollRemote = _0x7e2a4c
 
         local DICE = {"golden", "diamond", "void", "galaxy"}
         local selectedDice = {golden = true, diamond = true, void = true, galaxy = true}
@@ -827,7 +828,7 @@ task.spawn(function()
                 if not v then
                     for _, dice in ipairs(DICE) do
                         if dicePaused[dice] then
-                            pcall(function() diceNetworker:fetch("requestSetSpecialRollPaused", dice, false) end)
+                            pcall(function() rollRemote:InvokeServer("requestSetSpecialRollPaused", dice, false) end)
                             dicePaused[dice] = false
                         end
                     end
@@ -860,73 +861,99 @@ task.spawn(function()
 
         local diceLuckLabel = _0x8c1d4a:CreateLabel("Total Stacked Luck: x0")
 
+        -- Wait for data service to have specialRollProgression before starting loop
+        local function isDiceDataReady()
+            local prog = _0x7b3f5a:get("specialRollProgression")
+            if not prog then return false end
+            if type(SpecialRollUtils.getLuckMultiplier) ~= "function" then return false end
+            return true
+        end
+
+        -- Spawn the dice stack loop with readiness check and error handling
         task.spawn(function()
+            -- Wait until data is ready
+            while not isDiceDataReady() do
+                task.wait(1)
+            end
+
+            -- Main loop with pcall to catch errors
             while true do
-                task.wait(0.5)
+                local success, err = pcall(function()
+                    task.wait(0.5)
 
-                local upgrades = _0x7b3f5a:get("upgrades") or {}
-                local progression = _0x7b3f5a:get("specialRollProgression") or {}
+                    local upgrades = _0x7b3f5a:get("upgrades") or {}
+                    local progression = _0x7b3f5a:get("specialRollProgression") or {}
 
-                local totalStacked = 0
-                for _, dice in ipairs(DICE) do
-                    local prog = progression[dice]
-                    local rolls = prog and prog.rollsUntilNext or math.huge
-                    if rolls <= 1 then
-                        local mult = 0
-                        pcall(function()
+                    -- Update total stacked luck display
+                    local totalStacked = 0
+                    for _, dice in ipairs(DICE) do
+                        local prog = progression[dice]
+                        local rolls = prog and prog.rollsUntilNext or math.huge
+                        if rolls <= 1 then
+                            local mult = 0
                             mult = SpecialRollUtils.getLuckMultiplier(dice, upgrades) or 0
-                        end)
-                        totalStacked = totalStacked + mult
+                            totalStacked = totalStacked + mult
+                        end
                     end
-                end
 
-                pcall(function()
-                    diceLuckLabel:Set("Total Stacked Luck: x" .. string.format("%.1f", totalStacked))
+                    pcall(function()
+                        diceLuckLabel:Set("Total Stacked Luck: x" .. string.format("%.1f", totalStacked))
+                    end)
+
+                    if not diceStackActive then return end
+
+                    -- Determine which dice to watch
+                    local toWatch = {}
+                    for _, dice in ipairs(DICE) do
+                        if selectedDice[dice] then
+                            local ok = false
+                            ok = SpecialRollUtils.isUnlocked(dice, upgrades)
+                            if ok then
+                                table.insert(toWatch, dice)
+                            end
+                        end
+                    end
+
+                    if #toWatch == 0 then return end
+
+                    -- Check if all selected dice are ready to unleash
+                    local allReady = true
+                    for _, dice in ipairs(toWatch) do
+                        local prog = progression[dice]
+                        local rolls = prog and prog.rollsUntilNext or math.huge
+                        if rolls <= 1 then
+                            if not dicePaused[dice] then
+                                pcall(function() rollRemote:InvokeServer("requestSetSpecialRollPaused", dice, true) end)
+                                dicePaused[dice] = true
+                            end
+                        else
+                            allReady = false
+                        end
+                    end
+
+                    if allReady then
+                        for _, dice in ipairs(toWatch) do
+                            pcall(function() rollRemote:InvokeServer("requestSetSpecialRollPaused", dice, false) end)
+                            dicePaused[dice] = false
+                        end
+                        -- Use Rayfield notification if available, otherwise fallback
+                        if _0x2c5d8f and _0x2c5d8f.Notify then
+                            _0x2c5d8f:Notify({
+                                Title = "Dice Stack",
+                                Content = "All stacked — releasing now.",
+                                Duration = 3,
+                                Image = 4483362458,
+                            })
+                        else
+                            showNotification("Dice Stack", "All stacked — releasing now.", 3)
+                        end
+                        task.wait(2)
+                    end
                 end)
 
-                if not diceStackActive then continue end
-
-                local toWatch = {}
-                for _, dice in ipairs(DICE) do
-                    if selectedDice[dice] then
-                        local ok = false
-                        pcall(function()
-                            ok = SpecialRollUtils.isUnlocked(dice, upgrades)
-                        end)
-                        if ok then
-                            table.insert(toWatch, dice)
-                        end
-                    end
-                end
-
-                if #toWatch == 0 then continue end
-
-                local allReady = true
-                for _, dice in ipairs(toWatch) do
-                    local prog = progression[dice]
-                    local rolls = prog and prog.rollsUntilNext or math.huge
-                    if rolls <= 1 then
-                        if not dicePaused[dice] then
-                            pcall(function() diceNetworker:fetch("requestSetSpecialRollPaused", dice, true) end)
-                            dicePaused[dice] = true
-                        end
-                    else
-                        allReady = false
-                    end
-                end
-
-                if allReady then
-                    for _, dice in ipairs(toWatch) do
-                        pcall(function() diceNetworker:fetch("requestSetSpecialRollPaused", dice, false) end)
-                        dicePaused[dice] = false
-                    end
-                    _0x2c5d8f:Notify({
-                        Title = "Dice Stack",
-                        Content = "All stacked — releasing now.",
-                        Duration = 3,
-                        Image = 4483362458,
-                    })
-                    task.wait(2)
+                if not success then
+                    warn("[Dice Stack] Error: ", err)
+                    task.wait(5) -- avoid spam if persistent error
                 end
             end
         end)
