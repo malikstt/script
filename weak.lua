@@ -89,6 +89,7 @@ task.spawn(function()
         local _0x8d1f4a = require(_0x9d2f4a.Features.Roll.RollSlice)
         local _0x6f3a2c = require(_0x9d2f4a.Game.Items.Slimes)
         local _0x1b7e4d = require(_0x9d2f4a.Features.Mutations.Mutations)
+        local FruitsModule = require(_0x9d2f4a.Game.Items.Fruits)
 
         local _0x4a8d2f = _0x5a8f2b.getKinds()
         local _0x7c2e5a = _0x2c4e7a.getInventoryItemIds()
@@ -899,6 +900,88 @@ task.spawn(function()
         })
         -- ==================== END FEATURE 1 ====================
 
+        -- ==================== FEATURE 2: AUTO FRUITS ====================
+        _0x8c1d4a:CreateSection("Fruits")
+
+        local sortedFruits = FruitsModule.getSortedFruits()
+        local fruitNames = { "Any" }
+        for _, fruit in ipairs(sortedFruits) do
+            table.insert(fruitNames, fruit.name)
+        end
+
+        _0x8c1d4a:CreateDropdown({
+            Name = "Fruits to Feed",
+            Options = fruitNames,
+            CurrentOption = { "Any" },
+            MultipleOptions = true,
+            Flag = "FruitsSelection",
+            Callback = function() end,
+        })
+
+        _0x8c1d4a:CreateDropdown({
+            Name = "Slimes to Feed",
+            Options = { "Best Slime", "Split Across Team" },
+            CurrentOption = { "Best Slime" },
+            MultipleOptions = false,
+            Flag = "FruitsTargetSlime",
+            Callback = function() end,
+        })
+
+        local autoFruitsThread = nil
+        _0x8c1d4a:CreateToggle({
+            Name = "Auto Feed Fruits",
+            CurrentValue = false,
+            Flag = "AutoFruitsToggle",
+            Callback = function(enabled)
+                if autoFruitsThread then task.cancel(autoFruitsThread) end
+                if not enabled then return end
+                autoFruitsThread = task.spawn(function()
+                    while _0x2c5d8f.Flags.AutoFruitsToggle.CurrentValue do
+                        local selectedFruitNames = _0x2c5d8f.Flags.FruitsSelection.CurrentOption or {}
+                        local anyFruit = false
+                        for _, name in ipairs(selectedFruitNames) do
+                            if name == "Any" then anyFruit = true; break end
+                        end
+                        local targetMode = _0x2c5d8f.Flags.FruitsTargetSlime.CurrentOption[1] or "Best Slime"
+                        local inventory = _0x7b3f5a:get("inventory") or {}
+                        local equipped = _0x7b3f5a:get("equipped") or {}
+                        local items = _0x7b3f5a:get("items") or {}
+                        local slimeTargets = {}
+                        if targetMode == "Best Slime" then
+                            local bestUid = _0x2f8c4a()
+                            if bestUid then slimeTargets = { bestUid } end
+                        else
+                            slimeTargets = equipped
+                        end
+                        for _, slimeUid in ipairs(slimeTargets) do
+                            local slimeData = inventory[slimeUid]
+                            if type(slimeData) == "table" then
+                                local unlockedTrees = slimeData.unlockedTrees or {}
+                                for _, fruitDef in ipairs(sortedFruits) do
+                                    local shouldFeed = anyFruit or false
+                                    if not anyFruit then
+                                        for _, fname in ipairs(selectedFruitNames) do
+                                            if fname == fruitDef.name then shouldFeed = true; break end
+                                        end
+                                    end
+                                    if shouldFeed and not unlockedTrees[fruitDef.treeId] then
+                                        local fruitId = fruitDef.id
+                                        local amount = items[fruitId]
+                                        if amount and amount > 0 then
+                                            _0x9c3a2e:InvokeServer("requestUseFruit", fruitId, slimeUid)
+                                            task.wait(0.2)
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                        task.wait(1)
+                    end
+                end)
+            end,
+        })
+        -- ==================== END FEATURE 2 ====================
+
         local _0x3e2c7a_tab = _0x4f2a8c_window:CreateTab("Game", 82493603309814)
 
         _0x3e2c7a_tab:CreateSection("Rebirth")
@@ -1577,263 +1660,7 @@ task.spawn(function()
             end
         end)
 
-        -- ==================== FEATURE 3: MOVE PLAYER ====================
-        _0x3e2c7a_tab:CreateSection("Player")
-
-        local xInput = _0x3e2c7a_tab:CreateInput({
-            Name = "X Coordinate",
-            CurrentValue = "",
-            PlaceholderText = "X",
-            RemoveTextAfterFocusLost = false,
-            Flag = "TeleportX",
-            Callback = function() end,
-        })
-        local yInput = _0x3e2c7a_tab:CreateInput({
-            Name = "Y Coordinate",
-            CurrentValue = "",
-            PlaceholderText = "Y",
-            RemoveTextAfterFocusLost = false,
-            Flag = "TeleportY",
-            Callback = function() end,
-        })
-        local zInput = _0x3e2c7a_tab:CreateInput({
-            Name = "Z Coordinate",
-            CurrentValue = "",
-            PlaceholderText = "Z",
-            RemoveTextAfterFocusLost = false,
-            Flag = "TeleportZ",
-            Callback = function() end,
-        })
-
-        _0x3e2c7a_tab:CreateButton({
-            Name = "Teleport",
-            Callback = function()
-                local x = tonumber(_0x2c5d8f.Flags.TeleportX.CurrentValue)
-                local y = tonumber(_0x2c5d8f.Flags.TeleportY.CurrentValue)
-                local z = tonumber(_0x2c5d8f.Flags.TeleportZ.CurrentValue)
-                if not x or not y or not z then
-                    _0x2c5d8f:Notify({
-                        Title = "Teleport",
-                        Content = "Invalid coordinates. Please enter numbers for X, Y, Z.",
-                        Duration = 3,
-                        Image = 4483362458,
-                    })
-                    return
-                end
-                local character = _0x9a4b7c.Character
-                if not character then
-                    _0x2c5d8f:Notify({
-                        Title = "Teleport",
-                        Content = "Character not found.",
-                        Duration = 3,
-                        Image = 4483362458,
-                    })
-                    return
-                end
-                local hrp = character:FindFirstChild("HumanoidRootPart")
-                if not hrp then
-                    _0x2c5d8f:Notify({
-                        Title = "Teleport",
-                        Content = "HumanoidRootPart not found.",
-                        Duration = 3,
-                        Image = 4483362458,
-                    })
-                    return
-                end
-                local success, err = pcall(function()
-                    hrp.CFrame = CFrame.new(x, y, z)
-                end)
-                if success then
-                    _0x2c5d8f:Notify({
-                        Title = "Teleport",
-                        Content = string.format("Teleported to (%.1f, %.1f, %.1f)", x, y, z),
-                        Duration = 3,
-                        Image = 4483362458,
-                    })
-                else
-                    _0x2c5d8f:Notify({
-                        Title = "Teleport",
-                        Content = "Teleport failed: " .. tostring(err),
-                        Duration = 3,
-                        Image = 4483362458,
-                    })
-                end
-            end,
-        })
-        -- ==================== END FEATURE 3 ====================
-
-        -- ==================== FEATURE 4: AUTO COMPLETE INDEX ====================
-        _0x3e2c7a_tab:CreateSection("Index Completion")
-
-        local indexData = _0x7b3f5a:get("index") or {}
-        local categoriesList = { "All (Recommended)", "Basic", "Shiny", "Big", "Huge", "Inverted" }
-        local categoryCounts = { Basic = 0, Shiny = 0, Big = 0, Huge = 0, Inverted = 0 }
-
-        local function updateCategoryCounts()
-            local cats = indexData.categories or {}
-            for cat in pairs(categoryCounts) do
-                local lower = cat:lower()
-                local catInfo = cats[lower]
-                if catInfo then
-                    local unlocked = catInfo.unlocked or {}
-                    local count = 0
-                    for _, v in pairs(unlocked) do if v == true then count = count + 1 end end
-                    categoryCounts[cat] = count
-                else
-                    categoryCounts[cat] = 0
-                end
-            end
-        end
-        updateCategoryCounts()
-
-        local function getCategoryMissingList(category)
-            local allSlimes = _0x6f3a2c.getSortedSlimes()
-            local cats = indexData.categories or {}
-            local targetCat = nil
-            if category == "Basic" then targetCat = "basic"
-            elseif category == "Shiny" then targetCat = "shiny"
-            elseif category == "Big" then targetCat = "big"
-            elseif category == "Huge" then targetCat = "huge"
-            elseif category == "Inverted" then targetCat = "inverted"
-            end
-            if not targetCat then
-                -- "All (Recommended)" - collect all missing across categories
-                local missingAll = {}
-                for _, slime in ipairs(allSlimes) do
-                    for _, catName in ipairs({"basic","shiny","big","huge","inverted"}) do
-                        local catInfo = cats[catName]
-                        if catInfo then
-                            local unlocked = catInfo.unlocked or {}
-                            if not unlocked[slime.id] then
-                                table.insert(missingAll, {id = slime.id, category = catName, odds = slime.odds})
-                            end
-                        end
-                    end
-                end
-                return missingAll
-            end
-            local catInfo = cats[targetCat]
-            if not catInfo then return {} end
-            local unlocked = catInfo.unlocked or {}
-            local missing = {}
-            for _, slime in ipairs(allSlimes) do
-                if not unlocked[slime.id] then
-                    table.insert(missing, {id = slime.id, category = targetCat, odds = slime.odds})
-                end
-            end
-            return missing
-        end
-
-        local function getRarestMissing(missingList)
-            if #missingList == 0 then return nil end
-            local rarest = missingList[1]
-            for _, m in ipairs(missingList) do
-                if m.odds > rarest.odds then rarest = m end
-            end
-            return rarest
-        end
-
-        local currentTargetLabel = _0x3e2c7a_tab:CreateLabel("Target: None")
-        local targetOddsLabel = _0x3e2c7a_tab:CreateLabel("Odds: N/A")
-        local progressLabel = _0x3e2c7a_tab:CreateLabel("Progress: Calculating...")
-
-        local function updateProgressLabels()
-            updateCategoryCounts()
-            local totalBasic = #_0x6f3a2c.getSortedSlimes()
-            local progressText = string.format("Basic: %d/%d", categoryCounts.Basic, totalBasic)
-            for cat, count in pairs(categoryCounts) do
-                if cat ~= "Basic" then
-                    progressText = progressText .. string.format("  |  %s: %d/%d", cat, count, totalBasic)
-                end
-            end
-            progressLabel:Set(progressText)
-        end
-
-        local selectedCategory = "All (Recommended)"
-        local currentMissingList = getCategoryMissingList(selectedCategory)
-        local currentTarget = getRarestMissing(currentMissingList)
-
-        _0x3e2c7a_tab:CreateDropdown({
-            Name = "Category",
-            Options = categoriesList,
-            CurrentOption = { selectedCategory },
-            MultipleOptions = false,
-            Flag = "IndexCategory",
-            Callback = function(opt)
-                selectedCategory = opt[1]
-                currentMissingList = getCategoryMissingList(selectedCategory)
-                currentTarget = getRarestMissing(currentMissingList)
-                if currentTarget then
-                    currentTargetLabel:Set("Target: " .. currentTarget.id .. " (" .. currentTarget.category .. ")")
-                    local oddsFormatted = currentTarget.odds > 0 and ("1 in " .. _0x6c2f8a(currentTarget.odds)) or "Unknown"
-                    targetOddsLabel:Set("Odds: " .. oddsFormatted)
-                else
-                    currentTargetLabel:Set("Target: None (complete!)")
-                    targetOddsLabel:Set("Odds: N/A")
-                end
-            end,
-        })
-
-        _0x3e2c7a_tab:CreateDropdown({
-            Name = "Strategy",
-            Options = { "Easiest First", "Rarest First" },
-            CurrentOption = { "Rarest First" },
-            MultipleOptions = false,
-            Flag = "IndexStrategy",
-            Callback = function() end,
-        })
-
-        local autoIndexThread = nil
-        _0x3e2c7a_tab:CreateToggle({
-            Name = "Start Auto Complete Index",
-            CurrentValue = false,
-            Flag = "AutoIndexToggle",
-            Callback = function(enabled)
-                if autoIndexThread then task.cancel(autoIndexThread) end
-                if not enabled then return end
-                autoIndexThread = task.spawn(function()
-                    while _0x2c5d8f.Flags.AutoIndexToggle.CurrentValue do
-                        updateProgressLabels()
-                        local strategy = _0x2c5d8f.Flags.IndexStrategy.CurrentOption[1] or "Rarest First"
-                        local missing = getCategoryMissingList(selectedCategory)
-                        if #missing == 0 then
-                            _0x2c5d8f:Notify({
-                                Title = "Index Completion",
-                                Content = "No missing slimes in selected category!",
-                                Duration = 3,
-                                Image = 4483362458,
-                            })
-                            break
-                        end
-                        local target = nil
-                        if strategy == "Easiest First" then
-                            table.sort(missing, function(a,b) return a.odds < b.odds end)
-                            target = missing[1]
-                        else
-                            target = getRarestMissing(missing)
-                        end
-                        if target then
-                            currentTargetLabel:Set("Target: " .. target.id .. " (" .. target.category .. ")")
-                            local oddsFormatted = target.odds > 0 and ("1 in " .. _0x6c2f8a(target.odds)) or "Unknown"
-                            targetOddsLabel:Set("Odds: " .. oddsFormatted)
-                        end
-                        _0x7e2a4c:InvokeServer("requestRoll")
-                        task.wait(_0x8d1f4a.rollTime() + 0.25)
-                        indexData = _0x7b3f5a:get("index") or {}
-                        updateCategoryCounts()
-                        currentMissingList = getCategoryMissingList(selectedCategory)
-                    end
-                end)
-            end,
-        })
-
-        updateProgressLabels()
-        if currentTarget then
-            currentTargetLabel:Set("Target: " .. currentTarget.id .. " (" .. currentTarget.category .. ")")
-            local oddsFormatted = currentTarget.odds > 0 and ("1 in " .. _0x6c2f8a(currentTarget.odds)) or "Unknown"
-            targetOddsLabel:Set("Odds: " .. oddsFormatted)
-        end
-        -- ==================== END FEATURE 4 ====================
+        -- NOTE: Move Player and Index Completion features have been removed.
 
         local _0x4c2e7a_tab = _0x4f2a8c_window:CreateTab("Misc", 96334002390551)
 
