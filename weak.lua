@@ -1984,8 +1984,8 @@ task.spawn(function()
                                     local isNew = isNewIndexEntry(slimeId, mutations)
                                     local shouldSend = sendAll or (sendNew and isNew) or (sendMutated and isMutated and webhookMutationFilter(mutations))
                                     if shouldSend and minChanceNum then
-                                        local slimeDef, ok = pcall(Slimes.getSlime, slimeId)
-                                        if ok then slimeDef = slimeDef else slimeDef = nil end
+                                        local ok, slimeDef = pcall(Slimes.getSlime, slimeId)
+                                        if not ok then slimeDef = nil end
                                         local odds = slimeDef and slimeDef.odds or 0
                                         local chanceValue = odds > 0 and (1 / odds) or 0
                                         if chanceValue > minChanceNum then
@@ -1995,8 +1995,9 @@ task.spawn(function()
                                     if shouldSend then
                                         local userId = Rayfield.Flags.WebhookUserID.CurrentValue
                                         local uniqueId = hash .. "_" .. slimeId .. "_" .. tostring(mutations and Mutations.getIds(mutations) or "")
-                                        local slimeDef, _ = pcall(Slimes.getSlime, slimeId)
-                                        task.spawn(sendWebhook, slimeId, slimeDef, mutations, savedWebhookUrl, userId, uniqueId)
+                                        local ok2, slimeDef2 = pcall(Slimes.getSlime, slimeId)
+                                        if not ok2 then slimeDef2 = nil end
+                                        task.spawn(sendWebhook, slimeId, slimeDef2, mutations, savedWebhookUrl, userId, uniqueId)
                                     end
                                 end
                             end
@@ -2929,10 +2930,3 @@ game:GetService("GuiService").ErrorMessageChanged:Connect(function()
 end)
 
 Rayfield:LoadConfiguration()
-
-Rayfield:Notify({
-    Title = "Cactus Hub",
-    Content = "Loaded – " .. #recipeIdsList .. " unlocked recipes ready.",
-    Duration = 5,
-    Image = 4483362458,
-})
