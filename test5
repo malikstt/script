@@ -25,15 +25,20 @@ local rayfieldLoaded, Rayfield = pcall(function()
 end)
 
 if not rayfieldLoaded or not Rayfield then
+    local stubObject = { Set = function() end }
+    local function stubFunc() return stubObject end
+    local function stubWindow()
+        return setmetatable({}, { __index = function() return stubFunc end })
+    end
     Rayfield = {
-        CreateWindow = function() return {} end,
-        CreateTab = function() return {} end,
-        CreateSection = function() end,
-        CreateToggle = function() end,
-        CreateButton = function() end,
-        CreateSlider = function() end,
-        CreateDropdown = function() end,
-        CreateLabel = function() return {Set = function() end} end,
+        CreateWindow = stubWindow,
+        CreateTab = stubFunc,
+        CreateSection = stubFunc,
+        CreateToggle = stubFunc,
+        CreateButton = stubFunc,
+        CreateSlider = stubFunc,
+        CreateDropdown = stubFunc,
+        CreateLabel = function() return stubObject end,
         Notify = function() end,
         SaveConfiguration = function() end,
         LoadConfiguration = function() end,
@@ -136,7 +141,6 @@ end
 
 local Flags = {
     TreadmillAuto = false,
-    SmartRebirth = false,
     Noclip = false,
     InfiniteJump = false,
     WalkSpeed = 16,
@@ -145,50 +149,51 @@ local Flags = {
     Fly = false,
     AntiAFK = false,
     AutoWalk = false,
-    GoldTreadmill = false,
-    DiamondTreadmill = false,
-    CandyTreadmill = false,
-    AdminTreadmill = false,
-    SpeedBoost = false,
-    WinsBoost = false,
+    GoldToggle = false,
+    DiamondToggle = false,
+    CandyToggle = false,
+    AdminToggle = false,
+    SpeedBoostToggle = false,
+    WinsBoostToggle = false,
 }
 
-local TREADMILL_TYPES = {
-    { label = "🏃 Normal", tag = "Treadmill", remote = "Treadmill", stateKey = nil, priority = 1 },
-    { label = "🥇 Gold", tag = "GoldTreadmill", remote = "GoldTreadmill", stateKey = "GoldTreadmillActive", priority = 2 },
-    { label = "🍬 Candy", tag = "CandyTreadmill", remote = "CandyTreadmill", stateKey = "CandyTreadmillActive", priority = 3 },
-    { label = "⭐ Admin", tag = "AdminTreadmill", remote = "AdminTreadmill", stateKey = "AdminTreadmillActive", priority = 4 },
-    { label = "💎 Diamond", tag = "DiamondTreadmill", remote = "DiamondTreadmill", stateKey = "DiamondTreadmillActive", priority = 5 },
-    { label = "💥 Admin Abuse", tag = "AdminAbuseTreadmill", remote = "AdminAbuseTreadmill", stateKey = nil, priority = 1 },
-}
-
-local FLY_SPEED = 50
-local currentTreadmillThread = nil
-
-local function getBestAvailableTreadmill()
-    local state = safeGetState()
-    local best = TREADMILL_TYPES[1]
-    for _, t in ipairs(TREADMILL_TYPES) do
-        if t.stateKey == nil or state[t.stateKey] then
-            if t.priority > best.priority then
-                best = t
-            end
-        end
-    end
-    return best
-end
-
-local function updateClientState()
+local function updateExploitBoosts()
+    if not ClientState then return end
+    local data = safeGetState()
     local updates = {}
-    if Flags.GoldTreadmill then updates.GoldTreadmillActive = true end
-    if Flags.DiamondTreadmill then updates.DiamondTreadmillActive = true end
-    if Flags.CandyTreadmill then updates.CandyTreadmillActive = true end
-    if Flags.AdminTreadmill then updates.AdminTreadmillActive = true end
-    if Flags.SpeedBoost then updates.SpeedBoostActive = true end
-    if Flags.WinsBoost then updates.WinsBoostActive = true end
-    if next(updates) and ClientState then
+    if Flags.GoldToggle and not data.GoldTreadmillActive then updates.GoldTreadmillActive = true end
+    if Flags.DiamondToggle and not data.DiamondTreadmillActive then updates.DiamondTreadmillActive = true end
+    if Flags.CandyToggle and not data.CandyTreadmillActive then updates.CandyTreadmillActive = true end
+    if Flags.AdminToggle and not data.AdminTreadmillActive then updates.AdminTreadmillActive = true end
+    if Flags.SpeedBoostToggle and not data.SpeedBoostActive then updates.SpeedBoostActive = true end
+    if Flags.WinsBoostToggle and not data.WinsBoostActive then updates.WinsBoostActive = true end
+    if next(updates) then
         pcall(function() ClientState.Update(ClientState, updates) end)
     end
+end
+
+local TREADMILL_TYPES = {
+    { label = "🏃 Normal", tag = "Treadmill", remote = "Treadmill", stateKey = nil },
+    { label = "🥇 Gold", tag = "GoldTreadmill", remote = "GoldTreadmill", stateKey = "GoldTreadmillActive" },
+    { label = "💎 Diamond", tag = "DiamondTreadmill", remote = "DiamondTreadmill", stateKey = "DiamondTreadmillActive" },
+    { label = "🍬 Candy", tag = "CandyTreadmill", remote = "CandyTreadmill", stateKey = "CandyTreadmillActive" },
+    { label = "⭐ Admin", tag = "AdminTreadmill", remote = "AdminTreadmill", stateKey = "AdminTreadmillActive" },
+    { label = "💥 Admin Abuse", tag = "AdminAbuseTreadmill", remote = "AdminAbuseTreadmill", stateKey = nil },
+}
+local selectedTreadmillIdx = 1
+local FLY_SPEED = 50
+
+local function getTreadmillLabels()
+    local out = {}
+    local state = safeGetState()
+    for _, t in ipairs(TREADMILL_TYPES) do
+        if t.stateKey == nil or state[t.stateKey] then
+            table.insert(out, "✅ " .. t.label)
+        else
+            table.insert(out, "🔒 " .. t.label)
+        end
+    end
+    return out
 end
 
 local function getTreadmillPart(tag)
@@ -209,30 +214,6 @@ local function getWinZonePart()
         end
     end
     return nil
-end
-
-local function teleportToTreadmill(treadmill)
-    if not treadmill or not HRP then return end
-    local part = getTreadmillPart(treadmill.tag)
-    if part then
-        HRP.CFrame = CFrame.new(part.Position + Vector3.new(0, 4, 0))
-    end
-end
-
-local function startTreadmillLoop()
-    if currentTreadmillThread then return end
-    currentTreadmillThread = task.spawn(function()
-        local updateSpeed = getRemote("UpdateSpeed")
-        while Flags.TreadmillAuto do
-            local best = getBestAvailableTreadmill()
-            teleportToTreadmill(best)
-            if updateSpeed then
-                pcall(function() updateSpeed:FireServer(best.remote) end)
-            end
-            task.wait(0.15)
-        end
-        currentTreadmillThread = nil
-    end)
 end
 
 local flyBody = { bv = nil, bg = nil }
@@ -313,15 +294,12 @@ local function startAutoWalk()
     if autoWalkActive then return end
     autoWalkActive = true
     task.spawn(function()
-        local keys = {Enum.KeyCode.W, Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.D}
-        local index = 1
         while Flags.AutoWalk do
             pcall(function()
-                VirtualInputManager:SendKeyEvent(true, keys[index], false, game)
-                task.wait(0.3)
-                VirtualInputManager:SendKeyEvent(false, keys[index], false, game)
-                index = index % 4 + 1
-                task.wait(0.1)
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+                task.wait(0.5)
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+                task.wait(0.5)
             end)
         end
         autoWalkActive = false
@@ -432,13 +410,43 @@ TabMain:CreateButton({
 })
 
 safeSection(TabFarming, "🏃 Treadmill")
+local treadmillLabels = getTreadmillLabels()
+TabFarming:CreateDropdown({
+    Name = "🎰 Treadmill Type",
+    Options = treadmillLabels,
+    CurrentOption = treadmillLabels[1],
+    Callback = function(selected)
+        for i, label in ipairs(treadmillLabels) do
+            if label == selected then
+                selectedTreadmillIdx = i
+                break
+            end
+        end
+    end
+})
 TabFarming:CreateToggle({
-    Name = "▶️ Auto Run Best Treadmill",
+    Name = "▶️ Treadmill Auto-Run",
     CurrentValue = false,
     Callback = function(v)
         Flags.TreadmillAuto = v
+        local updateSpeed = getRemote("UpdateSpeed")
         if v then
-            startTreadmillLoop()
+            pcall(function()
+                local t = TREADMILL_TYPES[selectedTreadmillIdx]
+                local part = getTreadmillPart(t.tag)
+                if part and HRP then
+                    HRP.CFrame = CFrame.new(part.Position + Vector3.new(0, 4, 0))
+                end
+            end)
+            task.spawn(function()
+                while Flags.TreadmillAuto do
+                    if updateSpeed then
+                        local t = TREADMILL_TYPES[selectedTreadmillIdx]
+                        pcall(function() updateSpeed:FireServer(t.remote) end)
+                    end
+                    task.wait(0.15)
+                end
+            end)
         end
     end
 })
@@ -454,27 +462,11 @@ TabFarming:CreateToggle({
 })
 
 safeSection(TabFarming, "🔄 Rebirth")
-TabFarming:CreateToggle({
-    Name = "🤖 Auto Rebirth",
-    CurrentValue = false,
-    Callback = function(v)
-        Flags.SmartRebirth = v
-        local remote = getRemote("Rebirth")
-        if v and remote then
-            task.spawn(function()
-                while Flags.SmartRebirth do
-                    pcall(function()
-                        local data = safeGetState()
-                        if (data.Level or 0) >= 100 then
-                            safeFireServer(remote)
-                            Rayfield:Notify({Title="🔄 Rebirthed!", Duration=2})
-                            task.wait(2)
-                        end
-                    end)
-                    task.wait(2)
-                end
-            end)
-        end
+TabFarming:CreateButton({
+    Name = "⚡ Manual Rebirth",
+    Callback = function()
+        safeFireServer(getRemote("Rebirth"))
+        Rayfield:Notify({Title="🔄 Rebirth", Content="Rebirth fired!", Duration=3})
     end
 })
 
@@ -527,7 +519,7 @@ TabFarming:CreateSlider({
     Callback = function(v) FLY_SPEED = v end
 })
 TabFarming:CreateToggle({
-    Name = "🚶 Auto Walk (WASD Loop)",
+    Name = "🚶 Auto Walk",
     CurrentValue = false,
     Callback = function(v)
         Flags.AutoWalk = v
@@ -535,94 +527,53 @@ TabFarming:CreateToggle({
     end
 })
 
-safeSection(TabExploit, "🔓 Unlock Toggles")
+safeSection(TabExploit, "🔓 Unlock Features")
 TabExploit:CreateToggle({
     Name = "🥇 Gold Treadmill",
     CurrentValue = false,
     Callback = function(v)
-        Flags.GoldTreadmill = v
-        updateClientState()
+        Flags.GoldToggle = v
+        updateExploitBoosts()
     end
 })
 TabExploit:CreateToggle({
     Name = "💎 Diamond Treadmill",
     CurrentValue = false,
     Callback = function(v)
-        Flags.DiamondTreadmill = v
-        updateClientState()
+        Flags.DiamondToggle = v
+        updateExploitBoosts()
     end
 })
 TabExploit:CreateToggle({
     Name = "🍬 Candy Treadmill",
     CurrentValue = false,
     Callback = function(v)
-        Flags.CandyTreadmill = v
-        updateClientState()
+        Flags.CandyToggle = v
+        updateExploitBoosts()
     end
 })
 TabExploit:CreateToggle({
     Name = "⭐ Admin Treadmill",
     CurrentValue = false,
     Callback = function(v)
-        Flags.AdminTreadmill = v
-        updateClientState()
+        Flags.AdminToggle = v
+        updateExploitBoosts()
     end
 })
 TabExploit:CreateToggle({
     Name = "🚀 Speed Boost",
     CurrentValue = false,
     Callback = function(v)
-        Flags.SpeedBoost = v
-        updateClientState()
+        Flags.SpeedBoostToggle = v
+        updateExploitBoosts()
     end
 })
 TabExploit:CreateToggle({
     Name = "🏆 Wins Boost",
     CurrentValue = false,
     Callback = function(v)
-        Flags.WinsBoost = v
-        updateClientState()
-    end
-})
-
-safeSection(TabExploit, "👥 Player Teleport")
-local selectedPlayer = nil
-local function refreshPlayerList()
-    local players = {}
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer then
-            table.insert(players, p.Name)
-        end
-    end
-    return players
-end
-local playerDropdown = TabExploit:CreateDropdown({
-    Name = "Select Player",
-    Options = refreshPlayerList(),
-    CurrentOption = "",
-    Callback = function(selected)
-        selectedPlayer = selected
-    end
-})
-TabExploit:CreateButton({
-    Name = "🔄 Refresh List",
-    Callback = function()
-        playerDropdown:SetOptions(refreshPlayerList())
-        Rayfield:Notify({Title="🔄 Refreshed", Duration=2})
-    end
-})
-TabExploit:CreateButton({
-    Name = "🌀 Teleport to Player",
-    Callback = function()
-        if not selectedPlayer then
-            Rayfield:Notify({Title="❌ Error", Content="No player selected", Duration=2})
-            return
-        end
-        local target = Players:FindFirstChild(selectedPlayer)
-        if target and target.Character and target.Character:FindFirstChild("HumanoidRootPart") and HRP then
-            HRP.CFrame = target.Character.HumanoidRootPart.CFrame
-            Rayfield:Notify({Title="🌀 Teleported", Content="To "..selectedPlayer, Duration=2})
-        end
+        Flags.WinsBoostToggle = v
+        updateExploitBoosts()
     end
 })
 
@@ -674,7 +625,6 @@ TabSettings:CreateButton({
     Name = "🔁 Reset All",
     Callback = function()
         Flags.TreadmillAuto = false
-        Flags.SmartRebirth = false
         Flags.Noclip = false
         Flags.InfiniteJump = false
         Flags.WalkSpeed = 16
@@ -683,19 +633,18 @@ TabSettings:CreateButton({
         Flags.Fly = false
         Flags.AntiAFK = false
         Flags.AutoWalk = false
-        Flags.GoldTreadmill = false
-        Flags.DiamondTreadmill = false
-        Flags.CandyTreadmill = false
-        Flags.AdminTreadmill = false
-        Flags.SpeedBoost = false
-        Flags.WinsBoost = false
+        Flags.GoldToggle = false
+        Flags.DiamondToggle = false
+        Flags.CandyToggle = false
+        Flags.AdminToggle = false
+        Flags.SpeedBoostToggle = false
+        Flags.WinsBoostToggle = false
         FLY_SPEED = 50
         if Humanoid then
             Humanoid.WalkSpeed = 16
             Humanoid.JumpPower = 50
         end
         disableFly()
-        updateClientState()
         Rayfield:Notify({Title="🔁 Reset", Content="All settings reset", Duration=2})
     end
 })
