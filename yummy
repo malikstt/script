@@ -19,8 +19,8 @@ local Slimes = require(ReplicatedStorage.Source.Game.Items.Slimes)
 local FruitsModule = require(ReplicatedStorage.Source.Game.Items.Fruits)
 local SpecialRollUtils = require(ReplicatedStorage.Source.Features.Roll.SpecialRollUtils)
 
-local networkerRoll = Networker.client.new("RollService")
-local networkerInventory = Networker.client.new("InventoryService")
+local networkerRoll = Networker.client.new("RollService", {})
+local networkerInventory = Networker.client.new("InventoryService", {})
 
 local CATEGORY_IDS = {"basic", "shiny", "big", "huge", "inverted"}
 local MUTATION_ODDS = {
@@ -203,7 +203,7 @@ local function runCategory(catId, mode, labels)
         end
 
         local before = getUnlocked(catId)
-        pcall(function() networkerRoll:fetch("requestRoll") end)
+        networkerRoll:fetch("requestRoll")
         task.wait(RollSlice.rollTime() + 0.25)
         local after = getUnlocked(catId)
 
@@ -509,9 +509,7 @@ local function doFeed()
         local slimeData = entry.data
         for _, fruitId in ipairs(fruitsToFeed) do
             if not slimeHasFruit(slimeData, fruitId) then
-                pcall(function()
-                    networkerInventory:fetch("requestUseFruit", fruitId, slimeKey)
-                end)
+                networkerInventory:fetch("requestUseFruit", fruitId, slimeKey)
             end
         end
     end
@@ -727,7 +725,7 @@ DiceTab:CreateToggle({
         if not v then
             for _, dice in ipairs(DICE) do
                 if paused[dice] then
-                    pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
+                    networkerRoll:fetch("requestSetSpecialRollPaused", dice, false)
                     paused[dice] = false
                 end
             end
@@ -771,24 +769,20 @@ task.spawn(function()
             local prog = progression[dice]
             local rolls = prog and prog.rollsUntilNext or math.huge
             if rolls <= 1 then
-                pcall(function()
-                    totalStacked += (SpecialRollUtils.getLuckMultiplier(dice, upgrades) or 0)
-                end)
+                local ok, mult = pcall(SpecialRollUtils.getLuckMultiplier, dice, upgrades)
+                if ok then totalStacked += (mult or 0) end
             end
         end
 
-        pcall(function()
-            DiceLuckLabel:Set("Total Stacked: x" .. string.format("%.1f", totalStacked))
-        end)
+        DiceLuckLabel:Set("Total Stacked: x" .. string.format("%.1f", totalStacked))
 
         if not stackActive then continue end
 
         local toWatch = {}
         for _, dice in ipairs(DICE) do
             if selectedDice[dice] then
-                local ok = false
-                pcall(function() ok = SpecialRollUtils.isUnlocked(dice, upgrades) end)
-                if ok then table.insert(toWatch, dice) end
+                local ok, unlocked = pcall(SpecialRollUtils.isUnlocked, dice, upgrades)
+                if ok and unlocked then table.insert(toWatch, dice) end
             end
         end
         if #toWatch == 0 then continue end
@@ -799,7 +793,7 @@ task.spawn(function()
             local rolls = prog and prog.rollsUntilNext or math.huge
             if rolls <= 1 then
                 if not paused[dice] then
-                    pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, true) end)
+                    networkerRoll:fetch("requestSetSpecialRollPaused", dice, true)
                     paused[dice] = true
                 end
             else
@@ -809,7 +803,7 @@ task.spawn(function()
 
         if allReady then
             for _, dice in ipairs(toWatch) do
-                pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
+                networkerRoll:fetch("requestSetSpecialRollPaused", dice, false)
                 paused[dice] = false
             end
             Rayfield:Notify({
@@ -835,7 +829,7 @@ FruitTab:CreateToggle({
         if autoFeedEnabled then
             if feedConnection then feedConnection:Disconnect() end
             feedConnection = RunService.Heartbeat:Connect(function()
-                if autoFeedEnabled then pcall(doFeed) end
+                if autoFeedEnabled then doFeed() end
             end)
         else
             if feedConnection then
