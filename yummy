@@ -2832,6 +2832,8 @@ local DICE_EX = {"golden", "diamond", "void", "galaxy"}
 local Slimes_EX           = _0x6f3a2c
 local FruitsModule_EX     = require(game:GetService("ReplicatedStorage").Source.Game.Items.Fruits)
 local SpecialRollUtils_EX = require(game:GetService("ReplicatedStorage").Source.Features.Roll.SpecialRollUtils)
+local RollSlice_EX        = require(game:GetService("ReplicatedStorage").Source.Features.Roll.RollSlice)
+
 local ALL_FRUITS_EX = FruitsModule_EX.getSortedFruits()
 
 local indexRunning_EX     = false
@@ -2847,69 +2849,61 @@ local enemySettings_EX = {
     AutoFarm         = false,
     MutationFilter   = "Any",
 }
-local RANGE_EX          = 50
+local RANGE_EX           = 50
 local cachedContainer_EX = nil
 local cachedEnemies_EX   = {}
 local lastCacheTime_EX   = 0
 local currentTarget_EX   = nil
 local tweenConn_EX       = nil
 
-local selectedDice_EX = {golden=true, diamond=true, void=true, galaxy=true}
-local stackActive_EX  = false
-local pausedDice_EX   = {golden=false, diamond=false, void=false, galaxy=false}
+local selectedDice_EX  = {golden=true, diamond=true, void=true, galaxy=true}
+local stackActive_EX   = false
+local pausedDice_EX    = {golden=false, diamond=false, void=false, galaxy=false}
 
 local autoFeedEnabled_EX  = false
 local selectedFruitIds_EX = {"ANY"}
-local selectedSlimeMode_EX= "Best"
+local selectedSlimeMode_EX = "Best"
 local feedConnection_EX   = nil
 
--- Networkers (new, no conflict)
 local networkerRoll_EX = _0x2c9e4d.client.new("RollService", {
     rareRollAnnouncement   = function() end,
     rareRollAnnouncementV2 = function() end,
 })
 local networkerInventory_EX = _0x2c9e4d.client.new("InventoryService", {})
 
--- Settings (reuse existing SettingsServiceClient pattern)
-local SettingsState_EX         = require(game:GetService("ReplicatedStorage").Source.Features.Settings.SettingsState)
-local SettingsServiceClient_EX = require(game:GetService("ReplicatedStorage").Source.Features.Settings.SettingsServiceClient)
-local SettingsState_EX = require(game:GetService("ReplicatedStorage").Source.Features.Settings.SettingsState)
+-- Reuse the SettingsServiceClient already initialized in main script
+local luckValueLocal_EX = 1
 
-local settingsClient_EX = {}
-settingsClient_EX.networker = _0x2c9e4d.client.new("SettingsService", settingsClient_EX)
-SettingsServiceClient_EX.init(settingsClient_EX)
-
-local function getLive_EX(key)
-    local ok, val = pcall(function() return SettingsState_EX.get(key) end)
-    if not ok then return nil end
-    if type(val) == "function" then return val() end
-    return val
-end
-
-repeat task.wait() until getLive_EX("luckOverrideEnabled") ~= nil
-
-local RollSlice_EX = require(game:GetService("ReplicatedStorage").Source.Features.Roll.RollSlice)
-
--- Luck helpers
 local function setLuck_EX(value)
-    SettingsServiceClient_EX.set(settingsClient_EX, "luckOverrideValue", math.min(value, 16384))
-    luckValueLocal_EX = math.min(value, 16384)
+    local clamped = math.min(value, 16384)
+    _0x7b3f5a:set("settings.luckOverrideValue", clamped)
+    pcall(function()
+        _0x2c9e4d.client.new("SettingsService", {}):fire("set", "luckOverrideValue", clamped)
+    end)
+    luckValueLocal_EX = clamped
     task.wait(0.3)
 end
+
 local function setLuckEnabled_EX(enabled)
-    SettingsServiceClient_EX.set(settingsClient_EX, "luckOverrideEnabled", enabled)
+    _0x7b3f5a:set("settings.luckOverrideEnabled", enabled)
+    pcall(function()
+        _0x2c9e4d.client.new("SettingsService", {}):fire("set", "luckOverrideEnabled", enabled)
+    end)
     task.wait(0.3)
 end
+
 local function calcOptimalLuck_EX(effectiveOdds)
     if not effectiveOdds or effectiveOdds <= 0 then return 16384 end
     return math.min(math.max(1, math.floor((1/effectiveOdds)*0.63)), 16384)
 end
+
 local function applyLuckSettings_EX()
     setLuck_EX(1)
     task.wait(0.3)
     setLuckEnabled_EX(true)
     task.wait(0.3)
 end
+
 local function applyLuckForTarget_EX(effectiveOdds)
     setLuck_EX(calcOptimalLuck_EX(effectiveOdds))
 end
@@ -3025,7 +3019,6 @@ local function runCategory_EX(catId, mode, labels)
     return false
 end
 
--- Enemy helpers
 local function getGameplayContainer_EX()
     if cachedContainer_EX and cachedContainer_EX.Parent then return cachedContainer_EX end
     for _, child in ipairs(workspace:GetChildren()) do
@@ -3092,8 +3085,8 @@ local function computeScores_EX()
         if not root then continue end
         local dist = (root.Position - rp.Position).Magnitude
         if dist > RANGE_EX then continue end
-        local coins  = enemy:GetAttribute("reward") or enemy:GetAttribute("coins") or 0
-        local goop   = enemy:GetAttribute("goop") or 0
+        local coins = enemy:GetAttribute("reward") or enemy:GetAttribute("coins") or 0
+        local goop  = enemy:GetAttribute("goop") or 0
         table.insert(entries, {enemy=enemy, root=root, coins=coins, goop=goop, dist=dist})
     end
     if #entries == 0 then return {} end
@@ -3146,7 +3139,6 @@ local function moveToEnemy_EX(enemy)
     end
 end
 
--- Fruit helpers
 local function getOwnedFruitIds_EX()
     local items = _0x7b3f5a:get("items") or {}
     local owned = {}
@@ -3166,8 +3158,8 @@ local function slimeHasFruit_EX(slimeData, fruitId)
 end
 
 local function getBestSlimeEntry_EX()
-    local stats   = _0x7b3f5a:get("stats") or {}
-    local rarest  = stats.rarestRoll
+    local stats  = _0x7b3f5a:get("stats") or {}
+    local rarest = stats.rarestRoll
     if not rarest or not rarest.slimeData then return nil, nil end
     local rarestId  = rarest.slimeData.id
     local rarestMut = rarest.slimeData.mutations or {}
