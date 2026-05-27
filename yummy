@@ -532,72 +532,195 @@ local Window = Rayfield:CreateWindow({
     KeySystem = false,
 })
 
-local FarmingTab = Window:CreateTab("🌾 Farming", 4483362458)
+local IndexTab = Window:CreateTab("📖 Index", 4483362458)
+local indexLabels = {}
 
-FarmingTab:CreateSection("Auto Feed Fruits")
+IndexTab:CreateSection("Controls")
 
-FarmingTab:CreateToggle({
-    Name = "Auto Feed Fruits to Slime(s)",
+IndexTab:CreateToggle({
+    Name = "Start Auto Complete",
     CurrentValue = false,
-    Flag = "AutoFeedToggle",
+    Flag = "IndexAutoComplete",
     Callback = function(value)
-        autoFeedEnabled = value
-        if autoFeedEnabled then
-            if feedConnection then feedConnection:Disconnect() end
-            feedConnection = RunService.Heartbeat:Connect(function()
-                if autoFeedEnabled then doFeed() end
+        if value then
+            indexRunning = true
+            indexThread = task.spawn(function()
+                applyLuckSettings()
+
+                luckPollThread = task.spawn(function()
+                    while indexRunning do
+                        if indexLabels.lLuck then
+                            indexLabels.lLuck:Set("🍀 Luck Override: x" .. tostring(luckValueLocal))
+                        end
+                        task.wait(1)
+                    end
+                end)
+
+                local modeFlag = Rayfield.Flags.IndexRollMode
+                local mode = modeFlag and (type(modeFlag.CurrentOption) == "table" and modeFlag.CurrentOption[1] or modeFlag.CurrentOption) or "🌱 Easiest First"
+
+                if selectedCategoryOption == nil or selectedCategoryOption == "🎲 All (Recommended)" then
+                    while indexRunning do
+                        local sorted = getSortedCategoriesByPriority()
+                        if #sorted == 0 then
+                            if indexLabels.lCategory then indexLabels.lCategory:Set("📂 ✅ All Complete!") end
+                            if indexLabels.lTarget   then indexLabels.lTarget:Set("🎯 Target: —") end
+                            if indexLabels.lOdds     then indexLabels.lOdds:Set("🎲 Odds: —") end
+                            indexRunning = false
+                            break
+                        end
+                        local completed = runCategory(sorted[1].id, mode, indexLabels)
+                        if not completed then break end
+                    end
+                else
+                    local catId = getCatIdFromOption(selectedCategoryOption)
+                    if catId then
+                        runCategory(catId, mode, indexLabels)
+                        if indexRunning then
+                            if indexLabels.lCategory then indexLabels.lCategory:Set("📂 ✅ Complete!") end
+                            if indexLabels.lTarget   then indexLabels.lTarget:Set("🎯 Target: —") end
+                            if indexLabels.lOdds     then indexLabels.lOdds:Set("🎲 Odds: —") end
+                        end
+                    end
+                    indexRunning = false
+                end
+
+                if luckPollThread then task.cancel(luckPollThread) end
+                setLuckEnabled(false)
             end)
         else
-            if feedConnection then
-                feedConnection:Disconnect()
-                feedConnection = nil
-            end
+            indexRunning = false
+            if indexThread    then task.cancel(indexThread) end
+            if luckPollThread then task.cancel(luckPollThread) end
+            setLuckEnabled(false)
+            if indexLabels.lTarget   then indexLabels.lTarget:Set("🎯 Target: —") end
+            if indexLabels.lOdds     then indexLabels.lOdds:Set("🎲 Odds: —") end
+            if indexLabels.lLuck     then indexLabels.lLuck:Set("🍀 Luck: —") end
+            if indexLabels.lCategory then indexLabels.lCategory:Set("📂 Category: —") end
         end
     end,
 })
 
-FarmingTab:CreateDropdown({
-    Name = "Slimes to Feed",
-    Options = {"Best", "Split Across Team"},
-    CurrentOption = {"Best"},
+IndexTab:CreateSection("Settings")
+
+local categoryOptions = {"🎲 All (Recommended)"}
+for _, catId in ipairs(CATEGORY_IDS) do
+    local missing = getMissingSlimes(catId)
+    local label = catId:sub(1,1):upper() .. catId:sub(2)
+    if #missing == 0 then
+        table.insert(categoryOptions, "✅ " .. label .. " (Complete)")
+    else
+        local effOdds = getEffectiveOdds(missing[1], catId)
+        table.insert(categoryOptions, string.format("%s (%d left | %s)", label, #missing, formatOdds(effOdds)))
+    end
+end
+selectedCategoryOption = categoryOptions[1]
+
+IndexTab:CreateDropdown({
+    Name = "Category",
+    Options = categoryOptions,
+    CurrentOption = { categoryOptions[1] },
     MultipleOptions = false,
-    Flag = "SlimeModeDropdown",
+    Flag = "IndexCategory",
     Callback = function(option)
-        selectedSlimeMode = type(option) == "table" and option[1] or option
+        selectedCategoryOption = type(option) == "table" and option[1] or option
     end,
 })
 
-local fruitOptions = {"Any"}
-local labelToId = {}
-for _, f in ipairs(ALL_FRUITS) do
-    table.insert(fruitOptions, f.powerName)
-    labelToId[f.powerName] = f.id
+IndexTab:CreateDropdown({
+    Name = "Roll Mode",
+    Options = { "🌱 Easiest First", "🎯 Rarest First" },
+    CurrentOption = { "🌱 Easiest First" },
+    MultipleOptions = false,
+    Flag = "IndexRollMode",
+    Callback = function() end,
+})
+
+IndexTab:CreateSection("Status")
+
+indexLabels.lTarget   = IndexTab:CreateLabel("🎯 Target: —")
+indexLabels.lOdds     = IndexTab:CreateLabel("🎲 Odds: —")
+indexLabels.lLuck     = IndexTab:CreateLabel("🍀 Luck: —")
+indexLabels.lCategory = IndexTab:CreateLabel("📂 Category: —")
+
+IndexTab:CreateSection("Index Progress")
+
+local total = getTotalSlimes()
+for _, catId in ipairs(CATEGORY_IDS) do
+    local label = catId:sub(1,1):upper() .. catId:sub(2)
+    local count = getUnlockedCount(catId)
+    progressLabels[catId] = IndexTab:CreateLabel(string.format("📊 %s: %d / %d", label, count, total))
 end
 
-FarmingTab:CreateDropdown({
-    Name = "Fruits to Feed",
-    Options = fruitOptions,
-    CurrentOption = {"Any"},
+local FarmTab = Window:CreateTab("⚔️ Auto Farm", 4483362458)
+
+FarmTab:CreateSection("Movement")
+
+FarmTab:CreateDropdown({
+    Name = "Teleport Style",
+    Options = {"Teleport", "Tween"},
+    CurrentOption = {"Teleport"},
+    MultipleOptions = false,
+    Flag = "TeleportStyle",
+    Callback = function(option) enemySettings.TeleportStyle = option[1] end,
+})
+
+FarmTab:CreateSection("Targeting")
+
+FarmTab:CreateDropdown({
+    Name = "Target Priority",
+    Options = {"Most Coins & Goop", "Closest", "Lowest HP", "Mutations Only"},
+    CurrentOption = {"Most Coins & Goop"},
     MultipleOptions = true,
-    Flag = "FruitDropdown",
+    Flag = "TargetPriority",
     Callback = function(options)
-        local picked = type(options) == "table" and options or {options}
-        selectedFruitIds = {}
-        for _, label in ipairs(picked) do
-            if label == "Any" then
-                selectedFruitIds = {"ANY"}
-                return
-            else
-                table.insert(selectedFruitIds, labelToId[label])
-            end
+        enemySettings.TargetPriorities = {}
+        for _, opt in ipairs(options) do
+            enemySettings.TargetPriorities[opt] = true
         end
-        if #selectedFruitIds == 0 then selectedFruitIds = {"ANY"} end
     end,
 })
 
-FarmingTab:CreateSection("Stack Dice")
+FarmTab:CreateDropdown({
+    Name = "Mutation Filter",
+    Options = {"Any", "Inverted", "Huge", "Shiny", "Big"},
+    CurrentOption = {"Any"},
+    MultipleOptions = false,
+    Flag = "MutationFilter",
+    Callback = function(option) enemySettings.MutationFilter = option[1] end,
+})
 
-FarmingTab:CreateToggle({
+FarmTab:CreateSection("Controls")
+
+FarmTab:CreateToggle({
+    Name = "Auto Farm",
+    CurrentValue = false,
+    Flag = "AutoFarm",
+    Callback = function(value)
+        enemySettings.AutoFarm = value
+        if not value then currentTarget = nil end
+    end,
+})
+
+RunService.Heartbeat:Connect(function()
+    refreshEnemyCache()
+    if not enemySettings.AutoFarm then
+        currentTarget = nil
+        return
+    end
+    if currentTarget and isAlive(currentTarget) and currentTarget.Parent then return end
+    local newTarget = selectTarget()
+    if newTarget and newTarget ~= currentTarget then
+        currentTarget = newTarget
+        moveToEnemy(currentTarget)
+    end
+end)
+
+local DiceTab = Window:CreateTab("🎲 Stack Dice", 4483362458)
+
+DiceTab:CreateSection("Auto Stack")
+
+DiceTab:CreateToggle({
     Name = "Auto Stack Dice",
     CurrentValue = false,
     Flag = "autostack",
@@ -614,7 +737,9 @@ FarmingTab:CreateToggle({
     end,
 })
 
-FarmingTab:CreateDropdown({
+DiceTab:CreateSection("Dice to Stack")
+
+DiceTab:CreateDropdown({
     Name = "Select Dice",
     Options = {"All", "Golden", "Diamond", "Void", "Galaxy"},
     CurrentOption = {"All"},
@@ -633,7 +758,9 @@ FarmingTab:CreateDropdown({
     end,
 })
 
-local DiceLuckLabel = FarmingTab:CreateLabel("Total Stacked: x0")
+DiceTab:CreateSection("Total Stacked Luck")
+
+local DiceLuckLabel = DiceTab:CreateLabel("Total Stacked: x0")
 
 task.spawn(function()
     while true do
@@ -693,30 +820,83 @@ task.spawn(function()
     end
 end)
 
-local GameTab = Window:CreateTab("🎮 Game", 4483362458)
+local FruitTab = Window:CreateTab("🍎 Auto Feed", 4483362458)
 
-local indexLabels = {}
+FruitTab:CreateSection("Fruit Settings")
 
-GameTab:CreateSection("Index Auto Complete")
-
-GameTab:CreateToggle({
-    Name = "Start Auto Complete",
+FruitTab:CreateToggle({
+    Name = "Auto Feed Fruits to Slime(s)",
     CurrentValue = false,
-    Flag = "IndexAutoComplete",
+    Flag = "AutoFeedToggle",
     Callback = function(value)
-        if value then
-            indexRunning = true
-            indexThread = task.spawn(function()
-                applyLuckSettings()
+        autoFeedEnabled = value
+        if autoFeedEnabled then
+            if feedConnection then feedConnection:Disconnect() end
+            feedConnection = RunService.Heartbeat:Connect(function()
+                if autoFeedEnabled then doFeed() end
+            end)
+        else
+            if feedConnection then
+                feedConnection:Disconnect()
+                feedConnection = nil
+            end
+        end
+    end,
+})
 
-                luckPollThread = task.spawn(function()
-                    while indexRunning do
-                        if indexLabels.lLuck then
-                            indexLabels.lLuck:Set("🍀 Luck Override: x" .. tostring(luckValueLocal))
-                        end
-                        task.wait(1)
-                    end
-                end)
+FruitTab:CreateDropdown({
+    Name = "Slimes to Feed",
+    Options = {"Best", "Split Across Team"},
+    CurrentOption = {"Best"},
+    MultipleOptions = false,
+    Flag = "SlimeModeDropdown",
+    Callback = function(option)
+        selectedSlimeMode = type(option) == "table" and option[1] or option
+    end,
+})
 
-                local modeFlag = Rayfield.Flags.IndexRollMode
-                local mode = modeFlag and
+local fruitOptions = {"Any"}
+local labelToId = {}
+for _, f in ipairs(ALL_FRUITS) do
+    table.insert(fruitOptions, f.powerName)
+    labelToId[f.powerName] = f.id
+end
+
+FruitTab:CreateDropdown({
+    Name = "Fruits to Feed",
+    Options = fruitOptions,
+    CurrentOption = {"Any"},
+    MultipleOptions = true,
+    Flag = "FruitDropdown",
+    Callback = function(options)
+        local picked = type(options) == "table" and options or {options}
+        selectedFruitIds = {}
+        for _, label in ipairs(picked) do
+            if label == "Any" then
+                selectedFruitIds = {"ANY"}
+                return
+            else
+                table.insert(selectedFruitIds, labelToId[label])
+            end
+        end
+        if #selectedFruitIds == 0 then selectedFruitIds = {"ANY"} end
+    end,
+})
+
+task.spawn(function()
+    while true do
+        task.wait(2)
+        if progressLabels then
+            local totalSlimes = getTotalSlimes()
+            for _, catId in ipairs(CATEGORY_IDS) do
+                if progressLabels[catId] then
+                    local label = catId:sub(1,1):upper() .. catId:sub(2)
+                    local count = getUnlockedCount(catId)
+                    progressLabels[catId]:Set(string.format("📊 %s: %d / %d", label, count, totalSlimes))
+                end
+            end
+        end
+    end
+end)
+
+print("Cactus Hub loaded successfully!")
