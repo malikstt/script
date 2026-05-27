@@ -2815,3 +2815,767 @@ task.spawn(function()
         _0x2c5d8f:LoadConfiguration()
     end)
 end)
+-- ================================================
+-- ADDENDUM: Index, Auto Farm, Stack Dice, Auto Feed
+-- ================================================
+
+local CATEGORY_IDS_EX = {"basic", "shiny", "big", "huge", "inverted"}
+local MUTATION_ODDS_EX = {
+    basic    = nil,
+    shiny    = 0.004,
+    big      = 0.01,
+    huge     = 0.001,
+    inverted = 0.0004,
+}
+local DICE_EX = {"golden", "diamond", "void", "galaxy"}
+
+local Slimes_EX       = _0x6f3a2c
+local FruitsModule_EX = require(_0x3f7a2b.Source.Game.Items.Fruits)
+local SpecialRollUtils_EX = _0x2c4e7a  -- already required as SpecialDiceServiceUtils
+
+local ALL_FRUITS_EX = FruitsModule_EX.getSortedFruits()
+
+local indexRunning_EX     = false
+local indexThread_EX      = nil
+local luckPollThread_EX   = nil
+local selectedCategoryOpt = nil
+local progressLabels_EX   = {}
+local luckValueLocal_EX   = 1
+
+local enemySettings_EX = {
+    TeleportStyle    = "Teleport",
+    TargetPriorities = { ["Most Coins & Goop"] = true },
+    AutoFarm         = false,
+    MutationFilter   = "Any",
+}
+local RANGE_EX          = 50
+local cachedContainer_EX = nil
+local cachedEnemies_EX   = {}
+local lastCacheTime_EX   = 0
+local currentTarget_EX   = nil
+local tweenConn_EX       = nil
+
+local selectedDice_EX = {golden=true, diamond=true, void=true, galaxy=true}
+local stackActive_EX  = false
+local pausedDice_EX   = {golden=false, diamond=false, void=false, galaxy=false}
+
+local autoFeedEnabled_EX  = false
+local selectedFruitIds_EX = {"ANY"}
+local selectedSlimeMode_EX= "Best"
+local feedConnection_EX   = nil
+
+-- Networkers (new, no conflict)
+local networkerRoll_EX = _0x2c9e4d.client.new("RollService", {
+    rareRollAnnouncement   = function() end,
+    rareRollAnnouncementV2 = function() end,
+})
+local networkerInventory_EX = _0x2c9e4d.client.new("InventoryService", {})
+
+-- Settings (reuse existing SettingsServiceClient pattern)
+local SettingsState_EX         = require(_0x3f7a2b.Source.Features.Settings.SettingsState)
+local SettingsServiceClient_EX = require(_0x3f7a2b.Source.Features.Settings.SettingsServiceClient)
+SettingsState_EX.init()
+local settingsClient_EX = {}
+settingsClient_EX.networker = _0x2c9e4d.client.new("SettingsService", settingsClient_EX)
+SettingsServiceClient_EX.init(settingsClient_EX)
+
+local function getLive_EX(key)
+    local v = SettingsState_EX.get(key)
+    if type(v) == "function" then return v() end
+    return v
+end
+repeat task.wait() until getLive_EX("luckOverrideEnabled") ~= nil
+
+local RollSlice_EX = require(_0x3f7a2b.Source.Features.Roll.RollSlice)
+
+-- Luck helpers
+local function setLuck_EX(value)
+    SettingsServiceClient_EX.set(settingsClient_EX, "luckOverrideValue", math.min(value, 16384))
+    luckValueLocal_EX = math.min(value, 16384)
+    task.wait(0.3)
+end
+local function setLuckEnabled_EX(enabled)
+    SettingsServiceClient_EX.set(settingsClient_EX, "luckOverrideEnabled", enabled)
+    task.wait(0.3)
+end
+local function calcOptimalLuck_EX(effectiveOdds)
+    if not effectiveOdds or effectiveOdds <= 0 then return 16384 end
+    return math.min(math.max(1, math.floor((1/effectiveOdds)*0.63)), 16384)
+end
+local function applyLuckSettings_EX()
+    setLuck_EX(1)
+    task.wait(0.3)
+    setLuckEnabled_EX(true)
+    task.wait(0.3)
+end
+local function applyLuckForTarget_EX(effectiveOdds)
+    setLuck_EX(calcOptimalLuck_EX(effectiveOdds))
+end
+
+local function formatOdds_EX(odds)
+    if not odds or odds <= 0 then return "N/A" end
+    local n = math.floor(1/odds+0.5)
+    if n >= 1e9 then return string.format("1 in %.1fB", n/1e9)
+    elseif n >= 1e6 then return string.format("1 in %.1fM", n/1e6)
+    elseif n >= 1e3 then return string.format("1 in %.1fK", n/1e3) end
+    return "1 in "..n
+end
+
+local function getEffectiveOdds_EX(slime, catId)
+    local m = MUTATION_ODDS_EX[catId]
+    if m then return slime.rollOdds * m end
+    return slime.rollOdds
+end
+
+local function getUnlocked_EX(catId)
+    local data = _0x7b3f5a:get("index") or {}
+    return ((data.categories or {})[catId] or {}).unlocked or {}
+end
+
+local function getTotalSlimes_EX()
+    return #Slimes_EX.getSortedSlimes()
+end
+
+local function getUnlockedCount_EX(catId)
+    local count = 0
+    for _, v in pairs(getUnlocked_EX(catId)) do
+        if v == true then count += 1 end
+    end
+    return count
+end
+
+local function getMissingSlimes_EX(catId)
+    local unlocked = getUnlocked_EX(catId)
+    local missing = {}
+    for _, slime in ipairs(Slimes_EX.getSortedSlimes()) do
+        if not unlocked[slime.id] then
+            table.insert(missing, slime)
+        end
+    end
+    table.sort(missing, function(a,b)
+        return getEffectiveOdds_EX(a,catId) > getEffectiveOdds_EX(b,catId)
+    end)
+    return missing
+end
+
+local function getSortedCatsByPriority_EX()
+    local cats = {}
+    for _, catId in ipairs(CATEGORY_IDS_EX) do
+        local missing = getMissingSlimes_EX(catId)
+        if #missing > 0 then
+            table.insert(cats, {
+                id = catId,
+                easiestEffectiveOdds = getEffectiveOdds_EX(missing[1], catId),
+            })
+        end
+    end
+    table.sort(cats, function(a,b) return a.easiestEffectiveOdds > b.easiestEffectiveOdds end)
+    return cats
+end
+
+local function getCatIdFromOption_EX(option)
+    for _, catId in ipairs(CATEGORY_IDS_EX) do
+        local label = catId:sub(1,1):upper()..catId:sub(2)
+        if option:find(label) then return catId end
+    end
+    return nil
+end
+
+local function runCategory_EX(catId, mode, labels)
+    local failCount = 0
+    local catLabel  = catId:sub(1,1):upper()..catId:sub(2)
+    local lastTargetId = nil
+    while indexRunning_EX do
+        local missing = getMissingSlimes_EX(catId)
+        if #missing == 0 then return true end
+        local target  = mode == "🎯 Rarest First" and missing[#missing] or missing[1]
+        local effOdds = getEffectiveOdds_EX(target, catId)
+        if target.id ~= lastTargetId then
+            lastTargetId = target.id
+            applyLuckForTarget_EX(effOdds)
+        end
+        if labels then
+            labels.lTarget:Set("🎯 Target: "..catLabel.." "..target.name)
+            labels.lOdds:Set("🎲 Odds: "..formatOdds_EX(effOdds))
+            labels.lCategory:Set(string.format("📂 %s (%d left)", catLabel, #missing))
+        end
+        local before = getUnlocked_EX(catId)
+        networkerRoll_EX:fetch("requestRoll")
+        task.wait(RollSlice_EX.rollTime() + 0.25)
+        local after = getUnlocked_EX(catId)
+        local gotOne = false
+        for id, value in pairs(after) do
+            if value == true and not before[id] then
+                gotOne = true
+                failCount = 0
+                local slime = Slimes_EX.getSlime(id)
+                print("[UNLOCKED]", catLabel, slime and slime.name or id)
+            end
+        end
+        if not gotOne then
+            failCount += 1
+            if failCount % 100 == 0 then
+                warn("[STUCK]", failCount, "rolls |", catLabel, target.name)
+            end
+        end
+        task.wait()
+    end
+    return false
+end
+
+-- Enemy helpers
+local function getGameplayContainer_EX()
+    if cachedContainer_EX and cachedContainer_EX.Parent then return cachedContainer_EX end
+    for _, child in ipairs(workspace:GetChildren()) do
+        if child.Name:match("^Gameplay") then cachedContainer_EX = child; return child end
+    end
+    return nil
+end
+
+local function getEnemyRoot_EX(enemy)
+    return enemy:FindFirstChild("HumanoidRootPart")
+        or enemy.PrimaryPart
+        or enemy:FindFirstChildWhichIsA("BasePart")
+end
+
+local function getMutation_EX(enemy)
+    for _, mut in ipairs({"inverted","huge","shiny","big"}) do
+        local ok, val = pcall(function() return enemy:GetAttribute(mut) end)
+        if ok and val then return mut end
+        if enemy:FindFirstChild(mut) then return mut end
+        local m = enemy:FindFirstChild("Mutation")
+        if m and m.Value == mut then return mut end
+        if enemy.Name:lower():find(mut) then return mut end
+    end
+    return nil
+end
+
+local function isAlive_EX(enemy)
+    if not enemy or not enemy.Parent then return false end
+    local h = enemy:FindFirstChildWhichIsA("Humanoid")
+    if h and h.Health <= 0 then return false end
+    local hp = enemy:GetAttribute("health") or enemy:GetAttribute("currentHealth")
+    if hp and hp <= 0 then return false end
+    return true
+end
+
+local function refreshEnemyCache_EX()
+    if tick() - lastCacheTime_EX < 2 then return end
+    lastCacheTime_EX = tick()
+    cachedEnemies_EX = {}
+    local container = getGameplayContainer_EX()
+    if not container then return end
+    local folder = container:FindFirstChild("Enemies")
+    if not folder then return end
+    for _, enemy in ipairs(folder:GetChildren()) do
+        if enemy:IsA("Model") then table.insert(cachedEnemies_EX, enemy) end
+    end
+end
+
+local function matchesMutationFilter_EX(enemy)
+    if enemySettings_EX.MutationFilter == "Any" then return true end
+    return getMutation_EX(enemy) == enemySettings_EX.MutationFilter:lower()
+end
+
+local function computeScores_EX()
+    local char = _0x9a4b7c.Character
+    if not char then return {} end
+    local rp = char:FindFirstChild("HumanoidRootPart")
+    if not rp then return {} end
+    local entries = {}
+    for _, enemy in ipairs(cachedEnemies_EX) do
+        if not isAlive_EX(enemy) then continue end
+        if not matchesMutationFilter_EX(enemy) then continue end
+        local root = getEnemyRoot_EX(enemy)
+        if not root then continue end
+        local dist = (root.Position - rp.Position).Magnitude
+        if dist > RANGE_EX then continue end
+        local coins  = enemy:GetAttribute("reward") or enemy:GetAttribute("coins") or 0
+        local goop   = enemy:GetAttribute("goop") or 0
+        table.insert(entries, {enemy=enemy, root=root, coins=coins, goop=goop, dist=dist})
+    end
+    if #entries == 0 then return {} end
+    local maxC, maxG, maxD = 0, 0, 0
+    for _, e in ipairs(entries) do
+        if e.coins > maxC then maxC = e.coins end
+        if e.goop  > maxG then maxG = e.goop  end
+        if e.dist  > maxD then maxD = e.dist  end
+    end
+    local scores = {}
+    local prio = enemySettings_EX.TargetPriorities
+    for _, e in ipairs(entries) do
+        local s = 0
+        if prio["Most Coins & Goop"] then
+            s = s + ((maxC>0 and e.coins/maxC or 0) + (maxG>0 and e.goop/maxG or 0))/2
+        end
+        if prio["Closest"]        then s = s + (maxD>0 and 1-e.dist/maxD or 0) end
+        if prio["Mutations Only"] then s = s + (getMutation_EX(e.enemy) and 1 or 0) end
+        scores[e.enemy] = s
+    end
+    return scores
+end
+
+local function selectTarget_EX()
+    local scores = computeScores_EX()
+    local best, bestScore = nil, -math.huge
+    for enemy, score in pairs(scores) do
+        if score > bestScore then bestScore = score; best = enemy end
+    end
+    return best
+end
+
+local function moveToEnemy_EX(enemy)
+    local char = _0x9a4b7c.Character
+    if not char then return end
+    local root = getEnemyRoot_EX(enemy)
+    if not root then return end
+    local target = root.CFrame * CFrame.new(0,3,0)
+    if enemySettings_EX.TeleportStyle == "Teleport" then
+        char:PivotTo(target)
+    elseif enemySettings_EX.TeleportStyle == "Tween" then
+        if tweenConn_EX then tweenConn_EX:Disconnect(); tweenConn_EX = nil end
+        local start = char:GetPivot()
+        local startTime = tick()
+        tweenConn_EX = _0x1e5f3d.RenderStepped:Connect(function()
+            local alpha = math.clamp((tick()-startTime)/0.25, 0, 1)
+            char:PivotTo(start:Lerp(target, alpha))
+            if alpha >= 1 then tweenConn_EX:Disconnect(); tweenConn_EX = nil end
+        end)
+    end
+end
+
+-- Fruit helpers
+local function getOwnedFruitIds_EX()
+    local items = _0x7b3f5a:get("items") or {}
+    local owned = {}
+    for _, f in ipairs(ALL_FRUITS_EX) do
+        if (items[f.id] or 0) > 0 then owned[f.id] = true end
+    end
+    return owned
+end
+
+local function slimeHasFruit_EX(slimeData, fruitId)
+    if type(slimeData) ~= "table" then return false end
+    local fruitDef = FruitsModule_EX.getFruit(fruitId)
+    if not fruitDef then return false end
+    local trees = slimeData.unlockedTrees
+    if type(trees) ~= "table" then return false end
+    return trees[fruitDef.treeId] == true
+end
+
+local function getBestSlimeEntry_EX()
+    local stats   = _0x7b3f5a:get("stats") or {}
+    local rarest  = stats.rarestRoll
+    if not rarest or not rarest.slimeData then return nil, nil end
+    local rarestId  = rarest.slimeData.id
+    local rarestMut = rarest.slimeData.mutations or {}
+    local equipped  = _0x7b3f5a:get("equipped") or {}
+    local inv       = _0x7b3f5a:get("inventory") or {}
+    for _, slimeKey in pairs(equipped) do
+        if type(slimeKey)=="string" and slimeKey:sub(1,1)=="." then
+            local data = inv[slimeKey]
+            if type(data)=="table" and data.id == rarestId then
+                local match = true
+                for k, v in pairs(rarestMut) do
+                    if not data.mutations or data.mutations[k] ~= v then match=false; break end
+                end
+                if match then return slimeKey, data end
+            end
+        end
+    end
+    for _, slimeKey in pairs(equipped) do
+        if type(slimeKey)=="string" and slimeKey:sub(1,1)=="." then
+            local data = inv[slimeKey]
+            if type(data)=="table" then return slimeKey, data end
+        end
+    end
+    return nil, nil
+end
+
+local function getTargetSlimes_EX()
+    if selectedSlimeMode_EX == "Best" then
+        local key, data = getBestSlimeEntry_EX()
+        if key and data then return {{key=key, data=data}} end
+        return {}
+    else
+        local equipped = _0x7b3f5a:get("equipped") or {}
+        local inv      = _0x7b3f5a:get("inventory") or {}
+        local result   = {}
+        for _, slimeKey in pairs(equipped) do
+            if type(slimeKey)=="string" and slimeKey:sub(1,1)=="." then
+                local data = inv[slimeKey]
+                if type(data)=="table" then table.insert(result, {key=slimeKey, data=data}) end
+            end
+        end
+        return result
+    end
+end
+
+local function resolveFruitList_EX()
+    local owned = getOwnedFruitIds_EX()
+    if selectedFruitIds_EX[1] == "ANY" then
+        local result = {}
+        for _, f in ipairs(ALL_FRUITS_EX) do
+            if owned[f.id] then table.insert(result, f.id) end
+        end
+        return result
+    else
+        local result = {}
+        for _, fid in ipairs(selectedFruitIds_EX) do
+            if owned[fid] then table.insert(result, fid) end
+        end
+        return result
+    end
+end
+
+local function doFeed_EX()
+    local targets = getTargetSlimes_EX()
+    local fruits  = resolveFruitList_EX()
+    if #targets == 0 or #fruits == 0 then return end
+    for _, entry in ipairs(targets) do
+        for _, fruitId in ipairs(fruits) do
+            if not slimeHasFruit_EX(entry.data, fruitId) then
+                networkerInventory_EX:fetch("requestUseFruit", fruitId, entry.key)
+            end
+        end
+    end
+end
+
+-- ========== INDEX TAB ==========
+local IndexTab_EX = _0x4f2a8c_window:CreateTab("📖 Index", 4483362458)
+local indexLabels_EX = {}
+
+IndexTab_EX:CreateSection("Controls")
+
+IndexTab_EX:CreateToggle({
+    Name = "Start Auto Complete",
+    CurrentValue = false,
+    Flag = "IndexAutoComplete",
+    Callback = function(value)
+        if value then
+            indexRunning_EX = true
+            indexThread_EX = task.spawn(function()
+                applyLuckSettings_EX()
+                luckPollThread_EX = task.spawn(function()
+                    while indexRunning_EX do
+                        if indexLabels_EX.lLuck then
+                            indexLabels_EX.lLuck:Set("🍀 Luck Override: x"..tostring(luckValueLocal_EX))
+                        end
+                        task.wait(1)
+                    end
+                end)
+                local modeFlag = _0x2c5d8f.Flags.IndexRollMode
+                local mode = modeFlag and (type(modeFlag.CurrentOption)=="table" and modeFlag.CurrentOption[1] or modeFlag.CurrentOption) or "🌱 Easiest First"
+                if selectedCategoryOpt == nil or selectedCategoryOpt == "🎲 All (Recommended)" then
+                    while indexRunning_EX do
+                        local sorted = getSortedCatsByPriority_EX()
+                        if #sorted == 0 then
+                            if indexLabels_EX.lCategory then indexLabels_EX.lCategory:Set("📂 ✅ All Complete!") end
+                            if indexLabels_EX.lTarget   then indexLabels_EX.lTarget:Set("🎯 Target: —") end
+                            if indexLabels_EX.lOdds     then indexLabels_EX.lOdds:Set("🎲 Odds: —") end
+                            indexRunning_EX = false
+                            break
+                        end
+                        local completed = runCategory_EX(sorted[1].id, mode, indexLabels_EX)
+                        if not completed then break end
+                    end
+                else
+                    local catId = getCatIdFromOption_EX(selectedCategoryOpt)
+                    if catId then
+                        runCategory_EX(catId, mode, indexLabels_EX)
+                        if indexRunning_EX then
+                            if indexLabels_EX.lCategory then indexLabels_EX.lCategory:Set("📂 ✅ Complete!") end
+                            if indexLabels_EX.lTarget   then indexLabels_EX.lTarget:Set("🎯 Target: —") end
+                            if indexLabels_EX.lOdds     then indexLabels_EX.lOdds:Set("🎲 Odds: —") end
+                        end
+                    end
+                    indexRunning_EX = false
+                end
+                if luckPollThread_EX then task.cancel(luckPollThread_EX) end
+                setLuckEnabled_EX(false)
+            end)
+        else
+            indexRunning_EX = false
+            if indexThread_EX    then task.cancel(indexThread_EX) end
+            if luckPollThread_EX then task.cancel(luckPollThread_EX) end
+            setLuckEnabled_EX(false)
+            if indexLabels_EX.lTarget   then indexLabels_EX.lTarget:Set("🎯 Target: —") end
+            if indexLabels_EX.lOdds     then indexLabels_EX.lOdds:Set("🎲 Odds: —") end
+            if indexLabels_EX.lLuck     then indexLabels_EX.lLuck:Set("🍀 Luck: —") end
+            if indexLabels_EX.lCategory then indexLabels_EX.lCategory:Set("📂 Category: —") end
+        end
+    end,
+})
+
+IndexTab_EX:CreateSection("Settings")
+
+local categoryOptions_EX = {"🎲 All (Recommended)"}
+for _, catId in ipairs(CATEGORY_IDS_EX) do
+    local missing = getMissingSlimes_EX(catId)
+    local label   = catId:sub(1,1):upper()..catId:sub(2)
+    if #missing == 0 then
+        table.insert(categoryOptions_EX, "✅ "..label.." (Complete)")
+    else
+        local effOdds = getEffectiveOdds_EX(missing[1], catId)
+        table.insert(categoryOptions_EX, string.format("%s (%d left | %s)", label, #missing, formatOdds_EX(effOdds)))
+    end
+end
+selectedCategoryOpt = categoryOptions_EX[1]
+
+IndexTab_EX:CreateDropdown({
+    Name = "Category",
+    Options = categoryOptions_EX,
+    CurrentOption = {categoryOptions_EX[1]},
+    MultipleOptions = false,
+    Flag = "IndexCategory",
+    Callback = function(option)
+        selectedCategoryOpt = type(option)=="table" and option[1] or option
+    end,
+})
+
+IndexTab_EX:CreateDropdown({
+    Name = "Roll Mode",
+    Options = {"🌱 Easiest First","🎯 Rarest First"},
+    CurrentOption = {"🌱 Easiest First"},
+    MultipleOptions = false,
+    Flag = "IndexRollMode",
+    Callback = function() end,
+})
+
+IndexTab_EX:CreateSection("Status")
+indexLabels_EX.lTarget   = IndexTab_EX:CreateLabel("🎯 Target: —")
+indexLabels_EX.lOdds     = IndexTab_EX:CreateLabel("🎲 Odds: —")
+indexLabels_EX.lLuck     = IndexTab_EX:CreateLabel("🍀 Luck: —")
+indexLabels_EX.lCategory = IndexTab_EX:CreateLabel("📂 Category: —")
+
+IndexTab_EX:CreateSection("Index Progress")
+local totalSlimes_EX = getTotalSlimes_EX()
+for _, catId in ipairs(CATEGORY_IDS_EX) do
+    local label = catId:sub(1,1):upper()..catId:sub(2)
+    local count = getUnlockedCount_EX(catId)
+    progressLabels_EX[catId] = IndexTab_EX:CreateLabel(string.format("📊 %s: %d / %d", label, count, totalSlimes_EX))
+end
+
+task.spawn(function()
+    while true do
+        task.wait(2)
+        local t = getTotalSlimes_EX()
+        for _, catId in ipairs(CATEGORY_IDS_EX) do
+            if progressLabels_EX[catId] then
+                local label = catId:sub(1,1):upper()..catId:sub(2)
+                progressLabels_EX[catId]:Set(string.format("📊 %s: %d / %d", label, getUnlockedCount_EX(catId), t))
+            end
+        end
+    end
+end)
+
+-- ========== AUTO FARM TAB ==========
+local FarmTab_EX = _0x4f2a8c_window:CreateTab("⚔️ Auto Farm", 4483362458)
+
+FarmTab_EX:CreateSection("Movement")
+FarmTab_EX:CreateDropdown({
+    Name = "Teleport Style",
+    Options = {"Teleport","Tween"},
+    CurrentOption = {"Teleport"},
+    MultipleOptions = false,
+    Flag = "EX_TeleportStyle",
+    Callback = function(option) enemySettings_EX.TeleportStyle = option[1] end,
+})
+
+FarmTab_EX:CreateSection("Targeting")
+FarmTab_EX:CreateDropdown({
+    Name = "Target Priority",
+    Options = {"Most Coins & Goop","Closest","Lowest HP","Mutations Only"},
+    CurrentOption = {"Most Coins & Goop"},
+    MultipleOptions = true,
+    Flag = "EX_TargetPriority",
+    Callback = function(options)
+        enemySettings_EX.TargetPriorities = {}
+        for _, opt in ipairs(options) do enemySettings_EX.TargetPriorities[opt] = true end
+    end,
+})
+
+FarmTab_EX:CreateDropdown({
+    Name = "Mutation Filter",
+    Options = {"Any","Inverted","Huge","Shiny","Big"},
+    CurrentOption = {"Any"},
+    MultipleOptions = false,
+    Flag = "EX_MutationFilter",
+    Callback = function(option) enemySettings_EX.MutationFilter = option[1] end,
+})
+
+FarmTab_EX:CreateSection("Controls")
+FarmTab_EX:CreateToggle({
+    Name = "Auto Farm",
+    CurrentValue = false,
+    Flag = "EX_AutoFarm",
+    Callback = function(value)
+        enemySettings_EX.AutoFarm = value
+        if not value then currentTarget_EX = nil end
+    end,
+})
+
+_0x1e5f3d.Heartbeat:Connect(function()
+    refreshEnemyCache_EX()
+    if not enemySettings_EX.AutoFarm then currentTarget_EX = nil; return end
+    if currentTarget_EX and isAlive_EX(currentTarget_EX) and currentTarget_EX.Parent then return end
+    local newTarget = selectTarget_EX()
+    if newTarget and newTarget ~= currentTarget_EX then
+        currentTarget_EX = newTarget
+        moveToEnemy_EX(currentTarget_EX)
+    end
+end)
+
+-- ========== STACK DICE TAB ==========
+local DiceTab_EX = _0x4f2a8c_window:CreateTab("🎲 Stack Dice", 4483362458)
+
+DiceTab_EX:CreateSection("Auto Stack")
+DiceTab_EX:CreateToggle({
+    Name = "Auto Stack Dice",
+    CurrentValue = false,
+    Flag = "EX_autostack",
+    Callback = function(v)
+        stackActive_EX = v
+        if not v then
+            for _, dice in ipairs(DICE_EX) do
+                if pausedDice_EX[dice] then
+                    networkerRoll_EX:fetch("requestSetSpecialRollPaused", dice, false)
+                    pausedDice_EX[dice] = false
+                end
+            end
+        end
+    end,
+})
+
+DiceTab_EX:CreateSection("Dice to Stack")
+DiceTab_EX:CreateDropdown({
+    Name = "Select Dice",
+    Options = {"All","Golden","Diamond","Void","Galaxy"},
+    CurrentOption = {"All"},
+    MultipleOptions = true,
+    Flag = "EX_diceDropdown",
+    Callback = function(choices)
+        for _, dice in ipairs(DICE_EX) do selectedDice_EX[dice] = false end
+        for _, choice in ipairs(choices) do
+            if choice == "All" then
+                for _, dice in ipairs(DICE_EX) do selectedDice_EX[dice] = true end
+                break
+            else
+                selectedDice_EX[choice:lower()] = true
+            end
+        end
+    end,
+})
+
+DiceTab_EX:CreateSection("Total Stacked Luck")
+local DiceLuckLabel_EX = DiceTab_EX:CreateLabel("Total Stacked: x0")
+
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        local upgrades    = _0x7b3f5a:get("upgrades") or {}
+        local progression = _0x7b3f5a:get("specialRollProgression") or {}
+        local totalStacked = 0
+        for _, dice in ipairs(DICE_EX) do
+            local prog  = progression[dice]
+            local rolls = prog and prog.rollsUntilNext or math.huge
+            if rolls <= 1 then
+                local ok, mult = pcall(SpecialRollUtils_EX.getLuckMultiplier, dice, upgrades)
+                if ok then totalStacked += (mult or 0) end
+            end
+        end
+        DiceLuckLabel_EX:Set("Total Stacked: x"..string.format("%.1f", totalStacked))
+
+        if not stackActive_EX then continue end
+
+        local toWatch = {}
+        for _, dice in ipairs(DICE_EX) do
+            if selectedDice_EX[dice] then
+                local ok, unlocked = pcall(SpecialRollUtils_EX.isUnlocked, dice, upgrades)
+                if ok and unlocked then table.insert(toWatch, dice) end
+            end
+        end
+        if #toWatch == 0 then continue end
+
+        local allReady = true
+        for _, dice in ipairs(toWatch) do
+            local prog  = progression[dice]
+            local rolls = prog and prog.rollsUntilNext or math.huge
+            if rolls <= 1 then
+                if not pausedDice_EX[dice] then
+                    networkerRoll_EX:fetch("requestSetSpecialRollPaused", dice, true)
+                    pausedDice_EX[dice] = true
+                end
+            else
+                allReady = false
+            end
+        end
+
+        if allReady then
+            for _, dice in ipairs(toWatch) do
+                networkerRoll_EX:fetch("requestSetSpecialRollPaused", dice, false)
+                pausedDice_EX[dice] = false
+            end
+            _0x2c5d8f:Notify({Title="Unleashed!", Content="All stacked — releasing now.", Duration=3})
+            task.wait(2)
+        end
+    end
+end)
+
+-- ========== AUTO FEED TAB ==========
+local FruitTab_EX = _0x4f2a8c_window:CreateTab("🍎 Auto Feed", 4483362458)
+
+FruitTab_EX:CreateSection("Fruit Settings")
+FruitTab_EX:CreateToggle({
+    Name = "Auto Feed Fruits to Slime(s)",
+    CurrentValue = false,
+    Flag = "EX_AutoFeedToggle",
+    Callback = function(value)
+        autoFeedEnabled_EX = value
+        if value then
+            if feedConnection_EX then feedConnection_EX:Disconnect() end
+            feedConnection_EX = _0x1e5f3d.Heartbeat:Connect(function()
+                if autoFeedEnabled_EX then doFeed_EX() end
+            end)
+        else
+            if feedConnection_EX then feedConnection_EX:Disconnect(); feedConnection_EX = nil end
+        end
+    end,
+})
+
+FruitTab_EX:CreateDropdown({
+    Name = "Slimes to Feed",
+    Options = {"Best","Split Across Team"},
+    CurrentOption = {"Best"},
+    MultipleOptions = false,
+    Flag = "EX_SlimeModeDropdown",
+    Callback = function(option)
+        selectedSlimeMode_EX = type(option)=="table" and option[1] or option
+    end,
+})
+
+local fruitOptions_EX = {"Any"}
+local labelToId_EX    = {}
+for _, f in ipairs(ALL_FRUITS_EX) do
+    table.insert(fruitOptions_EX, f.powerName)
+    labelToId_EX[f.powerName] = f.id
+end
+
+FruitTab_EX:CreateDropdown({
+    Name = "Fruits to Feed",
+    Options = fruitOptions_EX,
+    CurrentOption = {"Any"},
+    MultipleOptions = true,
+    Flag = "EX_FruitDropdown",
+    Callback = function(options)
+        local picked = type(options)=="table" and options or {options}
+        selectedFruitIds_EX = {}
+        for _, label in ipairs(picked) do
+            if label == "Any" then selectedFruitIds_EX = {"ANY"}; return
+            else table.insert(selectedFruitIds_EX, labelToId_EX[label]) end
+        end
+        if #selectedFruitIds_EX == 0 then selectedFruitIds_EX = {"ANY"} end
+    end,
+})
+
+print("Cactus Hub addendum loaded — 4 tabs added!")
