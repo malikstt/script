@@ -2819,192 +2819,216 @@ end)
 -- ADDENDUM: Index, Auto Farm, Stack Dice, Auto Feed
 -- ================================================
 
-local CATEGORY_IDS_EX = {"basic", "shiny", "big", "huge", "inverted"}
-local MUTATION_ODDS_EX = {
+-- Services & Modules
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local player = Players.LocalPlayer
+
+local DataService = require(ReplicatedStorage.Packages.DataService).client
+DataService:waitForData()
+
+local SettingsState = require(ReplicatedStorage.Source.Features.Settings.SettingsState)
+local SettingsServiceClient = require(ReplicatedStorage.Source.Features.Settings.SettingsServiceClient)
+local Networker = require(ReplicatedStorage.Packages.Networker)
+local RollSlice = require(ReplicatedStorage.Source.Features.Roll.RollSlice)
+local Slimes = require(ReplicatedStorage.Source.Game.Items.Slimes)
+local FruitsModule = require(ReplicatedStorage.Source.Game.Items.Fruits)
+local SpecialRollUtils = require(ReplicatedStorage.Source.Features.Roll.SpecialRollUtils)
+
+local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+
+SettingsState.init()
+local settingsClient = {}
+settingsClient.networker = Networker.client.new("SettingsService", settingsClient)
+SettingsServiceClient.init(settingsClient)
+
+local function getLive(key)
+    local v = SettingsState.get(key)
+    if type(v) == "function" then return v() end
+    return v
+end
+
+repeat task.wait() until getLive("luckOverrideEnabled") ~= nil
+
+local CATEGORY_IDS = {"basic", "shiny", "big", "huge", "inverted"}
+local MUTATION_ODDS = {
     basic    = nil,
     shiny    = 0.004,
     big      = 0.01,
     huge     = 0.001,
     inverted = 0.0004,
 }
-local DICE_EX = {"golden", "diamond", "void", "galaxy"}
+local DICE = {"golden", "diamond", "void", "galaxy"}
+local ALL_FRUITS = FruitsModule.getSortedFruits()
 
-local Slimes_EX           = _0x6f3a2c
-local FruitsModule_EX     = require(game:GetService("ReplicatedStorage").Source.Game.Items.Fruits)
-local SpecialRollUtils_EX = require(game:GetService("ReplicatedStorage").Source.Features.Roll.SpecialRollUtils)
-local RollSlice_EX        = require(game:GetService("ReplicatedStorage").Source.Features.Roll.RollSlice)
-
-local ALL_FRUITS_EX = FruitsModule_EX.getSortedFruits()
-
-local indexRunning_EX     = false
-local indexThread_EX      = nil
-local luckPollThread_EX   = nil
+local indexRunning = false
+local indexThread = nil
+local luckPollThread = nil
 local selectedCategoryOpt = nil
-local progressLabels_EX   = {}
-local luckValueLocal_EX   = 1
+local progressLabels = {}
+local luckValueLocal = 1
 
-local enemySettings_EX = {
+local enemySettings = {
     TeleportStyle    = "Teleport",
     TargetPriorities = { ["Most Coins & Goop"] = true },
     AutoFarm         = false,
     MutationFilter   = "Any",
 }
-local RANGE_EX           = 50
-local cachedContainer_EX = nil
-local cachedEnemies_EX   = {}
-local lastCacheTime_EX   = 0
-local currentTarget_EX   = nil
-local tweenConn_EX       = nil
+local RANGE = 50
+local cachedContainer = nil
+local cachedEnemies = {}
+local lastCacheTime = 0
+local currentTarget = nil
+local tweenConn = nil
 
-local selectedDice_EX  = {golden=true, diamond=true, void=true, galaxy=true}
-local stackActive_EX   = false
-local pausedDice_EX    = {golden=false, diamond=false, void=false, galaxy=false}
+local selectedDice = {golden=true, diamond=true, void=true, galaxy=true}
+local stackActive = false
+local pausedDice = {golden=false, diamond=false, void=false, galaxy=false}
 
-local autoFeedEnabled_EX  = false
-local selectedFruitIds_EX = {"ANY"}
-local selectedSlimeMode_EX = "Best"
-local feedConnection_EX   = nil
+local autoFeedEnabled = false
+local selectedFruitIds = {"ANY"}
+local selectedSlimeMode = "Best"
+local feedConnection = nil
 
-local networkerRoll_EX = _0x2c9e4d.client.new("RollService", {
+local rollClient = {
     rareRollAnnouncement   = function() end,
     rareRollAnnouncementV2 = function() end,
-})
-local networkerInventory_EX = _0x2c9e4d.client.new("InventoryService", {})
+}
+local networkerRoll = Networker.client.new("RollService", rollClient)
+local networkerInventory = Networker.client.new("InventoryService", {})
 
--- Reuse the SettingsServiceClient already initialized in main script
-local luckValueLocal_EX = 1
+-- ========== LUCK HELPERS ==========
 
-local function setLuck_EX(value)
+local function setLuck(value)
     local clamped = math.min(value, 16384)
-    _0x7b3f5a:set("settings.luckOverrideValue", clamped)
-    pcall(function()
-        _0x2c9e4d.client.new("SettingsService", {}):fire("set", "luckOverrideValue", clamped)
-    end)
-    luckValueLocal_EX = clamped
+    SettingsServiceClient.set(settingsClient, "luckOverrideValue", clamped)
+    luckValueLocal = clamped
     task.wait(0.3)
 end
 
-local function setLuckEnabled_EX(enabled)
-    _0x7b3f5a:set("settings.luckOverrideEnabled", enabled)
-    pcall(function()
-        _0x2c9e4d.client.new("SettingsService", {}):fire("set", "luckOverrideEnabled", enabled)
-    end)
+local function setLuckEnabled(enabled)
+    SettingsServiceClient.set(settingsClient, "luckOverrideEnabled", enabled)
     task.wait(0.3)
 end
 
-local function calcOptimalLuck_EX(effectiveOdds)
+local function calcOptimalLuck(effectiveOdds)
     if not effectiveOdds or effectiveOdds <= 0 then return 16384 end
-    return math.min(math.max(1, math.floor((1/effectiveOdds)*0.63)), 16384)
+    return math.min(math.max(1, math.floor((1 / effectiveOdds) * 0.63)), 16384)
 end
 
-local function applyLuckSettings_EX()
-    setLuck_EX(1)
+local function applyLuckSettings()
+    setLuck(1)
     task.wait(0.3)
-    setLuckEnabled_EX(true)
+    setLuckEnabled(true)
     task.wait(0.3)
 end
 
-local function applyLuckForTarget_EX(effectiveOdds)
-    setLuck_EX(calcOptimalLuck_EX(effectiveOdds))
+local function applyLuckForTarget(effectiveOdds)
+    setLuck(calcOptimalLuck(effectiveOdds))
 end
 
-local function formatOdds_EX(odds)
+-- ========== INDEX HELPERS ==========
+
+local function formatOdds(odds)
     if not odds or odds <= 0 then return "N/A" end
-    local n = math.floor(1/odds+0.5)
-    if n >= 1e9 then return string.format("1 in %.1fB", n/1e9)
-    elseif n >= 1e6 then return string.format("1 in %.1fM", n/1e6)
-    elseif n >= 1e3 then return string.format("1 in %.1fK", n/1e3) end
-    return "1 in "..n
+    local n = math.floor(1 / odds + 0.5)
+    if n >= 1e9 then return string.format("1 in %.1fB", n / 1e9)
+    elseif n >= 1e6 then return string.format("1 in %.1fM", n / 1e6)
+    elseif n >= 1e3 then return string.format("1 in %.1fK", n / 1e3) end
+    return "1 in " .. n
 end
 
-local function getEffectiveOdds_EX(slime, catId)
-    local m = MUTATION_ODDS_EX[catId]
+local function getEffectiveOdds(slime, catId)
+    local m = MUTATION_ODDS[catId]
     if m then return slime.rollOdds * m end
     return slime.rollOdds
 end
 
-local function getUnlocked_EX(catId)
-    local data = _0x7b3f5a:get("index") or {}
+local function getUnlocked(catId)
+    local data = DataService:get("index") or {}
     return ((data.categories or {})[catId] or {}).unlocked or {}
 end
 
-local function getTotalSlimes_EX()
-    return #Slimes_EX.getSortedSlimes()
+local function getTotalSlimes()
+    return #Slimes.getSortedSlimes()
 end
 
-local function getUnlockedCount_EX(catId)
+local function getUnlockedCount(catId)
     local count = 0
-    for _, v in pairs(getUnlocked_EX(catId)) do
+    for _, v in pairs(getUnlocked(catId)) do
         if v == true then count += 1 end
     end
     return count
 end
 
-local function getMissingSlimes_EX(catId)
-    local unlocked = getUnlocked_EX(catId)
+local function getMissingSlimes(catId)
+    local unlocked = getUnlocked(catId)
     local missing = {}
-    for _, slime in ipairs(Slimes_EX.getSortedSlimes()) do
+    for _, slime in ipairs(Slimes.getSortedSlimes()) do
         if not unlocked[slime.id] then
             table.insert(missing, slime)
         end
     end
-    table.sort(missing, function(a,b)
-        return getEffectiveOdds_EX(a,catId) > getEffectiveOdds_EX(b,catId)
+    table.sort(missing, function(a, b)
+        return getEffectiveOdds(a, catId) > getEffectiveOdds(b, catId)
     end)
     return missing
 end
 
-local function getSortedCatsByPriority_EX()
+local function getSortedCategoriesByPriority()
     local cats = {}
-    for _, catId in ipairs(CATEGORY_IDS_EX) do
-        local missing = getMissingSlimes_EX(catId)
+    for _, catId in ipairs(CATEGORY_IDS) do
+        local missing = getMissingSlimes(catId)
         if #missing > 0 then
             table.insert(cats, {
                 id = catId,
-                easiestEffectiveOdds = getEffectiveOdds_EX(missing[1], catId),
+                easiestEffectiveOdds = getEffectiveOdds(missing[1], catId),
             })
         end
     end
-    table.sort(cats, function(a,b) return a.easiestEffectiveOdds > b.easiestEffectiveOdds end)
+    table.sort(cats, function(a, b)
+        return a.easiestEffectiveOdds > b.easiestEffectiveOdds
+    end)
     return cats
 end
 
-local function getCatIdFromOption_EX(option)
-    for _, catId in ipairs(CATEGORY_IDS_EX) do
-        local label = catId:sub(1,1):upper()..catId:sub(2)
+local function getCatIdFromOption(option)
+    for _, catId in ipairs(CATEGORY_IDS) do
+        local label = catId:sub(1,1):upper() .. catId:sub(2)
         if option:find(label) then return catId end
     end
     return nil
 end
 
-local function runCategory_EX(catId, mode, labels)
+local function runCategory(catId, mode, labels)
     local failCount = 0
-    local catLabel  = catId:sub(1,1):upper()..catId:sub(2)
+    local catLabel = catId:sub(1,1):upper() .. catId:sub(2)
     local lastTargetId = nil
-    while indexRunning_EX do
-        local missing = getMissingSlimes_EX(catId)
+    while indexRunning do
+        local missing = getMissingSlimes(catId)
         if #missing == 0 then return true end
-        local target  = mode == "🎯 Rarest First" and missing[#missing] or missing[1]
-        local effOdds = getEffectiveOdds_EX(target, catId)
+        local target = mode == "🎯 Rarest First" and missing[#missing] or missing[1]
+        local effOdds = getEffectiveOdds(target, catId)
         if target.id ~= lastTargetId then
             lastTargetId = target.id
-            applyLuckForTarget_EX(effOdds)
+            applyLuckForTarget(effOdds)
         end
         if labels then
-            labels.lTarget:Set("🎯 Target: "..catLabel.." "..target.name)
-            labels.lOdds:Set("🎲 Odds: "..formatOdds_EX(effOdds))
+            labels.lTarget:Set("🎯 Target: " .. catLabel .. " " .. target.name)
+            labels.lOdds:Set("🎲 Odds: " .. formatOdds(effOdds))
             labels.lCategory:Set(string.format("📂 %s (%d left)", catLabel, #missing))
         end
-        local before = getUnlocked_EX(catId)
-        networkerRoll_EX:fetch("requestRoll")
-        task.wait(RollSlice_EX.rollTime() + 0.25)
-        local after = getUnlocked_EX(catId)
+        local before = getUnlocked(catId)
+        networkerRoll:fetch("requestRoll")
+        task.wait(RollSlice.rollTime() + 0.25)
+        local after = getUnlocked(catId)
         local gotOne = false
         for id, value in pairs(after) do
             if value == true and not before[id] then
                 gotOne = true
                 failCount = 0
-                local slime = Slimes_EX.getSlime(id)
+                local slime = Slimes.getSlime(id)
                 print("[UNLOCKED]", catLabel, slime and slime.name or id)
             end
         end
@@ -3019,22 +3043,24 @@ local function runCategory_EX(catId, mode, labels)
     return false
 end
 
-local function getGameplayContainer_EX()
-    if cachedContainer_EX and cachedContainer_EX.Parent then return cachedContainer_EX end
+-- ========== ENEMY FARM HELPERS ==========
+
+local function getGameplayContainer()
+    if cachedContainer and cachedContainer.Parent then return cachedContainer end
     for _, child in ipairs(workspace:GetChildren()) do
-        if child.Name:match("^Gameplay") then cachedContainer_EX = child; return child end
+        if child.Name:match("^Gameplay") then cachedContainer = child; return child end
     end
     return nil
 end
 
-local function getEnemyRoot_EX(enemy)
+local function getEnemyRoot(enemy)
     return enemy:FindFirstChild("HumanoidRootPart")
         or enemy.PrimaryPart
         or enemy:FindFirstChildWhichIsA("BasePart")
 end
 
-local function getMutation_EX(enemy)
-    for _, mut in ipairs({"inverted","huge","shiny","big"}) do
+local function getMutation(enemy)
+    for _, mut in ipairs({"inverted", "huge", "shiny", "big"}) do
         local ok, val = pcall(function() return enemy:GetAttribute(mut) end)
         if ok and val then return mut end
         if enemy:FindFirstChild(mut) then return mut end
@@ -3045,7 +3071,7 @@ local function getMutation_EX(enemy)
     return nil
 end
 
-local function isAlive_EX(enemy)
+local function isAlive(enemy)
     if not enemy or not enemy.Parent then return false end
     local h = enemy:FindFirstChildWhichIsA("Humanoid")
     if h and h.Health <= 0 then return false end
@@ -3054,64 +3080,69 @@ local function isAlive_EX(enemy)
     return true
 end
 
-local function refreshEnemyCache_EX()
-    if tick() - lastCacheTime_EX < 2 then return end
-    lastCacheTime_EX = tick()
-    cachedEnemies_EX = {}
-    local container = getGameplayContainer_EX()
+local function refreshEnemyCache()
+    if tick() - lastCacheTime < 2 then return end
+    lastCacheTime = tick()
+    cachedEnemies = {}
+    local container = getGameplayContainer()
     if not container then return end
     local folder = container:FindFirstChild("Enemies")
     if not folder then return end
     for _, enemy in ipairs(folder:GetChildren()) do
-        if enemy:IsA("Model") then table.insert(cachedEnemies_EX, enemy) end
+        if enemy:IsA("Model") then table.insert(cachedEnemies, enemy) end
     end
 end
 
-local function matchesMutationFilter_EX(enemy)
-    if enemySettings_EX.MutationFilter == "Any" then return true end
-    return getMutation_EX(enemy) == enemySettings_EX.MutationFilter:lower()
+local function matchesMutationFilter(enemy)
+    if enemySettings.MutationFilter == "Any" then return true end
+    return getMutation(enemy) == enemySettings.MutationFilter:lower()
 end
 
-local function computeScores_EX()
-    local char = _0x9a4b7c.Character
+local function computeScores()
+    local char = player.Character
     if not char then return {} end
     local rp = char:FindFirstChild("HumanoidRootPart")
     if not rp then return {} end
     local entries = {}
-    for _, enemy in ipairs(cachedEnemies_EX) do
-        if not isAlive_EX(enemy) then continue end
-        if not matchesMutationFilter_EX(enemy) then continue end
-        local root = getEnemyRoot_EX(enemy)
+    for _, enemy in ipairs(cachedEnemies) do
+        if not isAlive(enemy) then continue end
+        if not matchesMutationFilter(enemy) then continue end
+        local root = getEnemyRoot(enemy)
         if not root then continue end
         local dist = (root.Position - rp.Position).Magnitude
-        if dist > RANGE_EX then continue end
+        if dist > RANGE then continue end
         local coins = enemy:GetAttribute("reward") or enemy:GetAttribute("coins") or 0
         local goop  = enemy:GetAttribute("goop") or 0
-        table.insert(entries, {enemy=enemy, root=root, coins=coins, goop=goop, dist=dist})
+        local health = enemy:GetAttribute("health") or enemy:GetAttribute("maxHealth") or 0
+        local humanoid = enemy:FindFirstChildWhichIsA("Humanoid")
+        if humanoid then health = health == 0 and humanoid.MaxHealth or health end
+        table.insert(entries, {enemy=enemy, root=root, coins=coins, goop=goop, dist=dist, health=health})
     end
     if #entries == 0 then return {} end
-    local maxC, maxG, maxD = 0, 0, 0
+    local maxC, maxG, maxD, maxH = 0, 0, 0, 0
     for _, e in ipairs(entries) do
-        if e.coins > maxC then maxC = e.coins end
-        if e.goop  > maxG then maxG = e.goop  end
-        if e.dist  > maxD then maxD = e.dist  end
+        if e.coins  > maxC then maxC = e.coins  end
+        if e.goop   > maxG then maxG = e.goop   end
+        if e.dist   > maxD then maxD = e.dist   end
+        if e.health > maxH then maxH = e.health end
     end
     local scores = {}
-    local prio = enemySettings_EX.TargetPriorities
+    local prio = enemySettings.TargetPriorities
     for _, e in ipairs(entries) do
         local s = 0
         if prio["Most Coins & Goop"] then
-            s = s + ((maxC>0 and e.coins/maxC or 0) + (maxG>0 and e.goop/maxG or 0))/2
+            s = s + ((maxC > 0 and e.coins / maxC or 0) + (maxG > 0 and e.goop / maxG or 0)) / 2
         end
-        if prio["Closest"]        then s = s + (maxD>0 and 1-e.dist/maxD or 0) end
-        if prio["Mutations Only"] then s = s + (getMutation_EX(e.enemy) and 1 or 0) end
+        if prio["Closest"]        then s = s + (maxD > 0 and 1 - e.dist   / maxD or 0) end
+        if prio["Lowest HP"]      then s = s + (maxH > 0 and 1 - e.health / maxH or 0) end
+        if prio["Mutations Only"] then s = s + (getMutation(e.enemy) and 1 or 0) end
         scores[e.enemy] = s
     end
     return scores
 end
 
-local function selectTarget_EX()
-    local scores = computeScores_EX()
+local function selectTarget()
+    local scores = computeScores()
     local best, bestScore = nil, -math.huge
     for enemy, score in pairs(scores) do
         if score > bestScore then bestScore = score; best = enemy end
@@ -3119,373 +3150,393 @@ local function selectTarget_EX()
     return best
 end
 
-local function moveToEnemy_EX(enemy)
-    local char = _0x9a4b7c.Character
+local function moveToEnemy(enemy)
+    local char = player.Character
     if not char then return end
-    local root = getEnemyRoot_EX(enemy)
+    local root = getEnemyRoot(enemy)
     if not root then return end
-    local target = root.CFrame * CFrame.new(0,3,0)
-    if enemySettings_EX.TeleportStyle == "Teleport" then
+    local target = root.CFrame * CFrame.new(0, 3, 0)
+    if enemySettings.TeleportStyle == "Teleport" then
         char:PivotTo(target)
-    elseif enemySettings_EX.TeleportStyle == "Tween" then
-        if tweenConn_EX then tweenConn_EX:Disconnect(); tweenConn_EX = nil end
+    elseif enemySettings.TeleportStyle == "Tween" then
+        if tweenConn then tweenConn:Disconnect(); tweenConn = nil end
         local start = char:GetPivot()
         local startTime = tick()
-        tweenConn_EX = _0x1e5f3d.RenderStepped:Connect(function()
-            local alpha = math.clamp((tick()-startTime)/0.25, 0, 1)
+        tweenConn = RunService.RenderStepped:Connect(function()
+            local alpha = math.clamp((tick() - startTime) / 0.25, 0, 1)
             char:PivotTo(start:Lerp(target, alpha))
-            if alpha >= 1 then tweenConn_EX:Disconnect(); tweenConn_EX = nil end
+            if alpha >= 1 then tweenConn:Disconnect(); tweenConn = nil end
         end)
     end
 end
 
-local function getOwnedFruitIds_EX()
-    local items = _0x7b3f5a:get("items") or {}
+-- ========== FRUIT FEED HELPERS ==========
+
+local function getOwnedFruitIds()
+    local items = DataService:get("items") or {}
     local owned = {}
-    for _, f in ipairs(ALL_FRUITS_EX) do
+    for _, f in ipairs(ALL_FRUITS) do
         if (items[f.id] or 0) > 0 then owned[f.id] = true end
     end
     return owned
 end
 
-local function slimeHasFruit_EX(slimeData, fruitId)
+local function slimeHasFruit(slimeData, fruitId)
     if type(slimeData) ~= "table" then return false end
-    local fruitDef = FruitsModule_EX.getFruit(fruitId)
+    local fruitDef = FruitsModule.getFruit(fruitId)
     if not fruitDef then return false end
     local trees = slimeData.unlockedTrees
     if type(trees) ~= "table" then return false end
     return trees[fruitDef.treeId] == true
 end
 
-local function getBestSlimeEntry_EX()
-    local stats  = _0x7b3f5a:get("stats") or {}
+local function getBestSlimeEntry()
+    local stats  = DataService:get("stats") or {}
     local rarest = stats.rarestRoll
     if not rarest or not rarest.slimeData then return nil, nil end
     local rarestId  = rarest.slimeData.id
     local rarestMut = rarest.slimeData.mutations or {}
-    local equipped  = _0x7b3f5a:get("equipped") or {}
-    local inv       = _0x7b3f5a:get("inventory") or {}
+    local equipped  = DataService:get("equipped") or {}
+    local inv       = DataService:get("inventory") or {}
     for _, slimeKey in pairs(equipped) do
-        if type(slimeKey)=="string" and slimeKey:sub(1,1)=="." then
+        if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
             local data = inv[slimeKey]
-            if type(data)=="table" and data.id == rarestId then
+            if type(data) == "table" and data.id == rarestId then
                 local match = true
                 for k, v in pairs(rarestMut) do
-                    if not data.mutations or data.mutations[k] ~= v then match=false; break end
+                    if not data.mutations or data.mutations[k] ~= v then match = false; break end
                 end
                 if match then return slimeKey, data end
             end
         end
     end
     for _, slimeKey in pairs(equipped) do
-        if type(slimeKey)=="string" and slimeKey:sub(1,1)=="." then
+        if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
             local data = inv[slimeKey]
-            if type(data)=="table" then return slimeKey, data end
+            if type(data) == "table" then return slimeKey, data end
         end
     end
     return nil, nil
 end
 
-local function getTargetSlimes_EX()
-    if selectedSlimeMode_EX == "Best" then
-        local key, data = getBestSlimeEntry_EX()
+local function getTargetSlimes()
+    if selectedSlimeMode == "Best" then
+        local key, data = getBestSlimeEntry()
         if key and data then return {{key=key, data=data}} end
         return {}
     else
-        local equipped = _0x7b3f5a:get("equipped") or {}
-        local inv      = _0x7b3f5a:get("inventory") or {}
+        local equipped = DataService:get("equipped") or {}
+        local inv      = DataService:get("inventory") or {}
         local result   = {}
         for _, slimeKey in pairs(equipped) do
-            if type(slimeKey)=="string" and slimeKey:sub(1,1)=="." then
+            if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
                 local data = inv[slimeKey]
-                if type(data)=="table" then table.insert(result, {key=slimeKey, data=data}) end
+                if type(data) == "table" then table.insert(result, {key=slimeKey, data=data}) end
             end
         end
         return result
     end
 end
 
-local function resolveFruitList_EX()
-    local owned = getOwnedFruitIds_EX()
-    if selectedFruitIds_EX[1] == "ANY" then
+local function resolveFruitList()
+    local owned = getOwnedFruitIds()
+    if selectedFruitIds[1] == "ANY" then
         local result = {}
-        for _, f in ipairs(ALL_FRUITS_EX) do
+        for _, f in ipairs(ALL_FRUITS) do
             if owned[f.id] then table.insert(result, f.id) end
         end
         return result
     else
         local result = {}
-        for _, fid in ipairs(selectedFruitIds_EX) do
+        for _, fid in ipairs(selectedFruitIds) do
             if owned[fid] then table.insert(result, fid) end
         end
         return result
     end
 end
 
-local function doFeed_EX()
-    local targets = getTargetSlimes_EX()
-    local fruits  = resolveFruitList_EX()
+local function doFeed()
+    local targets = getTargetSlimes()
+    local fruits  = resolveFruitList()
     if #targets == 0 or #fruits == 0 then return end
     for _, entry in ipairs(targets) do
         for _, fruitId in ipairs(fruits) do
-            if not slimeHasFruit_EX(entry.data, fruitId) then
-                networkerInventory_EX:fetch("requestUseFruit", fruitId, entry.key)
+            if not slimeHasFruit(entry.data, fruitId) then
+                networkerInventory:fetch("requestUseFruit", fruitId, entry.key)
             end
         end
     end
 end
 
+-- ========== WINDOW ==========
+
+local Window = Rayfield:CreateWindow({
+    Name = "Cactus Hub",
+    Icon = 0,
+    LoadingTitle = "Cactus Hub",
+    LoadingSubtitle = "Loading...",
+    Theme = "Default",
+    ToggleUIKeybind = "K",
+    DisableRayfieldPrompts = false,
+    DisableBuildWarnings = true,
+    ConfigurationSaving = { Enabled = false },
+    KeySystem = false,
+})
+
 -- ========== INDEX TAB ==========
-local IndexTab_EX = _0x4f2a8c_window:CreateTab("📖 Index", 4483362458)
-local indexLabels_EX = {}
 
-IndexTab_EX:CreateSection("Controls")
+local IndexTab = Window:CreateTab("📖 Index", 4483362458)
+local indexLabels = {}
 
-IndexTab_EX:CreateToggle({
+IndexTab:CreateSection("Controls")
+
+IndexTab:CreateToggle({
     Name = "Start Auto Complete",
     CurrentValue = false,
     Flag = "IndexAutoComplete",
     Callback = function(value)
         if value then
-            indexRunning_EX = true
-            indexThread_EX = task.spawn(function()
-                applyLuckSettings_EX()
-                luckPollThread_EX = task.spawn(function()
-                    while indexRunning_EX do
-                        if indexLabels_EX.lLuck then
-                            indexLabels_EX.lLuck:Set("🍀 Luck Override: x"..tostring(luckValueLocal_EX))
+            indexRunning = true
+            indexThread = task.spawn(function()
+                applyLuckSettings()
+                luckPollThread = task.spawn(function()
+                    while indexRunning do
+                        if indexLabels.lLuck then
+                            indexLabels.lLuck:Set("🍀 Luck Override: x" .. tostring(luckValueLocal))
                         end
                         task.wait(1)
                     end
                 end)
-                local modeFlag = _0x2c5d8f.Flags.IndexRollMode
-                local mode = modeFlag and (type(modeFlag.CurrentOption)=="table" and modeFlag.CurrentOption[1] or modeFlag.CurrentOption) or "🌱 Easiest First"
+                local modeFlag = Rayfield.Flags.IndexRollMode
+                local mode = modeFlag and (type(modeFlag.CurrentOption) == "table" and modeFlag.CurrentOption[1] or modeFlag.CurrentOption) or "🌱 Easiest First"
                 if selectedCategoryOpt == nil or selectedCategoryOpt == "🎲 All (Recommended)" then
-                    while indexRunning_EX do
-                        local sorted = getSortedCatsByPriority_EX()
+                    while indexRunning do
+                        local sorted = getSortedCategoriesByPriority()
                         if #sorted == 0 then
-                            if indexLabels_EX.lCategory then indexLabels_EX.lCategory:Set("📂 ✅ All Complete!") end
-                            if indexLabels_EX.lTarget   then indexLabels_EX.lTarget:Set("🎯 Target: —") end
-                            if indexLabels_EX.lOdds     then indexLabels_EX.lOdds:Set("🎲 Odds: —") end
-                            indexRunning_EX = false
+                            if indexLabels.lCategory then indexLabels.lCategory:Set("📂 ✅ All Complete!") end
+                            if indexLabels.lTarget   then indexLabels.lTarget:Set("🎯 Target: —") end
+                            if indexLabels.lOdds     then indexLabels.lOdds:Set("🎲 Odds: —") end
+                            indexRunning = false
                             break
                         end
-                        local completed = runCategory_EX(sorted[1].id, mode, indexLabels_EX)
+                        local completed = runCategory(sorted[1].id, mode, indexLabels)
                         if not completed then break end
                     end
                 else
-                    local catId = getCatIdFromOption_EX(selectedCategoryOpt)
+                    local catId = getCatIdFromOption(selectedCategoryOpt)
                     if catId then
-                        runCategory_EX(catId, mode, indexLabels_EX)
-                        if indexRunning_EX then
-                            if indexLabels_EX.lCategory then indexLabels_EX.lCategory:Set("📂 ✅ Complete!") end
-                            if indexLabels_EX.lTarget   then indexLabels_EX.lTarget:Set("🎯 Target: —") end
-                            if indexLabels_EX.lOdds     then indexLabels_EX.lOdds:Set("🎲 Odds: —") end
+                        runCategory(catId, mode, indexLabels)
+                        if indexRunning then
+                            if indexLabels.lCategory then indexLabels.lCategory:Set("📂 ✅ Complete!") end
+                            if indexLabels.lTarget   then indexLabels.lTarget:Set("🎯 Target: —") end
+                            if indexLabels.lOdds     then indexLabels.lOdds:Set("🎲 Odds: —") end
                         end
                     end
-                    indexRunning_EX = false
+                    indexRunning = false
                 end
-                if luckPollThread_EX then task.cancel(luckPollThread_EX) end
-                setLuckEnabled_EX(false)
+                if luckPollThread then task.cancel(luckPollThread) end
+                setLuckEnabled(false)
             end)
         else
-            indexRunning_EX = false
-            if indexThread_EX    then task.cancel(indexThread_EX) end
-            if luckPollThread_EX then task.cancel(luckPollThread_EX) end
-            setLuckEnabled_EX(false)
-            if indexLabels_EX.lTarget   then indexLabels_EX.lTarget:Set("🎯 Target: —") end
-            if indexLabels_EX.lOdds     then indexLabels_EX.lOdds:Set("🎲 Odds: —") end
-            if indexLabels_EX.lLuck     then indexLabels_EX.lLuck:Set("🍀 Luck: —") end
-            if indexLabels_EX.lCategory then indexLabels_EX.lCategory:Set("📂 Category: —") end
+            indexRunning = false
+            if indexThread    then task.cancel(indexThread) end
+            if luckPollThread then task.cancel(luckPollThread) end
+            setLuckEnabled(false)
+            if indexLabels.lTarget   then indexLabels.lTarget:Set("🎯 Target: —") end
+            if indexLabels.lOdds     then indexLabels.lOdds:Set("🎲 Odds: —") end
+            if indexLabels.lLuck     then indexLabels.lLuck:Set("🍀 Luck: —") end
+            if indexLabels.lCategory then indexLabels.lCategory:Set("📂 Category: —") end
         end
     end,
 })
 
-IndexTab_EX:CreateSection("Settings")
+IndexTab:CreateSection("Settings")
 
-local categoryOptions_EX = {"🎲 All (Recommended)"}
-for _, catId in ipairs(CATEGORY_IDS_EX) do
-    local missing = getMissingSlimes_EX(catId)
-    local label   = catId:sub(1,1):upper()..catId:sub(2)
+local categoryOptions = {"🎲 All (Recommended)"}
+for _, catId in ipairs(CATEGORY_IDS) do
+    local missing = getMissingSlimes(catId)
+    local label   = catId:sub(1,1):upper() .. catId:sub(2)
     if #missing == 0 then
-        table.insert(categoryOptions_EX, "✅ "..label.." (Complete)")
+        table.insert(categoryOptions, "✅ " .. label .. " (Complete)")
     else
-        local effOdds = getEffectiveOdds_EX(missing[1], catId)
-        table.insert(categoryOptions_EX, string.format("%s (%d left | %s)", label, #missing, formatOdds_EX(effOdds)))
+        local effOdds = getEffectiveOdds(missing[1], catId)
+        table.insert(categoryOptions, string.format("%s (%d left | %s)", label, #missing, formatOdds(effOdds)))
     end
 end
-selectedCategoryOpt = categoryOptions_EX[1]
+selectedCategoryOpt = categoryOptions[1]
 
-IndexTab_EX:CreateDropdown({
+IndexTab:CreateDropdown({
     Name = "Category",
-    Options = categoryOptions_EX,
-    CurrentOption = {categoryOptions_EX[1]},
+    Options = categoryOptions,
+    CurrentOption = {categoryOptions[1]},
     MultipleOptions = false,
     Flag = "IndexCategory",
     Callback = function(option)
-        selectedCategoryOpt = type(option)=="table" and option[1] or option
+        selectedCategoryOpt = type(option) == "table" and option[1] or option
     end,
 })
 
-IndexTab_EX:CreateDropdown({
+IndexTab:CreateDropdown({
     Name = "Roll Mode",
-    Options = {"🌱 Easiest First","🎯 Rarest First"},
+    Options = {"🌱 Easiest First", "🎯 Rarest First"},
     CurrentOption = {"🌱 Easiest First"},
     MultipleOptions = false,
     Flag = "IndexRollMode",
     Callback = function() end,
 })
 
-IndexTab_EX:CreateSection("Status")
-indexLabels_EX.lTarget   = IndexTab_EX:CreateLabel("🎯 Target: —")
-indexLabels_EX.lOdds     = IndexTab_EX:CreateLabel("🎲 Odds: —")
-indexLabels_EX.lLuck     = IndexTab_EX:CreateLabel("🍀 Luck: —")
-indexLabels_EX.lCategory = IndexTab_EX:CreateLabel("📂 Category: —")
+IndexTab:CreateSection("Status")
+indexLabels.lTarget   = IndexTab:CreateLabel("🎯 Target: —")
+indexLabels.lOdds     = IndexTab:CreateLabel("🎲 Odds: —")
+indexLabels.lLuck     = IndexTab:CreateLabel("🍀 Luck: —")
+indexLabels.lCategory = IndexTab:CreateLabel("📂 Category: —")
 
-IndexTab_EX:CreateSection("Index Progress")
-local totalSlimes_EX = getTotalSlimes_EX()
-for _, catId in ipairs(CATEGORY_IDS_EX) do
-    local label = catId:sub(1,1):upper()..catId:sub(2)
-    local count = getUnlockedCount_EX(catId)
-    progressLabels_EX[catId] = IndexTab_EX:CreateLabel(string.format("📊 %s: %d / %d", label, count, totalSlimes_EX))
+IndexTab:CreateSection("Index Progress")
+local totalSlimes = getTotalSlimes()
+for _, catId in ipairs(CATEGORY_IDS) do
+    local label = catId:sub(1,1):upper() .. catId:sub(2)
+    local count = getUnlockedCount(catId)
+    progressLabels[catId] = IndexTab:CreateLabel(string.format("📊 %s: %d / %d", label, count, totalSlimes))
 end
 
 task.spawn(function()
     while true do
         task.wait(2)
-        local t = getTotalSlimes_EX()
-        for _, catId in ipairs(CATEGORY_IDS_EX) do
-            if progressLabels_EX[catId] then
-                local label = catId:sub(1,1):upper()..catId:sub(2)
-                progressLabels_EX[catId]:Set(string.format("📊 %s: %d / %d", label, getUnlockedCount_EX(catId), t))
+        local t = getTotalSlimes()
+        for _, catId in ipairs(CATEGORY_IDS) do
+            if progressLabels[catId] then
+                local label = catId:sub(1,1):upper() .. catId:sub(2)
+                progressLabels[catId]:Set(string.format("📊 %s: %d / %d", label, getUnlockedCount(catId), t))
             end
         end
     end
 end)
 
 -- ========== AUTO FARM TAB ==========
-local FarmTab_EX = _0x4f2a8c_window:CreateTab("⚔️ Auto Farm", 4483362458)
 
-FarmTab_EX:CreateSection("Movement")
-FarmTab_EX:CreateDropdown({
+local FarmTab = Window:CreateTab("⚔️ Auto Farm", 4483362458)
+
+FarmTab:CreateSection("Movement")
+FarmTab:CreateDropdown({
     Name = "Teleport Style",
-    Options = {"Teleport","Tween"},
+    Options = {"Teleport", "Tween"},
     CurrentOption = {"Teleport"},
     MultipleOptions = false,
-    Flag = "EX_TeleportStyle",
-    Callback = function(option) enemySettings_EX.TeleportStyle = option[1] end,
+    Flag = "TeleportStyle",
+    Callback = function(option) enemySettings.TeleportStyle = option[1] end,
 })
 
-FarmTab_EX:CreateSection("Targeting")
-FarmTab_EX:CreateDropdown({
+FarmTab:CreateSection("Targeting")
+FarmTab:CreateDropdown({
     Name = "Target Priority",
-    Options = {"Most Coins & Goop","Closest","Lowest HP","Mutations Only"},
+    Options = {"Most Coins & Goop", "Closest", "Lowest HP", "Mutations Only"},
     CurrentOption = {"Most Coins & Goop"},
     MultipleOptions = true,
-    Flag = "EX_TargetPriority",
+    Flag = "TargetPriority",
     Callback = function(options)
-        enemySettings_EX.TargetPriorities = {}
-        for _, opt in ipairs(options) do enemySettings_EX.TargetPriorities[opt] = true end
+        enemySettings.TargetPriorities = {}
+        for _, opt in ipairs(options) do enemySettings.TargetPriorities[opt] = true end
     end,
 })
 
-FarmTab_EX:CreateDropdown({
+FarmTab:CreateDropdown({
     Name = "Mutation Filter",
-    Options = {"Any","Inverted","Huge","Shiny","Big"},
+    Options = {"Any", "Inverted", "Huge", "Shiny", "Big"},
     CurrentOption = {"Any"},
     MultipleOptions = false,
-    Flag = "EX_MutationFilter",
-    Callback = function(option) enemySettings_EX.MutationFilter = option[1] end,
+    Flag = "MutationFilter",
+    Callback = function(option) enemySettings.MutationFilter = option[1] end,
 })
 
-FarmTab_EX:CreateSection("Controls")
-FarmTab_EX:CreateToggle({
+FarmTab:CreateSection("Controls")
+FarmTab:CreateToggle({
     Name = "Auto Farm",
     CurrentValue = false,
-    Flag = "EX_AutoFarm",
+    Flag = "AutoFarm",
     Callback = function(value)
-        enemySettings_EX.AutoFarm = value
-        if not value then currentTarget_EX = nil end
+        enemySettings.AutoFarm = value
+        if not value then currentTarget = nil end
     end,
 })
 
-_0x1e5f3d.Heartbeat:Connect(function()
-    refreshEnemyCache_EX()
-    if not enemySettings_EX.AutoFarm then currentTarget_EX = nil; return end
-    if currentTarget_EX and isAlive_EX(currentTarget_EX) and currentTarget_EX.Parent then return end
-    local newTarget = selectTarget_EX()
-    if newTarget and newTarget ~= currentTarget_EX then
-        currentTarget_EX = newTarget
-        moveToEnemy_EX(currentTarget_EX)
+RunService.Heartbeat:Connect(function()
+    refreshEnemyCache()
+    if not enemySettings.AutoFarm then currentTarget = nil; return end
+    if currentTarget and isAlive(currentTarget) and currentTarget.Parent then return end
+    local newTarget = selectTarget()
+    if newTarget and newTarget ~= currentTarget then
+        currentTarget = newTarget
+        moveToEnemy(currentTarget)
     end
 end)
 
 -- ========== STACK DICE TAB ==========
-local DiceTab_EX = _0x4f2a8c_window:CreateTab("🎲 Stack Dice", 4483362458)
 
-DiceTab_EX:CreateSection("Auto Stack")
-DiceTab_EX:CreateToggle({
+local DiceTab = Window:CreateTab("🎲 Stack Dice", 4483362458)
+
+DiceTab:CreateSection("Auto Stack")
+DiceTab:CreateToggle({
     Name = "Auto Stack Dice",
     CurrentValue = false,
-    Flag = "EX_autostack",
+    Flag = "autostack",
     Callback = function(v)
-        stackActive_EX = v
+        stackActive = v
         if not v then
-            for _, dice in ipairs(DICE_EX) do
-                if pausedDice_EX[dice] then
-                    networkerRoll_EX:fetch("requestSetSpecialRollPaused", dice, false)
-                    pausedDice_EX[dice] = false
+            for _, dice in ipairs(DICE) do
+                if pausedDice[dice] then
+                    networkerRoll:fetch("requestSetSpecialRollPaused", dice, false)
+                    pausedDice[dice] = false
                 end
             end
         end
     end,
 })
 
-DiceTab_EX:CreateSection("Dice to Stack")
-DiceTab_EX:CreateDropdown({
+DiceTab:CreateSection("Dice to Stack")
+DiceTab:CreateDropdown({
     Name = "Select Dice",
-    Options = {"All","Golden","Diamond","Void","Galaxy"},
+    Options = {"All", "Golden", "Diamond", "Void", "Galaxy"},
     CurrentOption = {"All"},
     MultipleOptions = true,
-    Flag = "EX_diceDropdown",
+    Flag = "diceDropdown",
     Callback = function(choices)
-        for _, dice in ipairs(DICE_EX) do selectedDice_EX[dice] = false end
+        for _, dice in ipairs(DICE) do selectedDice[dice] = false end
         for _, choice in ipairs(choices) do
             if choice == "All" then
-                for _, dice in ipairs(DICE_EX) do selectedDice_EX[dice] = true end
+                for _, dice in ipairs(DICE) do selectedDice[dice] = true end
                 break
             else
-                selectedDice_EX[choice:lower()] = true
+                selectedDice[choice:lower()] = true
             end
         end
     end,
 })
 
-DiceTab_EX:CreateSection("Total Stacked Luck")
-local DiceLuckLabel_EX = DiceTab_EX:CreateLabel("Total Stacked: x0")
+DiceTab:CreateSection("Total Stacked Luck")
+local DiceLuckLabel = DiceTab:CreateLabel("Total Stacked: x0")
 
 task.spawn(function()
     while true do
         task.wait(0.5)
-        local upgrades    = _0x7b3f5a:get("upgrades") or {}
-        local progression = _0x7b3f5a:get("specialRollProgression") or {}
+        local upgrades    = DataService:get("upgrades") or {}
+        local progression = DataService:get("specialRollProgression") or {}
         local totalStacked = 0
-        for _, dice in ipairs(DICE_EX) do
+        for _, dice in ipairs(DICE) do
             local prog  = progression[dice]
             local rolls = prog and prog.rollsUntilNext or math.huge
             if rolls <= 1 then
-                local ok, mult = pcall(SpecialRollUtils_EX.getLuckMultiplier, dice, upgrades)
+                local ok, mult = pcall(SpecialRollUtils.getLuckMultiplier, dice, upgrades)
                 if ok then totalStacked += (mult or 0) end
             end
         end
-        DiceLuckLabel_EX:Set("Total Stacked: x"..string.format("%.1f", totalStacked))
+        DiceLuckLabel:Set("Total Stacked: x" .. string.format("%.1f", totalStacked))
 
-        if not stackActive_EX then continue end
+        if not stackActive then continue end
 
         local toWatch = {}
-        for _, dice in ipairs(DICE_EX) do
-            if selectedDice_EX[dice] then
-                local ok, unlocked = pcall(SpecialRollUtils_EX.isUnlocked, dice, upgrades)
+        for _, dice in ipairs(DICE) do
+            if selectedDice[dice] then
+                local ok, unlocked = pcall(SpecialRollUtils.isUnlocked, dice, upgrades)
                 if ok and unlocked then table.insert(toWatch, dice) end
             end
         end
@@ -3496,9 +3547,9 @@ task.spawn(function()
             local prog  = progression[dice]
             local rolls = prog and prog.rollsUntilNext or math.huge
             if rolls <= 1 then
-                if not pausedDice_EX[dice] then
-                    networkerRoll_EX:fetch("requestSetSpecialRollPaused", dice, true)
-                    pausedDice_EX[dice] = true
+                if not pausedDice[dice] then
+                    networkerRoll:fetch("requestSetSpecialRollPaused", dice, true)
+                    pausedDice[dice] = true
                 end
             else
                 allReady = false
@@ -3507,69 +3558,70 @@ task.spawn(function()
 
         if allReady then
             for _, dice in ipairs(toWatch) do
-                networkerRoll_EX:fetch("requestSetSpecialRollPaused", dice, false)
-                pausedDice_EX[dice] = false
+                networkerRoll:fetch("requestSetSpecialRollPaused", dice, false)
+                pausedDice[dice] = false
             end
-            _0x2c5d8f:Notify({Title="Unleashed!", Content="All stacked — releasing now.", Duration=3})
+            Rayfield:Notify({Title = "Unleashed!", Content = "All stacked — releasing now.", Duration = 3})
             task.wait(2)
         end
     end
 end)
 
 -- ========== AUTO FEED TAB ==========
-local FruitTab_EX = _0x4f2a8c_window:CreateTab("🍎 Auto Feed", 4483362458)
 
-FruitTab_EX:CreateSection("Fruit Settings")
-FruitTab_EX:CreateToggle({
+local FruitTab = Window:CreateTab("🍎 Auto Feed", 4483362458)
+
+FruitTab:CreateSection("Fruit Settings")
+FruitTab:CreateToggle({
     Name = "Auto Feed Fruits to Slime(s)",
     CurrentValue = false,
-    Flag = "EX_AutoFeedToggle",
+    Flag = "AutoFeedToggle",
     Callback = function(value)
-        autoFeedEnabled_EX = value
+        autoFeedEnabled = value
         if value then
-            if feedConnection_EX then feedConnection_EX:Disconnect() end
-            feedConnection_EX = _0x1e5f3d.Heartbeat:Connect(function()
-                if autoFeedEnabled_EX then doFeed_EX() end
+            if feedConnection then feedConnection:Disconnect() end
+            feedConnection = RunService.Heartbeat:Connect(function()
+                if autoFeedEnabled then doFeed() end
             end)
         else
-            if feedConnection_EX then feedConnection_EX:Disconnect(); feedConnection_EX = nil end
+            if feedConnection then feedConnection:Disconnect(); feedConnection = nil end
         end
     end,
 })
 
-FruitTab_EX:CreateDropdown({
+FruitTab:CreateDropdown({
     Name = "Slimes to Feed",
-    Options = {"Best","Split Across Team"},
+    Options = {"Best", "Split Across Team"},
     CurrentOption = {"Best"},
     MultipleOptions = false,
-    Flag = "EX_SlimeModeDropdown",
+    Flag = "SlimeModeDropdown",
     Callback = function(option)
-        selectedSlimeMode_EX = type(option)=="table" and option[1] or option
+        selectedSlimeMode = type(option) == "table" and option[1] or option
     end,
 })
 
-local fruitOptions_EX = {"Any"}
-local labelToId_EX    = {}
-for _, f in ipairs(ALL_FRUITS_EX) do
-    table.insert(fruitOptions_EX, f.powerName)
-    labelToId_EX[f.powerName] = f.id
+local fruitOptions = {"Any"}
+local labelToId = {}
+for _, f in ipairs(ALL_FRUITS) do
+    table.insert(fruitOptions, f.powerName)
+    labelToId[f.powerName] = f.id
 end
 
-FruitTab_EX:CreateDropdown({
+FruitTab:CreateDropdown({
     Name = "Fruits to Feed",
-    Options = fruitOptions_EX,
+    Options = fruitOptions,
     CurrentOption = {"Any"},
     MultipleOptions = true,
-    Flag = "EX_FruitDropdown",
+    Flag = "FruitDropdown",
     Callback = function(options)
-        local picked = type(options)=="table" and options or {options}
-        selectedFruitIds_EX = {}
+        local picked = type(options) == "table" and options or {options}
+        selectedFruitIds = {}
         for _, label in ipairs(picked) do
-            if label == "Any" then selectedFruitIds_EX = {"ANY"}; return
-            else table.insert(selectedFruitIds_EX, labelToId_EX[label]) end
+            if label == "Any" then selectedFruitIds = {"ANY"}; return
+            else table.insert(selectedFruitIds, labelToId[label]) end
         end
-        if #selectedFruitIds_EX == 0 then selectedFruitIds_EX = {"ANY"} end
+        if #selectedFruitIds == 0 then selectedFruitIds = {"ANY"} end
     end,
 })
 
-print("Cactus Hub addendum loaded — 4 tabs added!")
+print("Cactus Hub loaded successfully!")
