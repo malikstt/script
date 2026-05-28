@@ -21,6 +21,12 @@ task.spawn(function()
 
         local Networker = require(packages.Networker)
 
+        local rollClient = {
+            rareRollAnnouncement = function() end,
+            rareRollAnnouncementV2 = function() end,
+        }
+        local networkerRoll = Networker.client.new("RollService", rollClient)
+
         local inventoryServiceClient, xpTransferServiceClient
         inventoryServiceClient = Networker.client.new("InventoryService")
         xpTransferServiceClient = Networker.client.new("XpTransferService")
@@ -55,6 +61,7 @@ task.spawn(function()
         local slimesModule = require(sourceFolder.Game.Items.Slimes)
         local mutationsModule = require(sourceFolder.Features.Mutations.Mutations)
         local FruitsModule = require(sourceFolder.Game.Items.Fruits)
+        local SpecialRollUtils = require(sourceFolder.Features.Roll.SpecialRollUtils)
 
         local boostKinds = boostServiceUtils.getKinds()
         local diceItemIds = specialDiceUtils.getInventoryItemIds()
@@ -94,7 +101,6 @@ task.spawn(function()
             local upgradeIds = {}
             local upgradeCosts = {}
             local seen = {}
-            
             local function traverseUpgradeTree(tree)
                 if type(tree) ~= "table" or seen[tree] then return end
                 seen[tree] = true
@@ -108,7 +114,6 @@ task.spawn(function()
                     end
                 end
             end
-            
             traverseUpgradeTree(upgradeTreeModule.main)
             return upgradeIds, upgradeCosts
         end
@@ -120,6 +125,25 @@ task.spawn(function()
                 if child.Name:match("^Gameplay") then
                     gameplayFolder = child
                     return child
+                end
+            end
+            return nil
+        end
+
+        local function getDamageUIParent()
+            local playerGui = localPlayer:FindFirstChild("PlayerGui")
+            if not playerGui then return nil end
+            for _, gui in ipairs(playerGui:GetChildren()) do
+                if gui.Name:lower():find("damage") or gui.Name:lower():find("combat") or gui.Name:lower():find("hit") then
+                    return gui
+                end
+            end
+            local screenGui = playerGui:FindFirstChildOfClass("ScreenGui")
+            if screenGui then
+                for _, child in ipairs(screenGui:GetChildren()) do
+                    if child.Name:lower():find("damage") or child.Name:lower():find("combat") or child.Name:lower():find("hit") then
+                        return child
+                    end
                 end
             end
             return nil
@@ -243,8 +267,7 @@ task.spawn(function()
             CurrentOption = { "Best Unlocked" },
             MultipleOptions = false,
             Flag = "FarmingZoneTarget",
-            Callback = function(option)
-            end,
+            Callback = function(option) end,
         })
 
         farmingTab:CreateToggle({
@@ -1197,8 +1220,8 @@ task.spawn(function()
                     task.spawn(function()
                         while task.wait(1) and rayfieldLibrary.Flags.MiscUseDice and rayfieldLibrary.Flags.MiscUseDice.CurrentValue do
                             local items = dataServiceClient:get("items") or {}
-                            local selectedDice = rayfieldLibrary.Flags.MiscDiceTypes and rayfieldLibrary.Flags.MiscDiceTypes.CurrentOption or {}
-                            for _, diceName in ipairs(selectedDice) do
+                            local selectedDiceItems = rayfieldLibrary.Flags.MiscDiceTypes and rayfieldLibrary.Flags.MiscDiceTypes.CurrentOption or {}
+                            for _, diceName in ipairs(selectedDiceItems) do
                                 local itemId = nameToIdMap[diceName]
                                 if itemId and (items[itemId] or 0) > 0 then
                                     inventoryServiceRemote:InvokeServer("requestUseItem", itemId)
@@ -1560,7 +1583,11 @@ task.spawn(function()
                     container.Visible = not Value
                 else
                     task.spawn(function()
-                        while not getDamageUIParent() and task.wait(0.5) do end
+                        local attempts = 0
+                        while not getDamageUIParent() and attempts < 20 do
+                            task.wait(0.5)
+                            attempts = attempts + 1
+                        end
                         local cont = getDamageUIParent()
                         if cont then cont.Visible = not Value end
                     end)
@@ -1806,7 +1833,6 @@ task.spawn(function()
 
         local craftingTab = gameTab
 
-        local ReplicatedStorage = game:GetService("ReplicatedStorage")
         local function getCraftingRemote()
             return ReplicatedStorage
                 :WaitForChild("Packages")
@@ -1986,17 +2012,15 @@ task.spawn(function()
         local function getMaxCraftsForRecipe(recipeId)
             local recipe = getRecipe(recipeId)
             if not recipe then return 0 end
-            
-            local inventory = getCraftingData("inventory") or {}
             local usedCounts = {}
             local maxCrafts = math.huge
-            
             for _, input in ipairs(recipe.inputs) do
                 local bestUid = findBestIngredient(input.id, usedCounts, craftingState.protectedPets)
                 if not bestUid then
                     return 0
                 end
                 usedCounts[bestUid] = (usedCounts[bestUid] or 0) + 1
+                local inventory = getCraftingData("inventory") or {}
                 local owned = getOwnedAmount(inventory[bestUid])
                 local used = usedCounts[bestUid]
                 local available = owned - used + 1
@@ -2004,7 +2028,6 @@ task.spawn(function()
                     maxCrafts = available
                 end
             end
-            
             return maxCrafts == math.huge and 0 or maxCrafts
         end
 
