@@ -112,7 +112,7 @@ task.spawn(function()
 	local gameTab      = mainWindow:CreateTab("Game", 82493603309814)
 	local indexTab     = mainWindow:CreateTab("Index", 4483362458)
 	local miscTab      = mainWindow:CreateTab("Misc", 96334002390551)
-	local webhookTab   = mainWindow:CreateTab("Webhook", 84577758013974)   -- added
+	local webhookTab   = mainWindow:CreateTab("Webhook", 84577758013974)
 	local settingsTab  = mainWindow:CreateTab("Settings", 122930981612451)
 	local statsTab     = mainWindow:CreateTab("Stats", 4483362458)
 
@@ -1113,8 +1113,352 @@ task.spawn(function()
 	})
 
 	gameTab:CreateSection("Combat")
-	featureToggle(gameTab, { Name="Auto Shoot Enemies", CurrentValue=false, Flag="CombatAutoShoot", Callback=function() end })
-	gameTab:CreateDropdown({ Name="Combat Target Priority", Options={"Closest","Highest HP","Lowest HP"}, CurrentOption={"Closest"}, MultipleOptions=false, Flag="CombatTargetPriority", Callback=function() end })
+
+	-- Combat system variables
+	local combatEnabled = false
+	local combatPriority = "Closest"
+
+	featureToggle(gameTab, {
+		Name = "Auto Shoot Enemies",
+		CurrentValue = false,
+		Flag = "CombatAutoShoot",
+		Callback = function(value)
+			combatEnabled = value
+		end,
+	})
+
+	gameTab:CreateDropdown({
+		Name = "Combat Target Priority",
+		Options = {"Closest", "Lowest HP", "Highest HP"},
+		CurrentOption = {"Closest"},
+		MultipleOptions = false,
+		Flag = "CombatTargetPriority",
+		Callback = function(option)
+			combatPriority = option[1]
+		end,
+	})
+
+	-- Helper: ensure SlimeGun is equipped
+	local function ensureGunEquipped()
+		local char = localPlayer.Character
+		if not char then return false end
+		local humanoid = char:FindFirstChildOfClass("Humanoid")
+		if not humanoid then return false end
+		local gun = char:FindFirstChild("SlimeGun") or localPlayer.Backpack:FindFirstChild("SlimeGun")
+		if gun and gun.Parent ~= char then
+			humanoid:EquipTool(gun)
+		end
+		return gun ~= nil
+	end
+
+	-- Target selection for combat
+	local function selectCombatTarget()
+		local character = localPlayer.Character
+		if not character then return nil end
+		local rootPart = character:FindFirstChild("HumanoidRootPart")
+		if not rootPart then return nil end
+
+		local gameplayContainer = getGameplayContainer()
+		if not gameplayContainer then return nil end
+		local enemiesFolder = gameplayContainer:FindFirstChild("Enemies")
+		if not enemiesFolder then return nil end
+
+		local bestTarget, bestValue = nil, nil
+		for _, enemy in ipairs(enemiesFolder:GetChildren()) do
+			if enemy:IsA("Model") and isAlive(enemy) then
+				local enemyRoot = getEnemyRoot(enemy)
+				if enemyRoot then
+					local dist = (enemyRoot.Position - rootPart.Position).Magnitude
+					if dist <= RANGE then
+						if combatPriority == "Closest" then
+							if bestValue == nil or dist < bestValue then
+								bestValue = dist
+								bestTarget = enemy
+							end
+						elseif combatPriority == "Lowest HP" then
+							local hp = enemy:GetAttribute("health") or 0
+							if hp > 0 and (bestValue == nil or hp < bestValue) then
+								bestValue = hp
+								bestTarget = enemy
+							end
+						elseif combatPriority == "Highest HP" then
+							local hp = enemy:GetAttribute("health") or 0
+							if hp > 0 and (bestValue == nil or hp > bestValue) then
+								bestValue = hp
+								bestTarget = enemy
+							end
+						end
+					end
+				end
+			end
+		end
+		return bestTarget
+	end
+
+	-- =============================================
+	-- CUSTOM DAMAGE UI (popups, health bars)
+	-- =============================================
+	local damageUIParent = nil
+	local function getDamageUIParent()
+		if damageUIParent and damageUIParent.Parent then return damageUIParent end
+		local playerGui = localPlayer.PlayerGui
+		local screenGui = playerGui:FindFirstChild("SlimeGunHUD")
+		if screenGui then
+			local container = screenGui:FindFirstChild("PopupContainer")
+			if container then
+				damageUIParent = container
+				return container
+			end
+		end
+		return nil
+	end
+
+	-- Create the damage UI container if it doesn't exist
+	task.spawn(function()
+		local ReplicatedStorage = game:GetService("ReplicatedStorage")
+		local Players = game:GetService("Players")
+		local player = Players.LocalPlayer
+
+		local GameplayServiceClient = require(ReplicatedStorage.Source.Features.Gameplay.GameplayServiceClient)
+		local GoopGunServiceClient = require(ReplicatedStorage.Source.Features.GoopGun.GoopGunServiceClient)
+		local GoopGunServiceUtils = require(ReplicatedStorage.Source.Features.GoopGun.GoopGunServiceUtils)
+		local DataService = require(ReplicatedStorage.Packages.DataService).client
+
+		local screenGui = Instance.new("ScreenGui")
+		screenGui.Name = "SlimeGunHUD"
+		screenGui.ResetOnSpawn = false
+		screenGui.IgnoreGuiInset = true
+		screenGui.DisplayOrder = 999
+		screenGui.Parent = player.PlayerGui
+
+		local container = Instance.new("Frame")
+		container.Name = "PopupContainer"
+		container.Position = UDim2.new(1, -276, 0, 48)
+		container.Size = UDim2.new(0, 260, 1, -96)
+		container.BackgroundTransparency = 1
+		container.Parent = screenGui
+
+		local layout = Instance.new("UIListLayout")
+		layout.SortOrder = Enum.SortOrder.LayoutOrder
+		layout.VerticalAlignment = Enum.VerticalAlignment.Top
+		layout.Padding = UDim.new(0, 6)
+		layout.Parent = container
+
+		local COLORS = {
+			normal   = Color3.fromRGB(120, 220, 255),
+			big      = Color3.fromRGB(255, 180, 50),
+			huge     = Color3.fromRGB(255, 80, 80),
+			shiny    = Color3.fromRGB(255, 230, 50),
+			inverted = Color3.fromRGB(180, 80, 255),
+		}
+
+		local function getMutationColor(mutations)
+			if not mutations then return COLORS.normal end
+			if mutations.inverted then return COLORS.inverted end
+			if mutations.huge     then return COLORS.huge end
+			if mutations.shiny    then return COLORS.shiny end
+			if mutations.big      then return COLORS.big end
+			return COLORS.normal
+		end
+
+		local function getEnemyLabel(enemy)
+			local tier = "Lv." .. tostring(enemy.enemyId or 1)
+			local uid = "#" .. tostring(enemy.uniqueId or "?")
+			if enemy.mutations then
+				local tags = {}
+				for mut in pairs(enemy.mutations) do
+					table.insert(tags, mut:sub(1,1):upper() .. mut:sub(2))
+				end
+				if #tags > 0 then
+					return table.concat(tags, " ") .. " Slime " .. tier .. " " .. uid
+				end
+			end
+			return "Slime " .. tier .. " " .. uid
+		end
+
+		local activePopups = {}
+		local popupOrder = 0
+		local TweenService = game:GetService("TweenService")
+
+		local function pulseFrame(frame, accentColor)
+			TweenService:Create(frame, TweenInfo.new(0.06, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				BackgroundColor3 = accentColor
+			}):Play()
+			task.delay(0.06, function()
+				TweenService:Create(frame, TweenInfo.new(0.12, Enum.EasingStyle.Quad), {
+					BackgroundColor3 = Color3.fromRGB(10, 10, 18)
+				}):Play()
+			end)
+		end
+
+		local function destroyPopup(uid)
+			local p = activePopups[uid]
+			if not p then return end
+			activePopups[uid] = nil
+			local frame = p.frame
+			TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quint), {
+				BackgroundTransparency = 1,
+				Size = UDim2.new(1, 0, 0, 0)
+			}):Play()
+			for _, lbl in ipairs(p.labels) do
+				TweenService:Create(lbl, TweenInfo.new(0.3), { TextTransparency = 1 }):Play()
+			end
+			TweenService:Create(p.accent, TweenInfo.new(0.3), { BackgroundTransparency = 1 }):Play()
+			task.delay(0.3, function() frame:Destroy() end)
+		end
+
+		local function scheduleExpiry(uid)
+			local p = activePopups[uid]
+			if not p then return end
+			if p.expireTask then task.cancel(p.expireTask) end
+			p.expireTask = task.delay(2.5, function()
+				destroyPopup(uid)
+			end)
+		end
+
+		local function createPopup(uid, enemyLabel, dmg, hpAfter, accentColor)
+			popupOrder = popupOrder + 1
+
+			local frame = Instance.new("Frame")
+			frame.Size = UDim2.new(1, 0, 0, 52)
+			frame.BackgroundColor3 = Color3.fromRGB(10, 10, 18)
+			frame.BackgroundTransparency = 0.1
+			frame.BorderSizePixel = 0
+			frame.ClipsDescendants = true
+			frame.LayoutOrder = popupOrder
+			frame.Parent = container
+
+			Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
+
+			local accent = Instance.new("Frame")
+			accent.Size = UDim2.new(0, 3, 1, 0)
+			accent.BackgroundColor3 = accentColor
+			accent.BorderSizePixel = 0
+			accent.Parent = frame
+			Instance.new("UICorner", accent).CornerRadius = UDim.new(0, 10)
+
+			local nameLabel = Instance.new("TextLabel")
+			nameLabel.Position = UDim2.new(0, 14, 0, 5)
+			nameLabel.Size = UDim2.new(1, -90, 0, 18)
+			nameLabel.BackgroundTransparency = 1
+			nameLabel.Text = enemyLabel
+			nameLabel.TextColor3 = Color3.fromRGB(220, 220, 230)
+			nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+			nameLabel.Font = Enum.Font.GothamBold
+			nameLabel.TextSize = 13
+			nameLabel.Parent = frame
+
+			local hpLabel = Instance.new("TextLabel")
+			hpLabel.Position = UDim2.new(0, 14, 0, 25)
+			hpLabel.Size = UDim2.new(1, -90, 0, 14)
+			hpLabel.BackgroundTransparency = 1
+			hpLabel.Text = "HP: " .. tostring(math.max(0, math.floor(hpAfter)))
+			hpLabel.TextColor3 = Color3.fromRGB(130, 130, 150)
+			hpLabel.TextXAlignment = Enum.TextXAlignment.Left
+			hpLabel.Font = Enum.Font.Gotham
+			hpLabel.TextSize = 11
+			hpLabel.Parent = frame
+
+			local hitsLabel = Instance.new("TextLabel")
+			hitsLabel.Position = UDim2.new(0, 14, 0, 38)
+			hitsLabel.Size = UDim2.new(1, -90, 0, 12)
+			hitsLabel.BackgroundTransparency = 1
+			hitsLabel.Text = "1 hit  •  " .. tostring(math.floor(dmg)) .. " total dmg"
+			hitsLabel.TextColor3 = Color3.fromRGB(90, 90, 110)
+			hitsLabel.TextXAlignment = Enum.TextXAlignment.Left
+			hitsLabel.Font = Enum.Font.Gotham
+			hitsLabel.TextSize = 10
+			hitsLabel.Parent = frame
+
+			local dmgLabel = Instance.new("TextLabel")
+			dmgLabel.Position = UDim2.new(1, -80, 0, 0)
+			dmgLabel.Size = UDim2.new(0, 72, 1, 0)
+			dmgLabel.BackgroundTransparency = 1
+			dmgLabel.Text = "-" .. tostring(math.floor(dmg))
+			dmgLabel.TextColor3 = accentColor
+			dmgLabel.TextXAlignment = Enum.TextXAlignment.Right
+			dmgLabel.Font = Enum.Font.GothamBold
+			dmgLabel.TextSize = 20
+			dmgLabel.Parent = frame
+
+			frame.Position = UDim2.new(-1, 0, 0, 0)
+			TweenService:Create(frame, TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+				Position = UDim2.new(0, 0, 0, 0)
+			}):Play()
+
+			activePopups[uid] = {
+				frame      = frame,
+				accent     = accent,
+				labels     = { nameLabel, hpLabel, hitsLabel, dmgLabel },
+				hpLabel    = hpLabel,
+				hitsLabel  = hitsLabel,
+				dmgLabel   = dmgLabel,
+				totalDmg   = dmg,
+				hits       = 1,
+				accentColor = accentColor,
+				expireTask = nil,
+			}
+
+			scheduleExpiry(uid)
+		end
+
+		local function updatePopup(uid, dmg, hpAfter)
+			local p = activePopups[uid]
+			if not p then return end
+
+			p.totalDmg = p.totalDmg + dmg
+			p.hits = p.hits + 1
+
+			p.hpLabel.Text   = "HP: " .. tostring(math.max(0, math.floor(hpAfter)))
+			p.hitsLabel.Text = p.hits .. " hits  •  " .. tostring(math.floor(p.totalDmg)) .. " total dmg"
+			p.dmgLabel.Text  = "-" .. tostring(math.floor(p.totalDmg))
+
+			pulseFrame(p.frame, p.accentColor)
+			scheduleExpiry(uid)
+		end
+
+		-- Combat loop with damage UI
+		while true do
+			if combatEnabled then
+				local character = localPlayer.Character
+				if character and character:FindFirstChildOfClass("Humanoid") and character.Humanoid.Health > 0 then
+					ensureGunEquipped()
+					local upgrades = DataService:get("upgrades") or {}
+					local fireRate = GoopGunServiceUtils.getFireRate(upgrades)
+					local targetId = selectCombatTarget()
+					if targetId then
+						local gameplay = GameplayServiceClient.gameplay
+						local enemy = gameplay and gameplay.enemies[targetId.Name]  -- adjust key as needed
+						local hpBefore = enemy and enemy.health or 0
+						local enemyLabel = enemy and getEnemyLabel(enemy) or "Slime"
+						local accentColor = enemy and getMutationColor(enemy.mutations) or COLORS.normal
+
+						local wrapper = GoopGunServiceClient.wrapper
+						if wrapper and wrapper.onEnemyHit then
+							wrapper.onEnemyHit(targetId.Name)
+						end
+
+						task.wait()
+						local hpAfter = enemy and enemy.health or 0
+						local dmg = hpBefore - hpAfter
+
+						if dmg > 0 then
+							if activePopups[targetId.Name] then
+								updatePopup(targetId.Name, dmg, hpAfter)
+							else
+								createPopup(targetId.Name, enemyLabel, dmg, hpAfter, accentColor)
+							end
+						end
+					end
+					task.wait(fireRate)
+				else
+					task.wait(1)
+				end
+			else
+				task.wait(0.5)
+			end
+		end
+	end)
 
 	gameTab:CreateSection("Recipes")
 
@@ -2012,8 +2356,36 @@ task.spawn(function()
 	-- =============================================
 	settingsTab:CreateSection("System")
 
-	featureToggle(settingsTab, { Name="Anti Kick", CurrentValue=false, Flag="SettingsAntiKick", Callback=function() end })
-	featureToggle(settingsTab, { Name="Auto Rejoin On Disconnect", CurrentValue=false, Flag="SettingsAutoRejoin", Callback=function() end })
+	featureToggle(settingsTab, {
+		Name = "Anti Kick",
+		CurrentValue = false,
+		Flag = "SettingsAntiKick",
+		Callback = function(value)
+			if value then
+				local players = game:GetService("Players")
+				local oldKick = players.LocalPlayer.Kick
+				players.LocalPlayer.Kick = function(self, msg)
+					if rayfieldLibrary.Flags.SettingsAntiKick and rayfieldLibrary.Flags.SettingsAntiKick.CurrentValue then
+						warn("[CactusHub] Blocked kick attempt: " .. tostring(msg))
+						return
+					end
+					return oldKick(self, msg)
+				end
+			else
+				local players = game:GetService("Players")
+				if players.LocalPlayer and players.LocalPlayer.Kick ~= players.LocalPlayer.Kick then
+					players.LocalPlayer.Kick = nil
+				end
+			end
+		end,
+	})
+
+	featureToggle(settingsTab, {
+		Name = "Auto Rejoin On Disconnect",
+		CurrentValue = false,
+		Flag = "SettingsAutoRejoin",
+		Callback = function() end,
+	})
 
 	featureToggle(settingsTab, {
 		Name = "Auto Friend Requests",
