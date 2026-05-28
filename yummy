@@ -1,22 +1,7 @@
 task.spawn(function()
     repeat task.wait() until game:IsLoaded()
     local Players = game:GetService("Players")
-    local HttpService = game:GetService("HttpService")
     local localPlayer = Players.LocalPlayer
-
-    local function showNotification(title, text, duration)
-        duration = duration or 5
-        game:GetService("StarterGui"):SetCore("SendNotification", {
-            Title = title,
-            Text = text,
-            Duration = duration
-        })
-    end
-
-    local request = request or http_request or (http and http.request) 
-    if not request then
-        showNotification("Executor Warning", "HTTP requests not supported. Thumbnails will not work.", 8)
-    end
 
     task.spawn(function()
         repeat task.wait() until game:IsLoaded()
@@ -25,7 +10,6 @@ task.spawn(function()
         local localPlayer = Players.LocalPlayer
         local RunService = game:GetService("RunService")
         local VirtualUser = game:GetService("VirtualUser")
-        local HttpService = game:GetService("HttpService")
 
         local packages = ReplicatedStorage:WaitForChild("Packages")
         local indexFolder = packages:WaitForChild("_Index")
@@ -81,120 +65,6 @@ task.spawn(function()
             local itemName = definition and definition.name or itemId
             idToNameMap[itemId] = itemName
             nameToIdMap[itemName] = itemId
-        end
-
-        local function formatNumber(number)
-            if type(number) ~= "number" then return tostring(number) end
-            local suffixes = {
-                {1e24,"Sp"},{1e21,"Sx"},{1e18,"Qn"},{1e15,"Qd"},{1e12,"T"},
-                {1e9,"B"},{1e6,"M"},{1e3,"K"}
-            }
-            for _, suffixPair in ipairs(suffixes) do
-                if math.abs(number) >= suffixPair[1] then
-                    local scaled = number / suffixPair[1]
-                    if math.abs(scaled - math.floor(scaled)) < 0.01 then
-                        return string.format("%d%s", math.floor(scaled), suffixPair[2])
-                    else
-                        return string.format("%.1f%s", scaled, suffixPair[2])
-                    end
-                end
-            end
-            return tostring(math.floor(number))
-        end
-
-        local function getRarityName(odds)
-            if not odds or type(odds) ~= "number" or odds <= 0 then return "Unknown" end
-            local tier, tierData = rarityTiersModule.getTier(odds)
-            return (tier and tierData and tierData.name) or "Unknown"
-        end
-
-        local function getFirstItemWithId(itemList)
-            if type(itemList) ~= "table" then return nil end
-            for _, item in ipairs(itemList) do
-                if type(item) == "table" and item.id then return item end
-            end
-            return nil
-        end
-
-        local function serializeRollResult(rollResult)
-            if type(rollResult) ~= "table" or #rollResult == 0 then return "empty" end
-            local ids = {}
-            for index, item in ipairs(rollResult) do
-                local firstItem = getFirstItemWithId(item)
-                ids[index] = firstItem and tostring(firstItem.id) or tostring(index)
-            end
-            return #rollResult .. "|" .. table.concat(ids, ",")
-        end
-
-        local function getMutationCategory(mutations)
-            if not mutations then return "basic" end
-            if mutations.inverted then return "inverted" end
-            if mutations.huge then return "huge" end
-            if mutations.big then return "big" end
-            if mutations.shiny then return "shiny" end
-            return "basic"
-        end
-
-        local function isNewSlime(slimeId, mutations)
-            local indexData = dataServiceClient:get("index") or {}
-            local categories = indexData.categories or {}
-            local categoryData = categories[getMutationCategory(mutations)]
-            local unlocked = categoryData and categoryData.unlocked or {}
-            return not unlocked[slimeId]
-        end
-
-        local function getMutationType(mutations)
-            if not mutations then return "basic" end
-            if mutations.inverted then return "inverted" end
-            if mutations.huge then return "huge" end
-            if mutations.big then return "big" end
-            if mutations.shiny then return "shiny" end
-            return "basic"
-        end
-
-        local thumbnailCache = {}
-        local function getThumbnailUrl(assetId)
-            if not assetId then return nil end
-            if thumbnailCache[assetId] then return thumbnailCache[assetId] end
-            local response = request({
-                Url = "https://thumbnails.roblox.com/v1/assets?assetIds=" .. assetId .. "&size=420x420&format=Png&isCircular=false",
-                Method = "GET"
-            })
-            if response and response.Success then
-                local decoded = HttpService:JSONDecode(response.Body)
-                if decoded and decoded.data and decoded.data[1] then
-                    thumbnailCache[assetId] = decoded.data[1].imageUrl
-                    return thumbnailCache[assetId]
-                end
-            end
-            return nil
-        end
-
-        local function getIconSize(mutations)
-            if not mutations then return 64 end
-            if mutations.huge then return 128 elseif mutations.big then return 96 end
-            return 64
-        end
-
-        local function getEmbedColor(mutations)
-            if not mutations then return 0x3498db end
-            if mutations.inverted then return 0x9b59b6
-            elseif mutations.huge then return 0xf1c40f
-            elseif mutations.big then return 0xe67e22
-            elseif mutations.shiny then return 0xf39c12
-            end
-            return 0x3498db
-        end
-
-        local function ordinalSuffix(number)
-            local numberStr = tostring(number)
-            local lastDigit = number % 10
-            local lastTwo = number % 100
-            if lastTwo >= 11 and lastTwo <= 13 then return numberStr.."th" end
-            if lastDigit == 1 then return numberStr.."st" end
-            if lastDigit == 2 then return numberStr.."nd" end
-            if lastDigit == 3 then return numberStr.."rd" end
-            return numberStr.."th"
         end
 
         local function getBestSlimeUid()
@@ -688,544 +558,179 @@ task.spawn(function()
             Callback = function(option) end,
         })
 
-        local function ensureSlimeGunEquipped()
-            local character = localPlayer.Character
-            if not character then return false end
-            local humanoid = character:FindFirstChildOfClass("Humanoid")
-            if not humanoid then return false end
-            local gun = character:FindFirstChild("SlimeGun") or localPlayer.Backpack:FindFirstChild("SlimeGun")
-            if gun and gun.Parent ~= character then
-                humanoid:EquipTool(gun)
+        -- ===================== TELEPORT TO PLAYER =====================
+        gameTab:CreateSection("Teleport to Player")
+        local playerDropdownOptions = {}
+        local selectedPlayer = nil
+
+        local function refreshPlayerList()
+            playerDropdownOptions = {}
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= localPlayer then
+                    table.insert(playerDropdownOptions, plr.Name)
+                end
             end
-            return gun ~= nil
+            if #playerDropdownOptions == 0 then
+                table.insert(playerDropdownOptions, "No other players")
+            end
+            -- Update dropdown options
+            rayfieldLibrary.Flags.TeleportPlayerDropdown.Options = playerDropdownOptions
+            if selectedPlayer and not table.find(playerDropdownOptions, selectedPlayer) then
+                selectedPlayer = nil
+            end
         end
 
-        task.spawn(function()
-            while true do
-                ensureSlimeGunEquipped()
-                task.wait(2)
-            end
-        end)
+        gameTab:CreateDropdown({
+            Name = "Select Player",
+            Options = {},
+            CurrentOption = {},
+            MultipleOptions = false,
+            Flag = "TeleportPlayerDropdown",
+            Callback = function(option)
+                selectedPlayer = option[1]
+            end,
+        })
 
-        local damageUIParent = nil
-        local function getDamageUIParent()
-            if damageUIParent and damageUIParent.Parent then return damageUIParent end
-            local playerGui = localPlayer.PlayerGui
-            local screenGui = playerGui:FindFirstChild("SlimeGunHUD")
-            if screenGui then
-                local container = screenGui:FindFirstChild("PopupContainer")
-                if container then
-                    damageUIParent = container
-                    return container
+        gameTab:CreateButton({
+            Name = "Teleport",
+            Callback = function()
+                if not selectedPlayer or selectedPlayer == "No other players" then
+                    rayfieldLibrary:Notify({
+                        Title = "Teleport",
+                        Content = "No player selected or no other players online.",
+                        Duration = 3,
+                    })
+                    return
                 end
-            end
-            return nil
-        end
-
-        task.spawn(function()
-            local ReplicatedStorage = game:GetService("ReplicatedStorage")
-            local Players = game:GetService("Players")
-            local player = Players.LocalPlayer
-            
-            local GameplayServiceClient = require(ReplicatedStorage.Source.Features.Gameplay.GameplayServiceClient)
-            local GoopGunServiceClient = require(ReplicatedStorage.Source.Features.GoopGun.GoopGunServiceClient)
-            local GoopGunServiceUtils = require(ReplicatedStorage.Source.Features.GoopGun.GoopGunServiceUtils)
-            local DataService = require(ReplicatedStorage.Packages.DataService).client
-            
-            local screenGui = Instance.new("ScreenGui")
-            screenGui.Name = "SlimeGunHUD"
-            screenGui.ResetOnSpawn = false
-            screenGui.IgnoreGuiInset = true
-            screenGui.DisplayOrder = 999
-            screenGui.Parent = player.PlayerGui
-            
-            local container = Instance.new("Frame")
-            container.Name = "PopupContainer"
-            container.Position = UDim2.new(1, -276, 0, 48)
-            container.Size = UDim2.new(0, 260, 1, -96)
-            container.BackgroundTransparency = 1
-            container.Parent = screenGui
-            
-            local layout = Instance.new("UIListLayout")
-            layout.SortOrder = Enum.SortOrder.LayoutOrder
-            layout.VerticalAlignment = Enum.VerticalAlignment.Top
-            layout.Padding = UDim.new(0, 6)
-            layout.Parent = container
-            
-            local COLORS = {
-                normal   = Color3.fromRGB(120, 220, 255),
-                big      = Color3.fromRGB(255, 180, 50),
-                huge     = Color3.fromRGB(255, 80, 80),
-                shiny    = Color3.fromRGB(255, 230, 50),
-                inverted = Color3.fromRGB(180, 80, 255),
-            }
-            
-            local function getMutationColor(mutations)
-                if not mutations then return COLORS.normal end
-                if mutations.inverted then return COLORS.inverted end
-                if mutations.huge     then return COLORS.huge end
-                if mutations.shiny    then return COLORS.shiny end
-                if mutations.big      then return COLORS.big end
-                return COLORS.normal
-            end
-            
-            local function getEnemyLabel(enemy)
-                local tier = "Lv." .. tostring(enemy.enemyId or 1)
-                local uid = "#" .. tostring(enemy.uniqueId or "?")
-                if enemy.mutations then
-                    local tags = {}
-                    for mut in pairs(enemy.mutations) do
-                        table.insert(tags, mut:sub(1,1):upper() .. mut:sub(2))
-                    end
-                    if #tags > 0 then
-                        return table.concat(tags, " ") .. " Slime " .. tier .. " " .. uid
-                    end
+                local targetPlayer = Players:FindFirstChild(selectedPlayer)
+                if not targetPlayer or not targetPlayer.Character then
+                    rayfieldLibrary:Notify({
+                        Title = "Teleport",
+                        Content = "Target player not found or has no character.",
+                        Duration = 3,
+                    })
+                    return
                 end
-                return "Slime " .. tier .. " " .. uid
-            end
-            
-            local activePopups = {}
-            local popupOrder = 0
-            
-            local TweenService = game:GetService("TweenService")
-            
-            local function pulseFrame(frame, accentColor)
-                TweenService:Create(frame, TweenInfo.new(0.06, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                    BackgroundColor3 = accentColor
-                }):Play()
-                task.delay(0.06, function()
-                    TweenService:Create(frame, TweenInfo.new(0.12, Enum.EasingStyle.Quad), {
-                        BackgroundColor3 = Color3.fromRGB(10, 10, 18)
-                    }):Play()
-                end)
-            end
-            
-            local function destroyPopup(uid)
-                local popup = activePopups[uid]
-                if not popup then return end
-                activePopups[uid] = nil
-                local frame = popup.frame
-                TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quint), {
-                    BackgroundTransparency = 1,
-                    Size = UDim2.new(1, 0, 0, 0)
-                }):Play()
-                for _, label in ipairs(popup.labels) do
-                    TweenService:Create(label, TweenInfo.new(0.3), { TextTransparency = 1 }):Play()
+                local targetRoot = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+                if not targetRoot then
+                    rayfieldLibrary:Notify({
+                        Title = "Teleport",
+                        Content = "Target has no HumanoidRootPart.",
+                        Duration = 3,
+                    })
+                    return
                 end
-                TweenService:Create(popup.accent, TweenInfo.new(0.3), { BackgroundTransparency = 1 }):Play()
-                task.delay(0.3, function() frame:Destroy() end)
-            end
-            
-            local function scheduleExpiry(uid)
-                local popup = activePopups[uid]
-                if not popup then return end
-                if popup.expireTask then task.cancel(popup.expireTask) end
-                popup.expireTask = task.delay(2.5, function()
-                    destroyPopup(uid)
-                end)
-            end
-            
-            local function createPopup(uid, enemyLabel, damage, hpAfter, accentColor)
-                popupOrder = popupOrder + 1
-            
-                local frame = Instance.new("Frame")
-                frame.Size = UDim2.new(1, 0, 0, 52)
-                frame.BackgroundColor3 = Color3.fromRGB(10, 10, 18)
-                frame.BackgroundTransparency = 0.1
-                frame.BorderSizePixel = 0
-                frame.ClipsDescendants = true
-                frame.LayoutOrder = popupOrder
-                frame.Parent = container
-            
-                Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
-            
-                local accent = Instance.new("Frame")
-                accent.Size = UDim2.new(0, 3, 1, 0)
-                accent.BackgroundColor3 = accentColor
-                accent.BorderSizePixel = 0
-                accent.Parent = frame
-                Instance.new("UICorner", accent).CornerRadius = UDim.new(0, 10)
-            
-                local nameLabel = Instance.new("TextLabel")
-                nameLabel.Position = UDim2.new(0, 14, 0, 5)
-                nameLabel.Size = UDim2.new(1, -90, 0, 18)
-                nameLabel.BackgroundTransparency = 1
-                nameLabel.Text = enemyLabel
-                nameLabel.TextColor3 = Color3.fromRGB(220, 220, 230)
-                nameLabel.TextXAlignment = Enum.TextXAlignment.Left
-                nameLabel.Font = Enum.Font.GothamBold
-                nameLabel.TextSize = 13
-                nameLabel.Parent = frame
-            
-                local hpLabel = Instance.new("TextLabel")
-                hpLabel.Position = UDim2.new(0, 14, 0, 25)
-                hpLabel.Size = UDim2.new(1, -90, 0, 14)
-                hpLabel.BackgroundTransparency = 1
-                hpLabel.Text = "HP: " .. tostring(math.max(0, math.floor(hpAfter)))
-                hpLabel.TextColor3 = Color3.fromRGB(130, 130, 150)
-                hpLabel.TextXAlignment = Enum.TextXAlignment.Left
-                hpLabel.Font = Enum.Font.Gotham
-                hpLabel.TextSize = 11
-                hpLabel.Parent = frame
-            
-                local hitsLabel = Instance.new("TextLabel")
-                hitsLabel.Position = UDim2.new(0, 14, 0, 38)
-                hitsLabel.Size = UDim2.new(1, -90, 0, 12)
-                hitsLabel.BackgroundTransparency = 1
-                hitsLabel.Text = "1 hit  •  " .. tostring(math.floor(damage)) .. " total dmg"
-                hitsLabel.TextColor3 = Color3.fromRGB(90, 90, 110)
-                hitsLabel.TextXAlignment = Enum.TextXAlignment.Left
-                hitsLabel.Font = Enum.Font.Gotham
-                hitsLabel.TextSize = 10
-                hitsLabel.Parent = frame
-            
-                local damageLabel = Instance.new("TextLabel")
-                damageLabel.Position = UDim2.new(1, -80, 0, 0)
-                damageLabel.Size = UDim2.new(0, 72, 1, 0)
-                damageLabel.BackgroundTransparency = 1
-                damageLabel.Text = "-" .. tostring(math.floor(damage))
-                damageLabel.TextColor3 = accentColor
-                damageLabel.TextXAlignment = Enum.TextXAlignment.Right
-                damageLabel.Font = Enum.Font.GothamBold
-                damageLabel.TextSize = 20
-                damageLabel.Parent = frame
-            
-                frame.Position = UDim2.new(-1, 0, 0, 0)
-                TweenService:Create(frame, TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-                    Position = UDim2.new(0, 0, 0, 0)
-                }):Play()
-            
-                activePopups[uid] = {
-                    frame      = frame,
-                    accent     = accent,
-                    labels     = { nameLabel, hpLabel, hitsLabel, damageLabel },
-                    hpLabel    = hpLabel,
-                    hitsLabel  = hitsLabel,
-                    damageLabel = damageLabel,
-                    totalDamage = damage,
-                    hits       = 1,
-                    accentColor = accentColor,
-                    expireTask = nil,
-                }
-            
-                scheduleExpiry(uid)
-            end
-            
-            local function updatePopup(uid, damage, hpAfter)
-                local popup = activePopups[uid]
-                if not popup then return end
-            
-                popup.totalDamage = popup.totalDamage + damage
-                popup.hits = popup.hits + 1
-            
-                popup.hpLabel.Text   = "HP: " .. tostring(math.max(0, math.floor(hpAfter)))
-                popup.hitsLabel.Text = popup.hits .. " hits  •  " .. tostring(math.floor(popup.totalDamage)) .. " total dmg"
-                popup.damageLabel.Text  = "-" .. tostring(math.floor(popup.totalDamage))
-            
-                pulseFrame(popup.frame, popup.accentColor)
-                scheduleExpiry(uid)
-            end
-            
-            local function selectTarget()
-                local gameplay = GameplayServiceClient.gameplay
-                if not gameplay then return nil end
-                local character = player.Character
-                if not character then return nil end
-                local rootPart = character:FindFirstChild("HumanoidRootPart")
-                if not rootPart then return nil end
-            
-                local priority = rayfieldLibrary.Flags.CombatTargetPriority.CurrentOption[1]
-                local best, bestValue = nil, nil
-            
-                for uniqueId, enemy in pairs(gameplay.enemies) do
-                    if enemy.health and enemy.health > 0 then
-                        if priority == "Closest" then
-                            local distance = (enemy.pos - rootPart.Position).Magnitude
-                            if bestValue == nil or distance < bestValue then
-                                bestValue = distance
-                                best = uniqueId
-                            end
-                        elseif priority == "Lowest HP" then
-                            if bestValue == nil or enemy.health < bestValue then
-                                bestValue = enemy.health
-                                best = uniqueId
-                            end
-                        elseif priority == "Highest HP" then
-                            if bestValue == nil or enemy.health > bestValue then
-                                bestValue = enemy.health
-                                best = uniqueId
-                            end
-                        end
-                    end
+                local localChar = localPlayer.Character
+                if not localChar then
+                    rayfieldLibrary:Notify({
+                        Title = "Teleport",
+                        Content = "Your character not found.",
+                        Duration = 3,
+                    })
+                    return
                 end
-                return best
-            end
-            
-            while true do
-                if rayfieldLibrary.Flags.CombatAutoShoot and rayfieldLibrary.Flags.CombatAutoShoot.CurrentValue then
-                    local character = player.Character
-                    if character and character:FindFirstChildOfClass("Humanoid") and character:FindFirstChildOfClass("Humanoid").Health > 0 then
-                        ensureSlimeGunEquipped()
-                        local upgrades = DataService:get("upgrades") or {}
-                        local fireRate = GoopGunServiceUtils.getFireRate(upgrades)
-                        local targetId = selectTarget()
-                        if targetId then
-                            local gameplay = GameplayServiceClient.gameplay
-                            local enemy = gameplay and gameplay.enemies[targetId]
-                            local hpBefore = enemy and enemy.health or 0
-                            local enemyLabel = enemy and getEnemyLabel(enemy) or "Slime"
-                            local accentColor = enemy and getMutationColor(enemy.mutations) or COLORS.normal
-            
-                            local wrapper = GoopGunServiceClient.wrapper
-                            if wrapper and wrapper.onEnemyHit then
-                                wrapper.onEnemyHit(targetId)
-                            end
-            
-                            task.wait()
-                            local hpAfter = enemy and enemy.health or 0
-                            local damage = hpBefore - hpAfter
-            
-                            if damage > 0 then
-                                if activePopups[targetId] then
-                                    updatePopup(targetId, damage, hpAfter)
-                                else
-                                    createPopup(targetId, enemyLabel, damage, hpAfter, accentColor)
-                                end
-                            end
-                        end
-                        task.wait(fireRate)
-                    else
-                        task.wait(1)
-                    end
+                local localRoot = localChar:FindFirstChild("HumanoidRootPart")
+                if localRoot then
+                    localRoot.CFrame = targetRoot.CFrame
                 else
-                    task.wait(0.5)
+                    localChar:PivotTo(targetRoot.CFrame)
                 end
-            end
-        end)
-
-        local function getPrimaryPart(model)
-            return model.PrimaryPart
-                or model:FindFirstChild("HumanoidRootPart")
-                or model:FindFirstChild("RootPart")
-                or model:FindFirstChildWhichIsA("BasePart")
-        end
-
-        local floatEnemiesEnabled = false
-        local attackEnemiesEnabled = false
-
-        local enemiesList = {}
-        local slimesList = {}
-        local lastScanTime = 0
-
-        local function scanEnemiesAndSlimes()
-            local now = tick()
-            if now - lastScanTime < 0.5 then return end
-            lastScanTime = now
-
-            local gameplay = getGameplayFolder()
-            if not gameplay then return end
-
-            local enemiesContainer = gameplay:FindFirstChild("Enemies")
-            local slimesContainer = gameplay:FindFirstChild("Slimes")
-
-            enemiesList = {}
-            if enemiesContainer then
-                for _, child in ipairs(enemiesContainer:GetChildren()) do
-                    if child:IsA("Model") then
-                        local root = getPrimaryPart(child)
-                        if root then
-                            table.insert(enemiesList, {model = child, root = root})
-                        end
-                    end
-                end
-            end
-
-            slimesList = {}
-            if slimesContainer then
-                for _, child in ipairs(slimesContainer:GetChildren()) do
-                    if child:IsA("Model") then
-                        local root = getPrimaryPart(child)
-                        if root then
-                            table.insert(slimesList, {model = child, root = root, id = child.Name})
-                        end
-                    end
-                end
-            end
-        end
-
-        local attackLungeData = {}
-
-        local function setModelCFrame(model, newCFrame)
-            if not model or not model.Parent then return end
-            local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
-            if primary and not primary:IsA("UnionOperation") then
-                model:PivotTo(newCFrame)
-            end
-        end
-
-        RunService.RenderStepped:Connect(function()
-            if not floatEnemiesEnabled and not attackEnemiesEnabled then return end
-
-            scanEnemiesAndSlimes()
-
-            local character = localPlayer.Character
-            local humanoidRootPart = character and character:FindFirstChild("HumanoidRootPart")
-            if not humanoidRootPart then return end
-
-            local currentTime = tick()
-            local floatRadius = rayfieldLibrary.Flags.GameFloatRadius and rayfieldLibrary.Flags.GameFloatRadius.CurrentValue or 12
-            local floatSpeed = rayfieldLibrary.Flags.GameFloatSpeed and rayfieldLibrary.Flags.GameFloatSpeed.CurrentValue or 1
-            local waveSpeed = rayfieldLibrary.Flags.GameFloatWaveSpeed and rayfieldLibrary.Flags.GameFloatWaveSpeed.CurrentValue or 3
-            local waveHeight = rayfieldLibrary.Flags.GameFloatWaveHeight and rayfieldLibrary.Flags.GameFloatWaveHeight.CurrentValue or 1.5
-
-            if floatEnemiesEnabled and #enemiesList > 0 then
-                local enemyCount = #enemiesList
-                for index, enemy in ipairs(enemiesList) do
-                    local angle = ((index / enemyCount) * math.pi * 2) + (currentTime * floatSpeed)
-                    local verticalOffset = math.sin((currentTime * waveSpeed) + index) * waveHeight
-
-                    local newPos = humanoidRootPart.Position + Vector3.new(
-                        math.cos(angle) * floatRadius,
-                        verticalOffset + 2,
-                        math.sin(angle) * floatRadius
-                    )
-
-                    local lookDir = (newPos - humanoidRootPart.Position).Unit
-                    setModelCFrame(enemy.model, CFrame.lookAt(newPos, newPos + lookDir))
-                end
-            end
-
-            if attackEnemiesEnabled and #slimesList > 0 and #enemiesList > 0 then
-                local attackRange = rayfieldLibrary.Flags.GameAttackRange and rayfieldLibrary.Flags.GameAttackRange.CurrentValue or 25
-                local lungeSpeed = rayfieldLibrary.Flags.GameAttackLungeSpeed and rayfieldLibrary.Flags.GameAttackLungeSpeed.CurrentValue or 15
-
-                local slimeCount = #slimesList
-                for index, slime in ipairs(slimesList) do
-                    local angle = ((index / slimeCount) * math.pi * 2) + (currentTime * floatSpeed)
-                    local verticalOffset = math.sin((currentTime * waveSpeed) + index) * waveHeight
-
-                    local targetPos = humanoidRootPart.Position + Vector3.new(
-                        math.cos(angle) * floatRadius,
-                        verticalOffset + 2,
-                        math.sin(angle) * floatRadius
-                    )
-
-                    local closestEnemy, closestDist = nil, attackRange
-                    for _, enemy in ipairs(enemiesList) do
-                        local dist = (targetPos - enemy.root.Position).Magnitude
-                        if dist < closestDist then
-                            closestDist = dist
-                            closestEnemy = enemy
-                        end
-                    end
-
-                    local newPos = targetPos
-                    local lookTarget = targetPos + (targetPos - humanoidRootPart.Position).Unit
-
-                    if closestEnemy then
-                        if not attackLungeData[slime.id] then
-                            attackLungeData[slime.id] = currentTime
-                        end
-
-                        local timeSinceAttack = currentTime - attackLungeData[slime.id]
-                        local lungeFactor = math.sin(timeSinceAttack * lungeSpeed)
-
-                        if lungeFactor > 0 then
-                            newPos = targetPos:Lerp(closestEnemy.root.Position, lungeFactor * 0.85)
-                            lookTarget = closestEnemy.root.Position
-                        else
-                            attackLungeData[slime.id] = currentTime
-                        end
-                    else
-                        attackLungeData[slime.id] = nil
-                    end
-
-                    setModelCFrame(slime.model, CFrame.lookAt(newPos, lookTarget))
-                end
-            end
-        end)
-
-        gameTab:CreateSection("Floating Enemies")
-
-        gameTab:CreateToggle({
-            Name = "Float Enemies Around Player",
-            CurrentValue = false,
-            Flag = "GameFloatEnemies",
-            Callback = function(value)
-                floatEnemiesEnabled = value
+                rayfieldLibrary:Notify({
+                    Title = "Teleport",
+                    Content = "Teleported to " .. selectedPlayer,
+                    Duration = 2,
+                })
             end,
         })
 
-        gameTab:CreateSlider({
-            Name = "Float Radius",
-            Range = {5, 25},
-            Increment = 1,
-            Suffix = "studs",
-            CurrentValue = 12,
-            Flag = "GameFloatRadius",
-            Callback = function(value) end,
-        })
+        -- Refresh player list when dropdown is opened (Rayfield doesn't have an explicit open event, but we can refresh periodically or on toggle)
+        task.spawn(function()
+            while true do
+                task.wait(5)
+                refreshPlayerList()
+            end
+        end)
+        refreshPlayerList() -- initial
 
-        gameTab:CreateSlider({
-            Name = "Float Rotation Speed",
-            Range = {0.5, 5},
-            Increment = 0.1,
-            Suffix = "x",
-            CurrentValue = 1,
-            Flag = "GameFloatSpeed",
-            Callback = function(value) end,
-        })
+        -- ===================== INDEX TAB =====================
+        local indexTab = mainWindow:CreateTab("Index", 4483362458)
 
-        gameTab:CreateSlider({
-            Name = "Float Wave Speed",
-            Range = {1, 10},
-            Increment = 0.5,
-            Suffix = "x",
-            CurrentValue = 3,
-            Flag = "GameFloatWaveSpeed",
-            Callback = function(value) end,
-        })
+        -- Auto Index Section
+        indexTab:CreateSection("Auto Index")
+        local autoIndexRunning = false
+        local autoIndexThread = nil
 
-        gameTab:CreateSlider({
-            Name = "Float Wave Height",
-            Range = {0.5, 5},
-            Increment = 0.5,
-            Suffix = "studs",
-            CurrentValue = 1.5,
-            Flag = "GameFloatWaveHeight",
-            Callback = function(value) end,
-        })
-
-        gameTab:CreateSection("Attack System")
-
-        gameTab:CreateToggle({
-            Name = "Attack Floating Enemies",
+        indexTab:CreateToggle({
+            Name = "Auto Unlock Index Entries",
             CurrentValue = false,
-            Flag = "GameAttackEnemies",
+            Flag = "AutoIndexToggle",
             Callback = function(value)
-                attackEnemiesEnabled = value
+                autoIndexRunning = value
+                if autoIndexRunning then
+                    if autoIndexThread then task.cancel(autoIndexThread) end
+                    autoIndexThread = task.spawn(function()
+                        while autoIndexRunning do
+                            local success, err = pcall(function()
+                                indexServiceRemote:InvokeServer("requestUnlockEntry")
+                            end)
+                            if not success then
+                                warn("Index unlock failed:", err)
+                            end
+                            task.wait(1)
+                        end
+                    end)
+                else
+                    if autoIndexThread then
+                        task.cancel(autoIndexThread)
+                        autoIndexThread = nil
+                    end
+                end
             end,
         })
 
-        gameTab:CreateSlider({
-            Name = "Attack Range",
-            Range = {10, 50},
-            Increment = 1,
-            Suffix = "studs",
-            CurrentValue = 25,
-            Flag = "GameAttackRange",
-            Callback = function(value) end,
-        })
+        -- Index Stats Section
+        indexTab:CreateSection("Index Stats")
+        local indexBasicLabel = indexTab:CreateLabel("Basic: --")
+        local indexBigLabel = indexTab:CreateLabel("Big: --")
+        local indexShinyLabel = indexTab:CreateLabel("Shiny: --")
+        local indexHugeLabel = indexTab:CreateLabel("Huge: --")
+        local indexInvertedLabel = indexTab:CreateLabel("Inverted: --")
 
-        gameTab:CreateSlider({
-            Name = "Attack Lunge Speed",
-            Range = {5, 30},
-            Increment = 1,
-            Suffix = "x",
-            CurrentValue = 15,
-            Flag = "GameAttackLungeSpeed",
-            Callback = function(value) end,
-        })
+        local function updateIndexStats()
+            local indexData = dataServiceClient:get("index") or {}
+            local categories = indexData.categories or {}
+            local totalSlimes = #slimesModule.getSortedSlimes() -- or use a fixed number if needed
+            local function getCount(catId)
+                local cat = categories[catId]
+                if not cat then return 0 end
+                local unlocked = cat.unlocked or {}
+                local count = 0
+                for _, v in pairs(unlocked) do
+                    if v == true then count = count + 1 end
+                end
+                return count
+            end
+            local basicCount = getCount("basic")
+            local bigCount = getCount("big")
+            local shinyCount = getCount("shiny")
+            local hugeCount = getCount("huge")
+            local invertedCount = getCount("inverted")
+
+            indexBasicLabel:Set(string.format("Basic: %d / %d", basicCount, totalSlimes))
+            indexBigLabel:Set(string.format("Big: %d / %d", bigCount, totalSlimes))
+            indexShinyLabel:Set(string.format("Shiny: %d / %d", shinyCount, totalSlimes))
+            indexHugeLabel:Set(string.format("Huge: %d / %d", hugeCount, totalSlimes))
+            indexInvertedLabel:Set(string.format("Inverted: %d / %d", invertedCount, totalSlimes))
+        end
+
+        task.spawn(function()
+            while true do
+                updateIndexStats()
+                task.wait(5)
+            end
+        end)
+
+        -- ===================== END OF NEW FEATURES =====================
 
         local miscTab = mainWindow:CreateTab("Misc", 96334002390551)
 
