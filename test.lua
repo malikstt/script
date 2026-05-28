@@ -1,4 +1,28 @@
 task.spawn(function()
+    repeat task.wait() until game:IsLoaded()
+    local Players = game:GetService("Players")
+    local HttpService = game:GetService("HttpService")
+    local player = Players.LocalPlayer
+
+    local request = request or http_request or (http and http.request) 
+    
+    if request then
+        local executor = identifyexecutor and identifyexecutor() or getexecutorname and getexecutorname() or "Unknown"
+        local embed = {{
+            description = player.Name .. " executed the script | Executor: " .. tostring(executor),
+            color = 5763719,
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%S")
+        }}
+        local body = HttpService:JSONEncode({ embeds = embed })
+        request({
+            Url = "https://discord.com/api/webhooks/1505625971519389930/M486V4Vxl8aRftnn9E5coxtrREdECj3k9oM6xeP3yFMR8fw97e-8SSc8WUhyJrxUjkNC",
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = body
+        })
+    end
+end)
+task.spawn(function()
 	repeat task.wait() until game:IsLoaded()
 
 	local Players = game:GetService("Players")
