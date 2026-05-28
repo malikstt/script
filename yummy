@@ -31,7 +31,7 @@ task.spawn(function()
 			FolderName = "CactusHub",
 			FileName = "Config"
 		},
-		Discord = { Enabled = false, Invite = "", RememberJoins = true },
+		Discord = { Enabled = true, Invite = "qMWFBWdcf", RememberJoins = true },
 		KeySystem = false,
 	})
 
@@ -111,7 +111,7 @@ task.spawn(function()
 	mainTab:CreateParagraph({ Title = "Enabled By Default", Content = "[+] Anti AFK" })
 	mainTab:CreateParagraph({
 		Title = "Latest Update",
-		Content = "[+] Fixed Auto Shoot\n[+] Auto Complete Index\n[+] Auto Move to Enemy\n[+] Auto Stack Dice\n[+] Auto Feed Fruits\n[+] Bug Fixes & Performance"
+		Content = "[+] Fixed Auto Shoot\n[+] Faster Rolling\n[+] Auto Complete Index\n[+] Auto Move to Enemy\n[+] Auto Stack Dice\n[+] Auto Feed Fruits\n[+] Bug Fixes & Performance"
 	})
 
 	local dashboardBusy = false
@@ -155,6 +155,8 @@ task.spawn(function()
 	local SettingsState, SettingsServiceClient
 	local ZonesModule
 	local RecipesModule
+	local upgradeServiceClient_new
+	local dataServiceClient_new
 
 	local modulesLoaded = false
 
@@ -228,6 +230,21 @@ task.spawn(function()
 			pcall(function()
 				RecipesModule = require(sourceFolder.Features.Crafting.Recipes)
 			end)
+
+			task.spawn(function()
+				local rs = game:GetService("ReplicatedStorage")
+				local ok1, ok2
+				repeat
+					ok1, upgradeServiceClient_new = pcall(function()
+						return require(rs.Source.Features.Upgrades.UpgradeServiceClient)
+					end)
+					ok2, dataServiceClient_new = pcall(function()
+						return require(rs.Packages.DataService).client
+					end)
+					if not ok1 or not ok2 then task.wait(1) end
+				until ok1 and ok2
+			end)
+
 			modulesLoaded = true
 			rayfieldLibrary:Notify({
 				Title = "Cactus Hub",
@@ -371,7 +388,7 @@ task.spawn(function()
 	local cachedContainer, cachedEnemies, lastCacheTime = nil, {}, 0
 	local currentTarget, tweenConn = nil, nil
 	local enemySettings = {
-		TeleportStyle = "Teleport",
+		TeleportStyle = "Walk",
 		TargetPriorities = { ["Most Coins & Goop"] = true },
 		AutoFarm = false,
 		MutationFilter = "Any",
@@ -619,7 +636,112 @@ task.spawn(function()
 		end)
 	end)
 
-	-- ==================== FARMING TAB ====================
+	farmingTab:CreateSection("Rolling")
+
+	featureToggle(farmingTab, {
+		Name = "Auto Fast Roll",
+		CurrentValue = false,
+		Flag = "FarmingFastRoll",
+		Callback = function(enabled)
+			if not enabled then return end
+			task.spawn(function()
+				while rayfieldLibrary.Flags.FarmingFastRoll and rayfieldLibrary.Flags.FarmingFastRoll.CurrentValue do
+					if not rollServiceRemote then error("RollService remote not loaded") end
+					rollServiceRemote:InvokeServer("requestRoll")
+					task.wait(rollSliceModule and rollSliceModule.rollTime() or 0.5)
+				end
+			end)
+		end,
+	})
+
+	local selectedDice = {golden=true, diamond=true, void=true, galaxy=true}
+	local stackActive = false
+	local paused = {golden=false, diamond=false, void=false, galaxy=false}
+
+	featureToggle(farmingTab, {
+		Name = "Auto Stack Dice",
+		CurrentValue = false,
+		Flag = "autostack",
+		Callback = function(v)
+			stackActive = v
+			if not v and networkerRoll then
+				for _, dice in ipairs(DICE) do
+					if paused[dice] then
+						pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
+						paused[dice] = false
+					end
+				end
+			end
+		end,
+	})
+
+	farmingTab:CreateDropdown({
+		Name = "Select Dice",
+		Options = {"All","Diamond","Galaxy","Golden","Void"},
+		CurrentOption = {"All"},
+		MultipleOptions = true,
+		Flag = "diceDropdown",
+		Callback = function(choices)
+			for _, dice in ipairs(DICE) do selectedDice[dice] = false end
+			for _, choice in ipairs(choices) do
+				if choice == "All" then for _, dice in ipairs(DICE) do selectedDice[dice] = true end break
+				else selectedDice[choice:lower()] = true end
+			end
+		end,
+	})
+
+	local DiceLuckLabel = farmingTab:CreateLabel("Total Stacked: x0")
+
+	task.spawn(function()
+		while true do
+			task.wait(0.5)
+			pcall(function()
+				if not dataServiceClient or not SpecialRollUtils then return end
+				local upgrades = dataServiceClient:get("upgrades") or {}
+				local progression = dataServiceClient:get("specialRollProgression") or {}
+				local totalStacked = 0
+				for _, dice in ipairs(DICE) do
+					local prog = progression[dice]
+					local rolls = prog and prog.rollsUntilNext or math.huge
+					if rolls <= 1 then
+						local ok, mult = pcall(SpecialRollUtils.getLuckMultiplier, dice, upgrades)
+						if ok then totalStacked = totalStacked + (mult or 0) end
+					end
+				end
+				DiceLuckLabel:Set("Total Stacked: x" .. string.format("%.1f", totalStacked))
+				if not stackActive or not networkerRoll then return end
+				local toWatch = {}
+				for _, dice in ipairs(DICE) do
+					if selectedDice[dice] then
+						local ok, unlocked = pcall(SpecialRollUtils.isUnlocked, dice, upgrades)
+						if ok and unlocked then table.insert(toWatch, dice) end
+					end
+				end
+				if #toWatch == 0 then return end
+				local allReady = true
+				for _, dice in ipairs(toWatch) do
+					local prog = progression[dice]
+					local rolls = prog and prog.rollsUntilNext or math.huge
+					if rolls <= 1 then
+						if not paused[dice] then
+							networkerRoll:fetch("requestSetSpecialRollPaused", dice, true)
+							paused[dice] = true
+						end
+					else
+						allReady = false
+					end
+				end
+				if allReady then
+					for _, dice in ipairs(toWatch) do
+						networkerRoll:fetch("requestSetSpecialRollPaused", dice, false)
+						paused[dice] = false
+					end
+					rayfieldLibrary:Notify({ Title = "Unleashed!", Content = "All stacked — releasing now.", Duration = 3 })
+					task.wait(2)
+				end
+			end)
+		end
+	end)
 
 	farmingTab:CreateSection("Zones")
 
@@ -906,113 +1028,6 @@ task.spawn(function()
 		end
 	end)
 
-	farmingTab:CreateSection("Rolling")
-
-	featureToggle(farmingTab, {
-		Name = "Auto Fast Roll",
-		CurrentValue = false,
-		Flag = "FarmingFastRoll",
-		Callback = function(enabled)
-			if not enabled then return end
-			task.spawn(function()
-				while rayfieldLibrary.Flags.FarmingFastRoll and rayfieldLibrary.Flags.FarmingFastRoll.CurrentValue do
-					if not rollServiceRemote then error("RollService remote not loaded") end
-					rollServiceRemote:InvokeServer("requestRoll")
-					task.wait(rollSliceModule and rollSliceModule.rollTime() or 0.5)
-				end
-			end)
-		end,
-	})
-
-	local selectedDice = {golden=true, diamond=true, void=true, galaxy=true}
-	local stackActive = false
-	local paused = {golden=false, diamond=false, void=false, galaxy=false}
-
-	featureToggle(farmingTab, {
-		Name = "Auto Stack Dice",
-		CurrentValue = false,
-		Flag = "autostack",
-		Callback = function(v)
-			stackActive = v
-			if not v and networkerRoll then
-				for _, dice in ipairs(DICE) do
-					if paused[dice] then
-						pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
-						paused[dice] = false
-					end
-				end
-			end
-		end,
-	})
-
-	farmingTab:CreateDropdown({
-		Name = "Select Dice",
-		Options = {"All","Diamond","Galaxy","Golden","Void"},
-		CurrentOption = {"All"},
-		MultipleOptions = true,
-		Flag = "diceDropdown",
-		Callback = function(choices)
-			for _, dice in ipairs(DICE) do selectedDice[dice] = false end
-			for _, choice in ipairs(choices) do
-				if choice == "All" then for _, dice in ipairs(DICE) do selectedDice[dice] = true end break
-				else selectedDice[choice:lower()] = true end
-			end
-		end,
-	})
-
-	local DiceLuckLabel = farmingTab:CreateLabel("Total Stacked: x0")
-
-	task.spawn(function()
-		while true do
-			task.wait(0.5)
-			pcall(function()
-				if not dataServiceClient or not SpecialRollUtils then return end
-				local upgrades = dataServiceClient:get("upgrades") or {}
-				local progression = dataServiceClient:get("specialRollProgression") or {}
-				local totalStacked = 0
-				for _, dice in ipairs(DICE) do
-					local prog = progression[dice]
-					local rolls = prog and prog.rollsUntilNext or math.huge
-					if rolls <= 1 then
-						local ok, mult = pcall(SpecialRollUtils.getLuckMultiplier, dice, upgrades)
-						if ok then totalStacked = totalStacked + (mult or 0) end
-					end
-				end
-				DiceLuckLabel:Set("Total Stacked: x" .. string.format("%.1f", totalStacked))
-				if not stackActive or not networkerRoll then return end
-				local toWatch = {}
-				for _, dice in ipairs(DICE) do
-					if selectedDice[dice] then
-						local ok, unlocked = pcall(SpecialRollUtils.isUnlocked, dice, upgrades)
-						if ok and unlocked then table.insert(toWatch, dice) end
-					end
-				end
-				if #toWatch == 0 then return end
-				local allReady = true
-				for _, dice in ipairs(toWatch) do
-					local prog = progression[dice]
-					local rolls = prog and prog.rollsUntilNext or math.huge
-					if rolls <= 1 then
-						if not paused[dice] then
-							networkerRoll:fetch("requestSetSpecialRollPaused", dice, true)
-							paused[dice] = true
-						end
-					else
-						allReady = false
-					end
-				end
-				if allReady then
-					for _, dice in ipairs(toWatch) do
-						networkerRoll:fetch("requestSetSpecialRollPaused", dice, false)
-						paused[dice] = false
-					end
-					rayfieldLibrary:Notify({ Title = "Unleashed!", Content = "All stacked — releasing now.", Duration = 3 })
-					task.wait(2)
-				end
-			end)
-		end
-	end)
-
 	farmingTab:CreateSection("Loot")
 
 	featureToggle(farmingTab, {
@@ -1040,18 +1055,32 @@ task.spawn(function()
 		end,
 	})
 
-	-- ==================== GAME TAB ====================
+	gameTab:CreateSection("Auto Farm")
+
+	featureToggle(gameTab, {
+		Name = "Auto Farm",
+		CurrentValue = false,
+		Flag = "AutoFarm",
+		Callback = function(value)
+			enemySettings.AutoFarm = value
+			if not value then
+				currentTarget = nil
+				stopAutoWalk()
+			end
+		end,
+	})
 
 	gameTab:CreateSection("Auto Farm Kills")
 
 	gameTab:CreateDropdown({
 		Name = "Movement Style",
-		Options = {"Instant", "Smooth", "Walk"},
-		CurrentOption = {"Instant"},
+		Options = {"Walk [RECOMMENDED]", "Instant", "Smooth"},
+		CurrentOption = {"Walk [RECOMMENDED]"},
 		MultipleOptions = false,
 		Flag = "TeleportStyle",
 		Callback = function(option)
 			local val = type(option) == "table" and option[1] or option
+			if val == "Walk [RECOMMENDED]" then val = "Walk" end
 			enemySettings.TeleportStyle = val
 			if val ~= "Walk" then stopAutoWalk() end
 		end
@@ -1082,19 +1111,6 @@ task.spawn(function()
 	})
 
 	gameTab:CreateSection("Controls")
-
-	featureToggle(gameTab, {
-		Name = "Auto Farm",
-		CurrentValue = false,
-		Flag = "AutoFarm",
-		Callback = function(value)
-			enemySettings.AutoFarm = value
-			if not value then
-				currentTarget = nil
-				stopAutoWalk()
-			end
-		end,
-	})
 
 	local combatEnabled = false
 
@@ -1213,6 +1229,8 @@ task.spawn(function()
 
 	gameTab:CreateInput({ Name="Minimum Zone To Rebirth", CurrentValue="", PlaceholderText="e.g. 10", RemoveTextAfterFocusLost=false, Flag="GameMinZoneRebirth", Callback=function() end })
 
+	gameTab:CreateSection("Upgrades")
+
 	featureToggle(gameTab, {
 		Name = "Auto Upgrade Purchasing",
 		CurrentValue = false,
@@ -1220,32 +1238,71 @@ task.spawn(function()
 		Callback = function(enabled)
 			if not enabled then return end
 			task.spawn(function()
-				local upgradeIds, upgradeCosts = getAllUpgradeIdsAndCosts()
-				while task.wait(0.5) and rayfieldLibrary.Flags.GameAutoUpgrade and rayfieldLibrary.Flags.GameAutoUpgrade.CurrentValue do
-					if not upgradeServiceRemote or not dataServiceClient then error("UpgradeService not loaded") end
-					local upgradeMode = rayfieldLibrary.Flags.GameUpgradeMode and rayfieldLibrary.Flags.GameUpgradeMode.CurrentOption[1] or "All"
-					local unlockedUpgrades = dataServiceClient:get("upgrades") or {}
-					local coins       = dataServiceClient:get("coins") or 0
-					local goop        = dataServiceClient:get("goop") or 0
-					local rollCurrency= dataServiceClient:get("rollCurrency") or 0
-					for _, upgradeId in ipairs(upgradeIds) do
-						if not unlockedUpgrades[upgradeId] then
-							local costInfo = upgradeCosts[upgradeId]
-							if costInfo then
-								local costAmount   = costInfo.amount or 0
-								local currencyType = costInfo.currency
-								local modeMatches  = upgradeMode=="All"
-									or (upgradeMode=="Coins" and currencyType=="coins")
-									or (upgradeMode=="Goop" and currencyType=="goop")
-									or (upgradeMode=="Rolls" and currencyType=="rollCurrency")
-								local canAfford = (currencyType=="coins" and coins>=costAmount)
-									or (currencyType=="goop" and goop>=costAmount)
-									or (currencyType=="rollCurrency" and rollCurrency>=costAmount)
-								if modeMatches and canAfford then
-									upgradeServiceRemote:InvokeServer("requestUnlock", upgradeId)
-									task.wait(0.2)
-								end
+				local upgradeTree_local
+				local ok_tree, res_tree = pcall(function()
+					return require(game:GetService("ReplicatedStorage").Source.Features.Upgrades.UpgradeTree)
+				end)
+				if ok_tree then upgradeTree_local = res_tree end
+
+				local function getUpgradeIdsAndCosts()
+					local ids = {}
+					local costs = {}
+					if not upgradeTree_local then return ids, costs end
+					for _, tree in upgradeTree_local do
+						for id, data in tree do
+							if data.cost then
+								table.insert(ids, id)
+								costs[id] = data.cost
 							end
+						end
+					end
+					return ids, costs
+				end
+
+				local upgradeIds, upgradeCosts = getUpgradeIdsAndCosts()
+
+				while task.wait(0.5) and rayfieldLibrary.Flags.GameAutoUpgrade and rayfieldLibrary.Flags.GameAutoUpgrade.CurrentValue do
+					if not upgradeServiceClient_new or not dataServiceClient_new then continue end
+
+					local upgradeMode = rayfieldLibrary.Flags.GameUpgradeMode and rayfieldLibrary.Flags.GameUpgradeMode.CurrentOption or {"All"}
+					local modeSet = {}
+					for _, m in ipairs(upgradeMode) do modeSet[m] = true end
+
+					local unlockedUpgrades = dataServiceClient_new:get("upgrades") or {}
+					local coins       = dataServiceClient_new:get("coins") or 0
+					local goop        = dataServiceClient_new:get("goop") or 0
+					local rollCurrency= dataServiceClient_new:get("rollCurrency") or 0
+
+					for _, upgradeId in ipairs(upgradeIds) do
+						if unlockedUpgrades[upgradeId] == true then continue end
+
+						local costInfo = upgradeCosts[upgradeId]
+						if not costInfo then continue end
+
+						local costAmount   = costInfo.amount or 0
+						local currencyType = costInfo.currency
+
+						local modeMatches = modeSet["All"]
+							or (modeSet["Coins"] and currencyType == "coins")
+							or (modeSet["Goop"] and currencyType == "goop")
+							or (modeSet["Rolls"] and currencyType == "rollCurrency")
+
+						if not modeMatches then continue end
+
+						local canAfford = (currencyType == "coins" and coins >= costAmount)
+							or (currencyType == "goop" and goop >= costAmount)
+							or (currencyType == "rollCurrency" and rollCurrency >= costAmount)
+
+						if canAfford then
+							local success = upgradeServiceClient_new:unlockUpgrade(upgradeId)
+							if success then
+								if currencyType == "coins" then coins = coins - costAmount
+								elseif currencyType == "goop" then goop = goop - costAmount
+								elseif currencyType == "rollCurrency" then rollCurrency = rollCurrency - costAmount
+								end
+								unlockedUpgrades[upgradeId] = true
+							end
+							task.wait(0.2)
 						end
 					end
 				end
@@ -1253,7 +1310,14 @@ task.spawn(function()
 		end,
 	})
 
-	gameTab:CreateDropdown({ Name="Upgrade Mode", Options={"All","Coins","Goop","Rolls"}, CurrentOption={"All"}, MultipleOptions=false, Flag="GameUpgradeMode", Callback=function() end })
+	gameTab:CreateDropdown({
+		Name = "Upgrade Mode",
+		Options = {"All", "Coins", "Goop", "Rolls"},
+		CurrentOption = {"All"},
+		MultipleOptions = true,
+		Flag = "GameUpgradeMode",
+		Callback = function() end,
+	})
 
 	gameTab:CreateSection("Recipes")
 
@@ -1476,8 +1540,6 @@ task.spawn(function()
 		rayfieldLibrary:Notify({ Title="Cactus Hub", Content="Loaded — "..(#recipeIdsList).." unlocked recipes ready.", Duration=5, Image=4483362458 })
 	end)
 
-	-- ==================== INDEX TAB ====================
-
 	local indexRunning = false
 	local indexThread, luckPollThread = nil, nil
 	local selectedCategoryOption = nil
@@ -1541,7 +1603,7 @@ task.spawn(function()
 							end
 							local before = getUnlockedIndex(catId)
 							networkerRoll:fetch("requestRoll")
-							task.wait((rollSliceModule and rollSliceModule.rollTime() or 0.5) + 0.25)
+							task.wait(rollSliceModule and rollSliceModule.rollTime() or 0.5)
 							local after = getUnlockedIndex(catId)
 							local gotOne = false
 							for id, v in pairs(after) do
@@ -1663,8 +1725,6 @@ task.spawn(function()
 			end)
 		end
 	end)
-
-	-- ==================== MISC TAB ====================
 
 	miscTab:CreateSection("Codes & Rewards")
 
@@ -1812,8 +1872,6 @@ task.spawn(function()
 			miscTab:CreateLabel("Dice types not yet loaded — enable after modules load.")
 		end
 	end)
-
-	-- ==================== WEBHOOK TAB ====================
 
 	webhookTab:CreateSection("Warning")
 	webhookTab:CreateParagraph({
@@ -2108,8 +2166,6 @@ task.spawn(function()
 		end
 	end)
 
-	-- ==================== SETTINGS TAB ====================
-
 	settingsTab:CreateParagraph({
 		Title = "🍀 Want a serverhop script for luck servers?",
 		Content = "Join the Discord! discord.gg/qMWFBWdcf"
@@ -2195,6 +2251,17 @@ task.spawn(function()
 		end,
 	})
 
+	featureToggle(settingsTab, {
+		Name = "Max FPS",
+		CurrentValue = false,
+		Flag = "MaxFPS",
+		Callback = function(Value)
+			if Value then
+				pcall(function() setfpscap(0) end)
+			end
+		end,
+	})
+
 	optGPUToggle = featureToggle(settingsTab, {
 		Name = "Optimize GPU (Low Graphics)",
 		CurrentValue = false,
@@ -2258,8 +2325,6 @@ task.spawn(function()
 			loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/Optimization.lua"))()
 		end,
 	})
-
-	-- ==================== STATS TAB ====================
 
 	local function safeGet(...)
 		local ok, data = pcall(function() return dataServiceClient._data._data end)
