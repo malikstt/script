@@ -2819,9 +2819,9 @@ task.spawn(function()
         local Networker2 = networkerModule
 
         -- *** FIX: Initialize settingsClient correctly ***
-        local settingsClient = SettingsServiceClient.client
-        settingsClient:waitForData()
-
+        local settingsClient2 = {}
+        settingsClient2.networker = Networker2.client.new("SettingsService", settingsClient2)
+        SettingsServiceClient.init(settingsClient2)
         local ALL_FRUITS2 = FruitsModule2.getSortedFruits()
 
         local CATEGORY_IDS2 = {"basic", "shiny", "big", "huge", "inverted"}
@@ -2860,15 +2860,15 @@ task.spawn(function()
         -- ========== LUCK HELPERS (now use the shared settingsClient) ==========
         local function setLuck2(value)
             local clamped = math.min(value, 16384)
-            settingsClient:set("luckOverrideValue", clamped)
+            SettingsServiceClient.set(settingsClient2, "luckOverrideValue", clamped)
             luckValueLocal2 = clamped
             task.wait(0.3)
         end
 
         local function setLuckEnabled2(enabled)
-            settingsClient:set("luckOverrideEnabled", enabled)
+            SettingsServiceClient.set(settingsClient2, "luckOverrideEnabled", enabled)
             task.wait(0.3)
-        end
+                end
 
         local function calcOptimalLuck2(effectiveOdds)
             if not effectiveOdds or effectiveOdds <= 0 then return 16384 end
