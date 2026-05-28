@@ -1635,6 +1635,316 @@ task.spawn(function()
             })
         end
 
+       -- =====================
+-- AUTO INDEX TAB
+-- =====================
+local indexRunning = false
+local indexThread = nil
+local luckPollThread = nil
+local selectedCategoryOption = nil
+local indexProgressLabels = {}
+local luckValueLocal = 1
+
+local SettingsState = require(replicatedStorage:WaitForChild("Source").Features.Settings.SettingsState)
+local SettingsServiceClient = require(replicatedStorage:WaitForChild("Source").Features.Settings.SettingsServiceClient)
+local slimesModule2 = require(replicatedStorage:WaitForChild("Source").Game.Items.Slimes)
+
+local CATEGORY_IDS = {"basic", "shiny", "big", "huge", "inverted"}
+local MUTATION_ODDS = {
+    basic    = nil,
+    shiny    = 0.004,
+    big      = 0.01,
+    huge     = 0.001,
+    inverted = 0.0004,
+}
+
+SettingsState.init()
+local settingsClientIndex = {}
+settingsClientIndex.networker = networkerModule.client.new("SettingsService", settingsClientIndex)
+SettingsServiceClient.init(settingsClientIndex)
+
+local function calcOptimalLuck(effectiveOdds)
+    if not effectiveOdds or effectiveOdds <= 0 then return 16384 end
+    local n = 1 / effectiveOdds
+    return math.min(math.max(1, math.floor(n * 0.63)), 16384)
+end
+
+local function setLuckEnabled(enabled)
+    SettingsServiceClient.set(settingsClientIndex, "luckOverrideEnabled", enabled)
+    task.wait(0.3)
+end
+
+local function setLuck(value)
+    local clamped = math.min(value, 16384)
+    SettingsServiceClient.set(settingsClientIndex, "luckOverrideValue", clamped)
+    luckValueLocal = clamped
+    task.wait(0.3)
+end
+
+local function applyLuckSettings()
+    setLuck(1)
+    task.wait(0.3)
+    setLuckEnabled(true)
+    task.wait(0.3)
+end
+
+local function applyLuckForTarget(effectiveOdds)
+    setLuck(calcOptimalLuck(effectiveOdds))
+end
+
+local function formatOddsIndex(odds)
+    if not odds or odds <= 0 then return "N/A" end
+    local n = math.floor(1 / odds + 0.5)
+    if n >= 1e9 then return string.format("1 in %.1fB", n / 1e9)
+    elseif n >= 1e6 then return string.format("1 in %.1fM", n / 1e6)
+    elseif n >= 1e3 then return string.format("1 in %.1fK", n / 1e3)
+    end
+    return "1 in " .. n
+end
+
+local function getEffectiveOdds(slime, catId)
+    local mutOdds = MUTATION_ODDS[catId]
+    if mutOdds then return slime.rollOdds * mutOdds end
+    return slime.rollOdds
+end
+
+local function getUnlocked(catId)
+    local data = dataServiceClient:get("index") or {}
+    return ((data.categories or {})[catId] or {}).unlocked or {}
+end
+
+local function getTotalSlimesIndex()
+    return #slimesModule2.getSortedSlimes()
+end
+
+local function getUnlockedCount(catId)
+    local unlocked = getUnlocked(catId)
+    local count = 0
+    for _, v in pairs(unlocked) do
+        if v == true then count += 1 end
+    end
+    return count
+end
+
+local function getMissingSlimes(catId)
+    local unlocked = getUnlocked(catId)
+    local sorted = slimesModule2.getSortedSlimes()
+    local missing = {}
+    for _, slime in ipairs(sorted) do
+        if not unlocked[slime.id] then
+            table.insert(missing, slime)
+        end
+    end
+    table.sort(missing, function(a, b)
+        return getEffectiveOdds(a, catId) > getEffectiveOdds(b, catId)
+    end)
+    return missing
+end
+
+local function getSortedCategoriesByPriority()
+    local cats = {}
+    for _, catId in ipairs(CATEGORY_IDS) do
+        local missing = getMissingSlimes(catId)
+        if #missing > 0 then
+            table.insert(cats, {
+                id = catId,
+                easiestEffectiveOdds = getEffectiveOdds(missing[1], catId),
+            })
+        end
+    end
+    table.sort(cats, function(a, b)
+        return a.easiestEffectiveOdds > b.easiestEffectiveOdds
+    end)
+    return cats
+end
+
+local function getCatIdFromOption(option)
+    for _, catId in ipairs(CATEGORY_IDS) do
+        local label = catId:sub(1,1):upper() .. catId:sub(2)
+        if option:find(label) then return catId end
+    end
+    return nil
+end
+
+local indexLabels = {}
+
+local function runCategory(catId, mode, labels)
+    local failCount = 0
+    local catLabel = catId:sub(1,1):upper() .. catId:sub(2)
+    local lastTargetId = nil
+
+    while indexRunning do
+        local missing = getMissingSlimes(catId)
+        if #missing == 0 then return true end
+
+        local target = mode == "🎯 Rarest First" and missing[#missing] or missing[1]
+        local effOdds = getEffectiveOdds(target, catId)
+
+        if target.id ~= lastTargetId then
+            lastTargetId = target.id
+            applyLuckForTarget(effOdds)
+        end
+
+        if labels then
+            labels.lTarget:Set("🎯 Target: " .. catLabel .. " " .. target.name)
+            labels.lOdds:Set("🎲 Odds: " .. formatOddsIndex(effOdds))
+            labels.lCategory:Set(string.format("📂 %s (%d left)", catLabel, #missing))
+        end
+
+        local before = getUnlocked(catId)
+        rollServiceRemote:InvokeServer("requestRoll")
+        task.wait(rollSlice.rollTime() + 0.25)
+        local after = getUnlocked(catId)
+
+        local gotOne = false
+        for id, value in pairs(after) do
+            if value == true and not before[id] then
+                gotOne = true
+                failCount = 0
+            end
+        end
+
+        if not gotOne then
+            failCount += 1
+        end
+
+        task.wait()
+    end
+    return false
+end
+
+local indexTab = mainWindow:CreateTab("📖 Index", 4483362458)
+
+indexTab:CreateSection("Controls")
+
+indexTab:CreateToggle({
+    Name = "Start Auto Complete",
+    CurrentValue = false,
+    Flag = "IndexAutoComplete",
+    Callback = function(value)
+        if value then
+            indexRunning = true
+            indexThread = task.spawn(function()
+                applyLuckSettings()
+
+                luckPollThread = task.spawn(function()
+                    while indexRunning do
+                        if indexLabels.lLuck then
+                            indexLabels.lLuck:Set("🍀 Luck Override: x" .. tostring(luckValueLocal))
+                        end
+                        task.wait(1)
+                    end
+                end)
+
+                local modeFlag = rayfield.Flags.IndexRollMode
+                local mode = modeFlag and (type(modeFlag.CurrentOption) == "table" and modeFlag.CurrentOption[1] or modeFlag.CurrentOption) or "🌱 Easiest First"
+
+                if selectedCategoryOption == nil or selectedCategoryOption == "🎲 All (Recommended)" then
+                    while indexRunning do
+                        local sorted = getSortedCategoriesByPriority()
+                        if #sorted == 0 then
+                            if indexLabels.lCategory then indexLabels.lCategory:Set("📂 ✅ All Complete!") end
+                            if indexLabels.lTarget then indexLabels.lTarget:Set("🎯 Target: —") end
+                            if indexLabels.lOdds then indexLabels.lOdds:Set("🎲 Odds: —") end
+                            indexRunning = false
+                            break
+                        end
+                        local completed = runCategory(sorted[1].id, mode, indexLabels)
+                        if not completed then break end
+                    end
+                else
+                    local catId = getCatIdFromOption(selectedCategoryOption)
+                    if catId then
+                        runCategory(catId, mode, indexLabels)
+                        if indexRunning then
+                            if indexLabels.lCategory then indexLabels.lCategory:Set("📂 ✅ Complete!") end
+                            if indexLabels.lTarget then indexLabels.lTarget:Set("🎯 Target: —") end
+                            if indexLabels.lOdds then indexLabels.lOdds:Set("🎲 Odds: —") end
+                        end
+                    end
+                    indexRunning = false
+                end
+
+                if luckPollThread then task.cancel(luckPollThread) end
+                setLuckEnabled(false)
+            end)
+        else
+            indexRunning = false
+            if indexThread then task.cancel(indexThread) end
+            if luckPollThread then task.cancel(luckPollThread) end
+            setLuckEnabled(false)
+            if indexLabels.lTarget then indexLabels.lTarget:Set("🎯 Target: —") end
+            if indexLabels.lOdds then indexLabels.lOdds:Set("🎲 Odds: —") end
+            if indexLabels.lLuck then indexLabels.lLuck:Set("🍀 Luck: —") end
+            if indexLabels.lCategory then indexLabels.lCategory:Set("📂 Category: —") end
+        end
+    end,
+})
+
+indexTab:CreateSection("Settings")
+
+local categoryOptions = {"🎲 All (Recommended)"}
+for _, catId in ipairs(CATEGORY_IDS) do
+    local missing = getMissingSlimes(catId)
+    local label = catId:sub(1,1):upper() .. catId:sub(2)
+    if #missing == 0 then
+        table.insert(categoryOptions, "✅ " .. label .. " (Complete)")
+    else
+        local effOdds = getEffectiveOdds(missing[1], catId)
+        table.insert(categoryOptions, string.format("%s (%d left | %s)", label, #missing, formatOddsIndex(effOdds)))
+    end
+end
+selectedCategoryOption = categoryOptions[1]
+
+indexTab:CreateDropdown({
+    Name = "Category",
+    Options = categoryOptions,
+    CurrentOption = { categoryOptions[1] },
+    MultipleOptions = false,
+    Flag = "IndexCategory",
+    Callback = function(option)
+        selectedCategoryOption = type(option) == "table" and option[1] or option
+    end,
+})
+
+indexTab:CreateDropdown({
+    Name = "Roll Mode",
+    Options = { "🌱 Easiest First", "🎯 Rarest First" },
+    CurrentOption = { "🌱 Easiest First" },
+    MultipleOptions = false,
+    Flag = "IndexRollMode",
+    Callback = function() end,
+})
+
+indexTab:CreateSection("Status")
+
+indexLabels.lTarget   = indexTab:CreateLabel("🎯 Target: —")
+indexLabels.lOdds     = indexTab:CreateLabel("🎲 Odds: —")
+indexLabels.lLuck     = indexTab:CreateLabel("🍀 Luck: —")
+indexLabels.lCategory = indexTab:CreateLabel("📂 Category: —")
+
+indexTab:CreateSection("Index Progress")
+
+local totalIndexSlimes = getTotalSlimesIndex()
+for _, catId in ipairs(CATEGORY_IDS) do
+    local label = catId:sub(1,1):upper() .. catId:sub(2)
+    local count = getUnlockedCount(catId)
+    indexProgressLabels[catId] = indexTab:CreateLabel(string.format("📊 %s: %d / %d", label, count, totalIndexSlimes))
+end
+
+task.spawn(function()
+    while true do
+        task.wait(2)
+        local total = getTotalSlimesIndex()
+        for _, catId in ipairs(CATEGORY_IDS) do
+            if indexProgressLabels[catId] then
+                local label = catId:sub(1,1):upper() .. catId:sub(2)
+                local count = getUnlockedCount(catId)
+                indexProgressLabels[catId]:Set(string.format("📊 %s: %d / %d", label, count, total))
+            end
+        end
+    end
+end)
         local webhookTab = mainWindow:CreateTab("Webhook", 84577758013974)
 
         webhookTab:CreateSection("Warning")
