@@ -54,6 +54,7 @@ task.spawn(function()
         local rollSliceModule = require(sourceFolder.Features.Roll.RollSlice)
         local slimesModule = require(sourceFolder.Game.Items.Slimes)
         local mutationsModule = require(sourceFolder.Features.Mutations.Mutations)
+        local FruitsModule = require(sourceFolder.Game.Items.Fruits)
 
         local boostKinds = boostServiceUtils.getKinds()
         local diceItemIds = specialDiceUtils.getInventoryItemIds()
@@ -312,29 +313,179 @@ task.spawn(function()
             end,
         })
 
-        farmingTab:CreateToggle({
-            Name = "Auto Feed Best Slime",
-            CurrentValue = false,
-            Flag = "FarmingAutoFeed",
-            Callback = function(enabled) end,
-        })
+        farmingTab:CreateSection("Auto Feed Fruits")
 
-        task.spawn(function()
-            while task.wait(10) do
-                if rayfieldLibrary.Flags.FarmingAutoFeed and rayfieldLibrary.Flags.FarmingAutoFeed.CurrentValue then
-                    local bestUid = getBestSlimeUid()
-                    if bestUid then
-                        local items = dataServiceClient:get("items") or {}
-                        for itemId, quantity in pairs(items) do
-                            if type(quantity) == "number" and quantity > 0 then
-                                inventoryServiceClient:fetch("requestUseFood", itemId, bestUid, quantity)
-                                task.wait(0.3)
+        local autoFeedEnabled = false
+        local selectedFruitIds = {"ANY"}
+        local selectedSlimeMode = "Best"
+        local feedConnection = nil
+
+        local function getOwnedFruitIds()
+            local items = dataServiceClient:get("items") or {}
+            local owned = {}
+            local allFruits = FruitsModule.getSortedFruits()
+            for _, f in ipairs(allFruits) do
+                if (items[f.id] or 0) > 0 then
+                    owned[f.id] = true
+                end
+            end
+            return owned
+        end
+
+        local function slimeHasFruit(slimeData, fruitId)
+            if type(slimeData) ~= "table" then return false end
+            local fruitDef = FruitsModule.getFruit(fruitId)
+            if not fruitDef then return false end
+            local trees = slimeData.unlockedTrees
+            if type(trees) ~= "table" then return false end
+            return trees[fruitDef.treeId] == true
+        end
+
+        local function getBestSlimeEntry()
+            local stats = dataServiceClient:get("stats") or {}
+            local rarest = stats.rarestRoll
+            if not rarest or not rarest.slimeData then return nil, nil end
+            local rarestId = rarest.slimeData.id
+            local rarestMutations = rarest.slimeData.mutations or {}
+            local equipped = dataServiceClient:get("equipped") or {}
+            local inv = dataServiceClient:get("inventory") or {}
+            for _, slimeKey in pairs(equipped) do
+                if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
+                    local data = inv[slimeKey]
+                    if type(data) == "table" and data.id == rarestId then
+                        local match = true
+                        for mutKey, mutVal in pairs(rarestMutations) do
+                            if data.mutations == nil or data.mutations[mutKey] ~= mutVal then
+                                match = false
+                                break
                             end
                         end
+                        if match then return slimeKey, data end
                     end
                 end
             end
-        end)
+            for _, slimeKey in pairs(equipped) do
+                if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
+                    local data = inv[slimeKey]
+                    if type(data) == "table" then return slimeKey, data end
+                end
+            end
+            return nil, nil
+        end
+
+        local function getTargetSlimes()
+            if selectedSlimeMode == "Best" then
+                local key, data = getBestSlimeEntry()
+                if key and data then return {{key = key, data = data}} end
+                return {}
+            else
+                local equipped = dataServiceClient:get("equipped") or {}
+                local result = {}
+                for _, slimeKey in pairs(equipped) do
+                    if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
+                        local inv = dataServiceClient:get("inventory") or {}
+                        local data = inv[slimeKey]
+                        if type(data) == "table" then
+                            table.insert(result, {key = slimeKey, data = data})
+                        end
+                    end
+                end
+                return result
+            end
+        end
+
+        local function resolveFruitList()
+            local owned = getOwnedFruitIds()
+            if selectedFruitIds[1] == "ANY" then
+                local result = {}
+                local allFruits = FruitsModule.getSortedFruits()
+                for _, f in ipairs(allFruits) do
+                    if owned[f.id] then table.insert(result, f.id) end
+                end
+                return result
+            else
+                local result = {}
+                for _, fid in ipairs(selectedFruitIds) do
+                    if owned[fid] then table.insert(result, fid) end
+                end
+                return result
+            end
+        end
+
+        local function doFeed()
+            local targets = getTargetSlimes()
+            local fruitsToFeed = resolveFruitList()
+            if #targets == 0 or #fruitsToFeed == 0 then return end
+            for _, entry in ipairs(targets) do
+                local slimeKey = entry.key
+                local slimeData = entry.data
+                for _, fruitId in ipairs(fruitsToFeed) do
+                    if not slimeHasFruit(slimeData, fruitId) then
+                        inventoryServiceClient:fetch("requestUseFruit", fruitId, slimeKey)
+                    end
+                end
+            end
+        end
+
+        farmingTab:CreateToggle({
+            Name = "Auto Feed Fruits to Slime(s)",
+            CurrentValue = false,
+            Flag = "AutoFeedToggle",
+            Callback = function(value)
+                autoFeedEnabled = value
+                if autoFeedEnabled then
+                    if feedConnection then feedConnection:Disconnect() end
+                    feedConnection = RunService.Heartbeat:Connect(function()
+                        if autoFeedEnabled then doFeed() end
+                    end)
+                else
+                    if feedConnection then
+                        feedConnection:Disconnect()
+                        feedConnection = nil
+                    end
+                end
+            end,
+        })
+
+        farmingTab:CreateDropdown({
+            Name = "Slimes to Feed",
+            Options = {"Best", "Split Across Team"},
+            CurrentOption = {"Best"},
+            MultipleOptions = false,
+            Flag = "SlimeModeDropdown",
+            Callback = function(option)
+                selectedSlimeMode = type(option) == "table" and option[1] or option
+            end,
+        })
+
+        local fruitOptions = {"Any"}
+        local labelToId = {}
+        local allFruits = FruitsModule.getSortedFruits()
+        for _, f in ipairs(allFruits) do
+            table.insert(fruitOptions, f.powerName)
+            labelToId[f.powerName] = f.id
+        end
+
+        farmingTab:CreateDropdown({
+            Name = "Fruits to Feed",
+            Options = fruitOptions,
+            CurrentOption = {"Any"},
+            MultipleOptions = true,
+            Flag = "FruitDropdown",
+            Callback = function(options)
+                local picked = type(options) == "table" and options or {options}
+                selectedFruitIds = {}
+                for _, label in ipairs(picked) do
+                    if label == "Any" then
+                        selectedFruitIds = {"ANY"}
+                        return
+                    else
+                        table.insert(selectedFruitIds, labelToId[label])
+                    end
+                end
+                if #selectedFruitIds == 0 then selectedFruitIds = {"ANY"} end
+            end,
+        })
 
         farmingTab:CreateToggle({
             Name = "Auto Transfer XP",
@@ -539,6 +690,234 @@ task.spawn(function()
             Callback = function(option) end,
         })
 
+        gameTab:CreateSection("Movement")
+
+        local enemySettings = {
+            TeleportStyle = "Teleport",
+            TargetPriorities = { ["Most Coins & Goop"] = true },
+            AutoFarm = false,
+            MutationFilter = "Any",
+        }
+        local RANGE = 50
+        local cachedContainer = nil
+        local cachedEnemies = {}
+        local lastCacheTime = 0
+        local currentTarget = nil
+        local tweenConn = nil
+
+        local function getGameplayContainer()
+            if cachedContainer and cachedContainer.Parent then return cachedContainer end
+            for _, child in ipairs(workspace:GetChildren()) do
+                if child.Name:match("^Gameplay") then
+                    cachedContainer = child
+                    return child
+                end
+            end
+            return nil
+        end
+
+        local function getEnemyRoot(enemy)
+            return enemy:FindFirstChild("HumanoidRootPart")
+                or enemy.PrimaryPart
+                or enemy:FindFirstChildWhichIsA("BasePart")
+        end
+
+        local function getMutation(enemy)
+            for _, mut in ipairs({"inverted", "huge", "shiny", "big"}) do
+                local ok, val = pcall(function() return enemy:GetAttribute(mut) end)
+                if ok and val then return mut end
+                if enemy:FindFirstChild(mut) then return mut end
+                local m = enemy:FindFirstChild("Mutation")
+                if m and m.Value == mut then return mut end
+                if enemy.Name:lower():find(mut) then return mut end
+            end
+            return nil
+        end
+
+        local function getEnemyValue(enemy, rootPart)
+            local coins  = enemy:GetAttribute("reward") or enemy:GetAttribute("coins") or enemy:GetAttribute("coinReward")
+            local goop   = enemy:GetAttribute("goop") or enemy:GetAttribute("goopReward")
+            local health = enemy:GetAttribute("health") or enemy:GetAttribute("maxHealth")
+            local humanoid = enemy:FindFirstChildWhichIsA("Humanoid")
+            if humanoid then health = health or humanoid.MaxHealth end
+            local valueObj = enemy:FindFirstChild("Reward") or enemy:FindFirstChild("Coins") or enemy:FindFirstChild("Value")
+            if valueObj and valueObj:IsA("NumberValue") then coins = coins or valueObj.Value end
+            local goopObj = enemy:FindFirstChild("Goop") or enemy:FindFirstChild("GoopReward")
+            if goopObj and goopObj:IsA("NumberValue") then goop = goop or goopObj.Value end
+            local healthObj = enemy:FindFirstChild("Health") or enemy:FindFirstChild("MaxHealth")
+            if healthObj and healthObj:IsA("NumberValue") then health = health or healthObj.Value end
+            local dist = math.huge
+            local char = localPlayer.Character
+            if char and rootPart then
+                local rp = char:FindFirstChild("HumanoidRootPart")
+                if rp then dist = (rootPart.Position - rp.Position).Magnitude end
+            end
+            return { coins = coins or 0, goop = goop or 0, health = health or 0, mutation = getMutation(enemy), distance = dist }
+        end
+
+        local function isAlive(enemy)
+            if not enemy or not enemy.Parent then return false end
+            local humanoid = enemy:FindFirstChildWhichIsA("Humanoid")
+            if humanoid and humanoid.Health <= 0 then return false end
+            local hp = enemy:GetAttribute("health") or enemy:GetAttribute("currentHealth")
+            if hp and hp <= 0 then return false end
+            return true
+        end
+
+        local function refreshEnemyCache()
+            if tick() - lastCacheTime < 2 then return end
+            lastCacheTime = tick()
+            cachedEnemies = {}
+            local container = getGameplayContainer()
+            if not container then return end
+            local enemyFolder = container:FindFirstChild("Enemies")
+            if not enemyFolder then return end
+            for _, enemy in ipairs(enemyFolder:GetChildren()) do
+                if enemy:IsA("Model") then
+                    table.insert(cachedEnemies, enemy)
+                end
+            end
+        end
+
+        local function matchesMutationFilter(enemy)
+            if enemySettings.MutationFilter == "Any" then return true end
+            return getMutation(enemy) == enemySettings.MutationFilter:lower()
+        end
+
+        local function computeScores()
+            local char = localPlayer.Character
+            if not char then return {} end
+            local rp = char:FindFirstChild("HumanoidRootPart")
+            if not rp then return {} end
+            local entries = {}
+            for _, enemy in ipairs(cachedEnemies) do
+                if not isAlive(enemy) then continue end
+                if not matchesMutationFilter(enemy) then continue end
+                local root = getEnemyRoot(enemy)
+                if not root then continue end
+                local dist = (root.Position - rp.Position).Magnitude
+                if dist > RANGE then continue end
+                local data = getEnemyValue(enemy, root)
+                table.insert(entries, { enemy = enemy, data = data })
+            end
+            if #entries == 0 then return {} end
+            local maxCoins, maxGoop, maxHealth, maxDist = 0, 0, 0, 0
+            for _, e in ipairs(entries) do
+                if e.data.coins > maxCoins then maxCoins = e.data.coins end
+                if e.data.goop > maxGoop then maxGoop = e.data.goop end
+                if e.data.health > maxHealth then maxHealth = e.data.health end
+                if e.data.distance > maxDist then maxDist = e.data.distance end
+            end
+            local scores = {}
+            local priorities = enemySettings.TargetPriorities
+            for _, e in ipairs(entries) do
+                local s = 0
+                if priorities["Most Coins & Goop"] then
+                    local coinsNorm = maxCoins > 0 and e.data.coins / maxCoins or 0
+                    local goopNorm = maxGoop > 0 and e.data.goop / maxGoop or 0
+                    s = s + (coinsNorm + goopNorm) / 2
+                end
+                if priorities["Closest"] then s = s + (maxDist > 0 and 1 - e.data.distance / maxDist or 0) end
+                if priorities["Lowest HP"] then s = s + (maxHealth > 0 and 1 - e.data.health / maxHealth or 0) end
+                if priorities["Mutations Only"] then s = s + (e.data.mutation and 1 or 0) end
+                scores[e.enemy] = s
+            end
+            return scores
+        end
+
+        local function selectTarget()
+            local scores = computeScores()
+            local best, bestScore = nil, -math.huge
+            for enemy, score in pairs(scores) do
+                if score > bestScore then
+                    bestScore = score
+                    best = enemy
+                end
+            end
+            return best
+        end
+
+        local function moveToEnemy(enemy)
+            local char = localPlayer.Character
+            if not char then return end
+            local root = getEnemyRoot(enemy)
+            if not root then return end
+            local target = root.CFrame * CFrame.new(0, 3, 0)
+            if enemySettings.TeleportStyle == "Teleport" then
+                char:PivotTo(target)
+            elseif enemySettings.TeleportStyle == "Tween" then
+                if tweenConn then tweenConn:Disconnect() tweenConn = nil end
+                local start = char:GetPivot()
+                local startTime = tick()
+                local duration = 0.25
+                tweenConn = RunService.RenderStepped:Connect(function()
+                    local alpha = math.clamp((tick() - startTime) / duration, 0, 1)
+                    char:PivotTo(start:Lerp(target, alpha))
+                    if alpha >= 1 then tweenConn:Disconnect() tweenConn = nil end
+                end)
+            end
+        end
+
+        gameTab:CreateDropdown({
+            Name = "Teleport Style",
+            Options = {"Teleport", "Tween"},
+            CurrentOption = {"Teleport"},
+            MultipleOptions = false,
+            Flag = "TeleportStyle",
+            Callback = function(option) enemySettings.TeleportStyle = option[1] end,
+        })
+
+        gameTab:CreateSection("Targeting")
+
+        gameTab:CreateDropdown({
+            Name = "Target Priority",
+            Options = {"Most Coins & Goop", "Closest", "Lowest HP", "Mutations Only"},
+            CurrentOption = {"Most Coins & Goop"},
+            MultipleOptions = true,
+            Flag = "TargetPriority",
+            Callback = function(options)
+                enemySettings.TargetPriorities = {}
+                for _, opt in ipairs(options) do
+                    enemySettings.TargetPriorities[opt] = true
+                end
+            end,
+        })
+
+        gameTab:CreateDropdown({
+            Name = "Mutation Filter",
+            Options = {"Any", "Inverted", "Huge", "Shiny", "Big"},
+            CurrentOption = {"Any"},
+            MultipleOptions = false,
+            Flag = "MutationFilter",
+            Callback = function(option) enemySettings.MutationFilter = option[1] end,
+        })
+
+        gameTab:CreateSection("Controls")
+
+        gameTab:CreateToggle({
+            Name = "Auto Farm",
+            CurrentValue = false,
+            Flag = "AutoFarm",
+            Callback = function(value)
+                enemySettings.AutoFarm = value
+                if not value then currentTarget = nil end
+            end,
+        })
+
+        RunService.Heartbeat:Connect(function()
+            refreshEnemyCache()
+            if not enemySettings.AutoFarm then
+                currentTarget = nil
+                return
+            end
+            if currentTarget and isAlive(currentTarget) and currentTarget.Parent then return end
+            local newTarget = selectTarget()
+            if newTarget and newTarget ~= currentTarget then
+                currentTarget = newTarget
+                moveToEnemy(currentTarget)
+            end
+        end)
+
         gameTab:CreateSection("Combat")
 
         gameTab:CreateToggle({
@@ -557,180 +936,6 @@ task.spawn(function()
             Flag = "CombatTargetPriority",
             Callback = function(option) end,
         })
-
-        -- ===================== TELEPORT TO PLAYER =====================
-        gameTab:CreateSection("Teleport to Player")
-        local playerDropdownOptions = {}
-        local selectedPlayer = nil
-
-        local function refreshPlayerList()
-            playerDropdownOptions = {}
-            for _, plr in ipairs(Players:GetPlayers()) do
-                if plr ~= localPlayer then
-                    table.insert(playerDropdownOptions, plr.Name)
-                end
-            end
-            if #playerDropdownOptions == 0 then
-                table.insert(playerDropdownOptions, "No other players")
-            end
-            -- Update dropdown options
-            rayfieldLibrary.Flags.TeleportPlayerDropdown.Options = playerDropdownOptions
-            if selectedPlayer and not table.find(playerDropdownOptions, selectedPlayer) then
-                selectedPlayer = nil
-            end
-        end
-
-        gameTab:CreateDropdown({
-            Name = "Select Player",
-            Options = {},
-            CurrentOption = {},
-            MultipleOptions = false,
-            Flag = "TeleportPlayerDropdown",
-            Callback = function(option)
-                selectedPlayer = option[1]
-            end,
-        })
-
-        gameTab:CreateButton({
-            Name = "Teleport",
-            Callback = function()
-                if not selectedPlayer or selectedPlayer == "No other players" then
-                    rayfieldLibrary:Notify({
-                        Title = "Teleport",
-                        Content = "No player selected or no other players online.",
-                        Duration = 3,
-                    })
-                    return
-                end
-                local targetPlayer = Players:FindFirstChild(selectedPlayer)
-                if not targetPlayer or not targetPlayer.Character then
-                    rayfieldLibrary:Notify({
-                        Title = "Teleport",
-                        Content = "Target player not found or has no character.",
-                        Duration = 3,
-                    })
-                    return
-                end
-                local targetRoot = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
-                if not targetRoot then
-                    rayfieldLibrary:Notify({
-                        Title = "Teleport",
-                        Content = "Target has no HumanoidRootPart.",
-                        Duration = 3,
-                    })
-                    return
-                end
-                local localChar = localPlayer.Character
-                if not localChar then
-                    rayfieldLibrary:Notify({
-                        Title = "Teleport",
-                        Content = "Your character not found.",
-                        Duration = 3,
-                    })
-                    return
-                end
-                local localRoot = localChar:FindFirstChild("HumanoidRootPart")
-                if localRoot then
-                    localRoot.CFrame = targetRoot.CFrame
-                else
-                    localChar:PivotTo(targetRoot.CFrame)
-                end
-                rayfieldLibrary:Notify({
-                    Title = "Teleport",
-                    Content = "Teleported to " .. selectedPlayer,
-                    Duration = 2,
-                })
-            end,
-        })
-
-        -- Refresh player list when dropdown is opened (Rayfield doesn't have an explicit open event, but we can refresh periodically or on toggle)
-        task.spawn(function()
-            while true do
-                task.wait(5)
-                refreshPlayerList()
-            end
-        end)
-        refreshPlayerList() -- initial
-
-        -- ===================== INDEX TAB =====================
-        local indexTab = mainWindow:CreateTab("Index", 4483362458)
-
-        -- Auto Index Section
-        indexTab:CreateSection("Auto Index")
-        local autoIndexRunning = false
-        local autoIndexThread = nil
-
-        indexTab:CreateToggle({
-            Name = "Auto Unlock Index Entries",
-            CurrentValue = false,
-            Flag = "AutoIndexToggle",
-            Callback = function(value)
-                autoIndexRunning = value
-                if autoIndexRunning then
-                    if autoIndexThread then task.cancel(autoIndexThread) end
-                    autoIndexThread = task.spawn(function()
-                        while autoIndexRunning do
-                            local success, err = pcall(function()
-                                indexServiceRemote:InvokeServer("requestUnlockEntry")
-                            end)
-                            if not success then
-                                warn("Index unlock failed:", err)
-                            end
-                            task.wait(1)
-                        end
-                    end)
-                else
-                    if autoIndexThread then
-                        task.cancel(autoIndexThread)
-                        autoIndexThread = nil
-                    end
-                end
-            end,
-        })
-
-        -- Index Stats Section
-        indexTab:CreateSection("Index Stats")
-        local indexBasicLabel = indexTab:CreateLabel("Basic: --")
-        local indexBigLabel = indexTab:CreateLabel("Big: --")
-        local indexShinyLabel = indexTab:CreateLabel("Shiny: --")
-        local indexHugeLabel = indexTab:CreateLabel("Huge: --")
-        local indexInvertedLabel = indexTab:CreateLabel("Inverted: --")
-
-        local function updateIndexStats()
-            local indexData = dataServiceClient:get("index") or {}
-            local categories = indexData.categories or {}
-            local totalSlimes = #slimesModule.getSortedSlimes() -- or use a fixed number if needed
-            local function getCount(catId)
-                local cat = categories[catId]
-                if not cat then return 0 end
-                local unlocked = cat.unlocked or {}
-                local count = 0
-                for _, v in pairs(unlocked) do
-                    if v == true then count = count + 1 end
-                end
-                return count
-            end
-            local basicCount = getCount("basic")
-            local bigCount = getCount("big")
-            local shinyCount = getCount("shiny")
-            local hugeCount = getCount("huge")
-            local invertedCount = getCount("inverted")
-
-            indexBasicLabel:Set(string.format("Basic: %d / %d", basicCount, totalSlimes))
-            indexBigLabel:Set(string.format("Big: %d / %d", bigCount, totalSlimes))
-            indexShinyLabel:Set(string.format("Shiny: %d / %d", shinyCount, totalSlimes))
-            indexHugeLabel:Set(string.format("Huge: %d / %d", hugeCount, totalSlimes))
-            indexInvertedLabel:Set(string.format("Inverted: %d / %d", invertedCount, totalSlimes))
-        end
-
-        task.spawn(function()
-            while true do
-                updateIndexStats()
-                task.wait(5)
-            end
-        end)
-
-        -- ===================== END OF NEW FEATURES =====================
 
         local miscTab = mainWindow:CreateTab("Misc", 96334002390551)
 
