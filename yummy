@@ -5,6 +5,7 @@ task.spawn(function()
 	local localPlayer = Players.LocalPlayer
 	local RunService = game:GetService("RunService")
 	local ReplicatedStorage = game:GetService("ReplicatedStorage")
+	local HttpService = game:GetService("HttpService")   -- needed for webhook JSON
 
 	-- =============================================
 	-- SAFE REQUIRE HELPER
@@ -111,11 +112,12 @@ task.spawn(function()
 	local gameTab      = mainWindow:CreateTab("Game", 82493603309814)
 	local indexTab     = mainWindow:CreateTab("Index", 4483362458)
 	local miscTab      = mainWindow:CreateTab("Misc", 96334002390551)
+	local webhookTab   = mainWindow:CreateTab("Webhook", 84577758013974)   -- added
 	local settingsTab  = mainWindow:CreateTab("Settings", 122930981612451)
 	local statsTab     = mainWindow:CreateTab("Stats", 4483362458)
 
 	-- =============================================
-	-- MAIN TAB — status labels
+	-- MAIN TAB — status labels & updated paragraph
 	-- =============================================
 	mainTab:CreateSection("Status")
 	local fpsLabel  = mainTab:CreateLabel("FPS: Calculating...")
@@ -148,7 +150,7 @@ task.spawn(function()
 	mainTab:CreateParagraph({ Title = "Enabled By Default", Content = "[+] Anti AFK" })
 	mainTab:CreateParagraph({
 		Title = "Latest Update",
-		Content = "[+] Auto Send & Accept Friend Requests\n[+] Fixed Auto Collect Loot\n[+] Fixed Settings\n[+] Hide Attack & Damage UI\n[+] Bug Fixes"
+		Content = "[+] Auto Complete Index\n[+] Auto Move to Enemy (Teleport/Tween)\n[+] Auto Stack Dice\n[+] Auto Feed Fruits\n[+] Removed Broken Float/Attack Systems\n[+] Bug Fixes & Performance"
 	})
 
 	local dashboardBusy = false
@@ -1671,6 +1673,337 @@ task.spawn(function()
 			miscTab:CreateDropdown({ Name="Dice & Item Types", Options=diceNames, CurrentOption={diceNames[1]}, MultipleOptions=true, Flag="MiscDiceTypes", Callback=function() end })
 		else
 			miscTab:CreateLabel("Dice types not yet loaded — enable after modules load.")
+		end
+	end)
+
+	-- =============================================
+	-- WEBHOOK TAB (fully restored)
+	-- =============================================
+
+	webhookTab:CreateSection("Warning")
+	webhookTab:CreateParagraph({
+		Title = "⚠️ WARNING",
+		Content = "WEBHOOK WILL ONLY WORK IF YOU MANUALLY ENABLE AUTO ROLL IN GAME\nPLEASE DISABLE FAST ROLL (from Farming Tab) if you have it enabled"
+	})
+
+	webhookTab:CreateSection("Configuration")
+
+	local savedWebhookUrl = ""
+	local WEBHOOK_AVATAR = "https://media.discordapp.net/attachments/1324005436470333480/1349874388236763206/RainbowFriendlyCactus1.png"
+
+	featureToggle(webhookTab, {
+		Name = "Enable Webhook",
+		CurrentValue = false,
+		Flag = "WebhookEnabled",
+		Callback = function() end,
+	})
+
+	webhookTab:CreateInput({
+		Name = "Webhook URL",
+		CurrentValue = "",
+		PlaceholderText = "Paste your Discord webhook URL",
+		RemoveTextAfterFocusLost = false,
+		Flag = "WebhookURLDisplay",
+		Callback = function(url)
+			if url and url:match("^https://discord") then
+				savedWebhookUrl = url
+				local masked = string.rep("•", #url - 6) .. url:sub(-6)
+				rayfieldLibrary:Notify({Title = "Webhook", Content = "URL saved: " .. masked, Duration = 3})
+			end
+		end,
+	})
+
+	webhookTab:CreateInput({
+		Name = "User ID",
+		CurrentValue = "",
+		PlaceholderText = "Discord User ID",
+		RemoveTextAfterFocusLost = false,
+		Flag = "WebhookUserID",
+		Callback = function() end,
+	})
+
+	webhookTab:CreateInput({
+		Name = "Minimum Chance To Send",
+		CurrentValue = "",
+		PlaceholderText = "e.g. 1B or 1000000000",
+		RemoveTextAfterFocusLost = false,
+		Flag = "WebhookMinChance",
+		Callback = function() end,
+	})
+
+	featureButton(webhookTab, {
+		Name = "Test Webhook",
+		Callback = function()
+			if savedWebhookUrl == "" then
+				rayfieldLibrary:Notify({Title = "Webhook", Content = "Please paste a Webhook URL first.", Duration = 4})
+				return
+			end
+			if not rayfieldLibrary.Flags.WebhookEnabled.CurrentValue then
+				rayfieldLibrary:Notify({Title = "Webhook", Content = "Please enable Webhook first.", Duration = 4})
+				return
+			end
+			local userId = rayfieldLibrary.Flags.WebhookUserID.CurrentValue
+			local mention = (userId and userId ~= "") and ("<@" .. userId .. "> ") or ""
+			local success, response = pcall(function()
+				return request({
+					Url = savedWebhookUrl,
+					Method = "POST",
+					Headers = {["Content-Type"] = "application/json"},
+					Body = HttpService:JSONEncode({
+						content = mention,
+						username = "Cactus Hub",
+						avatar_url = WEBHOOK_AVATAR,
+						embeds = {{ title = "✅ Webhook Test", description = "Your webhook is working correctly!", color = 0x2ecc71 }}
+					})
+				})
+			end)
+			if success then
+				rayfieldLibrary:Notify({Title = "Webhook", Content = "Test sent successfully!", Duration = 4})
+			else
+				rayfieldLibrary:Notify({Title = "Webhook", Content = "Failed to send test.", Duration = 4})
+			end
+		end,
+	})
+
+	webhookTab:CreateSection("Filters")
+
+	featureToggle(webhookTab, {
+		Name = "Send All Slimes",
+		CurrentValue = false,
+		Flag = "WebhookSendAll",
+		Callback = function() end,
+	})
+
+	featureToggle(webhookTab, {
+		Name = "Send New Slimes Only",
+		CurrentValue = false,
+		Flag = "WebhookSendNew",
+		Callback = function() end,
+	})
+
+	featureToggle(webhookTab, {
+		Name = "Send Mutated Slimes",
+		CurrentValue = false,
+		Flag = "WebhookSendMutated",
+		Callback = function() end,
+	})
+
+	webhookTab:CreateDropdown({
+		Name = "Mutations Filter",
+		Options = {"All", "Shiny", "Big", "Huge", "Inverted"},
+		CurrentOption = {"All"},
+		MultipleOptions = true,
+		Flag = "WebhookMutations",
+		Callback = function() end,
+	})
+
+	-- Helper functions for webhook (from original script)
+	local function formatNumber(num)
+		if type(num) ~= "number" then return tostring(num) end
+		local suffixes = {
+			{1e24,"Sp"},{1e21,"Sx"},{1e18,"Qn"},{1e15,"Qd"},
+			{1e12,"T"},{1e9,"B"},{1e6,"M"},{1e3,"K"}
+		}
+		for _, s in ipairs(suffixes) do
+			if math.abs(num) >= s[1] then
+				local formatted = num / s[1]
+				if math.abs(formatted - math.floor(formatted)) < 0.01 then
+					return string.format("%d%s", math.floor(formatted), s[2])
+				else
+					return string.format("%.1f%s", formatted, s[2])
+				end
+			end
+		end
+		return tostring(math.floor(num))
+	end
+
+	local function getRarityName(odds)
+		if not odds or odds <= 0 then return "Unknown" end
+		local tier, tierData = rarityTiersModule.getTier(odds)
+		return (tier and tierData and tierData.name) or "Unknown"
+	end
+
+	local function extractSlimeData(rollResultTable)
+		if type(rollResultTable) ~= "table" then return nil end
+		for _, item in ipairs(rollResultTable) do
+			if type(item) == "table" and item.id then return item end
+		end
+		return nil
+	end
+
+	local function encodeRollResults(rollResults)
+		if type(rollResults) ~= "table" or #rollResults == 0 then return "empty" end
+		local encoded = {}
+		for i, roll in ipairs(rollResults) do
+			local slimeData = extractSlimeData(roll)
+			encoded[i] = slimeData and tostring(slimeData.id) or tostring(i)
+		end
+		return #rollResults .. "|" .. table.concat(encoded, ",")
+	end
+
+	local function getMutationTypeString(mutations)
+		if not mutations then return "basic" end
+		if mutations.inverted then return "inverted" end
+		if mutations.huge then return "huge" end
+		if mutations.big then return "big" end
+		if mutations.shiny then return "shiny" end
+		return "basic"
+	end
+
+	local function isNewSlime(slimeId, mutations)
+		local indexData = dataServiceClient and dataServiceClient:get("index") or {}
+		local categories = indexData.categories or {}
+		local category = categories[getMutationTypeString(mutations)]
+		local unlocked = category and category.unlocked or {}
+		return not unlocked[slimeId]
+	end
+
+	local recentWebhookNotifications = {}
+	local function sendWebhookNotification(slimeId, slimeData, mutations, webhookUrl, mentionUserId, notificationKey)
+		if recentWebhookNotifications[notificationKey] then return end
+		recentWebhookNotifications[notificationKey] = true
+		local mentionText = (mentionUserId and mentionUserId ~= "") and ("<@" .. mentionUserId .. "> ") or ""
+		local slimeName = slimeData and slimeData.name or slimeId
+		local displayName = mutations and mutationsModule.getDisplayName(slimeName, mutations) or slimeName
+		local odds = slimeData and slimeData.odds or nil
+		local damage = slimeData and slimeData.damage or 0
+		local health = slimeData and slimeData.health or 0
+		local oddsMultiplier = mutations and mutationsModule.getVisualOddsMultiplier(mutations) or 1
+		local statBonus = mutations and mutationsModule.getStatBonus(mutations, "damage") or 1
+		local actualOdds = odds and (odds / oddsMultiplier) or nil
+		local rarityName = getRarityName(odds)
+		local chanceText = (actualOdds and actualOdds > 0) and string.format("1 in %s", formatNumber(math.floor(1 / actualOdds + 0.5))) or "N/A"
+		local totalRolls = (dataServiceClient and dataServiceClient:get("stats") or {}).rolls or 0
+		local coins = (dataServiceClient and dataServiceClient:get("coins") or 0)
+		local totalKills = (dataServiceClient and dataServiceClient:get("stats") or {}).kills or 0
+		local playerName = localPlayer.Name
+		local embedFields = {
+			{name = "Rarity", value = rarityName, inline = true},
+			{name = "Chance", value = chanceText, inline = true},
+		}
+		local finalDamage = damage * statBonus
+		local finalHealth = health * statBonus
+		local statsString = ""
+		if finalDamage > 0 and finalHealth > 0 then
+			statsString = string.format("⚔️ %s  ❤️ %s", formatNumber(finalDamage), formatNumber(finalHealth))
+		elseif finalDamage > 0 then
+			statsString = string.format("⚔️ %s", formatNumber(finalDamage))
+		elseif finalHealth > 0 then
+			statsString = string.format("❤️ %s", formatNumber(finalHealth))
+		end
+		if statsString ~= "" then
+			table.insert(embedFields, {name = "Stats", value = statsString, inline = true})
+		end
+		if mutations and next(mutations) then
+			local mutNames = {}
+			for mut in pairs(mutations) do
+				table.insert(mutNames, mut:sub(1,1):upper()..mut:sub(2))
+			end
+			table.insert(embedFields, {name = "Mutations", value = table.concat(mutNames, ", "), inline = true})
+		end
+		table.insert(embedFields, {name = "💰 Coins", value = formatNumber(coins), inline = true})
+		table.insert(embedFields, {name = "⚔️ Kills", value = formatNumber(totalKills), inline = true})
+
+		local iconAssetId = (mutations and mutations.inverted) and (slimeData and slimeData.invertedIcon) or (slimeData and slimeData.image)
+		local thumbnailUrl = nil
+		if iconAssetId and iconAssetId ~= "N/A" then
+			local assetNumber = string.match(tostring(iconAssetId), "rbxassetid://(%d+)")
+			if assetNumber then
+				local response = request({
+					Url = "https://thumbnails.roblox.com/v1/assets?assetIds=" .. assetNumber .. "&size=420x420&format=Png&isCircular=false",
+					Method = "GET"
+				})
+				if response and response.Success then
+					local decoded = HttpService:JSONDecode(response.Body)
+					if decoded and decoded.data and decoded.data[1] then
+						thumbnailUrl = decoded.data[1].imageUrl
+					end
+				end
+			end
+		end
+
+		local userEmbed = {
+			title = "🎲 New Slime Rolled!",
+			description = string.format("**||%s||** rolled **%s**!\n\n🎲 **Total Rolls:** %s", playerName, displayName, tostring(totalRolls)),
+			thumbnail = thumbnailUrl and {url = thumbnailUrl, width = 64, height = 64} or nil,
+			fields = embedFields,
+			color = mutations and (mutations.inverted and 0x9b59b6 or mutations.huge and 0xf1c40f or mutations.big and 0xe67e22 or mutations.shiny and 0xf39c12 or 0x3498db) or 0x3498db,
+		}
+
+		pcall(function()
+			request({
+				Url = webhookUrl,
+				Method = "POST",
+				Headers = {["Content-Type"] = "application/json"},
+				Body = HttpService:JSONEncode({ content = mentionText, username = "Cactus Hub", avatar_url = WEBHOOK_AVATAR, embeds = {userEmbed} })
+			})
+		end)
+	end
+
+	local lastRollResultsHash = nil
+	task.spawn(function()
+		while true do
+			task.wait(0.1)
+			if not modulesLoaded then task.wait(1) end
+			if not rayfieldLibrary.Flags.WebhookEnabled or not rayfieldLibrary.Flags.WebhookEnabled.CurrentValue then
+				task.wait(1)
+			elseif savedWebhookUrl ~= "" and rollSliceModule then
+				local currentRolls = rollSliceModule.rollResults()
+				if type(currentRolls) ~= "table" or #currentRolls == 0 then
+					task.wait(0.5)
+				else
+					local currentHash = encodeRollResults(currentRolls)
+					if currentHash ~= lastRollResultsHash then
+						lastRollResultsHash = currentHash
+						local sendAll = rayfieldLibrary.Flags.WebhookSendAll and rayfieldLibrary.Flags.WebhookSendAll.CurrentValue
+						local sendNewOnly = rayfieldLibrary.Flags.WebhookSendNew and rayfieldLibrary.Flags.WebhookSendNew.CurrentValue
+						local sendMutated = rayfieldLibrary.Flags.WebhookSendMutated and rayfieldLibrary.Flags.WebhookSendMutated.CurrentValue
+						local minChanceStr = rayfieldLibrary.Flags.WebhookMinChance.CurrentValue
+						local minChanceNum = nil
+						if minChanceStr and minChanceStr ~= "" then
+							local num = minChanceStr:upper():gsub(",", ""):match("^(%d+%.?%d*)([KMBTQ]?)$")
+							if num then
+								local val = tonumber(num)
+								local suffix = minChanceStr:upper():gsub(",", ""):match("%D+$") or ""
+								if suffix == "K" then val = val * 1e3
+								elseif suffix == "M" then val = val * 1e6
+								elseif suffix == "B" then val = val * 1e9
+								elseif suffix == "T" then val = val * 1e12
+								elseif suffix == "Q" then
+									if minChanceStr:find("QD") then val = val * 1e15
+									elseif minChanceStr:find("QN") then val = val * 1e18
+									else val = val * 1e15
+									end
+								end
+								minChanceNum = val
+							end
+						end
+						for _, rollResult in ipairs(currentRolls) do
+							local slimeData = extractSlimeData(rollResult)
+							if slimeData then
+								local slimeId = tostring(slimeData.id or "")
+								if slimeId ~= "" then
+									local mutations = type(slimeData.mutations) == "table" and next(slimeData.mutations) ~= nil and slimeData.mutations or nil
+									local slimeDefinition = slimesModule and slimesModule.getSlime(slimeId)
+									local hasMutation = mutations ~= nil
+									local isNew = isNewSlime(slimeId, mutations)
+									local shouldSend = sendAll or (sendNewOnly and isNew) or (sendMutated and hasMutation)
+									if shouldSend and minChanceNum then
+										local odds = slimeDefinition and slimeDefinition.odds or 0
+										local chanceValue = odds > 0 and (1 / odds) or 0
+										if chanceValue > minChanceNum then shouldSend = false end
+									end
+									if shouldSend then
+										local userId = rayfieldLibrary.Flags.WebhookUserID.CurrentValue
+										local notificationKey = currentHash .. "_" .. slimeId .. "_" .. tostring(mutations and mutationsModule.getIds(mutations) or "")
+										task.spawn(sendWebhookNotification, slimeId, slimeDefinition, mutations, savedWebhookUrl, userId, notificationKey)
+									end
+								end
+							end
+						end
+					end
+				end
+			end
 		end
 	end)
 
