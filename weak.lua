@@ -2818,6 +2818,10 @@ task.spawn(function()
         local SpecialRollUtils2 = require(source.Features.Roll.SpecialRollUtils)
         local Networker2 = networkerModule
 
+        -- *** FIX: Initialize settingsClient correctly ***
+        local settingsClient = SettingsServiceClient.client
+        settingsClient:waitForData()
+
         local ALL_FRUITS2 = FruitsModule2.getSortedFruits()
 
         local CATEGORY_IDS2 = {"basic", "shiny", "big", "huge", "inverted"}
@@ -2853,19 +2857,18 @@ task.spawn(function()
         local networkerRoll2 = Networker2.client.new("RollService", rollClient2)
         local networkerInventory2 = Networker2.client.new("InventoryService", {})
 
-        -- ========== LUCK HELPERS ==========
-
+        -- ========== LUCK HELPERS (now use the shared settingsClient) ==========
         local function setLuck2(value)
-    local clamped = math.min(value, 16384)
-    SettingsServiceClient.set(settingsClient, "luckOverrideValue", clamped)
-    luckValueLocal2 = clamped
-    task.wait(0.3)
-end
+            local clamped = math.min(value, 16384)
+            settingsClient:set("luckOverrideValue", clamped)
+            luckValueLocal2 = clamped
+            task.wait(0.3)
+        end
 
-local function setLuckEnabled2(enabled)
-    SettingsServiceClient.set(settingsClient, "luckOverrideEnabled", enabled)
-    task.wait(0.3)
-                end
+        local function setLuckEnabled2(enabled)
+            settingsClient:set("luckOverrideEnabled", enabled)
+            task.wait(0.3)
+        end
 
         local function calcOptimalLuck2(effectiveOdds)
             if not effectiveOdds or effectiveOdds <= 0 then return 16384 end
@@ -2884,7 +2887,6 @@ local function setLuckEnabled2(enabled)
         end
 
         -- ========== INDEX HELPERS ==========
-
         local function formatOdds2(odds)
             if not odds or odds <= 0 then return "N/A" end
             local n = math.floor(1 / odds + 0.5)
@@ -2993,7 +2995,6 @@ local function setLuckEnabled2(enabled)
         end
 
         -- ========== FRUIT FEED HELPERS ==========
-
         local function getOwnedFruitIds2()
             local items = dataServiceClient:get("items") or {}
             local owned = {}
@@ -3091,7 +3092,6 @@ local function setLuckEnabled2(enabled)
         end
 
         -- ========== INDEX TAB ==========
-
         local IndexTab = mainWindow:CreateTab("📖 Index", 4483362458)
         local indexLabels2 = {}
 
@@ -3218,7 +3218,6 @@ local function setLuckEnabled2(enabled)
         end)
 
         -- ========== STACK DICE TAB ==========
-
         local DiceTab = mainWindow:CreateTab("🎲 Stack Dice", 4483362458)
 
         DiceTab:CreateSection("Auto Stack")
@@ -3315,7 +3314,6 @@ local function setLuckEnabled2(enabled)
         end)
 
         -- ========== AUTO FEED TAB ==========
-
         local FruitTab = mainWindow:CreateTab("🍎 Auto Feed", 4483362458)
 
         FruitTab:CreateSection("Fruit Settings")
