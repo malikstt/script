@@ -13,21 +13,25 @@ local data        = DataClient._data._data
 local LocalPlayer = Players.LocalPlayer
 
 local UPDATE_INTERVAL = 0.5
-local STATUS_INTERVAL = 5
 local TWEEN_TIME      = 0.25
 
 local PALETTE = {
-	bg      = Color3.fromRGB(5,   5,   8),
-	panel   = Color3.fromRGB(10,  12,  18),
-	border  = Color3.fromRGB(30,  35,  50),
-	accent  = Color3.fromRGB(80,  160, 255),
-	gold    = Color3.fromRGB(255, 210, 60),
-	diamond = Color3.fromRGB(120, 230, 255),
-	void    = Color3.fromRGB(180, 80,  255),
-	green   = Color3.fromRGB(80,  220, 80),
-	red     = Color3.fromRGB(255, 80,  80),
-	text    = Color3.fromRGB(220, 228, 245),
-	dim     = Color3.fromRGB(100, 110, 135),
+	bg         = Color3.fromRGB(4,   5,   9),
+	panel      = Color3.fromRGB(8,   10,  16),
+	panelAlt   = Color3.fromRGB(11,  13,  21),
+	border     = Color3.fromRGB(25,  30,  48),
+	borderBright = Color3.fromRGB(45, 55, 85),
+	accent     = Color3.fromRGB(70,  150, 255),
+	accentGlow = Color3.fromRGB(40,  100, 220),
+	gold       = Color3.fromRGB(255, 210, 60),
+	diamond    = Color3.fromRGB(120, 230, 255),
+	void       = Color3.fromRGB(160, 70,  255),
+	galaxy     = Color3.fromRGB(220, 100, 255),
+	green      = Color3.fromRGB(70,  210, 100),
+	red        = Color3.fromRGB(255, 75,  75),
+	text       = Color3.fromRGB(210, 220, 240),
+	dim        = Color3.fromRGB(85,  95,  120),
+	dimmer     = Color3.fromRGB(55,  62,  85),
 }
 
 local ASSET_IDS = {
@@ -39,9 +43,8 @@ local ASSET_IDS = {
 	goldDice    = "rbxassetid://133158717152423",
 	diamondDice = "rbxassetid://139581611167886",
 	voidDice    = "rbxassetid://98779770728903",
+	galaxyDice  = "rbxassetid://138834642952755",
 }
-
-local DICE_FRAMES = { "|", "/", "-", "\\" }
 
 local SUFFIXES = {
 	{ 1e24, "Sp" }, { 1e21, "Sx" }, { 1e18, "Qn" }, { 1e15, "Qd" },
@@ -52,8 +55,7 @@ local function formatNum(n)
 	n = tonumber(n) or 0
 	for _, pair in ipairs(SUFFIXES) do
 		if n >= pair[1] then
-			local s = string.format("%.2f", n / pair[1]):gsub("%.?0+$", "")
-			return s .. pair[2]
+			return (string.format("%.2f", n / pair[1]):gsub("%.?0+$", "")) .. pair[2]
 		end
 	end
 	return tostring(math.floor(n))
@@ -64,8 +66,8 @@ local function tweenProp(obj, props, t)
 end
 
 local function pulse(label)
-	tweenProp(label, { TextTransparency = 0.6 }, 0.05)
-	task.delay(0.05, function() tweenProp(label, { TextTransparency = 0 }, 0.2) end)
+	tweenProp(label, { TextTransparency = 0.5 }, 0.04)
+	task.delay(0.04, function() tweenProp(label, { TextTransparency = 0 }, 0.22) end)
 end
 
 local function make(class, props, parent)
@@ -82,7 +84,7 @@ end
 
 local function makeLabel(props, parent)
 	props.BackgroundTransparency = 1
-	props.Font        = props.Font or Enum.Font.GothamBold
+	props.Font       = props.Font or Enum.Font.GothamBold
 	props.TextScaled  = true
 	props.TextWrapped = false
 	return make("TextLabel", props, parent)
@@ -98,22 +100,27 @@ local function addCorner(parent, radius)
 	make("UICorner", { CornerRadius = UDim.new(0, radius or 6) }, parent)
 end
 
-local function addStroke(parent, color, thickness)
+local function addStroke(parent, color, thickness, trans)
 	make("UIStroke", {
-		Color            = color or PALETTE.border,
-		Thickness        = thickness or 1,
-		ApplyStrokeMode  = Enum.ApplyStrokeMode.Border,
+		Color           = color or PALETTE.border,
+		Thickness       = thickness or 1,
+		Transparency    = trans or 0,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
 	}, parent)
+end
+
+local function addGradient(parent, colorSeq, rot)
+	make("UIGradient", { Color = colorSeq, Rotation = rot or 0 }, parent)
 end
 
 local function addListLayout(parent, props)
 	local ul = Instance.new("UIListLayout")
-	ul.FillDirection      = props.FillDirection or Enum.FillDirection.Vertical
+	ul.FillDirection       = props.FillDirection or Enum.FillDirection.Vertical
 	ul.HorizontalAlignment = props.HAlign or Enum.HorizontalAlignment.Center
-	ul.VerticalAlignment  = props.VAlign  or Enum.VerticalAlignment.Top
-	ul.Padding            = props.Padding or UDim.new(0, 12)
-	ul.SortOrder          = Enum.SortOrder.LayoutOrder
-	ul.Parent             = parent
+	ul.VerticalAlignment   = props.VAlign  or Enum.VerticalAlignment.Top
+	ul.Padding             = props.Padding or UDim.new(0, 7)
+	ul.SortOrder           = Enum.SortOrder.LayoutOrder
+	ul.Parent              = parent
 	return ul
 end
 
@@ -127,58 +134,163 @@ local function safeGet(...)
 	return tonumber(current) or 0
 end
 
+local sessionStart       = os.clock()
+local sessionStartRolls  = safeGet("stats","rolls")
+local sessionStartKills  = safeGet("stats","kills")
+local sessionStartCoins  = safeGet("coins")
+local sessionStartGoop   = safeGet("goop")
+
+local bestSlimeData = { name = "None", odds = "N/A", assetId = "" }
+
+task.spawn(function()
+	repeat task.wait() until game:IsLoaded()
+	pcall(function()
+		local sourceFolder = ReplicatedStorage:WaitForChild("Source", 30)
+		local slimesModule = require(sourceFolder.Game.Items.Slimes)
+		while true do
+			task.wait(3)
+			pcall(function()
+				local ok, d = pcall(function() return DataClient._data._data end)
+				if not ok or type(d) ~= "table" then return end
+				if d.stats and d.stats.rarestRoll and d.stats.rarestRoll.slimeData then
+					local rd       = d.stats.rarestRoll.slimeData
+					local id       = tostring(rd.id or "?")
+					local mutations = rd.mutations or {}
+					local odds     = d.stats.rarestRoll.odds or 0
+					local prefix   = ""
+					if mutations.inverted then prefix = "Inverted "
+					elseif mutations.shiny and mutations.huge then prefix = "Shiny Huge "
+					elseif mutations.shiny and mutations.big  then prefix = "Shiny Big "
+					elseif mutations.huge  then prefix = "Huge "
+					elseif mutations.shiny then prefix = "Shiny "
+					elseif mutations.big   then prefix = "Big "
+					end
+					bestSlimeData.name   = prefix .. id:sub(1,1):upper() .. id:sub(2)
+					bestSlimeData.odds   = odds > 0 and ("1 in " .. formatNum(math.floor(odds))) or "N/A"
+					local slimeData      = slimesModule.getSlime(id)
+					bestSlimeData.assetId = ""
+					if slimeData then
+						if mutations.inverted and slimeData.invertedIcon and slimeData.invertedIcon ~= "" then
+							bestSlimeData.assetId = slimeData.invertedIcon
+						elseif slimeData.image then
+							bestSlimeData.assetId = slimeData.image
+						end
+					end
+				end
+			end)
+		end
+	end)
+end)
+
+local totalCoinsEarned = 0
+local totalGoopEarned  = 0
+local totalRollsDone   = 0
+local totalKillsDone   = 0
+
 local function buildHUD(playerGui)
 	local existing = playerGui:FindFirstChild("__MAINHUD__")
 	if existing then existing:Destroy() end
 
 	local screenGui = make("ScreenGui", {
-		Name            = "__MAINHUD__",
-		ResetOnSpawn    = false,
-		IgnoreGuiInset  = true,
-		DisplayOrder    = 9999,
-		ZIndexBehavior  = Enum.ZIndexBehavior.Sibling,
-		Parent          = playerGui,
+		Name           = "__MAINHUD__",
+		ResetOnSpawn   = false,
+		IgnoreGuiInset = true,
+		DisplayOrder   = 9999,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+		Parent         = playerGui,
 	})
 
-	local scaleContainer = makeFrame({
-		Name                = "ScaleContainer",
-		Size                = UDim2.fromScale(1, 1),
-		Position            = UDim2.fromScale(0, 0),
-		BackgroundColor3    = PALETTE.bg,
+	local sc = makeFrame({
+		Name                   = "ScaleContainer",
+		Size                   = UDim2.fromScale(1, 1),
+		Position               = UDim2.fromScale(0, 0),
+		BackgroundColor3       = PALETTE.bg,
 		BackgroundTransparency = 0,
 	}, screenGui)
 
-	make("UIScale", { Scale = 1 }, scaleContainer)
+	make("UIScale", { Scale = 1 }, sc)
 	make("UIAspectRatioConstraint", {
-		AspectRatio = 16 / 9,
-		AspectType  = Enum.AspectType.ScaleWithParentSize,
+		AspectRatio  = 16 / 9,
+		AspectType   = Enum.AspectType.ScaleWithParentSize,
 		DominantAxis = Enum.DominantAxis.Width,
-	}, scaleContainer)
+	}, sc)
+
+	addGradient(sc, ColorSequence.new({
+		ColorSequenceKeypoint.new(0,   Color3.fromRGB(4,  5,  11)),
+		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(6,  7,  15)),
+		ColorSequenceKeypoint.new(1,   Color3.fromRGB(3,  4,   9)),
+	}), 90)
 
 	makeFrame({
-		Name                = "Overlay",
-		Size                = UDim2.fromScale(1, 1),
-		BackgroundColor3    = Color3.new(0, 0, 0),
-		BackgroundTransparency = 0.96,
-		ZIndex              = 10,
-	}, scaleContainer)
+		Name                   = "Overlay",
+		Size                   = UDim2.fromScale(1, 1),
+		BackgroundColor3       = Color3.new(0,0,0),
+		BackgroundTransparency = 0.97,
+		ZIndex                 = 10,
+	}, sc)
+
+	local function makePanelGlow(parent, color)
+		local g = makeFrame({
+			Size                   = UDim2.new(1, 14, 1, 14),
+			Position               = UDim2.fromOffset(-7, -7),
+			BackgroundColor3       = color or PALETTE.accentGlow,
+			BackgroundTransparency = 0.88,
+			ZIndex                 = -1,
+		}, parent)
+		addCorner(g, 15)
+		return g
+	end
+
+	local function makeDivider(parent)
+		local d = makeFrame({
+			Size             = UDim2.fromScale(0.88, 0.004),
+			BackgroundColor3 = PALETTE.border,
+			BackgroundTransparency = 0.3,
+		}, parent)
+		addCorner(d, 2)
+		return d
+	end
+
+	local function makeSectionTag(parent, text)
+		return makeLabel({
+			Size           = UDim2.fromScale(1, 0.055),
+			Text           = text,
+			TextColor3     = PALETTE.dim,
+			Font           = Enum.Font.Gotham,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		}, parent)
+	end
 
 	local topCenter = makeFrame({
 		Name             = "TopCenter",
-		Size             = UDim2.fromScale(0.28, 0.09),
-		Position         = UDim2.fromScale(0.36, 0.01),
+		Size             = UDim2.fromScale(0.24, 0.078),
+		Position         = UDim2.fromScale(0.38, 0.014),
 		BackgroundColor3 = PALETTE.panel,
-	}, scaleContainer)
-	addCorner(topCenter, 8)
+	}, sc)
+	addCorner(topCenter, 10)
 	addStroke(topCenter, PALETTE.accent, 1)
+	addGradient(topCenter, ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(13, 16, 26)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(7,  9,  17)),
+	}), 90)
+	makePanelGlow(topCenter, PALETTE.accentGlow)
+
+	local topAccentBar = makeFrame({
+		Size             = UDim2.fromScale(0.55, 0.022),
+		Position         = UDim2.fromScale(0.225, 0),
+		BackgroundColor3 = PALETTE.accent,
+		BackgroundTransparency = 0.25,
+	}, topCenter)
+	addCorner(topAccentBar, 2)
 
 	local avatarFrame = makeFrame({
 		Name             = "AvatarFrame",
-		Size             = UDim2.fromScale(0.18, 0.85),
-		Position         = UDim2.fromScale(0.02, 0.075),
-		BackgroundColor3 = PALETTE.border,
+		Size             = UDim2.fromScale(0.155, 0.76),
+		Position         = UDim2.fromScale(0.025, 0.12),
+		BackgroundColor3 = PALETTE.borderBright,
 	}, topCenter)
-	addCorner(avatarFrame, 6)
+	addCorner(avatarFrame, 7)
+	addStroke(avatarFrame, PALETTE.accent, 1)
 	make("UIAspectRatioConstraint", {
 		AspectRatio  = 1,
 		AspectType   = Enum.AspectType.ScaleWithParentSize,
@@ -186,22 +298,26 @@ local function buildHUD(playerGui)
 	}, avatarFrame)
 
 	local avatarImg = makeImageLabel({
-		Name      = "Avatar",
-		Size      = UDim2.fromScale(1, 1),
-		Position  = UDim2.fromScale(0, 0),
-		Image     = "",
-		ScaleType = Enum.ScaleType.Fit,
+		Size = UDim2.fromScale(1,1), Image = "", ScaleType = Enum.ScaleType.Fit,
 	}, avatarFrame)
-	addCorner(avatarImg, 6)
+	addCorner(avatarImg, 7)
 
 	makeLabel({
-		Name              = "Username",
-		Size              = UDim2.fromScale(0.77, 1),
-		Position          = UDim2.fromScale(0.21, 0),
-		Text              = LocalPlayer.Name,
-		TextColor3        = PALETTE.text,
-		Font              = Enum.Font.GothamBold,
-		TextXAlignment    = Enum.TextXAlignment.Center,
+		Size           = UDim2.fromScale(0.79, 0.5),
+		Position       = UDim2.fromScale(0.2, 0.08),
+		Text           = LocalPlayer.Name,
+		TextColor3     = PALETTE.text,
+		Font           = Enum.Font.GothamBold,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, topCenter)
+
+	makeLabel({
+		Size           = UDim2.fromScale(0.79, 0.3),
+		Position       = UDim2.fromScale(0.2, 0.62),
+		Text           = "ANALYST",
+		TextColor3     = PALETTE.accent,
+		Font           = Enum.Font.Gotham,
+		TextXAlignment = Enum.TextXAlignment.Left,
 	}, topCenter)
 
 	task.spawn(function()
@@ -212,167 +328,334 @@ local function buildHUD(playerGui)
 		if ok and screenGui.Parent then avatarImg.Image = img end
 	end)
 
-	local centerProgressionPanel = makeFrame({
-		Name             = "CenterProgressionPanel",
-		Size             = UDim2.fromScale(0.28, 0.16),
-		Position         = UDim2.fromScale(0.36, 0.12),
+	local progPanel = makeFrame({
+		Name             = "ProgressionPanel",
+		Size             = UDim2.fromScale(0.24, 0.205),
+		Position         = UDim2.fromScale(0.38, 0.105),
 		BackgroundColor3 = PALETTE.panel,
-	}, scaleContainer)
-	addCorner(centerProgressionPanel, 10)
-	addStroke(centerProgressionPanel, PALETTE.border)
+	}, sc)
+	addCorner(progPanel, 10)
+	addStroke(progPanel, PALETTE.border)
+	addGradient(progPanel, ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(11, 13, 22)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(7,  9,  16)),
+	}), 90)
 
 	make("UIPadding", {
-		PaddingTop    = UDim.new(0.02, 0),
-		PaddingBottom = UDim.new(0.02, 0),
+		PaddingTop    = UDim.new(0.025, 0),
+		PaddingBottom = UDim.new(0.025, 0),
 		PaddingLeft   = UDim.new(0.04, 0),
 		PaddingRight  = UDim.new(0.04, 0),
-	}, centerProgressionPanel)
+	}, progPanel)
+	addListLayout(progPanel, { Padding = UDim.new(0, 5) })
 
-	addListLayout(centerProgressionPanel, { Padding = UDim.new(0, 6) })
+	local function makeProgRow(parent, assetId, labelText, accentColor)
+		local row = makeFrame({
+			Size             = UDim2.fromScale(1, 0.2),
+			BackgroundColor3 = PALETTE.panelAlt,
+		}, parent)
+		addCorner(row, 6)
+		addStroke(row, PALETTE.border, 1)
 
-	local function makeProgressionRow(parent, assetId, labelText, accentColor, startVal)
-		local row = makeFrame({ Size = UDim2.fromScale(1, 0.26), BackgroundColor3 = Color3.fromRGB(14, 16, 24) }, parent)
-		addCorner(row, 5)
+		local ic = makeFrame({ Size = UDim2.fromScale(0.18, 1), BackgroundTransparency = 1 }, row)
+		local img = makeImageLabel({
+			Size     = UDim2.fromScale(0.88, 0.72),
+			Position = UDim2.fromScale(0.06, 0.14),
+			Image    = assetId,
+		}, ic)
+		make("UIAspectRatioConstraint", { AspectRatio = 1, AspectType = Enum.AspectType.ScaleWithParentSize, DominantAxis = Enum.DominantAxis.Height }, img)
 
-		local iconContainer = makeFrame({ Size = UDim2.fromScale(0.22, 1), BackgroundTransparency = 1 }, row)
-		local iconImg = makeImageLabel({ Size = UDim2.fromScale(1, 0.7), Position = UDim2.fromScale(0, 0.15), Image = assetId }, iconContainer)
-		make("UIAspectRatioConstraint", { AspectRatio = 1, AspectType = Enum.AspectType.ScaleWithParentSize, DominantAxis = Enum.DominantAxis.Height }, iconImg)
+		makeLabel({
+			Size           = UDim2.fromScale(0.46, 0.74),
+			Position       = UDim2.fromScale(0.2, 0.13),
+			Text           = labelText,
+			TextColor3     = PALETTE.dim,
+			Font           = Enum.Font.Gotham,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		}, row)
 
-		makeLabel({ Size = UDim2.fromScale(0.52, 0.8), Position = UDim2.fromScale(0.24, 0.1), Text = labelText, TextColor3 = PALETTE.dim, Font = Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left }, row)
-		local valLbl = makeLabel({ Size = UDim2.fromScale(0.22, 0.8), Position = UDim2.fromScale(0.76, 0.1), Text = startVal or "-", TextColor3 = accentColor, TextXAlignment = Enum.TextXAlignment.Right }, row)
+		local valLbl = makeLabel({
+			Size           = UDim2.fromScale(0.3, 0.74),
+			Position       = UDim2.fromScale(0.68, 0.13),
+			Text           = "-",
+			TextColor3     = accentColor,
+			TextXAlignment = Enum.TextXAlignment.Right,
+		}, row)
 		return row, valLbl
 	end
 
-	local _, goldenVal  = makeProgressionRow(centerProgressionPanel, ASSET_IDS.goldDice,    "Next Golden",  PALETTE.gold,    "-")
-	local _, diamondVal = makeProgressionRow(centerProgressionPanel, ASSET_IDS.diamondDice, "Next Diamond", PALETTE.diamond, "-")
-	local _, voidVal    = makeProgressionRow(centerProgressionPanel, ASSET_IDS.voidDice,    "Next Void",    PALETTE.void,    "-")
+	local _, goldenVal  = makeProgRow(progPanel, ASSET_IDS.goldDice,    "Golden",  PALETTE.gold)
+	local _, diamondVal = makeProgRow(progPanel, ASSET_IDS.diamondDice, "Diamond", PALETTE.diamond)
+	local _, voidVal    = makeProgRow(progPanel, ASSET_IDS.voidDice,    "Void",    PALETTE.void)
+	local _, galaxyVal  = makeProgRow(progPanel, ASSET_IDS.galaxyDice,  "Galaxy",  PALETTE.galaxy)
 
 	local timerContainer = makeFrame({
 		Name             = "TimerContainer",
-		Size             = UDim2.fromScale(0.18, 0.1),
-		Position         = UDim2.fromScale(0.41, 0.45),
+		Size             = UDim2.fromScale(0.11, 0.058),
+		Position         = UDim2.fromScale(0.445, 0.323),
 		BackgroundColor3 = PALETTE.panel,
-	}, scaleContainer)
-	addCorner(timerContainer, 12)
-	addStroke(timerContainer, PALETTE.accent, 2)
+	}, sc)
+	addCorner(timerContainer, 14)
+	addStroke(timerContainer, PALETTE.accent, 1)
+	addGradient(timerContainer, ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(12, 16, 28)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(7,  9,  18)),
+	}), 90)
+
+	local timerTopLine = makeFrame({
+		Size             = UDim2.fromScale(0.5, 0.035),
+		Position         = UDim2.fromScale(0.25, 0),
+		BackgroundColor3 = PALETTE.accent,
+		BackgroundTransparency = 0.3,
+	}, timerContainer)
+	addCorner(timerTopLine, 2)
 
 	local timerLabel = makeLabel({
-		Name       = "Timer",
-		Size       = UDim2.fromScale(1, 1),
+		Size       = UDim2.fromScale(0.9, 0.7),
+		Position   = UDim2.fromScale(0.05, 0.1),
 		Text       = "00:00",
 		TextColor3 = PALETTE.accent,
 		Font       = Enum.Font.GothamBold,
 	}, timerContainer)
 
+	makeLabel({
+		Size       = UDim2.fromScale(0.9, 0.26),
+		Position   = UDim2.fromScale(0.05, 0.72),
+		Text       = "SESSION TIME",
+		TextColor3 = PALETTE.dim,
+		Font       = Enum.Font.Gotham,
+	}, timerContainer)
+
 	local leftPanel = makeFrame({
 		Name             = "LeftPanel",
-		Size             = UDim2.fromScale(0.18, 0.78),
-		Position         = UDim2.fromScale(0.01, 0.11),
+		Size             = UDim2.fromScale(0.175, 0.84),
+		Position         = UDim2.fromScale(0.008, 0.08),
 		BackgroundColor3 = PALETTE.panel,
-	}, scaleContainer)
+	}, sc)
 	addCorner(leftPanel, 10)
 	addStroke(leftPanel, PALETTE.border)
-	make("UIPadding", { PaddingTop = UDim.new(0.02,0), PaddingBottom = UDim.new(0.02,0), PaddingLeft = UDim.new(0.04,0), PaddingRight = UDim.new(0.04,0) }, leftPanel)
-	addListLayout(leftPanel, { Padding = UDim.new(0, 10) })
+	addGradient(leftPanel, ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(10, 12, 20)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(6,  8,  14)),
+	}), 90)
 
-	local function makeStatRowWithLabel(parent, assetId, labelText, startVal)
-		local row = makeFrame({ Size = UDim2.fromScale(1, 0.28), BackgroundColor3 = Color3.fromRGB(14, 16, 24) }, parent)
+	make("UIPadding", {
+		PaddingTop    = UDim.new(0.012, 0),
+		PaddingBottom = UDim.new(0.012, 0),
+		PaddingLeft   = UDim.new(0.05, 0),
+		PaddingRight  = UDim.new(0.05, 0),
+	}, leftPanel)
+	addListLayout(leftPanel, { Padding = UDim.new(0, 5) })
+
+	local function makeStatRow(parent, assetId, labelText, accentColor, rowH)
+		local row = makeFrame({
+			Size             = UDim2.fromScale(1, rowH or 0.1),
+			BackgroundColor3 = PALETTE.panelAlt,
+		}, parent)
 		addCorner(row, 6)
-		local iconContainer = makeFrame({ Size = UDim2.fromScale(0.22, 1), BackgroundTransparency = 1 }, row)
-		local iconImg = makeImageLabel({ Size = UDim2.fromScale(1, 0.7), Position = UDim2.fromScale(0, 0.15), Image = assetId }, iconContainer)
-		make("UIAspectRatioConstraint", { AspectRatio = 1, AspectType = Enum.AspectType.ScaleWithParentSize, DominantAxis = Enum.DominantAxis.Height }, iconImg)
-		makeLabel({ Size = UDim2.fromScale(0.35, 0.8), Position = UDim2.fromScale(0.24, 0.1), Text = labelText, TextColor3 = PALETTE.dim, Font = Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left }, row)
-		local valLbl = makeLabel({ Size = UDim2.fromScale(0.37, 0.8), Position = UDim2.fromScale(0.61, 0.1), Text = startVal or "0", TextColor3 = PALETTE.text, TextXAlignment = Enum.TextXAlignment.Right }, row)
+
+		local ic = makeFrame({ Size = UDim2.fromScale(0.2, 1), BackgroundTransparency = 1 }, row)
+		local img = makeImageLabel({
+			Size     = UDim2.fromScale(0.82, 0.7),
+			Position = UDim2.fromScale(0.09, 0.15),
+			Image    = assetId,
+		}, ic)
+		make("UIAspectRatioConstraint", { AspectRatio = 1, AspectType = Enum.AspectType.ScaleWithParentSize, DominantAxis = Enum.DominantAxis.Height }, img)
+
+		if labelText then
+			makeLabel({
+				Size           = UDim2.fromScale(0.38, 0.7),
+				Position       = UDim2.fromScale(0.22, 0.15),
+				Text           = labelText,
+				TextColor3     = PALETTE.dim,
+				Font           = Enum.Font.Gotham,
+				TextXAlignment = Enum.TextXAlignment.Left,
+			}, row)
+		end
+
+		local valW = labelText and 0.36 or 0.76
+		local valX = labelText and 0.62 or 0.22
+		local valLbl = makeLabel({
+			Size           = UDim2.fromScale(valW, 0.7),
+			Position       = UDim2.fromScale(valX, 0.15),
+			Text           = "0",
+			TextColor3     = accentColor or PALETTE.text,
+			TextXAlignment = Enum.TextXAlignment.Right,
+		}, row)
 		return row, valLbl
 	end
 
-	local function makeStatRow(parent, assetId, startVal)
-		local row = makeFrame({ Size = UDim2.fromScale(1, 0.28), BackgroundColor3 = Color3.fromRGB(14, 16, 24) }, parent)
-		addCorner(row, 6)
-		local iconContainer = makeFrame({ Size = UDim2.fromScale(0.22, 1), BackgroundTransparency = 1 }, row)
-		local iconImg = makeImageLabel({ Size = UDim2.fromScale(1, 0.7), Position = UDim2.fromScale(0, 0.15), Image = assetId }, iconContainer)
-		make("UIAspectRatioConstraint", { AspectRatio = 1, AspectType = Enum.AspectType.ScaleWithParentSize, DominantAxis = Enum.DominantAxis.Height }, iconImg)
-		local valLbl = makeLabel({ Size = UDim2.fromScale(0.74, 0.8), Position = UDim2.fromScale(0.24, 0.1), Text = startVal or "0", TextColor3 = PALETTE.text, TextXAlignment = Enum.TextXAlignment.Right }, row)
-		return row, valLbl
-	end
+	makeSectionTag(leftPanel, "LIFETIME")
+	local _, rebirthVal = makeStatRow(leftPanel, ASSET_IDS.rebirth, "Rebirths", PALETTE.diamond)
+	local _, goopVal    = makeStatRow(leftPanel, ASSET_IDS.goop,    nil,        PALETTE.green)
+	local _, coinsVal   = makeStatRow(leftPanel, ASSET_IDS.coins,   nil,        PALETTE.gold)
+	local _, killsVal   = makeStatRow(leftPanel, ASSET_IDS.kills,   nil,        PALETTE.red)
+	local _, zoneVal    = makeStatRow(leftPanel, ASSET_IDS.zone,    "Zone",     PALETTE.accent)
 
-	local _, rebirthVal = makeStatRowWithLabel(leftPanel, ASSET_IDS.rebirth, "Rebirths", "0")
-	local _, goopVal    = makeStatRow(leftPanel, ASSET_IDS.goop,  "0")
-	local _, coinsVal   = makeStatRow(leftPanel, ASSET_IDS.coins, "0")
+	local divLeft = makeDivider(leftPanel)
+
+	makeSectionTag(leftPanel, "SESSION")
+	local _, sessRollsVal = makeStatRow(leftPanel, ASSET_IDS.goldDice,  nil, PALETTE.void)
+	local _, sessKillsVal = makeStatRow(leftPanel, ASSET_IDS.kills,     nil, PALETTE.red)
+	local _, sessCoinsVal = makeStatRow(leftPanel, ASSET_IDS.coins,     nil, PALETTE.gold)
+	local _, sessGoopVal  = makeStatRow(leftPanel, ASSET_IDS.goop,      nil, PALETTE.green)
 
 	local rightPanel = makeFrame({
 		Name             = "RightPanel",
-		Size             = UDim2.fromScale(0.18, 0.78),
-		Position         = UDim2.fromScale(0.81, 0.11),
+		Size             = UDim2.fromScale(0.175, 0.84),
+		Position         = UDim2.fromScale(0.817, 0.08),
 		BackgroundColor3 = PALETTE.panel,
-	}, scaleContainer)
+	}, sc)
 	addCorner(rightPanel, 10)
 	addStroke(rightPanel, PALETTE.border)
-	make("UIPadding", { PaddingTop = UDim.new(0.02,0), PaddingBottom = UDim.new(0.02,0), PaddingLeft = UDim.new(0.04,0), PaddingRight = UDim.new(0.04,0) }, rightPanel)
-	addListLayout(rightPanel, { Padding = UDim.new(0, 10) })
+	addGradient(rightPanel, ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(10, 12, 20)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(6,  8,  14)),
+	}), 90)
 
-	local function makeStatRowEmoji(parent, emoji, startVal)
-		local row = makeFrame({ Size = UDim2.fromScale(1, 0.28), BackgroundColor3 = Color3.fromRGB(14, 16, 24) }, parent)
+	make("UIPadding", {
+		PaddingTop    = UDim.new(0.012, 0),
+		PaddingBottom = UDim.new(0.012, 0),
+		PaddingLeft   = UDim.new(0.05, 0),
+		PaddingRight  = UDim.new(0.05, 0),
+	}, rightPanel)
+	addListLayout(rightPanel, { Padding = UDim.new(0, 5) })
+
+	makeSectionTag(rightPanel, "BEST ROLL")
+
+	local bestSlimeRow = makeFrame({
+		Size             = UDim2.fromScale(1, 0.2),
+		BackgroundColor3 = PALETTE.panelAlt,
+	}, rightPanel)
+	addCorner(bestSlimeRow, 8)
+	addStroke(bestSlimeRow, PALETTE.void, 1)
+
+	local bestSlimeIcon = makeImageLabel({
+		Size     = UDim2.fromScale(0.32, 0.84),
+		Position = UDim2.fromScale(0.03, 0.08),
+		Image    = "",
+	}, bestSlimeRow)
+	make("UIAspectRatioConstraint", { AspectRatio = 1, AspectType = Enum.AspectType.ScaleWithParentSize, DominantAxis = Enum.DominantAxis.Height }, bestSlimeIcon)
+
+	local bestSlimeNameLbl = makeLabel({
+		Size           = UDim2.fromScale(0.62, 0.48),
+		Position       = UDim2.fromScale(0.36, 0.06),
+		Text           = "None",
+		TextColor3     = PALETTE.void,
+		Font           = Enum.Font.GothamBold,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, bestSlimeRow)
+
+	local bestSlimeOddsLbl = makeLabel({
+		Size           = UDim2.fromScale(0.62, 0.38),
+		Position       = UDim2.fromScale(0.36, 0.58),
+		Text           = "N/A",
+		TextColor3     = PALETTE.dim,
+		Font           = Enum.Font.Gotham,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, bestSlimeRow)
+
+	local divRight = makeDivider(rightPanel)
+
+	makeSectionTag(rightPanel, "RATES")
+
+	local function makeRateRow(parent, assetId, labelText, accentColor)
+		local row = makeFrame({
+			Size             = UDim2.fromScale(1, 0.1),
+			BackgroundColor3 = PALETTE.panelAlt,
+		}, parent)
 		addCorner(row, 6)
-		local iconContainer = makeFrame({ Size = UDim2.fromScale(0.22, 1), BackgroundTransparency = 1 }, row)
-		makeLabel({ Size = UDim2.fromScale(1, 0.7), Position = UDim2.fromScale(0, 0.15), Text = emoji, TextColor3 = PALETTE.accent, Font = Enum.Font.GothamBold }, iconContainer)
-		local valLbl = makeLabel({ Size = UDim2.fromScale(0.74, 0.8), Position = UDim2.fromScale(0.24, 0.1), Text = startVal or "0", TextColor3 = PALETTE.text, TextXAlignment = Enum.TextXAlignment.Right }, row)
+
+		local ic = makeFrame({ Size = UDim2.fromScale(0.2, 1), BackgroundTransparency = 1 }, row)
+		local img = makeImageLabel({
+			Size     = UDim2.fromScale(0.82, 0.7),
+			Position = UDim2.fromScale(0.09, 0.15),
+			Image    = assetId,
+		}, ic)
+		make("UIAspectRatioConstraint", { AspectRatio = 1, AspectType = Enum.AspectType.ScaleWithParentSize, DominantAxis = Enum.DominantAxis.Height }, img)
+
+		makeLabel({
+			Size           = UDim2.fromScale(0.76, 0.42),
+			Position       = UDim2.fromScale(0.22, 0.08),
+			Text           = labelText,
+			TextColor3     = PALETTE.dim,
+			Font           = Enum.Font.Gotham,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		}, row)
+
+		local valLbl = makeLabel({
+			Size           = UDim2.fromScale(0.76, 0.46),
+			Position       = UDim2.fromScale(0.22, 0.5),
+			Text           = "-",
+			TextColor3     = accentColor or PALETTE.text,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		}, row)
 		return row, valLbl
 	end
 
-	local function makeStatRowWithLabelRight(parent, assetId, labelText, startVal)
-		local row = makeFrame({ Size = UDim2.fromScale(1, 0.28), BackgroundColor3 = Color3.fromRGB(14, 16, 24) }, parent)
-		addCorner(row, 6)
-		local iconContainer = makeFrame({ Size = UDim2.fromScale(0.22, 1), BackgroundTransparency = 1 }, row)
-		local iconImg = makeImageLabel({ Size = UDim2.fromScale(1, 0.7), Position = UDim2.fromScale(0, 0.15), Image = assetId }, iconContainer)
-		make("UIAspectRatioConstraint", { AspectRatio = 1, AspectType = Enum.AspectType.ScaleWithParentSize, DominantAxis = Enum.DominantAxis.Height }, iconImg)
-		makeLabel({ Size = UDim2.fromScale(0.35, 0.8), Position = UDim2.fromScale(0.24, 0.1), Text = labelText, TextColor3 = PALETTE.dim, Font = Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left }, row)
-		local valLbl = makeLabel({ Size = UDim2.fromScale(0.37, 0.8), Position = UDim2.fromScale(0.61, 0.1), Text = startVal or "0", TextColor3 = PALETTE.text, TextXAlignment = Enum.TextXAlignment.Right }, row)
-		return row, valLbl
-	end
-
-	local _, rollsVal = makeStatRowEmoji(rightPanel, "🎲", "0")
-	local _, killsVal = makeStatRow(rightPanel, ASSET_IDS.kills, "0")
-	local _, zoneVal  = makeStatRowWithLabelRight(rightPanel, ASSET_IDS.zone, "Zone", "0")
+	local _, rpsVal = makeRateRow(rightPanel, ASSET_IDS.goldDice,  "Rolls/s",  PALETTE.void)
+	local _, cpsVal = makeRateRow(rightPanel, ASSET_IDS.coins,     "Coins/s",  PALETTE.gold)
+	local _, gpsVal = makeRateRow(rightPanel, ASSET_IDS.goop,      "Goop/s",   PALETTE.green)
+	local _, kpmVal = makeRateRow(rightPanel, ASSET_IDS.kills,     "Kills/m",  PALETTE.red)
 
 	local statusPanel = makeFrame({
 		Name             = "StatusPanel",
-		Size             = UDim2.fromScale(0.28, 0.06),
-		Position         = UDim2.fromScale(0.36, 0.7),
+		Size             = UDim2.fromScale(0.24, 0.056),
+		Position         = UDim2.fromScale(0.38, 0.73),
 		BackgroundColor3 = PALETTE.panel,
-	}, scaleContainer)
+	}, sc)
 	addCorner(statusPanel, 20)
 	addStroke(statusPanel, PALETTE.border)
+	addGradient(statusPanel, ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(11, 13, 22)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(7,  9,  16)),
+	}), 0)
+
+	for _, data2 in ipairs({ { UDim2.fromScale(0.012, 0.2), PALETTE.accent }, { UDim2.fromScale(0.955, 0.2), PALETTE.accent } }) do
+		local bar = makeFrame({
+			Size             = UDim2.fromScale(0.008, 0.6),
+			Position         = data2[1],
+			BackgroundColor3 = data2[2],
+			BackgroundTransparency = 0.3,
+		}, statusPanel)
+		addCorner(bar, 2)
+	end
 
 	local statusLabel = makeLabel({
 		Name       = "StatusLabel",
-		Size       = UDim2.fromScale(1, 1),
+		Size       = UDim2.fromScale(0.96, 0.78),
+		Position   = UDim2.fromScale(0.02, 0.11),
 		Text       = "* Idle",
 		TextColor3 = PALETTE.accent,
 		Font       = Enum.Font.GothamBold,
 	}, statusPanel)
 
-	for _, anchor in ipairs({ UDim2.fromScale(0.01, 0.15), UDim2.fromScale(0.96, 0.15) }) do
-		makeFrame({ Size = UDim2.fromScale(0.012, 0.5), Position = anchor, BackgroundColor3 = PALETTE.accent }, statusPanel)
-	end
-
 	return {
-		screenGui   = screenGui,
-		timerLabel  = timerLabel,
-		rebirthVal  = rebirthVal,
-		goopVal     = goopVal,
-		coinsVal    = coinsVal,
-		rollsVal    = rollsVal,
-		killsVal    = killsVal,
-		zoneVal     = zoneVal,
-		goldenVal   = goldenVal,
-		diamondVal  = diamondVal,
-		voidVal     = voidVal,
-		statusLabel = statusLabel,
+		screenGui     = screenGui,
+		timerLabel    = timerLabel,
+		rebirthVal    = rebirthVal,
+		goopVal       = goopVal,
+		coinsVal      = coinsVal,
+		killsVal      = killsVal,
+		zoneVal       = zoneVal,
+		goldenVal     = goldenVal,
+		diamondVal    = diamondVal,
+		voidVal       = voidVal,
+		galaxyVal     = galaxyVal,
+		sessRollsVal  = sessRollsVal,
+		sessKillsVal  = sessKillsVal,
+		sessCoinsVal  = sessCoinsVal,
+		sessGoopVal   = sessGoopVal,
+		rpsVal        = rpsVal,
+		cpsVal        = cpsVal,
+		gpsVal        = gpsVal,
+		kpmVal        = kpmVal,
+		bestSlimeIcon = bestSlimeIcon,
+		bestSlimeNameLbl = bestSlimeNameLbl,
+		bestSlimeOddsLbl = bestSlimeOddsLbl,
+		statusLabel   = statusLabel,
 	}
 end
-
-local sessionStart = os.clock()
 
 local function getTimerText()
 	local elapsed = os.clock() - sessionStart
@@ -386,6 +669,22 @@ local function getProgressionText(value)
 	return formatNum(n) .. " rolls"
 end
 
+local prevRolls = safeGet("stats","rolls")
+local prevCoins = safeGet("coins")
+local prevGoop  = safeGet("goop")
+local prevKills = safeGet("stats","kills")
+local rateRps   = 0
+local rateCps   = 0
+local rateGps   = 0
+local rateKps   = 0
+local lastRateUpdate = os.clock()
+local RATE_WINDOW = 5
+
+local everEarnedCoins = safeGet("coins") > sessionStartCoins
+local everEarnedGoop  = safeGet("goop")  > sessionStartGoop
+local everEarnedRolls = safeGet("stats","rolls") > sessionStartRolls
+local everEarnedKills = safeGet("stats","kills") > sessionStartKills
+
 local function updateStats(refs)
 	local function updateLabel(lbl, newText)
 		if lbl.Text ~= newText then
@@ -394,33 +693,103 @@ local function updateStats(refs)
 		end
 	end
 
+	local now = os.clock()
+	if now - lastRateUpdate >= RATE_WINDOW then
+		local dt   = now - lastRateUpdate
+		local curR = safeGet("stats","rolls")
+		local curC = safeGet("coins")
+		local curG = safeGet("goop")
+		local curK = safeGet("stats","kills")
+
+		local deltaR = math.max(0, curR - prevRolls)
+		local deltaC = math.max(0, curC - prevCoins)
+		local deltaG = math.max(0, curG - prevGoop)
+		local deltaK = math.max(0, curK - prevKills)
+
+		if deltaR > 0 then everEarnedRolls = true end
+		if deltaC > 0 then everEarnedCoins = true end
+		if deltaG > 0 then everEarnedGoop  = true end
+		if deltaK > 0 then everEarnedKills = true end
+
+		rateRps = deltaR / dt
+		rateCps = deltaC / dt
+		rateGps = deltaG / dt
+		rateKps = deltaK / dt
+
+		prevRolls = curR
+		prevCoins = curC
+		prevGoop  = curG
+		prevKills = curK
+		lastRateUpdate = now
+	end
+
 	updateLabel(refs.rebirthVal, formatNum(safeGet("rebirths")))
 	updateLabel(refs.goopVal,    formatNum(safeGet("goop")))
 	updateLabel(refs.coinsVal,   formatNum(safeGet("coins")))
-	updateLabel(refs.rollsVal,   formatNum(safeGet("stats", "rolls")))
-	updateLabel(refs.killsVal,   formatNum(safeGet("stats", "kills")))
+	updateLabel(refs.killsVal,   formatNum(safeGet("stats","kills")))
 	updateLabel(refs.zoneVal,    formatNum(safeGet("zone")))
-	updateLabel(refs.goldenVal,  getProgressionText(safeGet("specialRollProgression", "golden",  "rollsUntilNext")))
-	updateLabel(refs.diamondVal, getProgressionText(safeGet("specialRollProgression", "diamond", "rollsUntilNext")))
-	updateLabel(refs.voidVal,    getProgressionText(safeGet("specialRollProgression", "void",    "rollsUntilNext")))
+
+	local gp  = getProgressionText(safeGet("specialRollProgression","golden","rollsUntilNext"))
+	local dp  = getProgressionText(safeGet("specialRollProgression","diamond","rollsUntilNext"))
+	local vp  = getProgressionText(safeGet("specialRollProgression","void","rollsUntilNext"))
+	local gxp = getProgressionText(safeGet("specialRollProgression","galaxy","rollsUntilNext"))
+	updateLabel(refs.goldenVal,  gp)
+	updateLabel(refs.diamondVal, dp)
+	updateLabel(refs.voidVal,    vp)
+	updateLabel(refs.galaxyVal,  gxp)
+
+	updateLabel(refs.sessRollsVal, formatNum(math.max(0, safeGet("stats","rolls") - sessionStartRolls)))
+	updateLabel(refs.sessKillsVal, formatNum(math.max(0, safeGet("stats","kills") - sessionStartKills)))
+	updateLabel(refs.sessCoinsVal, formatNum(math.max(0, safeGet("coins")          - sessionStartCoins)))
+	updateLabel(refs.sessGoopVal,  formatNum(math.max(0, safeGet("goop")           - sessionStartGoop)))
+
+	if everEarnedRolls then
+		updateLabel(refs.rpsVal, string.format("%.1f/s", rateRps))
+	else
+		updateLabel(refs.rpsVal, "-")
+	end
+
+	if everEarnedCoins then
+		updateLabel(refs.cpsVal, formatNum(math.floor(rateCps)) .. "/s")
+	else
+		updateLabel(refs.cpsVal, "-")
+	end
+
+	if everEarnedGoop then
+		updateLabel(refs.gpsVal, formatNum(math.floor(rateGps)) .. "/s")
+	else
+		updateLabel(refs.gpsVal, "-")
+	end
+
+	if everEarnedKills then
+		updateLabel(refs.kpmVal, string.format("%.1f/m", rateKps * 60))
+	else
+		updateLabel(refs.kpmVal, "-")
+	end
 
 	refs.timerLabel.Text = getTimerText()
+
+	if bestSlimeData.name ~= refs.bestSlimeNameLbl.Text then
+		refs.bestSlimeNameLbl.Text = bestSlimeData.name
+		refs.bestSlimeOddsLbl.Text = bestSlimeData.odds
+		if bestSlimeData.assetId ~= "" then
+			refs.bestSlimeIcon.Image = bestSlimeData.assetId
+		end
+	end
 end
 
 local function runStatusEngine(refs, alive)
-	local WINDOW        = 10
-	local ROTATE_S      = 4
-	local msgIndex      = 0
-	local lastCoins     = safeGet("coins")
-	local lastRolls     = safeGet("stats", "rolls")
-	local lastKills     = safeGet("stats", "kills")
-	local lastGoop      = safeGet("goop")
-	local coinDelta     = 0
-	local rollDelta     = 0
-	local killDelta     = 0
-	local goopDelta     = 0
-	local peakCoinRate  = 0
-	local startRolls    = safeGet("stats", "rolls")
+	local WINDOW   = 10
+	local ROTATE_S = 4
+	local msgIndex = 0
+
+	local lastCoins = safeGet("coins")
+	local lastRolls = safeGet("stats","rolls")
+	local lastKills = safeGet("stats","kills")
+	local lastGoop  = safeGet("goop")
+	local coinDelta, rollDelta, killDelta, goopDelta = 0, 0, 0, 0
+	local peakCoinRate = 0
+	local startRolls   = safeGet("stats","rolls")
 
 	local function setMsg(text, color)
 		if not alive() then return end
@@ -441,8 +810,8 @@ local function runStatusEngine(refs, alive)
 			if not alive() then break end
 			pcall(function()
 				local c = safeGet("coins")
-				local r = safeGet("stats", "rolls")
-				local k = safeGet("stats", "kills")
+				local r = safeGet("stats","rolls")
+				local k = safeGet("stats","kills")
 				local g = safeGet("goop")
 				coinDelta = math.max(0, c - lastCoins)
 				rollDelta = math.max(0, r - lastRolls)
@@ -456,9 +825,10 @@ local function runStatusEngine(refs, alive)
 	end)
 
 	local reactive = {
-		{ check = function() return tonumber(safeGet("specialRollProgression","void","rollsUntilNext")) == 0 end,    text = function() return "Void roll ready"    end, color = PALETTE.void    },
-		{ check = function() return tonumber(safeGet("specialRollProgression","diamond","rollsUntilNext")) == 0 end, text = function() return "Diamond roll ready" end, color = PALETTE.diamond },
-		{ check = function() return tonumber(safeGet("specialRollProgression","golden","rollsUntilNext")) == 0 end,  text = function() return "Golden roll ready"  end, color = PALETTE.gold    },
+		{ check = function() return tonumber(safeGet("specialRollProgression","galaxy","rollsUntilNext")) == 0 end,  text = function() return "Galaxy roll ready"   end, color = PALETTE.galaxy  },
+		{ check = function() return tonumber(safeGet("specialRollProgression","void","rollsUntilNext")) == 0 end,    text = function() return "Void roll ready"     end, color = PALETTE.void    },
+		{ check = function() return tonumber(safeGet("specialRollProgression","diamond","rollsUntilNext")) == 0 end, text = function() return "Diamond roll ready"  end, color = PALETTE.diamond },
+		{ check = function() return tonumber(safeGet("specialRollProgression","golden","rollsUntilNext")) == 0 end,  text = function() return "Golden roll ready"   end, color = PALETTE.gold    },
 		{
 			check = function() local r = safeGet("rebirths"); return safeGet("goop") >= (2^r)*500 end,
 			text  = function() return "Rebirth requirement met" end,
@@ -475,59 +845,57 @@ local function runStatusEngine(refs, alive)
 			end,
 			color = PALETTE.green,
 		},
-		{ check = function() return killDelta >= 25 end,  text = function() return "Kill streak  +"  .. formatNum(killDelta) end,                                color = PALETTE.red  },
+		{ check = function() return killDelta >= 25  end, text = function() return "Kill streak  +"  .. formatNum(killDelta) end,                               color = PALETTE.red  },
 		{ check = function() return coinDelta >= 5e5 end, text = function() return "Earning  "       .. formatNum(math.floor(coinDelta/WINDOW)) .. "/sec" end,  color = PALETTE.gold },
 		{ check = function() return goopDelta >= 1000 end,text = function() return "Goop rate  +"    .. formatNum(math.floor(goopDelta/WINDOW)) .. "/sec" end,  color = PALETTE.green},
-		{ check = function() return rollDelta >= 10 end,  text = function() return string.format("Rolling fast  %.1f/sec", rollDelta/WINDOW) end,               color = PALETTE.void },
+		{ check = function() return rollDelta >= 10  end, text = function() return string.format("Rolling fast  %.1f/sec", rollDelta/WINDOW) end,               color = PALETTE.void },
 	}
 
 	local idlePool = {
-		function() local z = safeGet("zone"); local b = safeGet("furthestZone"); return { text = "Zone efficiency  " .. (b>0 and math.floor((z/math.max(1,b))*100) or 100) .. "%", color = PALETTE.accent } end,
-		function() local n = tonumber(safeGet("specialRollProgression","void","rollsUntilNext")) or 0;    return { text = n>0 and "Void in  "..formatNum(n).." rolls" or "Void roll standing by",    color = PALETTE.void    } end,
-		function() local n = tonumber(safeGet("specialRollProgression","diamond","rollsUntilNext")) or 0; return { text = n>0 and "Diamond in  "..formatNum(n).." rolls" or "Diamond roll standing by", color = PALETTE.diamond } end,
-		function() local n = tonumber(safeGet("specialRollProgression","golden","rollsUntilNext")) or 0;  return { text = n>0 and "Golden in  "..formatNum(n).." rolls" or "Golden roll standing by",  color = PALETTE.gold    } end,
-		function() local r=safeGet("rebirths"); local g=safeGet("goop"); local q=(2^r)*500; return { text = "Rebirth progress  "..math.min(100,math.floor((g/math.max(1,q))*100)).."%", color=PALETTE.green } end,
-		function() local r=safeGet("rebirths"); return { text = "Next rebirth  "..formatNum((2^r)*500).." goop", color=PALETTE.diamond } end,
-		function() return { text = "Eliminations  "  .. formatNum(safeGet("stats","kills")), color = PALETTE.red  } end,
-		function() return { text = "Lifetime rolls  " .. formatNum(safeGet("stats","rolls")), color = PALETTE.dim } end,
-		function() return { text = "Balance  "       .. formatNum(safeGet("coins")),          color = PALETTE.gold } end,
-		function() return { text = "Rebirth tier  "  .. formatNum(safeGet("rebirths")),       color = PALETTE.diamond } end,
-		function() return { text = "Session  "       .. math.floor((os.clock()-sessionStart)/60).." min", color = PALETTE.dim } end,
-		function() return rollDelta>0 and { text=string.format("Roll rate  %.1f/sec",rollDelta/WINDOW), color=PALETTE.void } or { text="Roll monitor active", color=PALETTE.dim } end,
-		function() return { text = "Farming zone  "  .. formatNum(safeGet("zone")),  color = PALETTE.accent } end,
-		function() return { text = "Goop reserve  "  .. formatNum(safeGet("goop")),  color = PALETTE.green  } end,
-		function() local r=safeGet("rebirths"); return { text=string.format("Luck amp  x%.1f",1+(r*0.1)), color=PALETTE.gold } end,
-		function() return coinDelta>0 and { text="Coins/min  "..formatNum(math.floor(coinDelta/WINDOW*60)), color=PALETTE.gold } or { text="Coin tracker active", color=PALETTE.dim } end,
-		function() return peakCoinRate>0 and { text="Peak rate  "..formatNum(peakCoinRate).."/sec", color=PALETTE.gold } or { text="Peak rate calculating", color=PALETTE.dim } end,
-		function() return { text="Session rolls  "..formatNum(safeGet("stats","rolls")-startRolls), color=PALETTE.void } end,
-		function() local e=os.clock()-sessionStart; local k=safeGet("stats","kills"); return { text=string.format("Kills/min  %.1f",e>0 and (k/(e/60)) or 0), color=PALETTE.red } end,
-		function() local e=os.clock()-sessionStart; local r=safeGet("stats","rolls")-startRolls; return { text=string.format("Session rps  %.2f",e>0 and (r/e) or 0), color=PALETTE.void } end,
-		function() local z=safeGet("zone"); local b=safeGet("furthestZone"); return b>z and { text="Best zone  "..formatNum(b), color=PALETTE.accent } or { text="At furthest zone", color=PALETTE.accent } end,
-		function() return goopDelta>0 and { text="Goop/min  "..formatNum(math.floor(goopDelta/WINDOW*60)), color=PALETTE.green } or { text="Goop tracker active", color=PALETTE.dim } end,
-		function() local r=safeGet("rebirths"); return { text=string.format("Rebirth mult  x%.2f",1+(r*0.25)), color=PALETTE.diamond } end,
-		function() local e=os.clock()-sessionStart; local c=safeGet("coins"); return { text="Avg coins/min  "..formatNum(math.floor(e>0 and (c/(e/60)) or 0)), color=PALETTE.gold } end,
+		function() local z=safeGet("zone"); local b=safeGet("furthestZone"); return {text="Zone efficiency  "..(b>0 and math.floor((z/math.max(1,b))*100) or 100).."%", color=PALETTE.accent} end,
+		function() local n=tonumber(safeGet("specialRollProgression","galaxy","rollsUntilNext")) or 0; return {text=n>0 and "Galaxy in  "..formatNum(n).." rolls" or "Galaxy roll standing by", color=PALETTE.galaxy} end,
+		function() local n=tonumber(safeGet("specialRollProgression","void","rollsUntilNext")) or 0;   return {text=n>0 and "Void in  "..formatNum(n).." rolls" or "Void roll standing by",    color=PALETTE.void}   end,
+		function() local n=tonumber(safeGet("specialRollProgression","diamond","rollsUntilNext")) or 0;return {text=n>0 and "Diamond in  "..formatNum(n).." rolls" or "Diamond roll standing by",color=PALETTE.diamond}end,
+		function() local n=tonumber(safeGet("specialRollProgression","golden","rollsUntilNext")) or 0; return {text=n>0 and "Golden in  "..formatNum(n).." rolls" or "Golden roll standing by",  color=PALETTE.gold}  end,
+		function() local r=safeGet("rebirths");local g=safeGet("goop");local q=(2^r)*500; return {text="Rebirth progress  "..math.min(100,math.floor((g/math.max(1,q))*100)).."%",color=PALETTE.green} end,
+		function() local r=safeGet("rebirths"); return {text="Next rebirth  "..formatNum((2^r)*500).." goop",color=PALETTE.diamond} end,
+		function() return {text="Eliminations  "..formatNum(safeGet("stats","kills")),color=PALETTE.red} end,
+		function() return {text="Lifetime rolls  "..formatNum(safeGet("stats","rolls")),color=PALETTE.dim} end,
+		function() return {text="Balance  "..formatNum(safeGet("coins")),color=PALETTE.gold} end,
+		function() return {text="Rebirth tier  "..formatNum(safeGet("rebirths")),color=PALETTE.diamond} end,
+		function() return {text="Session  "..math.floor((os.clock()-sessionStart)/60).." min",color=PALETTE.dim} end,
+		function() return rollDelta>0 and {text=string.format("Roll rate  %.1f/sec",rollDelta/WINDOW),color=PALETTE.void} or {text="Roll monitor active",color=PALETTE.dim} end,
+		function() return {text="Farming zone  "..formatNum(safeGet("zone")),color=PALETTE.accent} end,
+		function() return {text="Goop reserve  "..formatNum(safeGet("goop")),color=PALETTE.green} end,
+		function() local r=safeGet("rebirths"); return {text=string.format("Luck amp  x%.1f",1+(r*0.1)),color=PALETTE.gold} end,
+		function() return coinDelta>0 and {text="Coins/min  "..formatNum(math.floor(coinDelta/WINDOW*60)),color=PALETTE.gold} or {text="Coin tracker active",color=PALETTE.dim} end,
+		function() return peakCoinRate>0 and {text="Peak rate  "..formatNum(peakCoinRate).."/sec",color=PALETTE.gold} or {text="Peak rate calculating",color=PALETTE.dim} end,
+		function() return {text="Session rolls  "..formatNum(safeGet("stats","rolls")-startRolls),color=PALETTE.void} end,
+		function() local e=os.clock()-sessionStart; local k=safeGet("stats","kills"); return {text=string.format("Kills/min  %.1f",e>0 and (k/(e/60)) or 0),color=PALETTE.red} end,
+		function() local e=os.clock()-sessionStart; local r=safeGet("stats","rolls")-startRolls; return {text=string.format("Session rps  %.2f",e>0 and (r/e) or 0),color=PALETTE.void} end,
+		function() local z=safeGet("zone"); local b=safeGet("furthestZone"); return b>z and {text="Best zone  "..formatNum(b),color=PALETTE.accent} or {text="At furthest zone",color=PALETTE.accent} end,
+		function() return goopDelta>0 and {text="Goop/min  "..formatNum(math.floor(goopDelta/WINDOW*60)),color=PALETTE.green} or {text="Goop tracker active",color=PALETTE.dim} end,
+		function() local r=safeGet("rebirths"); return {text=string.format("Rebirth mult  x%.2f",1+(r*0.25)),color=PALETTE.diamond} end,
+		function() local e=os.clock()-sessionStart; local c=safeGet("coins"); return {text="Avg coins/min  "..formatNum(math.floor(e>0 and (c/(e/60)) or 0)),color=PALETTE.gold} end,
 		function()
 			local vn=tonumber(safeGet("specialRollProgression","void","rollsUntilNext")) or 0
 			local dn=tonumber(safeGet("specialRollProgression","diamond","rollsUntilNext")) or 0
 			local gn=tonumber(safeGet("specialRollProgression","golden","rollsUntilNext")) or 0
-			local closest=math.min(vn,dn,gn)
-			return closest==0 and { text="Special roll available", color=PALETTE.gold } or { text="Next special  "..formatNum(closest).." rolls", color=PALETTE.dim }
+			local gxn=tonumber(safeGet("specialRollProgression","galaxy","rollsUntilNext")) or 0
+			local closest=math.min(vn,dn,gn,gxn)
+			return closest==0 and {text="Special roll available",color=PALETTE.gold} or {text="Next special  "..formatNum(closest).." rolls",color=PALETTE.dim}
 		end,
-		function() local k=safeGet("stats","kills"); local r=safeGet("stats","rolls"); return { text=string.format("Kill/roll ratio  %.2f",r>0 and (k/r) or 0), color=PALETTE.red } end,
-		function() local e=os.clock()-sessionStart; local h=e/3600; local k=safeGet("stats","kills"); return { text="Kills/hr  "..formatNum(h>0 and math.floor(k/h) or 0), color=PALETTE.red } end,
-		function() local e=os.clock()-sessionStart; local h=e/3600; local r=safeGet("stats","rolls")-startRolls; return { text="Rolls/hr  "..formatNum(h>0 and math.floor(r/h) or 0), color=PALETTE.void } end,
-		function() return { text="Working toward rebirth "..formatNum(safeGet("rebirths")+1), color=PALETTE.green } end,
-		function()
-			local vn=tonumber(safeGet("specialRollProgression","void","rollsUntilNext")) or 0
-			local dn=tonumber(safeGet("specialRollProgression","diamond","rollsUntilNext")) or 0
-			return (vn>0 and dn>0) and { text="Void-diamond gap  "..formatNum(math.abs(vn-dn)), color=PALETTE.void } or { text="Special roll sync active", color=PALETTE.dim }
-		end,
-		function() local c=safeGet("coins"); local g=safeGet("goop"); return { text=string.format("Coin/goop ratio  %.1f",g>0 and (c/math.max(1,g)) or 0), color=PALETTE.gold } end,
+		function() local k=safeGet("stats","kills"); local r=safeGet("stats","rolls"); return {text=string.format("Kill/roll ratio  %.2f",r>0 and (k/r) or 0),color=PALETTE.red} end,
+		function() local e=os.clock()-sessionStart; local h=e/3600; local k=safeGet("stats","kills"); return {text="Kills/hr  "..formatNum(h>0 and math.floor(k/h) or 0),color=PALETTE.red} end,
+		function() local e=os.clock()-sessionStart; local h=e/3600; local r=safeGet("stats","rolls")-startRolls; return {text="Rolls/hr  "..formatNum(h>0 and math.floor(r/h) or 0),color=PALETTE.void} end,
+		function() return {text="Working toward rebirth "..formatNum(safeGet("rebirths")+1),color=PALETTE.green} end,
+		function() local c=safeGet("coins"); local g=safeGet("goop"); return {text=string.format("Coin/goop ratio  %.1f",g>0 and (c/math.max(1,g)) or 0),color=PALETTE.gold} end,
 		function()
 			local e=os.clock()-sessionStart
-			if e<120 then return { text="Session warming up", color=PALETTE.dim } end
-			return { text="Coins/hr  "..formatNum(math.floor((safeGet("coins")/e)*3600)), color=PALETTE.gold }
+			if e<120 then return {text="Session warming up",color=PALETTE.dim} end
+			return {text="Coins/hr  "..formatNum(math.floor((safeGet("coins")/e)*3600)),color=PALETTE.gold}
 		end,
+		function() return bestSlimeData.name~="None" and {text="Best roll: "..bestSlimeData.name,color=PALETTE.void} or {text="No rare roll recorded yet",color=PALETTE.dim} end,
 	}
 
 	task.spawn(function()
@@ -551,20 +919,17 @@ end
 
 getgenv().HUDEnabled = getgenv().HUDEnabled ~= false
 
-local function isAlive(screenGui)
+local function isAlive(sg)
 	return function()
-		return getgenv().HUDEnabled == true and screenGui.Parent ~= nil
+		return getgenv().HUDEnabled == true and sg.Parent ~= nil
 	end
 end
 
 local function init(playerGui)
 	if not getgenv().HUDEnabled then return end
-
-	local refs    = buildHUD(playerGui)
-	local alive   = isAlive(refs.screenGui)
-
+	local refs  = buildHUD(playerGui)
+	local alive = isAlive(refs.screenGui)
 	runStatusEngine(refs, alive)
-
 	local elapsed = 0
 	RunService.Heartbeat:Connect(function(dt)
 		if not alive() then return end
