@@ -1151,7 +1151,7 @@ task.spawn(function()
 		return gun ~= nil
 	end
 
-	-- Target selection for combat
+	-- Target selection for combat (uses same enemy list as auto farm)
 	local function selectCombatTarget()
 		local character = localPlayer.Character
 		if not character then return nil end
@@ -1198,32 +1198,43 @@ task.spawn(function()
 	-- =============================================
 	-- CUSTOM DAMAGE UI (popups, health bars)
 	-- =============================================
-	local damageUIParent = nil
-	local function getDamageUIParent()
-		if damageUIParent and damageUIParent.Parent then return damageUIParent end
-		local playerGui = localPlayer.PlayerGui
-		local screenGui = playerGui:FindFirstChild("SlimeGunHUD")
-		if screenGui then
-			local container = screenGui:FindFirstChild("PopupContainer")
-			if container then
-				damageUIParent = container
-				return container
-			end
-		end
-		return nil
-	end
-
-	-- Create the damage UI container if it doesn't exist
 	task.spawn(function()
+		-- Wait for essential modules to be available
 		local ReplicatedStorage = game:GetService("ReplicatedStorage")
 		local Players = game:GetService("Players")
 		local player = Players.LocalPlayer
 
-		local GameplayServiceClient = require(ReplicatedStorage.Source.Features.Gameplay.GameplayServiceClient)
-		local GoopGunServiceClient = require(ReplicatedStorage.Source.Features.GoopGun.GoopGunServiceClient)
-		local GoopGunServiceUtils = require(ReplicatedStorage.Source.Features.GoopGun.GoopGunServiceUtils)
-		local DataService = require(ReplicatedStorage.Packages.DataService).client
+		local GameplayServiceClient, GoopGunServiceClient, GoopGunServiceUtils
+		local function loadModules()
+			local ok, result = pcall(function()
+				return require(ReplicatedStorage.Source.Features.Gameplay.GameplayServiceClient)
+			end)
+			if ok then GameplayServiceClient = result else warn("[UI] Failed to load GameplayServiceClient") end
 
+			local ok2, result2 = pcall(function()
+				return require(ReplicatedStorage.Source.Features.GoopGun.GoopGunServiceClient)
+			end)
+			if ok2 then GoopGunServiceClient = result2 else warn("[UI] Failed to load GoopGunServiceClient") end
+
+			local ok3, result3 = pcall(function()
+				return require(ReplicatedStorage.Source.Features.GoopGun.GoopGunServiceUtils)
+			end)
+			if ok3 then GoopGunServiceUtils = result3 else warn("[UI] Failed to load GoopGunServiceUtils") end
+		end
+
+		-- Wait up to 10 seconds for modules to load
+		for i = 1, 20 do
+			loadModules()
+			if GameplayServiceClient and GoopGunServiceClient and GoopGunServiceUtils then break end
+			task.wait(0.5)
+		end
+
+		if not (GameplayServiceClient and GoopGunServiceClient and GoopGunServiceUtils) then
+			warn("[CactusHub] Damage UI: Required modules not loaded. UI disabled.")
+			return
+		end
+
+		-- Create UI container
 		local screenGui = Instance.new("ScreenGui")
 		screenGui.Name = "SlimeGunHUD"
 		screenGui.ResetOnSpawn = false
@@ -1255,9 +1266,9 @@ task.spawn(function()
 		local function getMutationColor(mutations)
 			if not mutations then return COLORS.normal end
 			if mutations.inverted then return COLORS.inverted end
-			if mutations.huge     then return COLORS.huge end
-			if mutations.shiny    then return COLORS.shiny end
-			if mutations.big      then return COLORS.big end
+			if mutations.huge then return COLORS.huge end
+			if mutations.shiny then return COLORS.shiny end
+			if mutations.big then return COLORS.big end
 			return COLORS.normal
 		end
 
@@ -1417,37 +1428,50 @@ task.spawn(function()
 			scheduleExpiry(uid)
 		end
 
+		-- Damage tracking
+		local lastEnemyHealths = {}
+
 		-- Combat loop with damage UI
+		print("[CactusHub] Damage UI system started.")
 		while true do
 			if combatEnabled then
 				local character = localPlayer.Character
 				if character and character:FindFirstChildOfClass("Humanoid") and character.Humanoid.Health > 0 then
 					ensureGunEquipped()
-					local upgrades = DataService:get("upgrades") or {}
+					local upgrades = dataServiceClient and dataServiceClient:get("upgrades") or {}
 					local fireRate = GoopGunServiceUtils.getFireRate(upgrades)
-					local targetId = selectCombatTarget()
-					if targetId then
+					local target = selectCombatTarget()
+					if target then
+						local targetId = target.Name
 						local gameplay = GameplayServiceClient.gameplay
-						local enemy = gameplay and gameplay.enemies[targetId.Name]  -- adjust key as needed
-						local hpBefore = enemy and enemy.health or 0
-						local enemyLabel = enemy and getEnemyLabel(enemy) or "Slime"
-						local accentColor = enemy and getMutationColor(enemy.mutations) or COLORS.normal
+						local enemy = gameplay and gameplay.enemies[targetId]
+						local currentHealth = enemy and enemy.health or 0
+						local lastHealth = lastEnemyHealths[targetId] or currentHealth
 
-						local wrapper = GoopGunServiceClient.wrapper
-						if wrapper and wrapper.onEnemyHit then
-							wrapper.onEnemyHit(targetId.Name)
+						-- Only shoot if health hasn't dropped recently (avoid spam)
+						if currentHealth > 0 and currentHealth >= lastHealth then
+							local wrapper = GoopGunServiceClient.wrapper
+							if wrapper and wrapper.onEnemyHit then
+								wrapper.onEnemyHit(targetId)
+							end
 						end
 
-						task.wait()
-						local hpAfter = enemy and enemy.health or 0
-						local dmg = hpBefore - hpAfter
+						task.wait(0.05) -- let server update health
 
+						-- Re-fetch health after shot
+						local newHealth = enemy and enemy.health or 0
+						local dmg = lastHealth - newHealth
 						if dmg > 0 then
-							if activePopups[targetId.Name] then
-								updatePopup(targetId.Name, dmg, hpAfter)
+							local enemyLabel = enemy and getEnemyLabel(enemy) or "Slime"
+							local accentColor = enemy and getMutationColor(enemy.mutations) or COLORS.normal
+							if activePopups[targetId] then
+								updatePopup(targetId, dmg, newHealth)
 							else
-								createPopup(targetId.Name, enemyLabel, dmg, hpAfter, accentColor)
+								createPopup(targetId, enemyLabel, dmg, newHealth, accentColor)
 							end
+							lastEnemyHealths[targetId] = newHealth
+						else
+							lastEnemyHealths[targetId] = currentHealth
 						end
 					end
 					task.wait(fireRate)
