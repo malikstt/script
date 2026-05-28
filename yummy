@@ -402,12 +402,14 @@ task.spawn(function()
                 for _, f in ipairs(allFruits) do
                     if owned[f.id] then table.insert(result, f.id) end
                 end
+                table.sort(result)
                 return result
             else
                 local result = {}
                 for _, fid in ipairs(selectedFruitIds) do
                     if owned[fid] then table.insert(result, fid) end
                 end
+                table.sort(result)
                 return result
             end
         end
@@ -447,9 +449,11 @@ task.spawn(function()
             end,
         })
 
+        local slimeFeedOptions = {"Best", "Split Across Team"}
+        table.sort(slimeFeedOptions)
         farmingTab:CreateDropdown({
             Name = "Slimes to Feed",
-            Options = {"Best", "Split Across Team"},
+            Options = slimeFeedOptions,
             CurrentOption = {"Best"},
             MultipleOptions = false,
             Flag = "SlimeModeDropdown",
@@ -461,9 +465,14 @@ task.spawn(function()
         local fruitOptions = {"Any"}
         local labelToId = {}
         local allFruits = FruitsModule.getSortedFruits()
+        local fruitNames = {}
         for _, f in ipairs(allFruits) do
-            table.insert(fruitOptions, f.powerName)
+            table.insert(fruitNames, f.powerName)
             labelToId[f.powerName] = f.id
+        end
+        table.sort(fruitNames)
+        for _, name in ipairs(fruitNames) do
+            table.insert(fruitOptions, name)
         end
 
         farmingTab:CreateDropdown({
@@ -487,6 +496,113 @@ task.spawn(function()
             end,
         })
 
+        farmingTab:CreateSection("Stack Dice")
+
+        local DICE = {"golden", "diamond", "void", "galaxy"}
+        local selectedDice = {golden = true, diamond = true, void = true, galaxy = true}
+        local stackActive = false
+        local paused = {golden = false, diamond = false, void = false, galaxy = false}
+
+        farmingTab:CreateToggle({
+            Name = "Auto Stack Dice",
+            CurrentValue = false,
+            Flag = "autostack",
+            Callback = function(v)
+                stackActive = v
+                if not v then
+                    for _, dice in ipairs(DICE) do
+                        if paused[dice] then
+                            networkerRoll:fetch("requestSetSpecialRollPaused", dice, false)
+                            paused[dice] = false
+                        end
+                    end
+                end
+            end,
+        })
+
+        local diceOptions = {"All", "Diamond", "Galaxy", "Golden", "Void"}
+        table.sort(diceOptions)
+        farmingTab:CreateDropdown({
+            Name = "Select Dice",
+            Options = diceOptions,
+            CurrentOption = {"All"},
+            MultipleOptions = true,
+            Flag = "diceDropdown",
+            Callback = function(choices)
+                for _, dice in ipairs(DICE) do selectedDice[dice] = false end
+                for _, choice in ipairs(choices) do
+                    if choice == "All" then
+                        for _, dice in ipairs(DICE) do selectedDice[dice] = true end
+                        break
+                    else
+                        selectedDice[choice:lower()] = true
+                    end
+                end
+            end,
+        })
+
+        local DiceLuckLabel = farmingTab:CreateLabel("Total Stacked: x0")
+
+        task.spawn(function()
+            while true do
+                task.wait(0.5)
+                local upgrades = dataServiceClient:get("upgrades") or {}
+                local progression = dataServiceClient:get("specialRollProgression") or {}
+                local totalStacked = 0
+
+                for _, dice in ipairs(DICE) do
+                    local prog = progression[dice]
+                    local rolls = prog and prog.rollsUntilNext or math.huge
+                    if rolls <= 1 then
+                        local ok, mult = pcall(SpecialRollUtils.getLuckMultiplier, dice, upgrades)
+                        if ok then totalStacked = totalStacked + (mult or 0) end
+                    end
+                end
+
+                DiceLuckLabel:Set("Total Stacked: x" .. string.format("%.1f", totalStacked))
+
+                if not stackActive then continue end
+
+                local toWatch = {}
+                for _, dice in ipairs(DICE) do
+                    if selectedDice[dice] then
+                        local ok, unlocked = pcall(SpecialRollUtils.isUnlocked, dice, upgrades)
+                        if ok and unlocked then table.insert(toWatch, dice) end
+                    end
+                end
+                if #toWatch == 0 then continue end
+
+                local allReady = true
+                for _, dice in ipairs(toWatch) do
+                    local prog = progression[dice]
+                    local rolls = prog and prog.rollsUntilNext or math.huge
+                    if rolls <= 1 then
+                        if not paused[dice] then
+                            networkerRoll:fetch("requestSetSpecialRollPaused", dice, true)
+                            paused[dice] = true
+                        end
+                    else
+                        allReady = false
+                    end
+                end
+
+                if allReady then
+                    for _, dice in ipairs(toWatch) do
+                        networkerRoll:fetch("requestSetSpecialRollPaused", dice, false)
+                        paused[dice] = false
+                    end
+                    rayfieldLibrary:Notify({
+                        Title = "Unleashed!",
+                        Content = "All stacked — releasing now.",
+                        Duration = 3,
+                    })
+                    task.wait(2)
+                end
+            end
+        end)
+
+        farmingTab:CreateSection("Auto Transfer XP")
+
         farmingTab:CreateToggle({
             Name = "Auto Transfer XP",
             CurrentValue = false,
@@ -494,19 +610,23 @@ task.spawn(function()
             Callback = function(enabled) end,
         })
 
+        local transferToOptions = {"Best Slime", "Whole Team"}
+        table.sort(transferToOptions)
         farmingTab:CreateDropdown({
             Name = "Transfer To",
-            Options = { "Best Slime", "Whole Team" },
-            CurrentOption = { "Best Slime" },
+            Options = transferToOptions,
+            CurrentOption = {"Best Slime"},
             MultipleOptions = false,
             Flag = "FarmingTransferTarget",
             Callback = function(option) end,
         })
 
+        local transferFromOptions = {"All Slimes", "Unequipped With XP"}
+        table.sort(transferFromOptions)
         farmingTab:CreateDropdown({
             Name = "Transfer From",
-            Options = { "Unequipped With XP", "All Slimes" },
-            CurrentOption = { "Unequipped With XP" },
+            Options = transferFromOptions,
+            CurrentOption = {"Unequipped With XP"},
             MultipleOptions = false,
             Flag = "FarmingTransferSource",
             Callback = function(option) end,
@@ -681,9 +801,11 @@ task.spawn(function()
             end,
         })
 
+        local upgradeModeOptions = {"All", "Coins", "Goop", "Rolls"}
+        table.sort(upgradeModeOptions)
         gameTab:CreateDropdown({
             Name = "Upgrade Mode",
-            Options = {"All", "Goop", "Coins", "Rolls"},
+            Options = upgradeModeOptions,
             CurrentOption = {"All"},
             MultipleOptions = false,
             Flag = "GameUpgradeMode",
@@ -723,7 +845,7 @@ task.spawn(function()
         end
 
         local function getMutation(enemy)
-            for _, mut in ipairs({"inverted", "huge", "shiny", "big"}) do
+            for _, mut in ipairs({"big", "huge", "inverted", "shiny"}) do
                 local ok, val = pcall(function() return enemy:GetAttribute(mut) end)
                 if ok and val then return mut end
                 if enemy:FindFirstChild(mut) then return mut end
@@ -858,9 +980,11 @@ task.spawn(function()
             end
         end
 
+        local teleportStyleOptions = {"Teleport", "Tween"}
+        table.sort(teleportStyleOptions)
         gameTab:CreateDropdown({
             Name = "Teleport Style",
-            Options = {"Teleport", "Tween"},
+            Options = teleportStyleOptions,
             CurrentOption = {"Teleport"},
             MultipleOptions = false,
             Flag = "TeleportStyle",
@@ -869,9 +993,11 @@ task.spawn(function()
 
         gameTab:CreateSection("Targeting")
 
+        local priorityOptions = {"Closest", "Lowest HP", "Most Coins & Goop", "Mutations Only"}
+        table.sort(priorityOptions)
         gameTab:CreateDropdown({
             Name = "Target Priority",
-            Options = {"Most Coins & Goop", "Closest", "Lowest HP", "Mutations Only"},
+            Options = priorityOptions,
             CurrentOption = {"Most Coins & Goop"},
             MultipleOptions = true,
             Flag = "TargetPriority",
@@ -883,9 +1009,11 @@ task.spawn(function()
             end,
         })
 
+        local mutationFilterOptions = {"Any", "Big", "Huge", "Inverted", "Shiny"}
+        table.sort(mutationFilterOptions)
         gameTab:CreateDropdown({
             Name = "Mutation Filter",
-            Options = {"Any", "Inverted", "Huge", "Shiny", "Big"},
+            Options = mutationFilterOptions,
             CurrentOption = {"Any"},
             MultipleOptions = false,
             Flag = "MutationFilter",
@@ -928,9 +1056,11 @@ task.spawn(function()
             Callback = function(enabled) end,
         })
 
+        local combatPriorityOptions = {"Closest", "Highest HP", "Lowest HP"}
+        table.sort(combatPriorityOptions)
         gameTab:CreateDropdown({
             Name = "Target Priority",
-            Options = {"Closest", "Lowest HP", "Highest HP"},
+            Options = combatPriorityOptions,
             CurrentOption = {"Closest"},
             MultipleOptions = false,
             Flag = "CombatTargetPriority",
@@ -949,12 +1079,13 @@ task.spawn(function()
                 if enabled then
                     task.spawn(function()
                         local codes = {
-                            "gullible",
-                            "test",
-                            "goingBananas",
                             "AAisComing",
+                            "goingBananas",
+                            "gullible",
                             "Sliming",
+                            "test",
                         }
+                        table.sort(codes)
                         while rayfieldLibrary.Flags.MiscRedeemCodes and rayfieldLibrary.Flags.MiscRedeemCodes.CurrentValue do
                             for _, code in ipairs(codes) do
                                 codeServiceRemote:InvokeServer("redeem", code)
@@ -1022,6 +1153,10 @@ task.spawn(function()
 
         miscTab:CreateSection("Consumables")
 
+        local sortedBoostKinds = {}
+        for _, kind in ipairs(boostKinds) do table.insert(sortedBoostKinds, kind) end
+        table.sort(sortedBoostKinds)
+
         miscTab:CreateToggle({
             Name = "Auto Use Potions",
             CurrentValue = false,
@@ -1046,8 +1181,8 @@ task.spawn(function()
 
         miscTab:CreateDropdown({
             Name = "Potion Types",
-            Options = boostKinds,
-            CurrentOption = {boostKinds[1]},
+            Options = sortedBoostKinds,
+            CurrentOption = {sortedBoostKinds[1]},
             MultipleOptions = true,
             Flag = "MiscPotionTypes",
             Callback = function(option) end,
@@ -1080,6 +1215,7 @@ task.spawn(function()
             for _, itemId in ipairs(diceItemIds) do
                 table.insert(diceNames, idToNameMap[itemId])
             end
+            table.sort(diceNames)
             miscTab:CreateDropdown({
                 Name = "Dice & Item Types",
                 Options = diceNames,
@@ -1513,6 +1649,7 @@ task.spawn(function()
                     table.insert(names, clean:sub(1,1):upper()..clean:sub(2))
                 end
             end
+            table.sort(names)
             return #names > 0 and table.concat(names, ", ") or "None"
         end
 
@@ -1803,6 +1940,7 @@ task.spawn(function()
                     table.insert(result, recipe.id)
                 end
             end
+            table.sort(result)
             return result
         end
 
@@ -2023,10 +2161,12 @@ task.spawn(function()
 
         craftingTab:CreateSection("Protected Pets")
 
+        local protectOptions = {"Best Slime", "Equipped Slimes", "Xp Slimes"}
+        table.sort(protectOptions)
         craftingTab:CreateDropdown({
             Name = "Protect Categories",
-            Options = { "Best Slime", "Equipped Slimes", "Xp Slimes" },
-            CurrentOption = { "Best Slime", "Equipped Slimes", "Xp Slimes" },
+            Options = protectOptions,
+            CurrentOption = {"Best Slime", "Equipped Slimes", "Xp Slimes"},
             MultipleOptions = true,
             Flag = "CraftingProtectCategories",
             Callback = function(options)
