@@ -71,15 +71,14 @@ task.spawn(function()
 		return tab:CreateButton(wrappedConfig)
 	end
 
-	local mainTab      = mainWindow:CreateTab("Main", 138602335586757)
-	local farmingTab   = mainWindow:CreateTab("Farming", 138602335586757)
-	local gameTab      = mainWindow:CreateTab("Game", 82493603309814)
-	local indexTab     = mainWindow:CreateTab("Index", 4483362458)
-	local miscTab      = mainWindow:CreateTab("Misc", 96334002390551)
-	local webhookTab   = mainWindow:CreateTab("Webhook", 84577758013974)
-	local settingsTab  = mainWindow:CreateTab("Settings", 122930981612451)
-	local statsTab     = mainWindow:CreateTab("Stats", 4483362458)
-
+	local mainTab      = mainWindow:CreateTab("Main", 74725529332053)
+local farmingTab   = mainWindow:CreateTab("Farming", 114367663524453)
+local gameTab      = mainWindow:CreateTab("Game", 77999805030576)
+local indexTab     = mainWindow:CreateTab("Index", 123662711814867)
+local miscTab      = mainWindow:CreateTab("Misc", 83590339425734)
+local webhookTab   = mainWindow:CreateTab("Webhook", 84577758013974)
+local settingsTab  = mainWindow:CreateTab("Settings", 120533439477016)
+local statsTab     = mainWindow:CreateTab("Stats", 102533388850982)
 	mainTab:CreateSection("Status")
 	local fpsLabel  = mainTab:CreateLabel("FPS: Calculating...")
 	local pingLabel = mainTab:CreateLabel("Ping: Calculating...")
@@ -891,7 +890,7 @@ task.spawn(function()
 		else
 			local equipped = dataServiceClient:get("equipped") or {}
 			local result = {}
-			for _, slimeKey in pairs(equipped) do
+			for _, slimeKey in ipairs(equipped) do
 				if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
 					local inv = dataServiceClient:get("inventory") or {}
 					local data = inv[slimeKey]
@@ -1069,8 +1068,6 @@ task.spawn(function()
 			end
 		end,
 	})
-
-	gameTab:CreateSection("Auto Farm Kills")
 
 	gameTab:CreateDropdown({
 		Name = "Movement Style",
@@ -2230,7 +2227,7 @@ task.spawn(function()
 	}
 	local CHEAP_MATERIAL = Enum.Material.SmoothPlastic
 	local updatingOptimizations = false
-	local optGPUToggle, optEffectsToggle, optGCToggle, optIntenseToggle
+	local optGPUToggle, optEffectsToggle, optGCToggle, optIntenseToggle, maxFpsToggle
 
 	local function setAllOptimizations(value)
 		updatingOptimizations = true
@@ -2238,6 +2235,7 @@ task.spawn(function()
 		if optEffectsToggle then optEffectsToggle:Set(value) end
 		if optGCToggle      then optGCToggle:Set(value) end
 		if optIntenseToggle then optIntenseToggle:Set(value) end
+		if maxFpsToggle     then maxFpsToggle:Set(value) end
 		updatingOptimizations = false
 	end
 
@@ -2251,7 +2249,7 @@ task.spawn(function()
 		end,
 	})
 
-	featureToggle(settingsTab, {
+	maxFpsToggle = featureToggle(settingsTab, {
 		Name = "Max FPS",
 		CurrentValue = false,
 		Flag = "MaxFPS",
