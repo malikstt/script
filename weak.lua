@@ -2856,16 +2856,16 @@ task.spawn(function()
         -- ========== LUCK HELPERS ==========
 
         local function setLuck2(value)
-            local clamped = math.min(value, 16384)
-            SettingsServiceClient.set("luckOverrideValue", clamped)
-            luckValueLocal2 = clamped
-            task.wait(0.3)
-        end
+    local clamped = math.min(value, 16384)
+    SettingsServiceClient.set(settingsClient, "luckOverrideValue", clamped)
+    luckValueLocal2 = clamped
+    task.wait(0.3)
+end
 
-        local function setLuckEnabled2(enabled)
-            SettingsServiceClient.set("luckOverrideEnabled", enabled)
-            task.wait(0.3)
-        end
+local function setLuckEnabled2(enabled)
+    SettingsServiceClient.set(settingsClient, "luckOverrideEnabled", enabled)
+    task.wait(0.3)
+                end
 
         local function calcOptimalLuck2(effectiveOdds)
             if not effectiveOdds or effectiveOdds <= 0 then return 16384 end
