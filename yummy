@@ -501,6 +501,54 @@ task.spawn(function()
 		return best
 	end
 
+	local function selectCombatTarget()
+		local char = localPlayer.Character
+		if not char then return nil, nil end
+		local root = char:FindFirstChild("HumanoidRootPart")
+		if not root then return nil, nil end
+		local gp = getGameplayContainer()
+		if not gp then return nil, nil end
+		local folder = gp:FindFirstChild("Enemies")
+		if not folder then return nil, nil end
+		local priority = rayfieldLibrary.Flags.CombatTargetPriority and rayfieldLibrary.Flags.CombatTargetPriority.CurrentOption[1] or "Closest"
+		local bestEnemy, bestId, bestScore = nil, nil, nil
+		for _, e in ipairs(folder:GetChildren()) do
+			if e:IsA("Model") and isAlive(e) then
+				local primary = getEnemyRoot(e)
+				if primary then
+					local dist = (primary.Position - root.Position).Magnitude
+					local id = tonumber(e.Name)
+					local score
+					if priority == "Closest" then
+						score = -dist
+					elseif priority == "Lowest HP" then
+						local hp = e:GetAttribute("health") or e:GetAttribute("currentHealth") or 0
+						local hum = e:FindFirstChildWhichIsA("Humanoid")
+						if hum then hp = hum.Health end
+						score = -hp
+					elseif priority == "Highest HP" then
+						local hp = e:GetAttribute("health") or e:GetAttribute("currentHealth") or 0
+						local hum = e:FindFirstChildWhichIsA("Humanoid")
+						if hum then hp = hum.Health end
+						score = hp
+					elseif priority == "Most Coins & Goop" then
+						local coins = e:GetAttribute("reward") or e:GetAttribute("coins") or 0
+						local goop = e:GetAttribute("goop") or 0
+						score = coins + goop
+					else
+						score = -dist
+					end
+					if bestScore == nil or score > bestScore then
+						bestScore = score
+						bestEnemy = e
+						bestId = id
+					end
+				end
+			end
+		end
+		return bestEnemy, bestId
+	end
+
 	local function getSafePosition(targetCFrame)
 		local origin = targetCFrame.Position + Vector3.new(0, 50, 0)
 		local result = workspace:Raycast(origin, Vector3.new(0, -100, 0))
@@ -1147,35 +1195,7 @@ task.spawn(function()
 		end,
 	})
 
-	-- ========== SIMPLE, RELIABLE AUTO SHOOT (NO DAMAGE UI) ==========
 	local combatEnabled = false
-
-	-- Reuse the existing getGameplayContainer, isAlive, getEnemyRoot
-	local function getClosestEnemyId()
-		local char = localPlayer.Character
-		if not char then return nil end
-		local root = char:FindFirstChild("HumanoidRootPart")
-		if not root then return nil end
-		local gp = getGameplayContainer()
-		if not gp then return nil end
-		local folder = gp:FindFirstChild("Enemies")
-		if not folder then return nil end
-		local closest, closestDist, closestId = nil, math.huge, nil
-		for _, e in ipairs(folder:GetChildren()) do
-			if e:IsA("Model") and isAlive(e) then
-				local primary = getEnemyRoot(e)
-				if primary then
-					local dist = (primary.Position - root.Position).Magnitude
-					if dist < closestDist then
-						closestDist = dist
-						closest = e
-						closestId = tonumber(e.Name)
-					end
-				end
-			end
-		end
-		return closestId, closestDist
-	end
 
 	local function equipSlimeGun()
 		local char = localPlayer.Character
@@ -1227,9 +1247,7 @@ task.spawn(function()
 		Callback = function() end,
 	})
 
-	-- Shooting thread (runs continuously when enabled)
 	task.spawn(function()
-		local SHOOT_RANGE = 60
 		local controller = nil
 		while true do
 			task.wait(0.1)
@@ -1245,16 +1263,8 @@ task.spawn(function()
 			local humanoid = char:FindFirstChildWhichIsA("Humanoid")
 			if not humanoid or humanoid.Health <= 0 then task.wait(1) continue end
 
-			-- Get target based on priority dropdown
-			local targetId = nil
-			local priority = rayfieldLibrary.Flags.CombatTargetPriority and rayfieldLibrary.Flags.CombatTargetPriority.CurrentOption[1] or "Closest"
-			if priority == "Closest" then
-				targetId, _ = getClosestEnemyId()
-			else
-				-- Use the existing selectCombatTarget function for other priorities
-				local targetEnemy, id = selectCombatTarget()
-				targetId = id
-			end
+			refreshEnemyCache()
+			local _, targetId = selectCombatTarget()
 
 			if not targetId then
 				task.wait(0.2)
@@ -1288,13 +1298,9 @@ task.spawn(function()
 				controller = nil
 			end
 
-			-- Small delay to avoid overloading
 			task.wait(0.05)
 		end
 	end)
-
-	-- We need selectCombatTarget for non‑closest priorities; it's already defined above (line ~720)
-	-- It uses RANGE=50, which is fine. To avoid duplication, we'll just reuse it.
 
 	gameTab:CreateSection("Recipes")
 
