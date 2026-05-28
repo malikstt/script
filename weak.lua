@@ -182,6 +182,11 @@ task.spawn(function()
 	end)
 end)
 
+local totalCoinsEarned = 0
+local totalGoopEarned  = 0
+local totalRollsDone   = 0
+local totalKillsDone   = 0
+
 local function buildHUD(playerGui)
 	local existing = playerGui:FindFirstChild("__MAINHUD__")
 	if existing then existing:Destroy() end
@@ -256,7 +261,6 @@ local function buildHUD(playerGui)
 		}, parent)
 	end
 
-	-- TOP CENTER (identity)
 	local topCenter = makeFrame({
 		Name             = "TopCenter",
 		Size             = UDim2.fromScale(0.24, 0.078),
@@ -324,7 +328,6 @@ local function buildHUD(playerGui)
 		if ok and screenGui.Parent then avatarImg.Image = img end
 	end)
 
-	-- PROGRESSION PANEL (center)
 	local progPanel = makeFrame({
 		Name             = "ProgressionPanel",
 		Size             = UDim2.fromScale(0.24, 0.205),
@@ -386,7 +389,6 @@ local function buildHUD(playerGui)
 	local _, voidVal    = makeProgRow(progPanel, ASSET_IDS.voidDice,    "Void",    PALETTE.void)
 	local _, galaxyVal  = makeProgRow(progPanel, ASSET_IDS.galaxyDice,  "Galaxy",  PALETTE.galaxy)
 
-	-- TIMER
 	local timerContainer = makeFrame({
 		Name             = "TimerContainer",
 		Size             = UDim2.fromScale(0.11, 0.058),
@@ -424,7 +426,6 @@ local function buildHUD(playerGui)
 		Font       = Enum.Font.Gotham,
 	}, timerContainer)
 
-	-- LEFT PANEL
 	local leftPanel = makeFrame({
 		Name             = "LeftPanel",
 		Size             = UDim2.fromScale(0.175, 0.84),
@@ -499,7 +500,6 @@ local function buildHUD(playerGui)
 	local _, sessCoinsVal = makeStatRow(leftPanel, ASSET_IDS.coins,     nil, PALETTE.gold)
 	local _, sessGoopVal  = makeStatRow(leftPanel, ASSET_IDS.goop,      nil, PALETTE.green)
 
-	-- RIGHT PANEL
 	local rightPanel = makeFrame({
 		Name             = "RightPanel",
 		Size             = UDim2.fromScale(0.175, 0.84),
@@ -559,36 +559,45 @@ local function buildHUD(playerGui)
 
 	makeSectionTag(rightPanel, "RATES")
 
-	local function makeRateRow(parent, label, accentColor)
+	local function makeRateRow(parent, assetId, labelText, accentColor)
 		local row = makeFrame({
-			Size             = UDim2.fromScale(1, 0.085),
+			Size             = UDim2.fromScale(1, 0.1),
 			BackgroundColor3 = PALETTE.panelAlt,
 		}, parent)
 		addCorner(row, 6)
+
+		local ic = makeFrame({ Size = UDim2.fromScale(0.2, 1), BackgroundTransparency = 1 }, row)
+		local img = makeImageLabel({
+			Size     = UDim2.fromScale(0.82, 0.7),
+			Position = UDim2.fromScale(0.09, 0.15),
+			Image    = assetId,
+		}, ic)
+		make("UIAspectRatioConstraint", { AspectRatio = 1, AspectType = Enum.AspectType.ScaleWithParentSize, DominantAxis = Enum.DominantAxis.Height }, img)
+
 		makeLabel({
-			Size           = UDim2.fromScale(0.5, 0.72),
-			Position       = UDim2.fromScale(0.03, 0.14),
-			Text           = label,
+			Size           = UDim2.fromScale(0.76, 0.42),
+			Position       = UDim2.fromScale(0.22, 0.08),
+			Text           = labelText,
 			TextColor3     = PALETTE.dim,
 			Font           = Enum.Font.Gotham,
 			TextXAlignment = Enum.TextXAlignment.Left,
 		}, row)
+
 		local valLbl = makeLabel({
-			Size           = UDim2.fromScale(0.46, 0.72),
-			Position       = UDim2.fromScale(0.51, 0.14),
-			Text           = "0/s",
+			Size           = UDim2.fromScale(0.76, 0.46),
+			Position       = UDim2.fromScale(0.22, 0.5),
+			Text           = "-",
 			TextColor3     = accentColor or PALETTE.text,
-			TextXAlignment = Enum.TextXAlignment.Right,
+			TextXAlignment = Enum.TextXAlignment.Left,
 		}, row)
 		return row, valLbl
 	end
 
-	local _, rpsVal      = makeRateRow(rightPanel, "Rolls/s",  PALETTE.void)
-	local _, cpsVal      = makeRateRow(rightPanel, "Coins/s",  PALETTE.gold)
-	local _, gpsVal      = makeRateRow(rightPanel, "Goop/s",   PALETTE.green)
-	local _, kpmVal      = makeRateRow(rightPanel, "Kills/m",  PALETTE.red)
+	local _, rpsVal = makeRateRow(rightPanel, ASSET_IDS.goldDice,  "Rolls/s",  PALETTE.void)
+	local _, cpsVal = makeRateRow(rightPanel, ASSET_IDS.coins,     "Coins/s",  PALETTE.gold)
+	local _, gpsVal = makeRateRow(rightPanel, ASSET_IDS.goop,      "Goop/s",   PALETTE.green)
+	local _, kpmVal = makeRateRow(rightPanel, ASSET_IDS.kills,     "Kills/m",  PALETTE.red)
 
-	-- STATUS PANEL
 	local statusPanel = makeFrame({
 		Name             = "StatusPanel",
 		Size             = UDim2.fromScale(0.24, 0.056),
@@ -671,6 +680,11 @@ local rateKps   = 0
 local lastRateUpdate = os.clock()
 local RATE_WINDOW = 5
 
+local everEarnedCoins = safeGet("coins") > sessionStartCoins
+local everEarnedGoop  = safeGet("goop")  > sessionStartGoop
+local everEarnedRolls = safeGet("stats","rolls") > sessionStartRolls
+local everEarnedKills = safeGet("stats","kills") > sessionStartKills
+
 local function updateStats(refs)
 	local function updateLabel(lbl, newText)
 		if lbl.Text ~= newText then
@@ -681,19 +695,31 @@ local function updateStats(refs)
 
 	local now = os.clock()
 	if now - lastRateUpdate >= RATE_WINDOW then
-		local dt     = now - lastRateUpdate
-		local curR   = safeGet("stats","rolls")
-		local curC   = safeGet("coins")
-		local curG   = safeGet("goop")
-		local curK   = safeGet("stats","kills")
-		rateRps      = math.max(0, curR - prevRolls) / dt
-		rateCps      = math.max(0, curC - prevCoins) / dt
-		rateGps      = math.max(0, curG - prevGoop)  / dt
-		rateKps      = math.max(0, curK - prevKills) / dt
-		prevRolls    = curR
-		prevCoins    = curC
-		prevGoop     = curG
-		prevKills    = curK
+		local dt   = now - lastRateUpdate
+		local curR = safeGet("stats","rolls")
+		local curC = safeGet("coins")
+		local curG = safeGet("goop")
+		local curK = safeGet("stats","kills")
+
+		local deltaR = math.max(0, curR - prevRolls)
+		local deltaC = math.max(0, curC - prevCoins)
+		local deltaG = math.max(0, curG - prevGoop)
+		local deltaK = math.max(0, curK - prevKills)
+
+		if deltaR > 0 then everEarnedRolls = true end
+		if deltaC > 0 then everEarnedCoins = true end
+		if deltaG > 0 then everEarnedGoop  = true end
+		if deltaK > 0 then everEarnedKills = true end
+
+		rateRps = deltaR / dt
+		rateCps = deltaC / dt
+		rateGps = deltaG / dt
+		rateKps = deltaK / dt
+
+		prevRolls = curR
+		prevCoins = curC
+		prevGoop  = curG
+		prevKills = curK
 		lastRateUpdate = now
 	end
 
@@ -717,10 +743,29 @@ local function updateStats(refs)
 	updateLabel(refs.sessCoinsVal, formatNum(math.max(0, safeGet("coins")          - sessionStartCoins)))
 	updateLabel(refs.sessGoopVal,  formatNum(math.max(0, safeGet("goop")           - sessionStartGoop)))
 
-	updateLabel(refs.rpsVal, string.format("%.1f/s", rateRps))
-	updateLabel(refs.cpsVal, formatNum(math.floor(rateCps)) .. "/s")
-	updateLabel(refs.gpsVal, formatNum(math.floor(rateGps)) .. "/s")
-	updateLabel(refs.kpmVal, string.format("%.1f/m", rateKps * 60))
+	if everEarnedRolls then
+		updateLabel(refs.rpsVal, string.format("%.1f/s", rateRps))
+	else
+		updateLabel(refs.rpsVal, "-")
+	end
+
+	if everEarnedCoins then
+		updateLabel(refs.cpsVal, formatNum(math.floor(rateCps)) .. "/s")
+	else
+		updateLabel(refs.cpsVal, "-")
+	end
+
+	if everEarnedGoop then
+		updateLabel(refs.gpsVal, formatNum(math.floor(rateGps)) .. "/s")
+	else
+		updateLabel(refs.gpsVal, "-")
+	end
+
+	if everEarnedKills then
+		updateLabel(refs.kpmVal, string.format("%.1f/m", rateKps * 60))
+	else
+		updateLabel(refs.kpmVal, "-")
+	end
 
 	refs.timerLabel.Text = getTimerText()
 
