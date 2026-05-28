@@ -6,6 +6,7 @@ task.spawn(function()
 	local RunService = game:GetService("RunService")
 	local ReplicatedStorage = game:GetService("ReplicatedStorage")
 	local HttpService = game:GetService("HttpService")
+	local TweenService = game:GetService("TweenService")
 
 	local function safeRequire(path, name)
 		local ok, result = pcall(require, path)
@@ -14,22 +15,6 @@ task.spawn(function()
 			return nil
 		end
 		return result
-	end
-
-	local function safeCall(fn, notify, ...)
-		local ok, err = pcall(fn, ...)
-		if not ok then
-			warn("[CactusHub] Error: " .. tostring(err))
-			if notify then
-				pcall(function()
-					rayfieldLibrary:Notify({
-						Title = "Feature Error",
-						Content = tostring(err):sub(1, 120),
-						Duration = 5,
-					})
-				end)
-			end
-		end
 	end
 
 	local rayfieldLibrary
@@ -135,7 +120,7 @@ task.spawn(function()
 	mainTab:CreateParagraph({ Title = "Enabled By Default", Content = "[+] Anti AFK" })
 	mainTab:CreateParagraph({
 		Title = "Latest Update",
-		Content = "[+] Fixed Auto Shoot (task.spawn wrap)\n[+] Auto Complete Index\n[+] Auto Move to Enemy\n[+] Auto Stack Dice\n[+] Auto Feed Fruits\n[+] Bug Fixes & Performance"
+		Content = "[+] Fixed Auto Shoot\n[+] Auto Complete Index\n[+] Auto Move to Enemy\n[+] Auto Stack Dice\n[+] Auto Feed Fruits\n[+] Bug Fixes & Performance"
 	})
 
 	local dashboardBusy = false
@@ -186,23 +171,17 @@ task.spawn(function()
 		local ok, err = pcall(function()
 			packages = ReplicatedStorage:WaitForChild("Packages", 15)
 			if not packages then error("Packages not found") end
-
 			local indexFolder = packages:WaitForChild("_Index", 15)
 			if not indexFolder then error("_Index not found") end
-
 			local networkerModule = indexFolder:WaitForChild("leifstout_networker@0.3.1", 15)
 			if not networkerModule then error("networker package not found") end
 			networkerModule = networkerModule:WaitForChild("networker", 15)
 			if not networkerModule then error("networker module not found") end
-
 			local remotesFolder = networkerModule:WaitForChild("_remotes", 15)
 			if not remotesFolder then error("_remotes not found") end
-
 			dataServiceClient = require(packages.DataService).client
 			dataServiceClient:waitForData()
-
 			Networker = require(packages.Networker)
-
 			local rollClient = {
 				rareRollAnnouncement = function() end,
 				rareRollAnnouncementV2 = function() end,
@@ -210,7 +189,6 @@ task.spawn(function()
 			networkerRoll = Networker.client.new("RollService", rollClient)
 			inventoryServiceClient = Networker.client.new("InventoryService")
 			xpTransferServiceClient = Networker.client.new("XpTransferService")
-
 			local function getRemoteFunction(name)
 				local folder = remotesFolder:FindFirstChild(name) or remotesFolder:WaitForChild(name, 10)
 				if not folder then warn("[CactusHub] Remote folder not found: " .. name) return nil end
@@ -218,7 +196,6 @@ task.spawn(function()
 				if not rf then warn("[CactusHub] RemoteFunction not found in: " .. name) end
 				return rf
 			end
-
 			rollServiceRemote      = getRemoteFunction("RollService")
 			codeServiceRemote      = getRemoteFunction("CodeService")
 			inventoryServiceRemote = getRemoteFunction("InventoryService")
@@ -229,10 +206,8 @@ task.spawn(function()
 			offlineEarningsRemote  = getRemoteFunction("OfflineEarningsService")
 			indexServiceRemote     = getRemoteFunction("IndexService")
 			lootServiceRemote      = getRemoteFunction("LootService")
-
 			sourceFolder = ReplicatedStorage:WaitForChild("Source", 30)
 			if not sourceFolder then error("Source folder not found") end
-
 			upgradeTreeModule  = require(sourceFolder.Features.Upgrades.UpgradeTree)
 			indexRewardsModule = require(sourceFolder.Features.Index.IndexRewards)
 			boostServiceUtils  = require(sourceFolder.Features.Boosts.BoostServiceUtils)
@@ -243,10 +218,8 @@ task.spawn(function()
 			FruitsModule       = require(sourceFolder.Game.Items.Fruits)
 			SpecialRollUtils   = require(sourceFolder.Features.Roll.SpecialRollUtils)
 			ZonesModule        = require(sourceFolder.Game.Items.Zones)
-
 			boostKinds  = boostServiceUtils.getKinds()
 			diceItemIds = specialDiceUtils.getInventoryItemIds()
-
 			idToNameMap = {}
 			nameToIdMap = {}
 			for _, itemId in ipairs(diceItemIds) do
@@ -255,19 +228,15 @@ task.spawn(function()
 				idToNameMap[itemId] = itemName
 				nameToIdMap[itemName] = itemId
 			end
-
 			SettingsState         = require(sourceFolder.Features.Settings.SettingsState)
 			SettingsServiceClient = require(sourceFolder.Features.Settings.SettingsServiceClient)
-
 			SettingsState.init()
 			local settingsClient = {}
 			settingsClient.networker = Networker.client.new("SettingsService", settingsClient)
 			SettingsServiceClient.init(settingsClient)
-
 			pcall(function()
 				RecipesModule = require(sourceFolder.Features.Crafting.Recipes)
 			end)
-
 			modulesLoaded = true
 			rayfieldLibrary:Notify({
 				Title = "Cactus Hub",
@@ -275,7 +244,6 @@ task.spawn(function()
 				Duration = 4,
 			})
 		end)
-
 		if not ok then
 			warn("[CactusHub] Module load error: " .. tostring(err))
 			rayfieldLibrary:Notify({
@@ -476,27 +444,25 @@ task.spawn(function()
 		end
 	end
 
-	local function computeScores()
-		local char = localPlayer.Character
-		if not char then return {} end
-		local rp = char:FindFirstChild("HumanoidRootPart")
-		if not rp then return {} end
+	local function getEnemyScore(enemy, rootPos)
+		local root = getEnemyRoot(enemy)
+		if not root then return nil end
+		local dist = (root.Position - rootPos).Magnitude
+		if dist > RANGE then return nil end
+		local coins  = enemy:GetAttribute("reward") or enemy:GetAttribute("coins") or 0
+		local goop   = enemy:GetAttribute("goop") or 0
+		local health = enemy:GetAttribute("health") or enemy:GetAttribute("currentHealth") or 0
+		local humanoid = enemy:FindFirstChildWhichIsA("Humanoid")
+		if humanoid then health = humanoid.Health end
+		return { enemy=enemy, root=root, coins=coins, goop=goop, health=health, dist=dist }
+	end
+
+	local function computeScores(rootPos)
 		local entries = {}
 		for _, enemy in ipairs(cachedEnemies) do
 			if isAlive(enemy) and matchesMutationFilter(enemy) then
-				local root = getEnemyRoot(enemy)
-				if root then
-					local dist = (root.Position - rp.Position).Magnitude
-					if dist <= RANGE then
-						local coins = enemy:GetAttribute("reward") or enemy:GetAttribute("coins") or 0
-						local goop  = enemy:GetAttribute("goop") or 0
-						local health = enemy:GetAttribute("health") or 0
-						local humanoid = enemy:FindFirstChildWhichIsA("Humanoid")
-						if humanoid then health = humanoid.MaxHealth end
-						local mut = getMutation(enemy)
-						table.insert(entries, { enemy=enemy, root=root, coins=coins, goop=goop, health=health, mutation=mut, distance=dist })
-					end
-				end
+				local e = getEnemyScore(enemy, rootPos)
+				if e then table.insert(entries, e) end
 			end
 		end
 		if #entries == 0 then return {} end
@@ -505,7 +471,7 @@ task.spawn(function()
 			if e.coins > maxCoins then maxCoins = e.coins end
 			if e.goop > maxGoop then maxGoop = e.goop end
 			if e.health > maxHealth then maxHealth = e.health end
-			if e.distance > maxDist then maxDist = e.distance end
+			if e.dist > maxDist then maxDist = e.dist end
 		end
 		local scores = {}
 		local pri = enemySettings.TargetPriorities
@@ -514,16 +480,20 @@ task.spawn(function()
 			if pri["Most Coins & Goop"] then
 				s = s + ((maxCoins > 0 and e.coins/maxCoins or 0) + (maxGoop > 0 and e.goop/maxGoop or 0)) / 2
 			end
-			if pri["Closest"] then s = s + (maxDist > 0 and 1 - e.distance/maxDist or 0) end
+			if pri["Closest"] then s = s + (maxDist > 0 and 1 - e.dist/maxDist or 0) end
 			if pri["Lowest HP"] then s = s + (maxHealth > 0 and 1 - e.health/maxHealth or 0) end
-			if pri["Mutations Only"] then s = s + (e.mutation and 1 or 0) end
+			if pri["Mutations Only"] then s = s + (getMutation(e.enemy) and 1 or 0) end
 			scores[e.enemy] = s
 		end
-		return scores
+		return scores, entries
 	end
 
 	local function selectTarget()
-		local scores = computeScores()
+		local char = localPlayer.Character
+		if not char then return nil end
+		local rp = char:FindFirstChild("HumanoidRootPart")
+		if not rp then return nil end
+		local scores = computeScores(rp.Position)
 		local best, bestScore = nil, -math.huge
 		for enemy, score in pairs(scores) do
 			if score > bestScore then bestScore = score best = enemy end
@@ -531,22 +501,86 @@ task.spawn(function()
 		return best
 	end
 
+	local function getSafePosition(targetCFrame)
+		local origin = targetCFrame.Position + Vector3.new(0, 50, 0)
+		local result = workspace:Raycast(origin, Vector3.new(0, -100, 0))
+		if result then
+			return result.Position + Vector3.new(0, 3, 0)
+		end
+		return targetCFrame.Position + Vector3.new(0, 3, 0)
+	end
+
+	local autoWalkConn = nil
+
+	local function stopAutoWalk()
+		if autoWalkConn then
+			autoWalkConn:Disconnect()
+			autoWalkConn = nil
+		end
+		local char = localPlayer.Character
+		if char then
+			local hum = char:FindFirstChildWhichIsA("Humanoid")
+			if hum then
+				hum.WalkSpeed = 16
+				hum:MoveTo(char.HumanoidRootPart.Position)
+			end
+		end
+	end
+
 	local function moveToEnemy(enemy)
 		local char = localPlayer.Character
 		if not char then return end
 		local root = getEnemyRoot(enemy)
 		if not root then return end
-		local target = root.CFrame * CFrame.new(0, 3, 0)
+
+		local safePos = getSafePosition(root.CFrame)
+		local targetCF = CFrame.new(safePos)
+
 		if enemySettings.TeleportStyle == "Teleport" then
-			char:PivotTo(target)
+			if tweenConn then tweenConn:Disconnect() tweenConn = nil end
+			stopAutoWalk()
+			char:PivotTo(targetCF)
+
 		elseif enemySettings.TeleportStyle == "Tween" then
 			if tweenConn then tweenConn:Disconnect() tweenConn = nil end
-			local start = char:GetPivot()
+			stopAutoWalk()
+			local startCF = char:GetPivot()
 			local startTime = tick()
+			local duration = 0.25
 			tweenConn = RunService.RenderStepped:Connect(function()
-				local alpha = math.clamp((tick() - startTime) / 0.25, 0, 1)
-				char:PivotTo(start:Lerp(target, alpha))
+				if not char or not char.Parent then tweenConn:Disconnect() tweenConn = nil return end
+				local alpha = math.clamp((tick() - startTime) / duration, 0, 1)
+				local newPos = startCF.Position:Lerp(safePos, alpha)
+				local rayResult = workspace:Raycast(newPos + Vector3.new(0, 10, 0), Vector3.new(0, -20, 0))
+				if rayResult then newPos = rayResult.Position + Vector3.new(0, 3, 0) end
+				char:PivotTo(CFrame.new(newPos))
 				if alpha >= 1 then tweenConn:Disconnect() tweenConn = nil end
+			end)
+
+		elseif enemySettings.TeleportStyle == "Walk" then
+			if tweenConn then tweenConn:Disconnect() tweenConn = nil end
+			stopAutoWalk()
+			local hum = char:FindFirstChildWhichIsA("Humanoid")
+			if not hum then return end
+			hum.WalkSpeed = 50
+			hum:MoveTo(safePos)
+			autoWalkConn = RunService.Heartbeat:Connect(function()
+				if not char or not char.Parent or not isAlive(enemy) then
+					stopAutoWalk()
+					return
+				end
+				local rp = char:FindFirstChild("HumanoidRootPart")
+				if not rp then stopAutoWalk() return end
+				local dist = (rp.Position - safePos).Magnitude
+				if dist < 5 then
+					stopAutoWalk()
+				else
+					local newRoot = getEnemyRoot(enemy)
+					if newRoot then
+						safePos = getSafePosition(newRoot.CFrame)
+						hum:MoveTo(safePos)
+					end
+				end
 			end)
 		end
 	end
@@ -556,6 +590,7 @@ task.spawn(function()
 			refreshEnemyCache()
 			if not enemySettings.AutoFarm then currentTarget = nil return end
 			if currentTarget and isAlive(currentTarget) and currentTarget.Parent then return end
+			stopAutoWalk()
 			local newTarget = selectTarget()
 			if newTarget and newTarget ~= currentTarget then
 				currentTarget = newTarget
@@ -564,7 +599,6 @@ task.spawn(function()
 		end)
 	end)
 
-	-- FARMING TAB
 	farmingTab:CreateSection("Zones")
 
 	pcall(function()
@@ -864,7 +898,6 @@ task.spawn(function()
 					end
 				end
 				DiceLuckLabel:Set("Total Stacked: x" .. string.format("%.1f", totalStacked))
-
 				if not stackActive or not networkerRoll then return end
 				local toWatch = {}
 				for _, dice in ipairs(DICE) do
@@ -991,7 +1024,6 @@ task.spawn(function()
 		end,
 	})
 
-	-- GAME TAB
 	gameTab:CreateSection("Rebirth")
 
 	featureToggle(gameTab, {
@@ -1003,11 +1035,11 @@ task.spawn(function()
 			task.spawn(function()
 				while rayfieldLibrary.Flags.GameAutoRebirth and rayfieldLibrary.Flags.GameAutoRebirth.CurrentValue do
 					if not rebirthServiceRemote or not dataServiceClient then error("RebirthService not loaded") end
-					local rebirths    = dataServiceClient:get("rebirths") or 0
-					local goop        = dataServiceClient:get("goop") or 0
-					local furthestZone= dataServiceClient:get("furthestZone") or 0
-					local requiredGoop= (2^rebirths)*500
-					local minZone     = tonumber(rayfieldLibrary.Flags.GameMinZoneRebirth and rayfieldLibrary.Flags.GameMinZoneRebirth.CurrentValue) or 0
+					local rebirths     = dataServiceClient:get("rebirths") or 0
+					local goop         = dataServiceClient:get("goop") or 0
+					local furthestZone = dataServiceClient:get("furthestZone") or 0
+					local requiredGoop = (2^rebirths)*500
+					local minZone      = tonumber(rayfieldLibrary.Flags.GameMinZoneRebirth and rayfieldLibrary.Flags.GameMinZoneRebirth.CurrentValue) or 0
 					if furthestZone >= minZone and goop >= requiredGoop then
 						rebirthServiceRemote:InvokeServer("requestRebirth")
 					end
@@ -1064,16 +1096,42 @@ task.spawn(function()
 	gameTab:CreateDropdown({ Name="Upgrade Mode", Options={"All","Coins","Goop","Rolls"}, CurrentOption={"All"}, MultipleOptions=false, Flag="GameUpgradeMode", Callback=function() end })
 
 	gameTab:CreateSection("Movement")
-	gameTab:CreateDropdown({ Name="Teleport Style", Options={"Teleport","Tween"}, CurrentOption={"Teleport"}, MultipleOptions=false, Flag="TeleportStyle", Callback=function(option) enemySettings.TeleportStyle = option[1] end })
+	gameTab:CreateDropdown({
+		Name = "Teleport Style",
+		Options = {"Teleport", "Tween", "Walk"},
+		CurrentOption = {"Teleport"},
+		MultipleOptions = false,
+		Flag = "TeleportStyle",
+		Callback = function(option)
+			local val = type(option) == "table" and option[1] or option
+			enemySettings.TeleportStyle = val
+			if val ~= "Walk" then stopAutoWalk() end
+		end
+	})
 
 	gameTab:CreateSection("Targeting")
-	gameTab:CreateDropdown({ Name="Target Priority", Options={"Closest","Lowest HP","Most Coins & Goop","Mutations Only"}, CurrentOption={"Most Coins & Goop"}, MultipleOptions=true, Flag="TargetPriority",
-		Callback=function(options)
+	gameTab:CreateDropdown({
+		Name = "Target Priority",
+		Options = {"Closest","Lowest HP","Most Coins & Goop","Mutations Only"},
+		CurrentOption = {"Most Coins & Goop"},
+		MultipleOptions = true,
+		Flag = "TargetPriority",
+		Callback = function(options)
 			enemySettings.TargetPriorities = {}
 			for _, opt in ipairs(options) do enemySettings.TargetPriorities[opt] = true end
 		end
 	})
-	gameTab:CreateDropdown({ Name="Mutation Filter", Options={"Any","Big","Huge","Inverted","Shiny"}, CurrentOption={"Any"}, MultipleOptions=false, Flag="MutationFilter", Callback=function(option) enemySettings.MutationFilter = option[1] end })
+	gameTab:CreateDropdown({
+		Name = "Mutation Filter",
+		Options = {"Any","Big","Huge","Inverted","Shiny"},
+		CurrentOption = {"Any"},
+		MultipleOptions = false,
+		Flag = "MutationFilter",
+		Callback = function(option)
+			local val = type(option) == "table" and option[1] or option
+			enemySettings.MutationFilter = val
+		end
+	})
 
 	gameTab:CreateSection("Controls")
 	featureToggle(gameTab, {
@@ -1082,14 +1140,16 @@ task.spawn(function()
 		Flag = "AutoFarm",
 		Callback = function(value)
 			enemySettings.AutoFarm = value
-			if not value then currentTarget = nil end
+			if not value then
+				currentTarget = nil
+				stopAutoWalk()
+			end
 		end,
 	})
 
 	gameTab:CreateSection("Combat")
 
 	local combatEnabled = false
-	local combatPriority = "Closest"
 
 	featureToggle(gameTab, {
 		Name = "Auto Shoot Enemies",
@@ -1102,18 +1162,13 @@ task.spawn(function()
 
 	gameTab:CreateDropdown({
 		Name = "Combat Target Priority",
-		Options = {"Closest", "Lowest HP", "Highest HP"},
+		Options = {"Closest", "Lowest HP", "Highest HP", "Most Coins & Goop"},
 		CurrentOption = {"Closest"},
 		MultipleOptions = false,
 		Flag = "CombatTargetPriority",
-		Callback = function(option)
-			combatPriority = option[1]
-		end,
+		Callback = function() end,
 	})
 
-	-- ==============================
-	-- DAMAGE UI & COMBAT SYSTEM (FIXED)
-	-- ==============================
 	local screenGui = Instance.new("ScreenGui")
 	screenGui.Name = "SlimeGunHUD"
 	screenGui.ResetOnSpawn = false
@@ -1123,15 +1178,15 @@ task.spawn(function()
 
 	local dmgContainer = Instance.new("Frame")
 	dmgContainer.Name = "PopupContainer"
-	dmgContainer.Position = UDim2.new(1, -276, 0, 48)
-	dmgContainer.Size = UDim2.new(0, 260, 1, -96)
+	dmgContainer.Position = UDim2.new(1, -310, 0, 60)
+	dmgContainer.Size = UDim2.new(0, 295, 1, -120)
 	dmgContainer.BackgroundTransparency = 1
 	dmgContainer.Parent = screenGui
 
 	local layout = Instance.new("UIListLayout")
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 	layout.VerticalAlignment = Enum.VerticalAlignment.Top
-	layout.Padding = UDim.new(0, 6)
+	layout.Padding = UDim.new(0, 8)
 	layout.Parent = dmgContainer
 
 	local COLORS = {
@@ -1168,7 +1223,6 @@ task.spawn(function()
 
 	local activePopups = {}
 	local popupOrder = 0
-	local TweenService = game:GetService("TweenService")
 
 	local function pulseFrame(frame, accentColor)
 		TweenService:Create(frame, TweenInfo.new(0.06, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
@@ -1201,72 +1255,70 @@ task.spawn(function()
 		local p = activePopups[uid]
 		if not p then return end
 		if p.expireTask then task.cancel(p.expireTask) end
-		p.expireTask = task.delay(2.5, function()
-			destroyPopup(uid)
-		end)
+		p.expireTask = task.delay(2.5, function() destroyPopup(uid) end)
 	end
 
 	local function createPopup(uid, enemyLabel, dmg, hpAfter, accentColor)
 		popupOrder = popupOrder + 1
 		local frame = Instance.new("Frame")
-		frame.Size = UDim2.new(1, 0, 0, 52)
+		frame.Size = UDim2.new(1, 0, 0, 66)
 		frame.BackgroundColor3 = Color3.fromRGB(10, 10, 18)
 		frame.BackgroundTransparency = 0.1
 		frame.BorderSizePixel = 0
 		frame.ClipsDescendants = true
 		frame.LayoutOrder = popupOrder
 		frame.Parent = dmgContainer
-		Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
+		Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
 
 		local accent = Instance.new("Frame")
-		accent.Size = UDim2.new(0, 3, 1, 0)
+		accent.Size = UDim2.new(0, 4, 1, 0)
 		accent.BackgroundColor3 = accentColor
 		accent.BorderSizePixel = 0
 		accent.Parent = frame
-		Instance.new("UICorner", accent).CornerRadius = UDim.new(0, 10)
+		Instance.new("UICorner", accent).CornerRadius = UDim.new(0, 12)
 
 		local nameLabel = Instance.new("TextLabel")
-		nameLabel.Position = UDim2.new(0, 14, 0, 5)
-		nameLabel.Size = UDim2.new(1, -90, 0, 18)
+		nameLabel.Position = UDim2.new(0, 16, 0, 7)
+		nameLabel.Size = UDim2.new(1, -100, 0, 20)
 		nameLabel.BackgroundTransparency = 1
 		nameLabel.Text = enemyLabel
-		nameLabel.TextColor3 = Color3.fromRGB(220, 220, 230)
+		nameLabel.TextColor3 = Color3.fromRGB(225, 225, 235)
 		nameLabel.TextXAlignment = Enum.TextXAlignment.Left
 		nameLabel.Font = Enum.Font.GothamBold
-		nameLabel.TextSize = 13
+		nameLabel.TextSize = 15
 		nameLabel.Parent = frame
 
 		local hpLabel = Instance.new("TextLabel")
-		hpLabel.Position = UDim2.new(0, 14, 0, 25)
-		hpLabel.Size = UDim2.new(1, -90, 0, 14)
+		hpLabel.Position = UDim2.new(0, 16, 0, 30)
+		hpLabel.Size = UDim2.new(1, -100, 0, 16)
 		hpLabel.BackgroundTransparency = 1
 		hpLabel.Text = "HP: " .. tostring(math.max(0, math.floor(hpAfter)))
-		hpLabel.TextColor3 = Color3.fromRGB(130, 130, 150)
+		hpLabel.TextColor3 = Color3.fromRGB(140, 140, 160)
 		hpLabel.TextXAlignment = Enum.TextXAlignment.Left
 		hpLabel.Font = Enum.Font.Gotham
-		hpLabel.TextSize = 11
+		hpLabel.TextSize = 13
 		hpLabel.Parent = frame
 
 		local hitsLabel = Instance.new("TextLabel")
-		hitsLabel.Position = UDim2.new(0, 14, 0, 38)
-		hitsLabel.Size = UDim2.new(1, -90, 0, 12)
+		hitsLabel.Position = UDim2.new(0, 16, 0, 47)
+		hitsLabel.Size = UDim2.new(1, -100, 0, 14)
 		hitsLabel.BackgroundTransparency = 1
 		hitsLabel.Text = "1 hit  •  " .. tostring(math.floor(dmg)) .. " total dmg"
-		hitsLabel.TextColor3 = Color3.fromRGB(90, 90, 110)
+		hitsLabel.TextColor3 = Color3.fromRGB(100, 100, 120)
 		hitsLabel.TextXAlignment = Enum.TextXAlignment.Left
 		hitsLabel.Font = Enum.Font.Gotham
-		hitsLabel.TextSize = 10
+		hitsLabel.TextSize = 11
 		hitsLabel.Parent = frame
 
 		local dmgLabel = Instance.new("TextLabel")
-		dmgLabel.Position = UDim2.new(1, -80, 0, 0)
-		dmgLabel.Size = UDim2.new(0, 72, 1, 0)
+		dmgLabel.Position = UDim2.new(1, -92, 0, 0)
+		dmgLabel.Size = UDim2.new(0, 84, 1, 0)
 		dmgLabel.BackgroundTransparency = 1
 		dmgLabel.Text = "-" .. tostring(math.floor(dmg))
 		dmgLabel.TextColor3 = accentColor
 		dmgLabel.TextXAlignment = Enum.TextXAlignment.Right
 		dmgLabel.Font = Enum.Font.GothamBold
-		dmgLabel.TextSize = 20
+		dmgLabel.TextSize = 24
 		dmgLabel.Parent = frame
 
 		frame.Position = UDim2.new(-1, 0, 0, 0)
@@ -1295,19 +1347,12 @@ task.spawn(function()
 		scheduleExpiry(uid)
 	end
 
-	-- Load combat modules with retries
-	local GameplayServiceClient, GoopGunServiceClient, GoopGunServiceUtils
+	local GameplayServiceClient, GoopGunServiceUtils
 	local function loadCombatModules()
 		local ok, result = pcall(function()
 			return require(ReplicatedStorage.Source.Features.Gameplay.GameplayServiceClient)
 		end)
 		if ok then GameplayServiceClient = result end
-
-		local ok2, result2 = pcall(function()
-			return require(ReplicatedStorage.Source.Features.GoopGun.GoopGunServiceClient)
-		end)
-		if ok2 then GoopGunServiceClient = result2 end
-
 		local ok3, result3 = pcall(function()
 			return require(ReplicatedStorage.Source.Features.GoopGun.GoopGunServiceUtils)
 		end)
@@ -1316,7 +1361,7 @@ task.spawn(function()
 
 	for i = 1, 20 do
 		loadCombatModules()
-		if GameplayServiceClient and GoopGunServiceClient and GoopGunServiceUtils then break end
+		if GameplayServiceClient and GoopGunServiceUtils then break end
 		task.wait(0.5)
 	end
 
@@ -1325,129 +1370,168 @@ task.spawn(function()
 		if not char then return false end
 		local humanoid = char:FindFirstChildOfClass("Humanoid")
 		if not humanoid then return false end
-		local gun = char:FindFirstChild("SlimeGun") or localPlayer.Backpack:FindFirstChild("SlimeGun")
-		if gun and gun.Parent ~= char then
-			humanoid:EquipTool(gun)
+		local gun = char:FindFirstChild("SlimeGun")
+		if not gun then
+			gun = localPlayer.Backpack:FindFirstChild("SlimeGun")
+			if gun then humanoid:EquipTool(gun) end
 		end
 		return gun ~= nil
 	end
 
-	-- Keep gun equipped periodically
 	task.spawn(function()
 		while true do
 			task.wait(2)
-			pcall(ensureGunEquipped)
+			if combatEnabled then pcall(ensureGunEquipped) end
 		end
 	end)
 
+	local function findGunController()
+		local char = localPlayer.Character
+		if not char then return nil end
+		local tool = char:FindFirstChild("SlimeGun")
+		if not tool then return nil end
+		for _, v in ipairs(getgc(true)) do
+			if type(v) == "table"
+				and rawget(v, "tool") == tool
+				and rawget(v, "prevSendAt") ~= nil
+				and rawget(v, "janitor") ~= nil then
+				return v
+			end
+		end
+		return nil
+	end
+
 	local function selectCombatTarget()
-		local character = localPlayer.Character
-		if not character then return nil end
-		local rootPart = character:FindFirstChild("HumanoidRootPart")
-		if not rootPart then return nil end
+		local char = localPlayer.Character
+		if not char then return nil, nil end
+		local rootPart = char:FindFirstChild("HumanoidRootPart")
+		if not rootPart then return nil, nil end
 		local gameplayContainer = getGameplayContainer()
-		if not gameplayContainer then return nil end
+		if not gameplayContainer then return nil, nil end
 		local enemiesFolder = gameplayContainer:FindFirstChild("Enemies")
-		if not enemiesFolder then return nil end
-		local bestTarget, bestValue = nil, nil
+		if not enemiesFolder then return nil, nil end
+
+		local priority = rayfieldLibrary.Flags.CombatTargetPriority and rayfieldLibrary.Flags.CombatTargetPriority.CurrentOption[1] or "Closest"
+
+		local bestEnemy, bestValue, bestId = nil, nil, nil
+
 		for _, enemy in ipairs(enemiesFolder:GetChildren()) do
 			if enemy:IsA("Model") and isAlive(enemy) then
 				local enemyRoot = getEnemyRoot(enemy)
 				if enemyRoot then
 					local dist = (enemyRoot.Position - rootPart.Position).Magnitude
 					if dist <= RANGE then
-						if combatPriority == "Closest" then
+						local hp = enemy:GetAttribute("health") or enemy:GetAttribute("currentHealth") or 0
+						local coins = enemy:GetAttribute("reward") or enemy:GetAttribute("coins") or 0
+						local goop = enemy:GetAttribute("goop") or 0
+
+						if priority == "Closest" then
 							if bestValue == nil or dist < bestValue then
-								bestValue = dist
-								bestTarget = enemy
+								bestValue = dist bestEnemy = enemy bestId = tonumber(enemy.Name)
 							end
-						elseif combatPriority == "Lowest HP" then
-							local hp = enemy:GetAttribute("health") or 0
+						elseif priority == "Lowest HP" then
 							if hp > 0 and (bestValue == nil or hp < bestValue) then
-								bestValue = hp
-								bestTarget = enemy
+								bestValue = hp bestEnemy = enemy bestId = tonumber(enemy.Name)
 							end
-						elseif combatPriority == "Highest HP" then
-							local hp = enemy:GetAttribute("health") or 0
+						elseif priority == "Highest HP" then
 							if hp > 0 and (bestValue == nil or hp > bestValue) then
-								bestValue = hp
-								bestTarget = enemy
+								bestValue = hp bestEnemy = enemy bestId = tonumber(enemy.Name)
+							end
+						elseif priority == "Most Coins & Goop" then
+							local score = coins + goop
+							if bestValue == nil or score > bestValue then
+								bestValue = score bestEnemy = enemy bestId = tonumber(enemy.Name)
 							end
 						end
 					end
 				end
 			end
 		end
-		return bestTarget
+
+		return bestEnemy, bestId
 	end
 
-	local lastEnemyHealths = {}
-	local warnedOnce = false
+	local gunController = nil
 
-	-- COMBAT LOOP
 	task.spawn(function()
-		print("[CactusHub] Combat loop started.")
 		while true do
 			if combatEnabled then
-				local character = localPlayer.Character
-				if character and character:FindFirstChildOfClass("Humanoid") and character.Humanoid.Health > 0 then
-					-- Wait for gameplay data to be ready
-					if not GameplayServiceClient or not GameplayServiceClient.gameplay then
-						task.wait(0.5)
-						continue
-					end
-					ensureGunEquipped()
-					local upgrades = (dataServiceClient and dataServiceClient:get("upgrades")) or {}
-					local fireRate = 0.1
-					if GoopGunServiceUtils then
-						pcall(function() fireRate = GoopGunServiceUtils.getFireRate(upgrades) end)
-					end
-					local target = selectCombatTarget()
-					if target then
-						local targetId = target.Name
-						local gameplay = GameplayServiceClient.gameplay
-						local enemy = gameplay and gameplay.enemies and gameplay.enemies[targetId]
-						if enemy and enemy.health > 0 then
-							-- Store health before shooting
-							local healthBefore = enemy.health
-							local shotFired = false
-							if GoopGunServiceClient then
-								local wrapper = GoopGunServiceClient.wrapper
-								if wrapper and wrapper.onEnemyHit then
-									pcall(function() wrapper.onEnemyHit(targetId) end)
-									shotFired = true
+				local char = localPlayer.Character
+				if char then
+					local humanoid = char:FindFirstChildOfClass("Humanoid")
+					if humanoid and humanoid.Health > 0 then
+						if not GameplayServiceClient or not GameplayServiceClient.gameplay then
+							task.wait(0.5)
+							continue
+						end
+
+						ensureGunEquipped()
+
+						if not gunController then
+							gunController = findGunController()
+							if not gunController then task.wait(0.5) continue end
+						end
+
+						local upgrades = (dataServiceClient and dataServiceClient:get("upgrades")) or {}
+						local fireRate = 0.1
+						if GoopGunServiceUtils then
+							pcall(function() fireRate = GoopGunServiceUtils.getFireRate(upgrades) end)
+						end
+
+						local targetEnemy, targetId = selectCombatTarget()
+
+						if targetEnemy and targetId then
+							local gameplay = GameplayServiceClient.gameplay
+							local enemyData = gameplay and gameplay.enemies and gameplay.enemies[tostring(targetId)]
+
+							if enemyData and enemyData.health > 0 then
+								local healthBefore = enemyData.health
+
+								local ok, err = pcall(function()
+									local orig = gunController._getTargetEnemyId
+									gunController._getTargetEnemyId = function() return targetId end
+									gunController:onActivated()
+									gunController._getTargetEnemyId = orig
+								end)
+
+								if not ok then
+									gunController = nil
+									task.wait(0.3)
+									continue
 								end
-							end
-							-- Small delay to let damage apply
-							task.wait(0.05)
-							-- Get new health after shot
-							local healthAfter = enemy.health
-							local dmg = healthBefore - healthAfter
-							if dmg > 0 then
-								local enemyLabel = getEnemyLabel(enemy)
-								local accentColor = getMutationColor(enemy.mutations)
-								if activePopups[targetId] then
-									updatePopup(targetId, dmg, healthAfter)
-								else
-									createPopup(targetId, enemyLabel, dmg, healthAfter, accentColor)
+
+								task.wait(0.05)
+
+								local healthAfter = enemyData.health
+								local dmg = healthBefore - healthAfter
+
+								if dmg > 0 then
+									local label = getEnemyLabel(enemyData)
+									local color = getMutationColor(enemyData.mutations)
+									local uid = tostring(targetId)
+									if activePopups[uid] then
+										updatePopup(uid, dmg, healthAfter)
+									else
+										createPopup(uid, label, dmg, healthAfter, color)
+									end
 								end
-								lastEnemyHealths[targetId] = healthAfter
-							else
-								lastEnemyHealths[targetId] = healthBefore
 							end
 						end
+
+						task.wait(fireRate)
+					else
+						task.wait(1)
 					end
-					task.wait(fireRate)
 				else
 					task.wait(1)
 				end
 			else
+				gunController = nil
 				task.wait(0.5)
 			end
 		end
 	end)
 
-	-- GAME TAB — Recipes (unchanged, same as before)
 	gameTab:CreateSection("Recipes")
 
 	pcall(function()
@@ -1669,7 +1753,6 @@ task.spawn(function()
 		rayfieldLibrary:Notify({ Title="Cactus Hub", Content="Loaded — "..(#recipeIdsList).." unlocked recipes ready.", Duration=5, Image=4483362458 })
 	end)
 
-	-- INDEX TAB (unchanged)
 	local indexRunning = false
 	local indexThread, luckPollThread = nil, nil
 	local selectedCategoryOption = nil
@@ -1856,7 +1939,6 @@ task.spawn(function()
 		end
 	end)
 
-	-- MISC TAB
 	miscTab:CreateSection("Codes & Rewards")
 
 	featureToggle(miscTab, {
@@ -2004,7 +2086,6 @@ task.spawn(function()
 		end
 	end)
 
-	-- WEBHOOK TAB
 	webhookTab:CreateSection("Warning")
 	webhookTab:CreateParagraph({
 		Title = "⚠️ WARNING",
@@ -2300,7 +2381,6 @@ task.spawn(function()
 		end
 	end)
 
-	-- SETTINGS TAB
 	settingsTab:CreateSection("System")
 
 	featureToggle(settingsTab, {
@@ -2486,7 +2566,6 @@ task.spawn(function()
 		end,
 	})
 
-	-- STATS TAB
 	local function safeGet(...)
 		local ok, data = pcall(function() return dataServiceClient._data._data end)
 		if not ok or type(data) ~= "table" then return 0 end
@@ -2676,7 +2755,7 @@ task.spawn(function()
 				local ss = math.floor(elapsed%60)
 				local rps = getRate(windowRPS, lastRollMove, startRolls, rolls)
 				local cps = getRate(windowCPS, lastCoinMove, startCoins, coins)
-				local gps = getRate(windowGPS, lastGoopMove, startGoop,  goop)
+				local gps = getRate(windowGPS, lastGoopMove, startGoop, goop)
 				local bestName, bestOdds = getBestRoll()
 				local dailyOdds = safeNum("stats","dailyRarestRoll","odds")
 				local dailyStr  = dailyOdds > 0 and ("1 in "..fmt(math.floor(dailyOdds))) or "N/A"
@@ -2700,7 +2779,6 @@ task.spawn(function()
 		end
 	end)
 
-	-- ANTI AFK + AUTO REJOIN
 	local virtualUser = game:GetService("VirtualUser")
 	localPlayer.Idled:Connect(function()
 		virtualUser:CaptureController()
