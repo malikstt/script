@@ -1147,212 +1147,54 @@ task.spawn(function()
 		end,
 	})
 
-	-- ========== AUTO SHOOT (WITH TOGGLE & PRIORITY DROPDOWN) ==========
+	-- ========== SIMPLE, RELIABLE AUTO SHOOT (NO DAMAGE UI) ==========
 	local combatEnabled = false
-	local GoopGunServiceUtils = nil
-	local gunController = nil
 
-	pcall(function()
-		GoopGunServiceUtils = require(ReplicatedStorage.Source.Features.GoopGun.GoopGunServiceUtils)
-	end)
-
-	local screenGui = Instance.new("ScreenGui")
-	screenGui.Name = "SlimeGunHUD"
-	screenGui.ResetOnSpawn = false
-	screenGui.IgnoreGuiInset = true
-	screenGui.DisplayOrder = 999
-	screenGui.Parent = localPlayer.PlayerGui
-
-	local dmgContainer = Instance.new("Frame")
-	dmgContainer.Name = "PopupContainer"
-	dmgContainer.Position = UDim2.new(1, -310, 0, 60)
-	dmgContainer.Size = UDim2.new(0, 295, 1, -120)
-	dmgContainer.BackgroundTransparency = 1
-	dmgContainer.Parent = screenGui
-
-	local layout = Instance.new("UIListLayout")
-	layout.SortOrder = Enum.SortOrder.LayoutOrder
-	layout.VerticalAlignment = Enum.VerticalAlignment.Top
-	layout.Padding = UDim.new(0, 8)
-	layout.Parent = dmgContainer
-
-	local COLORS = {
-		normal   = Color3.fromRGB(120, 220, 255),
-		big      = Color3.fromRGB(255, 180, 50),
-		huge     = Color3.fromRGB(255, 80, 80),
-		shiny    = Color3.fromRGB(255, 230, 50),
-		inverted = Color3.fromRGB(180, 80, 255),
-	}
-
-	local function getMutationColor(mutations)
-		if not mutations then return COLORS.normal end
-		if mutations.inverted then return COLORS.inverted end
-		if mutations.huge then return COLORS.huge end
-		if mutations.shiny then return COLORS.shiny end
-		if mutations.big then return COLORS.big end
-		return COLORS.normal
-	end
-
-	local function getEnemyLabel(enemy)
-		local tier = "Lv." .. tostring(enemy.enemyId or 1)
-		local uid = "#" .. tostring(enemy.uniqueId or "?")
-		if enemy.mutations then
-			local tags = {}
-			for mut in pairs(enemy.mutations) do
-				table.insert(tags, mut:sub(1,1):upper() .. mut:sub(2))
-			end
-			if #tags > 0 then
-				return table.concat(tags, " ") .. " Slime " .. tier .. " " .. uid
+	-- Reuse the existing getGameplayContainer, isAlive, getEnemyRoot
+	local function getClosestEnemyId()
+		local char = localPlayer.Character
+		if not char then return nil end
+		local root = char:FindFirstChild("HumanoidRootPart")
+		if not root then return nil end
+		local gp = getGameplayContainer()
+		if not gp then return nil end
+		local folder = gp:FindFirstChild("Enemies")
+		if not folder then return nil end
+		local closest, closestDist, closestId = nil, math.huge, nil
+		for _, e in ipairs(folder:GetChildren()) do
+			if e:IsA("Model") and isAlive(e) then
+				local primary = getEnemyRoot(e)
+				if primary then
+					local dist = (primary.Position - root.Position).Magnitude
+					if dist < closestDist then
+						closestDist = dist
+						closest = e
+						closestId = tonumber(e.Name)
+					end
+				end
 			end
 		end
-		return "Slime " .. tier .. " " .. uid
+		return closestId, closestDist
 	end
 
-	local activePopups = {}
-	local popupOrder = 0
-
-	local function pulseFrame(frame, accentColor)
-		TweenService:Create(frame, TweenInfo.new(0.06, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			BackgroundColor3 = accentColor
-		}):Play()
-		task.delay(0.06, function()
-			TweenService:Create(frame, TweenInfo.new(0.12, Enum.EasingStyle.Quad), {
-				BackgroundColor3 = Color3.fromRGB(10, 10, 18)
-			}):Play()
-		end)
-	end
-
-	local function destroyPopup(uid)
-		local p = activePopups[uid]
-		if not p then return end
-		activePopups[uid] = nil
-		local frame = p.frame
-		TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quint), {
-			BackgroundTransparency = 1,
-			Size = UDim2.new(1, 0, 0, 0)
-		}):Play()
-		for _, lbl in ipairs(p.labels) do
-			TweenService:Create(lbl, TweenInfo.new(0.3), { TextTransparency = 1 }):Play()
-		end
-		TweenService:Create(p.accent, TweenInfo.new(0.3), { BackgroundTransparency = 1 }):Play()
-		task.delay(0.3, function() frame:Destroy() end)
-	end
-
-	local function scheduleExpiry(uid)
-		local p = activePopups[uid]
-		if not p then return end
-		if p.expireTask then task.cancel(p.expireTask) end
-		p.expireTask = task.delay(2.5, function() destroyPopup(uid) end)
-	end
-
-	local function createPopup(uid, enemyLabel, dmg, hpAfter, accentColor)
-		popupOrder = popupOrder + 1
-		local frame = Instance.new("Frame")
-		frame.Size = UDim2.new(1, 0, 0, 66)
-		frame.BackgroundColor3 = Color3.fromRGB(10, 10, 18)
-		frame.BackgroundTransparency = 0.1
-		frame.BorderSizePixel = 0
-		frame.ClipsDescendants = true
-		frame.LayoutOrder = popupOrder
-		frame.Parent = dmgContainer
-		Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
-
-		local accent = Instance.new("Frame")
-		accent.Size = UDim2.new(0, 4, 1, 0)
-		accent.BackgroundColor3 = accentColor
-		accent.BorderSizePixel = 0
-		accent.Parent = frame
-		Instance.new("UICorner", accent).CornerRadius = UDim.new(0, 12)
-
-		local nameLabel = Instance.new("TextLabel")
-		nameLabel.Position = UDim2.new(0, 16, 0, 7)
-		nameLabel.Size = UDim2.new(1, -100, 0, 20)
-		nameLabel.BackgroundTransparency = 1
-		nameLabel.Text = enemyLabel
-		nameLabel.TextColor3 = Color3.fromRGB(225, 225, 235)
-		nameLabel.TextXAlignment = Enum.TextXAlignment.Left
-		nameLabel.Font = Enum.Font.GothamBold
-		nameLabel.TextSize = 15
-		nameLabel.Parent = frame
-
-		local hpLabel = Instance.new("TextLabel")
-		hpLabel.Position = UDim2.new(0, 16, 0, 30)
-		hpLabel.Size = UDim2.new(1, -100, 0, 16)
-		hpLabel.BackgroundTransparency = 1
-		hpLabel.Text = "HP: " .. tostring(math.max(0, math.floor(hpAfter)))
-		hpLabel.TextColor3 = Color3.fromRGB(140, 140, 160)
-		hpLabel.TextXAlignment = Enum.TextXAlignment.Left
-		hpLabel.Font = Enum.Font.Gotham
-		hpLabel.TextSize = 13
-		hpLabel.Parent = frame
-
-		local hitsLabel = Instance.new("TextLabel")
-		hitsLabel.Position = UDim2.new(0, 16, 0, 47)
-		hitsLabel.Size = UDim2.new(1, -100, 0, 14)
-		hitsLabel.BackgroundTransparency = 1
-		hitsLabel.Text = "1 hit  •  " .. tostring(math.floor(dmg)) .. " total dmg"
-		hitsLabel.TextColor3 = Color3.fromRGB(100, 100, 120)
-		hitsLabel.TextXAlignment = Enum.TextXAlignment.Left
-		hitsLabel.Font = Enum.Font.Gotham
-		hitsLabel.TextSize = 11
-		hitsLabel.Parent = frame
-
-		local dmgLabel = Instance.new("TextLabel")
-		dmgLabel.Position = UDim2.new(1, -92, 0, 0)
-		dmgLabel.Size = UDim2.new(0, 84, 1, 0)
-		dmgLabel.BackgroundTransparency = 1
-		dmgLabel.Text = "-" .. tostring(math.floor(dmg))
-		dmgLabel.TextColor3 = accentColor
-		dmgLabel.TextXAlignment = Enum.TextXAlignment.Right
-		dmgLabel.Font = Enum.Font.GothamBold
-		dmgLabel.TextSize = 24
-		dmgLabel.Parent = frame
-
-		frame.Position = UDim2.new(-1, 0, 0, 0)
-		TweenService:Create(frame, TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-			Position = UDim2.new(0, 0, 0, 0)
-		}):Play()
-
-		activePopups[uid] = {
-			frame = frame, accent = accent,
-			labels = {nameLabel, hpLabel, hitsLabel, dmgLabel},
-			hpLabel = hpLabel, hitsLabel = hitsLabel, dmgLabel = dmgLabel,
-			totalDmg = dmg, hits = 1, accentColor = accentColor, expireTask = nil,
-		}
-		scheduleExpiry(uid)
-	end
-
-	local function updatePopup(uid, dmg, hpAfter)
-		local p = activePopups[uid]
-		if not p then return end
-		p.totalDmg = p.totalDmg + dmg
-		p.hits = p.hits + 1
-		p.hpLabel.Text = "HP: " .. tostring(math.max(0, math.floor(hpAfter)))
-		p.hitsLabel.Text = p.hits .. " hits  •  " .. tostring(math.floor(p.totalDmg)) .. " total dmg"
-		p.dmgLabel.Text = "-" .. tostring(math.floor(p.totalDmg))
-		pulseFrame(p.frame, p.accentColor)
-		scheduleExpiry(uid)
-	end
-
-	local function ensureGunEquipped()
+	local function equipSlimeGun()
 		local char = localPlayer.Character
 		if not char then return false end
-		local humanoid = char:FindFirstChildOfClass("Humanoid")
+		local humanoid = char:FindFirstChildWhichIsA("Humanoid")
 		if not humanoid then return false end
-		local gun = char:FindFirstChild("SlimeGun")
-		if not gun then
-			gun = localPlayer.Backpack:FindFirstChild("SlimeGun")
-			if gun then humanoid:EquipTool(gun) end
+		local tool = char:FindFirstChild("SlimeGun")
+		if tool then return true end
+		local backpack = localPlayer:FindFirstChildOfClass("Backpack")
+		if backpack then
+			tool = backpack:FindFirstChild("SlimeGun")
+			if tool then
+				humanoid:EquipTool(tool)
+				task.wait(0.3)
+				return true
+			end
 		end
-		return gun ~= nil
+		return false
 	end
-
-	task.spawn(function()
-		while true do
-			task.wait(2)
-			if combatEnabled then pcall(ensureGunEquipped) end
-		end
-	end)
 
 	local function findGunController()
 		local char = localPlayer.Character
@@ -1360,63 +1202,11 @@ task.spawn(function()
 		local tool = char:FindFirstChild("SlimeGun")
 		if not tool then return nil end
 		for _, v in ipairs(getgc(true)) do
-			if type(v) == "table"
-				and rawget(v, "tool") == tool
-				and rawget(v, "prevSendAt") ~= nil
-				and rawget(v, "janitor") ~= nil then
+			if type(v) == "table" and rawget(v, "tool") == tool and rawget(v, "prevSendAt") ~= nil then
 				return v
 			end
 		end
 		return nil
-	end
-
-	local function selectCombatTarget()
-		local char = localPlayer.Character
-		if not char then return nil, nil end
-		local rootPart = char:FindFirstChild("HumanoidRootPart")
-		if not rootPart then return nil, nil end
-		local gameplayContainer = getGameplayContainer()
-		if not gameplayContainer then return nil, nil end
-		local enemiesFolder = gameplayContainer:FindFirstChild("Enemies")
-		if not enemiesFolder then return nil, nil end
-
-		local priority = rayfieldLibrary.Flags.CombatTargetPriority and rayfieldLibrary.Flags.CombatTargetPriority.CurrentOption[1] or "Closest"
-		local bestEnemy, bestValue, bestId = nil, nil, nil
-
-		for _, enemy in ipairs(enemiesFolder:GetChildren()) do
-			if enemy:IsA("Model") and isAlive(enemy) then
-				local enemyRoot = getEnemyRoot(enemy)
-				if enemyRoot then
-					local dist = (enemyRoot.Position - rootPart.Position).Magnitude
-					if dist <= RANGE then
-						local hp = enemy:GetAttribute("health") or enemy:GetAttribute("currentHealth") or 0
-						local coins = enemy:GetAttribute("reward") or enemy:GetAttribute("coins") or 0
-						local goop = enemy:GetAttribute("goop") or 0
-
-						if priority == "Closest" then
-							if bestValue == nil or dist < bestValue then
-								bestValue = dist bestEnemy = enemy bestId = tonumber(enemy.Name)
-							end
-						elseif priority == "Lowest HP" then
-							if hp > 0 and (bestValue == nil or hp < bestValue) then
-								bestValue = hp bestEnemy = enemy bestId = tonumber(enemy.Name)
-							end
-						elseif priority == "Highest HP" then
-							if hp > 0 and (bestValue == nil or hp > bestValue) then
-								bestValue = hp bestEnemy = enemy bestId = tonumber(enemy.Name)
-							end
-						elseif priority == "Most Coins & Goop" then
-							local score = coins + goop
-							if bestValue == nil or score > bestValue then
-								bestValue = score bestEnemy = enemy bestId = tonumber(enemy.Name)
-							end
-						end
-					end
-				end
-			end
-		end
-
-		return bestEnemy, bestId
 	end
 
 	featureToggle(gameTab, {
@@ -1425,7 +1215,6 @@ task.spawn(function()
 		Flag = "CombatAutoShoot",
 		Callback = function(value)
 			combatEnabled = value
-			if not value then gunController = nil end
 		end,
 	})
 
@@ -1438,88 +1227,74 @@ task.spawn(function()
 		Callback = function() end,
 	})
 
+	-- Shooting thread (runs continuously when enabled)
 	task.spawn(function()
+		local SHOOT_RANGE = 60
+		local controller = nil
 		while true do
 			task.wait(0.1)
+
 			if not combatEnabled then
-				gunController = nil
+				controller = nil
 				task.wait(0.3)
 				continue
 			end
 
 			local char = localPlayer.Character
 			if not char then task.wait(0.5) continue end
-			local humanoid = char:FindFirstChildOfClass("Humanoid")
+			local humanoid = char:FindFirstChildWhichIsA("Humanoid")
 			if not humanoid or humanoid.Health <= 0 then task.wait(1) continue end
 
-			local targetEnemy, targetId = selectCombatTarget()
-			if not targetEnemy or not targetId then task.wait(0.2) continue end
+			-- Get target based on priority dropdown
+			local targetId = nil
+			local priority = rayfieldLibrary.Flags.CombatTargetPriority and rayfieldLibrary.Flags.CombatTargetPriority.CurrentOption[1] or "Closest"
+			if priority == "Closest" then
+				targetId, _ = getClosestEnemyId()
+			else
+				-- Use the existing selectCombatTarget function for other priorities
+				local targetEnemy, id = selectCombatTarget()
+				targetId = id
+			end
+
+			if not targetId then
+				task.wait(0.2)
+				continue
+			end
 
 			local tool = char:FindFirstChild("SlimeGun")
 			if not tool then
-				ensureGunEquipped()
-				gunController = nil
+				equipSlimeGun()
+				controller = nil
 				task.wait(0.3)
 				continue
 			end
 
-			if not gunController then
-				gunController = findGunController()
-				if not gunController then task.wait(0.5) continue end
+			if not controller then
+				controller = findGunController()
+				if not controller then
+					task.wait(0.5)
+					continue
+				end
 			end
 
-			local upgrades = (dataServiceClient and dataServiceClient:get("upgrades")) or {}
-			local fireRate = 0.1
-			if GoopGunServiceUtils then
-				pcall(function() fireRate = GoopGunServiceUtils.getFireRate(upgrades) end)
-			end
-
-			local healthBefore = targetEnemy:GetAttribute("health") or targetEnemy:GetAttribute("currentHealth") or 0
-			local humanoidInEnemy = targetEnemy:FindFirstChildWhichIsA("Humanoid")
-			if humanoidInEnemy then healthBefore = humanoidInEnemy.Health end
-
-			local ok, err = pcall(function()
-				local orig = gunController._getTargetEnemyId
-				gunController._getTargetEnemyId = function() return targetId end
-				gunController:onActivated()
-				gunController._getTargetEnemyId = orig
+			local ok = pcall(function()
+				local orig = controller._getTargetEnemyId
+				controller._getTargetEnemyId = function() return targetId end
+				controller:onActivated()
+				controller._getTargetEnemyId = orig
 			end)
 
 			if not ok then
-				gunController = nil
-				task.wait(0.3)
-				continue
+				controller = nil
 			end
 
+			-- Small delay to avoid overloading
 			task.wait(0.05)
-
-			local healthAfter = targetEnemy:GetAttribute("health") or targetEnemy:GetAttribute("currentHealth") or 0
-			if humanoidInEnemy then healthAfter = humanoidInEnemy.Health end
-			local dmg = healthBefore - healthAfter
-
-			if dmg > 0 then
-				local enemyData = {
-					enemyId = targetEnemy:GetAttribute("enemyId") or 1,
-					uniqueId = targetEnemy:GetAttribute("uniqueId") or targetId,
-					mutations = {}
-				}
-				for _, mut in ipairs({"inverted","huge","shiny","big"}) do
-					local val = targetEnemy:GetAttribute(mut)
-					if val then enemyData.mutations[mut] = true end
-				end
-				local label = getEnemyLabel(enemyData)
-				local color = getMutationColor(enemyData.mutations)
-				local uid = tostring(targetId)
-				if activePopups[uid] then
-					updatePopup(uid, dmg, healthAfter)
-				else
-					createPopup(uid, label, dmg, healthAfter, color)
-				end
-			end
-
-			task.wait(fireRate)
 		end
 	end)
+
+	-- We need selectCombatTarget for non‑closest priorities; it's already defined above (line ~720)
+	-- It uses RANGE=50, which is fine. To avoid duplication, we'll just reuse it.
 
 	gameTab:CreateSection("Recipes")
 
