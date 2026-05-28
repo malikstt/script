@@ -1,20 +1,19 @@
-local setclipboard = setclipboard or toclipboard or set_clipboard or nil
-local request = request or http_request or (syn and syn.request) or (http and http.request) or nil
-
-if type(setclipboard) ~= "function" then setclipboard = function() end end
-if type(request) ~= "function" then request = function() return nil end end
-
 repeat task.wait() until game:IsLoaded()
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TeleportService = game:GetService("TeleportService")
+local CollectionService = game:GetService("CollectionService")
 local TweenService = game:GetService("TweenService")
-local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 
-local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+local rayfieldLoaded, Rayfield = pcall(function()
+    return loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+end)
+if not rayfieldLoaded or not Rayfield then warn("CactusHub: Rayfield failed to load") return end
+task.wait(0.25)
 
 local Character, Humanoid, HRP
 local function refreshCharacter(newChar)
@@ -23,144 +22,243 @@ local function refreshCharacter(newChar)
         if Character then
             Humanoid = Character:FindFirstChildOfClass("Humanoid")
             HRP = Character:FindFirstChild("HumanoidRootPart")
+        else
+            Humanoid = nil HRP = nil
         end
     end)
 end
 LocalPlayer.CharacterAdded:Connect(refreshCharacter)
 refreshCharacter()
 
-local ClientState = require(ReplicatedStorage:WaitForChild("ClientState"))
-local Config = require(ReplicatedStorage:WaitForChild("Config"))
+local ClientState, Config
+pcall(function() ClientState = require(ReplicatedStorage:WaitForChild("ClientState", 5)) end)
+pcall(function() Config = require(ReplicatedStorage:WaitForChild("Config", 5)) end)
+
+local Remotes
+pcall(function() Remotes = ReplicatedStorage:WaitForChild("Remotes", 5) end)
+
+local function getRemote(name)
+    if not Remotes then return nil end
+    return Remotes:FindFirstChild(name)
+end
+
+local function safeFireServer(remote, ...)
+    if not remote then return end
+    pcall(function(...) remote:FireServer(...) end, ...)
+end
+
+local function safeInvokeServer(remote, ...)
+    if not remote then return nil end
+    local ok, res = pcall(function(...) return remote:InvokeServer(...) end, ...)
+    if not ok then return nil end
+    return res
+end
+
+local function safeGetState()
+    if not ClientState then return {} end
+    local ok, data = pcall(function() return ClientState:Get() end)
+    if ok and type(data) == "table" then return data end
+    local ok2, data2 = pcall(function() return ClientState.Data end)
+    if ok2 and type(data2) == "table" then return data2 end
+    return {}
+end
+
+local function safeUpdateState(updates)
+    if not ClientState or not updates then return false end
+    local ok = pcall(function()
+        if ClientState.Update then
+            ClientState:Update(updates)
+        end
+    end)
+    return ok
+end
+
+local function getRebirthTiers()
+    if Config and Config.REBIRTH_TIERS then return Config.REBIRTH_TIERS end
+    return {}
+end
+
+local function fmtNum(n)
+    local S = {
+        {1e63,"Vg"},{1e60,"Nd"},{1e57,"Od"},{1e54,"Spd"},{1e51,"Sxd"},
+        {1e48,"Qid"},{1e45,"Qad"},{1e42,"Td"},{1e39,"Dd"},{1e36,"Ud"},
+        {1e33,"Dc"},{1e30,"No"},{1e27,"Oc"},{1e24,"Sp"},{1e21,"Sx"},
+        {1e18,"Qi"},{1e15,"Qa"},{1e12,"T"},{1e9,"B"},{1e6,"M"},{1e3,"K"}
+    }
+    n = tonumber(n) or 0
+    for _, v in ipairs(S) do
+        if v[1] <= n then
+            return string.format("%.2f", n/v[1]):gsub("%.?0+$","")..v[2]
+        end
+    end
+    if n ~= math.floor(n) then
+        return string.format("%.2f", n):gsub("0+$",""):gsub("%.$","")
+    end
+    return tostring(math.floor(n))
+end
 
 local Flags = {
+    TreadmillAuto = false,
+    SmartRebirth = false,
+    Noclip = false,
+    InfiniteJump = false,
+    ESPEnabled = false,
+    WalkSpeed = 16,
+    JumpPower = 50,
     AutoWin = false,
     Fly = false,
     AntiAFK = false,
-    Noclip = false,
-    InfiniteJump = false,
-    WalkSpeed = 16,
-    JumpPower = 50,
-    FlySpeed = 50,
+    BrightMode = false,
+    AutoEquipBestAura = false,
     SpeedBoost = false,
     WinsBoost = false,
-    TreadmillActive = false,
-    SelectedTreadmill = nil
+    FlySpeed = 50,
 }
 
-local flyBody = { bv = nil, bg = nil }
+local TREADMILL_TYPES = {
+    {label = "Normal",       tag = "Treadmill",           remote = "Treadmill",           stateKey = nil},
+    {label = "Gold",         tag = "GoldTreadmill",       remote = "GoldTreadmill",        stateKey = "GoldTreadmillActive"},
+    {label = "Diamond",      tag = "DiamondTreadmill",    remote = "DiamondTreadmill",     stateKey = "DiamondTreadmillActive"},
+    {label = "Candy",        tag = "CandyTreadmill",      remote = "CandyTreadmill",       stateKey = "CandyTreadmillActive"},
+    {label = "Admin",        tag = "AdminTreadmill",      remote = "AdminTreadmill",       stateKey = "AdminTreadmillActive"},
+    {label = "Admin Abuse",  tag = "AdminAbuseTreadmill", remote = "AdminAbuseTreadmill",  stateKey = nil},
+}
 
+local selectedTreadmillIdx = 1
+local FLY_SPEED = 50
+
+local function getTreadmillLabels()
+    local out = {}
+    local state = safeGetState()
+    for _, t in ipairs(TREADMILL_TYPES) do
+        if t.stateKey == nil or state[t.stateKey] then
+            table.insert(out, "✅ " .. t.label)
+        else
+            table.insert(out, "🔒 " .. t.label)
+        end
+    end
+    return out
+end
+
+local function getTreadmillPart(tag)
+    local parts = CollectionService:GetTagged(tag)
+    for _, p in ipairs(parts) do
+        if p:IsA("BasePart") and p.Parent then return p end
+    end
+    return nil
+end
+
+local function getWinZonePart()
+    local parts = CollectionService:GetTagged("OpenCheckpointModal")
+    for _, p in ipairs(parts) do
+        if p:IsA("BasePart") and p.Parent then return p end
+    end
+    return nil
+end
+
+local espHighlights, espConnections = {}, {}
+local ESP_FILL = Color3.fromRGB(0, 120, 255)
+local ESP_OUTLINE = Color3.fromRGB(255, 255, 255)
+
+local function applyESP(player)
+    pcall(function()
+        if player == LocalPlayer then return end
+        local char = player.Character
+        if not char or espHighlights[player] then return end
+        local hl = Instance.new("Highlight")
+        hl.FillColor = ESP_FILL
+        hl.OutlineColor = ESP_OUTLINE
+        hl.FillTransparency = 0.5
+        hl.OutlineTransparency = 0
+        hl.Adornee = char
+        hl.Parent = char
+        espHighlights[player] = hl
+        espConnections[player] = player.CharacterAdded:Connect(function()
+            espHighlights[player] = nil
+            if Flags.ESPEnabled then task.wait(0.5) applyESP(player) end
+        end)
+    end)
+end
+
+local function removeESP(player)
+    pcall(function()
+        if espHighlights[player] then espHighlights[player]:Destroy() espHighlights[player] = nil end
+        if espConnections[player] then espConnections[player]:Disconnect() espConnections[player] = nil end
+    end)
+end
+
+local function enableAllESP() for _, p in ipairs(Players:GetPlayers()) do applyESP(p) end end
+local function disableAllESP() for _, p in ipairs(Players:GetPlayers()) do removeESP(p) end end
+
+local flyBody = {}
 local function enableFly()
-    if not HRP then return end
-    if flyBody.bv then flyBody.bv:Destroy() end
-    if flyBody.bg then flyBody.bg:Destroy() end
-    local bv = Instance.new("BodyVelocity")
-    bv.Velocity = Vector3.zero
-    bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
-    bv.Parent = HRP
-    flyBody.bv = bv
-    local bg = Instance.new("BodyGyro")
-    bg.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
-    bg.Parent = HRP
-    flyBody.bg = bg
+    pcall(function()
+        if not HRP then return end
+        if flyBody.bv then flyBody.bv:Destroy() end
+        if flyBody.bg then flyBody.bg:Destroy() end
+        local bv = Instance.new("BodyVelocity")
+        bv.Velocity = Vector3.zero
+        bv.MaxForce = Vector3.new(1e5,1e5,1e5)
+        bv.Parent = HRP
+        flyBody.bv = bv
+        local bg = Instance.new("BodyGyro")
+        bg.MaxTorque = Vector3.new(1e5,1e5,1e5)
+        bg.D = 50
+        bg.Parent = HRP
+        flyBody.bg = bg
+    end)
 end
 
 local function disableFly()
-    if flyBody.bv then flyBody.bv:Destroy() end
-    if flyBody.bg then flyBody.bg:Destroy() end
-    flyBody.bv = nil
-    flyBody.bg = nil
+    pcall(function()
+        if flyBody.bv then flyBody.bv:Destroy() flyBody.bv = nil end
+        if flyBody.bg then flyBody.bg:Destroy() flyBody.bg = nil end
+        if Humanoid then Humanoid:ChangeState(Enum.HumanoidStateType.Landed) end
+    end)
 end
 
 RunService.RenderStepped:Connect(function()
-    if Flags.Fly and HRP and flyBody.bv then
+    if not Flags.Fly then return end
+    pcall(function()
+        if not HRP or not flyBody.bv or not flyBody.bg then return end
         local cam = workspace.CurrentCamera
         local dir = Vector3.zero
         if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir = dir + cam.CFrame.LookVector end
         if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir = dir - cam.CFrame.LookVector end
         if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir = dir - cam.CFrame.RightVector end
         if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir = dir + cam.CFrame.RightVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.new(0, 1, 0) end
-        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then dir = dir - Vector3.new(0, 1, 0) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.new(0,1,0) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then dir = dir - Vector3.new(0,1,0) end
         if dir.Magnitude > 0 then dir = dir.Unit end
-        flyBody.bv.Velocity = dir * Flags.FlySpeed
+        flyBody.bv.Velocity = dir * FLY_SPEED
         flyBody.bg.CFrame = cam.CFrame
-    end
+    end)
 end)
 
 RunService.Stepped:Connect(function()
-    if Flags.Noclip and Character then
+    if not Flags.Noclip or not Character then return end
+    pcall(function()
         for _, part in ipairs(Character:GetDescendants()) do
             if part:IsA("BasePart") then part.CanCollide = false end
         end
-    end
+    end)
 end)
 
 UserInputService.JumpRequest:Connect(function()
-    if Flags.InfiniteJump and Humanoid then
-        Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+    if Flags.InfiniteJump then
+        pcall(function() if Humanoid then Humanoid:ChangeState(Enum.HumanoidStateType.Jumping) end end)
     end
 end)
 
-local function getTreadmillParts()
-    local parts = {}
-    for _, tag in ipairs({"Treadmill", "GoldTreadmill", "DiamondTreadmill", "CandyTreadmill", "AdminTreadmill", "AdminAbuseTreadmill"}) do
-        for _, p in ipairs(game:GetService("CollectionService"):GetTagged(tag)) do
-            if p:IsA("BasePart") then table.insert(parts, {part = p, tag = tag}) end
-        end
-    end
-    return parts
-end
-
-local function getWinZone()
-    for _, p in ipairs(game:GetService("CollectionService"):GetTagged("OpenCheckpointModal")) do
-        if p:IsA("BasePart") then return p end
-    end
-    return nil
-end
-
-local function getWaypointsToTarget(targetBlock)
-    local waypoints = {}
-    local structure = workspace:FindFirstChild("Structure")
-    if not structure then return {targetBlock} end
-    local allWinBlocks = {}
-    local stages = {}
-    for _, stage in ipairs(structure:GetChildren()) do
-        local sNum = tonumber(stage.Name:match("^Stage(%d+)$"))
-        if sNum then table.insert(stages, {num = sNum, obj = stage}) end
-    end
-    table.sort(stages, function(a,b) return a.num < b.num end)
-    for _, stageData in ipairs(stages) do
-        local winBlocks = {}
-        for _, child in ipairs(stageData.obj:GetChildren()) do
-            local wNum = tonumber(child.Name:match("^WinBlock(%d+)$"))
-            if wNum then table.insert(winBlocks, {num = wNum, obj = child}) end
-        end
-        table.sort(winBlocks, function(a,b) return a.num < b.num end)
-        for _, wb in ipairs(winBlocks) do
-            table.insert(allWinBlocks, wb.obj)
-        end
-    end
-    for _, wb in ipairs(allWinBlocks) do
-        table.insert(waypoints, wb)
-        if wb == targetBlock then break end
-    end
-    return waypoints
-end
-
-local function moveToPosition(pos)
-    if not HRP or not Humanoid then return false end
-    Humanoid:MoveTo(pos)
-    local success = false
-    local finished = false
-    local conn = Humanoid.MoveToFinished:Connect(function(reached)
-        finished = true
-        success = reached
-        conn:Disconnect()
+LocalPlayer.CharacterAdded:Connect(function(char)
+    task.wait(0.5)
+    refreshCharacter(char)
+    if Flags.Fly then disableFly() task.wait(0.1) enableFly() end
+    pcall(function()
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then hum.WalkSpeed = Flags.WalkSpeed hum.JumpPower = Flags.JumpPower end
     end)
-    task.wait(4)
-    if not finished then conn:Disconnect() end
-    return success
-end
+end)
 
 local autoWinRunning = false
 local function startAutoWin()
@@ -168,122 +266,136 @@ local function startAutoWin()
     autoWinRunning = true
     task.spawn(function()
         while Flags.AutoWin do
-            local winZone = getWinZone()
-            if winZone and HRP then
-                local distance = (winZone.Position - HRP.Position).Magnitude
-                if distance < 10 then
-                    local winRemote = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("Win")
-                    if winRemote then winRemote:FireServer() end
-                    task.wait(2)
+            pcall(function()
+                local winZone = getWinZonePart()
+                if winZone and HRP then
+                    local distance = (winZone.Position - HRP.Position).Magnitude
+                    if distance < 10 then
+                        local winRemote = getRemote("Win")
+                        if winRemote then winRemote:FireServer() end
+                        task.wait(2)
+                    else
+                        local targetPos = winZone.Position + Vector3.new(0, 4, 0)
+                        local tween = TweenService:Create(HRP, TweenInfo.new(math.clamp(distance/100, 0.5, 3), Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPos)})
+                        tween:Play()
+                        tween.Completed:Wait()
+                    end
                 else
-                    local targetPos = winZone.Position + Vector3.new(0, 4, 0)
-                    local tween = TweenService:Create(HRP, TweenInfo.new(math.clamp(distance / 100, 0.5, 3), Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPos)})
-                    tween:Play()
-                    tween.Completed:Wait()
-                end
-            else
-                local targetBlock = nil
-                local structure = workspace:FindFirstChild("Structure")
-                if structure then
-                    local highestStage = nil
-                    local highestWin = nil
+                    local structure = workspace:FindFirstChild("Structure")
+                    if not structure then return end
+                    local bestStageNum, bestWinNum, bestWinBlock = -1, -1, nil
                     for _, stage in ipairs(structure:GetChildren()) do
                         local sNum = tonumber(stage.Name:match("^Stage(%d+)$"))
                         if sNum then
                             for _, child in ipairs(stage:GetChildren()) do
                                 local wNum = tonumber(child.Name:match("^WinBlock(%d+)$"))
                                 if wNum then
-                                    if not highestStage or sNum > highestStage or (sNum == highestStage and wNum > highestWin) then
-                                        highestStage = sNum
-                                        highestWin = wNum
-                                        targetBlock = child
+                                    if sNum > bestStageNum or (sNum == bestStageNum and wNum > bestWinNum) then
+                                        bestStageNum = sNum
+                                        bestWinNum = wNum
+                                        bestWinBlock = child
                                     end
                                 end
                             end
                         end
                     end
-                end
-                if targetBlock then
-                    local waypoints = getWaypointsToTarget(targetBlock)
-                    for _, wp in ipairs(waypoints) do
-                        if not Flags.AutoWin then break end
-                        moveToPosition(wp.Position + Vector3.new(0, 3, 0))
-                        task.wait(0.2)
+                    if bestWinBlock and HRP then
+                        local pos
+                        if bestWinBlock:IsA("BasePart") then pos = bestWinBlock.Position
+                        elseif bestWinBlock:IsA("Model") then pos = bestWinBlock:GetPivot().Position end
+                        if pos then
+                            local dist = (pos - HRP.Position).Magnitude
+                            local tween = TweenService:Create(HRP, TweenInfo.new(math.clamp(dist/100, 0.5, 3), Enum.EasingStyle.Linear), {CFrame = CFrame.new(pos + Vector3.new(0,4,0))})
+                            tween:Play()
+                            tween.Completed:Wait()
+                        end
                     end
                 end
-            end
-            task.wait(2)
+            end)
+            task.wait(1)
         end
         autoWinRunning = false
     end)
 end
 
 local function activateBoosts()
-    local data = ClientState.Data
+    local data = safeGetState()
     local updates = {}
     for k, v in pairs(data) do
-        if k == "GoldTreadmillActive" or k == "DiamondTreadmillActive" or k == "CandyTreadmillActive" or k == "AdminTreadmillActive" then
-            if v == false then updates[k] = true end
+        if (k == "GoldTreadmillActive" or k == "DiamondTreadmillActive" or k == "CandyTreadmillActive" or k == "AdminTreadmillActive") and v == false then
+            updates[k] = true
         end
     end
-    if Flags.SpeedBoost and data.SpeedBoostActive == false then
-        updates.SpeedBoostActive = true
-    end
-    if Flags.WinsBoost and data.WinsBoostActive == false then
-        updates.WinsBoostActive = true
-    end
-    if next(updates) then
-        ClientState.Update(ClientState, updates)
-        return true
-    end
+    if Flags.SpeedBoost and data.SpeedBoostActive == false then updates.SpeedBoostActive = true end
+    if Flags.WinsBoost and data.WinsBoostActive == false then updates.WinsBoostActive = true end
+    if next(updates) then safeUpdateState(updates) return true end
     return false
 end
 
-local function activateTreadmill()
-    if not Flags.TreadmillActive or not Flags.SelectedTreadmill then return end
-    local updateSpeed = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("UpdateSpeed")
-    if updateSpeed then
-        updateSpeed:FireServer(Flags.SelectedTreadmill)
-    end
-end
-
-local function refreshTreadmillList()
-    local data = ClientState.Data
-    local options = {}
-    local treadmills = {
-        {name = "Treadmill", stateKey = nil},
-        {name = "GoldTreadmill", stateKey = "GoldTreadmillActive"},
-        {name = "DiamondTreadmill", stateKey = "DiamondTreadmillActive"},
-        {name = "CandyTreadmill", stateKey = "CandyTreadmillActive"},
-        {name = "AdminTreadmill", stateKey = "AdminTreadmillActive"},
-        {name = "AdminAbuseTreadmill", stateKey = nil}
-    }
-    for _, t in ipairs(treadmills) do
-        if t.stateKey == nil or data[t.stateKey] then
-            table.insert(options, "✅ " .. t.name)
-        else
-            table.insert(options, "🔒 " .. t.name)
-        end
-    end
-    return options
-end
-
 local Window = Rayfield:CreateWindow({
-    Name = "Cactus Hub",
-    LoadingTitle = "CACTUS HUB",
-    LoadingSubtitle = "Loading...",
+    Name = "🌵 CACTUS HUB PRO",
+    LoadingTitle = "🌵 CACTUS HUB",
+    LoadingSubtitle = "Loading features...",
     Theme = "Default",
     ConfigurationSaving = {Enabled = true, FolderName = "CactusHub", FileName = "Config"},
     KeySystem = false,
 })
 
-local TabMain = Window:CreateTab("Main", nil)
-local TabFarming = Window:CreateTab("Farming", nil)
-local TabSettings = Window:CreateTab("Settings", nil)
+local TabMain = Window:CreateTab("🏠 Main", 76000123934453)
+local TabFarming = Window:CreateTab("🌾 Farming", 76000123934453)
+local TabVisuals = Window:CreateTab("👁️ Visuals", 76000123934453)
+local TabSettings = Window:CreateTab("⚙️ Settings", 76000123934453)
 
-TabMain:CreateSection("Boosts")
+local function safeSection(tab, name)
+    pcall(function() tab:CreateSection(name) end)
+end
+
+safeSection(TabMain, "📊 Live Stats")
+local LabelLevel = TabMain:CreateLabel("⚡ Level: --")
+local LabelWins  = TabMain:CreateLabel("🏆 Wins: --")
+local LabelMult  = TabMain:CreateLabel("✖️ Rebirth Mult: --")
+local LabelReb   = TabMain:CreateLabel("🔄 Rebirths: --")
+local LabelXP    = TabMain:CreateLabel("💫 XP: --")
+local LabelSpeed = TabMain:CreateLabel("🏃 Total XP (Speed): --")
+local LabelBoost = TabMain:CreateLabel("🚀 Speed Boost Mult: --")
+local LabelTrail = TabMain:CreateLabel("🌊 Trail: --")
+local LabelAura  = TabMain:CreateLabel("✨ Aura: --")
+local LabelStep  = TabMain:CreateLabel("👣 Step Bonus: --")
+local LabelFPS   = TabMain:CreateLabel("🖥️ FPS: --")
+
+local frameCount, lastFPSTime = 0, os.clock()
+RunService.RenderStepped:Connect(function()
+    frameCount = frameCount + 1
+    if os.clock() - lastFPSTime >= 1 then
+        pcall(function() LabelFPS:Set("🖥️ FPS: " .. frameCount) end)
+        frameCount = 0
+        lastFPSTime = os.clock()
+    end
+end)
+
+task.spawn(function()
+    while true do
+        pcall(function()
+            local d = safeGetState()
+            LabelLevel:Set("⚡ Level: "            .. tostring(d.Level or 0))
+            LabelWins:Set("🏆 Wins: "              .. fmtNum(d.Wins or 0))
+            LabelMult:Set("✖️ Rebirth Mult: x"     .. fmtNum(d.Multiplier or 1))
+            LabelReb:Set("🔄 Rebirths: "           .. tostring(d.Rebirths or 0))
+            LabelXP:Set("💫 XP: "                  .. fmtNum(d.XP or 0) .. " / " .. fmtNum(d.XPRequired or 100))
+            LabelSpeed:Set("🏃 Total XP (Speed): " .. fmtNum(d.TotalXP or 0))
+            LabelBoost:Set("🚀 Speed Boost: x"     .. fmtNum(d.SpeedBoostMultiplier or 1))
+            LabelTrail:Set("🌊 Trail: "             .. tostring(d.EquippedTrail or "None"))
+            LabelAura:Set("✨ Aura: "               .. tostring(d.EquippedAura or "None"))
+            LabelStep:Set("👣 Step Bonus: "         .. tostring(d.StepBonus or 1))
+        end)
+        task.wait(1)
+    end
+end)
+
+safeSection(TabMain, "🚀 Boosts")
+
 TabMain:CreateToggle({
-    Name = "Speed Boost",
+    Name = "⚡ Speed Boost",
     CurrentValue = false,
     Flag = "SpeedBoost",
     Callback = function(v)
@@ -291,8 +403,9 @@ TabMain:CreateToggle({
         if v then activateBoosts() end
     end
 })
+
 TabMain:CreateToggle({
-    Name = "Wins Boost",
+    Name = "🏆 Wins Boost",
     CurrentValue = false,
     Flag = "WinsBoost",
     Callback = function(v)
@@ -300,82 +413,225 @@ TabMain:CreateToggle({
         if v then activateBoosts() end
     end
 })
+
 TabMain:CreateButton({
-    Name = "Activate All Boosts Now",
+    Name = "💥 Activate All Boosts Now",
     Callback = function()
         Flags.SpeedBoost = true
         Flags.WinsBoost = true
         if activateBoosts() then
-            Rayfield:Notify({Title="Boosts", Content="All boosts activated!", Duration=3})
+            Rayfield:Notify({Title="🚀 Boosts", Content="All boosts activated!", Duration=3})
         else
-            Rayfield:Notify({Title="Boosts", Content="Already active or failed.", Duration=3})
+            Rayfield:Notify({Title="🚀 Boosts", Content="Already active or failed.", Duration=3})
         end
     end
 })
 
-TabMain:CreateSection("Treadmills")
-local treadmillOptions = refreshTreadmillList()
-local treadmillDropdown = TabMain:CreateDropdown({
-    Name = "Select Treadmill",
-    Options = treadmillOptions,
-    CurrentOption = treadmillOptions[1],
-    Callback = function(selected)
-        for _, t in ipairs({"Treadmill", "GoldTreadmill", "DiamondTreadmill", "CandyTreadmill", "AdminTreadmill", "AdminAbuseTreadmill"}) do
-            if selected:find(t) then
-                Flags.SelectedTreadmill = t
-                break
+TabMain:CreateButton({
+    Name = "🔓 Unlock All Treadmills",
+    Callback = function()
+        local data = safeGetState()
+        local updates = {}
+        for k, v in pairs(data) do
+            if k:find("TreadmillActive") and v == false then updates[k] = true end
+        end
+        if next(updates) then
+            safeUpdateState(updates)
+            Rayfield:Notify({Title="🔓 Unlocked", Content="All treadmills activated!", Duration=3})
+        else
+            Rayfield:Notify({Title="🔓 Unlocked", Content="All already unlocked or unavailable.", Duration=2})
+        end
+    end
+})
+
+safeSection(TabMain, "🎁 Rewards")
+
+TabMain:CreateButton({
+    Name = "🎁 Claim Group Gift",
+    Callback = function()
+        local verify = getRemote("VerifyGroup")
+        local claim  = getRemote("ClaimGift")
+        if verify and claim then
+            task.spawn(function()
+                local inGroup = safeInvokeServer(verify)
+                if inGroup then
+                    safeFireServer(claim)
+                    Rayfield:Notify({Title="✅ Claimed", Content="Group gift claimed!", Duration=3})
+                else
+                    Rayfield:Notify({Title="❌ Not In Group", Content="Join the group first.", Duration=3})
+                end
+            end)
+        else
+            local altClaim = getRemote("ClaimGroupGift") or getRemote("GroupGift")
+            if altClaim then
+                safeFireServer(altClaim)
+                Rayfield:Notify({Title="🎁 Fired", Content="Claim gift fired.", Duration=3})
+            else
+                Rayfield:Notify({Title="❌ Error", Content="Gift remotes not found.", Duration=3})
             end
         end
     end
 })
-TabMain:CreateToggle({
-    Name = "Auto Run Treadmill",
-    CurrentValue = false,
-    Flag = "TreadmillActive",
-    Callback = function(v)
-        Flags.TreadmillActive = v
-        if v then
-            task.spawn(function()
-                while Flags.TreadmillActive do
-                    activateTreadmill()
-                    task.wait(0.15)
+
+TabMain:CreateButton({
+    Name = "🏅 Equip Best Step Award",
+    Callback = function()
+        local remote = getRemote("EquipStepAward")
+        if not remote then
+            Rayfield:Notify({Title="❌ Error", Content="EquipStepAward remote not found.", Duration=3})
+            return
+        end
+        local state = safeGetState()
+        local wins = state.Wins or 0
+        if Config and Config.STEP_AWARDS then
+            local bestId, bestBonus = nil, 0
+            for id, award in pairs(Config.STEP_AWARDS) do
+                local req = tonumber(award.ReqWins) or 0
+                if wins >= req and (award.Bonus or 0) > bestBonus then
+                    bestBonus = award.Bonus
+                    bestId = id
+                end
+            end
+            if bestId then
+                safeFireServer(remote, bestId)
+                Rayfield:Notify({Title="✅ Equipped", Content="Best award: "..bestId.." (+"..bestBonus.."/step)", Duration=3})
+            else
+                Rayfield:Notify({Title="ℹ️ None Available", Content="No awards unlocked yet.", Duration=3})
+            end
+        else
+            safeFireServer(remote, "Best")
+            Rayfield:Notify({Title="✅ Equipped", Content="Fired equip award.", Duration=3})
+        end
+    end
+})
+
+safeSection(TabMain, "📍 Quick Teleport")
+
+TabMain:CreateButton({
+    Name = "🏃 Teleport to Treadmill",
+    Callback = function()
+        local found = nil
+        for _, t in ipairs(TREADMILL_TYPES) do
+            local p = getTreadmillPart(t.tag)
+            if p then found = p break end
+        end
+        if not found then
+            pcall(function()
+                local folder = workspace:FindFirstChild("Treadmill")
+                if folder then
+                    for _, c in ipairs(folder:GetDescendants()) do
+                        if c:IsA("BasePart") then found = c break end
+                    end
                 end
             end)
         end
-    end
-})
-TabMain:CreateButton({
-    Name = "Refresh Treadmill List",
-    Callback = function()
-        local newOptions = refreshTreadmillList()
-        treadmillDropdown:SetOptions(newOptions)
-        Rayfield:Notify({Title="Refreshed", Content="Treadmill list updated.", Duration=2})
+        if found and HRP then
+            pcall(function() HRP.CFrame = CFrame.new(found.Position + Vector3.new(0,4,0)) end)
+            Rayfield:Notify({Title="✅ Teleported", Content="On treadmill: "..found.Name, Duration=2})
+        else
+            Rayfield:Notify({Title="❌ Error", Content="No treadmill part found.", Duration=3})
+        end
     end
 })
 
 TabMain:CreateButton({
-    Name = "Unlock All Treadmills",
+    Name = "🏁 Teleport to Win Zone",
     Callback = function()
-        local data = ClientState.Data
-        local updates = {}
-        for k, v in pairs(data) do
-            if k:find("TreadmillActive") and v == false then
-                updates[k] = true
+        local part = getWinZonePart()
+        if part and HRP then
+            pcall(function() HRP.CFrame = CFrame.new(part.Position + Vector3.new(0,4,0)) end)
+            Rayfield:Notify({Title="✅ Teleported", Content="At win/checkpoint zone!", Duration=2})
+        else
+            local found = false
+            pcall(function()
+                local structure = workspace:FindFirstChild("Structure") or workspace:FindFirstChild("Map")
+                if structure then
+                    for _, c in ipairs(structure:GetDescendants()) do
+                        if c:IsA("BasePart") and (c.Name:lower():find("finish") or c.Name:lower():find("win") or c.Name:lower():find("end")) then
+                            if HRP then HRP.CFrame = CFrame.new(c.Position + Vector3.new(0,4,0)) end
+                            found = true
+                            Rayfield:Notify({Title="✅ Teleported", Content="At: "..c.Name, Duration=2})
+                            break
+                        end
+                    end
+                end
+            end)
+            if not found then
+                Rayfield:Notify({Title="❌ Error", Content="Win zone not found.", Duration=3})
             end
         end
-        if next(updates) then
-            ClientState.Update(ClientState, updates)
-            Rayfield:Notify({Title="Unlocked", Content="All treadmills activated!", Duration=3})
-            treadmillDropdown:SetOptions(refreshTreadmillList())
-        else
-            Rayfield:Notify({Title="Unlocked", Content="All already unlocked.", Duration=2})
+    end
+})
+
+safeSection(TabFarming, "🏃 Treadmill Farming")
+
+local treadmillLabels = getTreadmillLabels()
+local treadmillDropdown = TabFarming:CreateDropdown({
+    Name = "🎰 Treadmill Type",
+    Options = treadmillLabels,
+    CurrentOption = treadmillLabels[1],
+    Flag = "TreadmillType",
+    Callback = function(selected)
+        for i, label in ipairs(treadmillLabels) do
+            if label == selected then selectedTreadmillIdx = i break end
         end
     end
 })
 
-TabFarming:CreateSection("Auto Win")
+TabFarming:CreateButton({
+    Name = "🔄 Refresh Treadmill List",
+    Callback = function()
+        treadmillLabels = getTreadmillLabels()
+        pcall(function() treadmillDropdown:SetOptions(treadmillLabels) end)
+        Rayfield:Notify({Title="🔄 Refreshed", Content="Treadmill list updated.", Duration=2})
+    end
+})
+
 TabFarming:CreateToggle({
-    Name = "Auto Win (Tween to finish)",
+    Name = "▶️ Treadmill Auto-Run",
+    CurrentValue = false,
+    Flag = "TreadmillAuto",
+    Callback = function(v)
+        Flags.TreadmillAuto = v
+        local updateSpeed = getRemote("UpdateSpeed")
+        local treadSignal = getRemote("TreadmillSignal")
+        if v then
+            pcall(function()
+                local t = TREADMILL_TYPES[selectedTreadmillIdx]
+                local part = getTreadmillPart(t.tag)
+                if not part then
+                    for _, obj in ipairs(workspace:GetDescendants()) do
+                        if obj:IsA("BasePart") and CollectionService:HasTag(obj, t.tag) then
+                            part = obj break
+                        end
+                    end
+                end
+                if part and HRP then
+                    HRP.CFrame = CFrame.new(part.Position + Vector3.new(0,4,0))
+                    task.wait(0.3)
+                end
+            end)
+            if treadSignal then pcall(function() treadSignal:FireServer(true) end) end
+            task.spawn(function()
+                while Flags.TreadmillAuto do
+                    if updateSpeed then
+                        local t = TREADMILL_TYPES[selectedTreadmillIdx]
+                        pcall(function() updateSpeed:FireServer(t.remote) end)
+                    end
+                    task.wait(0.15)
+                end
+                if treadSignal then pcall(function() treadSignal:FireServer(false) end) end
+            end)
+        else
+            if treadSignal then pcall(function() treadSignal:FireServer(false) end) end
+        end
+    end
+})
+
+safeSection(TabFarming, "🏆 Auto Win")
+
+TabFarming:CreateToggle({
+    Name = "🏆 Auto Win (Tween to Finish)",
     CurrentValue = false,
     Flag = "AutoWin",
     Callback = function(v)
@@ -383,22 +639,194 @@ TabFarming:CreateToggle({
         if v then startAutoWin() end
     end
 })
-TabFarming:CreateButton({
-    Name = "Teleport to Win Zone",
-    Callback = function()
-        local winZone = getWinZone()
-        if winZone and HRP then
-            HRP.CFrame = CFrame.new(winZone.Position + Vector3.new(0, 4, 0))
-            Rayfield:Notify({Title="Teleported", Content="At win zone!", Duration=2})
-        else
-            Rayfield:Notify({Title="Error", Content="Win zone not found.", Duration=2})
+
+safeSection(TabFarming, "🔄 Rebirth")
+
+TabFarming:CreateToggle({
+    Name = "🤖 Auto Rebirth (Smart)",
+    CurrentValue = false,
+    Flag = "SmartRebirth",
+    Callback = function(v)
+        Flags.SmartRebirth = v
+        local remote = getRemote("Rebirth")
+        if v and remote then
+            task.spawn(function()
+                while Flags.SmartRebirth do
+                    pcall(function()
+                        local data = safeGetState()
+                        local tiers = getRebirthTiers()
+                        local nextIdx = (data.Rebirths or 0) + 1
+                        if nextIdx <= #tiers then
+                            local tier = tiers[nextIdx]
+                            if (data.Level or 0) >= (tier.level or math.huge) then
+                                safeFireServer(remote)
+                                Rayfield:Notify({Title="🔄 Rebirthed!", Content="Rebirth #"..nextIdx.." done!", Duration=3})
+                                task.wait(2)
+                            end
+                        end
+                    end)
+                    task.wait(2)
+                end
+            end)
         end
     end
 })
 
-TabFarming:CreateSection("Movement")
+TabFarming:CreateButton({
+    Name = "⚡ Manual Rebirth",
+    Callback = function()
+        safeFireServer(getRemote("Rebirth"))
+        Rayfield:Notify({Title="🔄 Rebirth", Content="Rebirth fired!", Duration=3})
+    end
+})
+
+safeSection(TabFarming, "⚡ Speed")
+
+TabFarming:CreateButton({
+    Name = "🚀 Set Max Speed for Level",
+    Callback = function()
+        pcall(function()
+            local data = safeGetState()
+            local maxSpeed = nil
+            if Config and Config.CalculateMaxSpeed then
+                maxSpeed = Config.CalculateMaxSpeed(data.Level or 0)
+            end
+            if maxSpeed and maxSpeed > 0 then
+                local remote = getRemote("SetCustomSpeed")
+                if remote then
+                    safeFireServer(remote, maxSpeed)
+                    if Humanoid then Humanoid.WalkSpeed = maxSpeed end
+                    Rayfield:Notify({Title="✅ Speed Set", Content="Max speed: "..math.floor(maxSpeed), Duration=3})
+                else
+                    Rayfield:Notify({Title="❌ Error", Content="SetCustomSpeed remote not found.", Duration=3})
+                end
+            else
+                Rayfield:Notify({Title="❌ Error", Content="Could not calculate max speed.", Duration=3})
+            end
+        end)
+    end
+})
+
+safeSection(TabFarming, "✨ Auras & Trails")
+
 TabFarming:CreateToggle({
-    Name = "Fly",
+    Name = "✨ Auto Equip Best Aura",
+    CurrentValue = false,
+    Flag = "AutoEquipBestAura",
+    Callback = function(v)
+        Flags.AutoEquipBestAura = v
+        if v then
+            task.spawn(function()
+                while Flags.AutoEquipBestAura do
+                    pcall(function()
+                        local data = safeGetState()
+                        local owned = data.OwnedAuras or {}
+                        local equipped = data.EquippedAura or "None"
+                        local bestAura, bestMult = nil, 0
+                        if #owned > 0 then
+                            local AurasCfg
+                            pcall(function()
+                                AurasCfg = require(ReplicatedStorage:WaitForChild("FeatureConfigs"):WaitForChild("Auras"))
+                            end)
+                            if AurasCfg and AurasCfg.AURAS then
+                                for _, auraId in ipairs(owned) do
+                                    local aura = AurasCfg.AURAS[auraId]
+                                    if aura and (aura.multiplier or 1) > bestMult then
+                                        bestMult = aura.multiplier
+                                        bestAura = auraId
+                                    end
+                                end
+                            else
+                                bestAura = owned[1]
+                            end
+                        end
+                        if bestAura and bestAura ~= equipped then
+                            safeFireServer(getRemote("EquipAura"), bestAura)
+                        end
+                    end)
+                    task.wait(5)
+                end
+            end)
+        end
+    end
+})
+
+TabFarming:CreateButton({
+    Name = "📋 List Owned Auras (Console)",
+    Callback = function()
+        local data = safeGetState()
+        local owned = data.OwnedAuras or {}
+        if #owned == 0 then
+            Rayfield:Notify({Title="✨ Auras", Content="No auras owned.", Duration=3})
+        else
+            print("[CactusHub] Owned Auras:")
+            for i, v in ipairs(owned) do print("  "..i..". "..tostring(v)) end
+            Rayfield:Notify({Title="✨ Auras", Content="Check console (F9). Owned: "..#owned, Duration=3})
+        end
+    end
+})
+
+TabFarming:CreateButton({
+    Name = "📋 List Owned Trails (Console)",
+    Callback = function()
+        local data = safeGetState()
+        local owned = data.OwnedTrails or {}
+        if #owned == 0 then
+            Rayfield:Notify({Title="🌊 Trails", Content="No trails owned.", Duration=3})
+        else
+            print("[CactusHub] Owned Trails:")
+            for i, v in ipairs(owned) do print("  "..i..". "..tostring(v)) end
+            Rayfield:Notify({Title="🌊 Trails", Content="Check console (F9). Owned: "..#owned, Duration=3})
+        end
+    end
+})
+
+safeSection(TabFarming, "🧍 Character")
+
+TabFarming:CreateSlider({
+    Name = "🏃 WalkSpeed",
+    Range = {16, 500},
+    Increment = 1,
+    Suffix = " studs/s",
+    CurrentValue = 16,
+    Flag = "WalkSpeed",
+    Callback = function(v)
+        Flags.WalkSpeed = v
+        pcall(function() if Humanoid then Humanoid.WalkSpeed = v end end)
+    end
+})
+
+TabFarming:CreateSlider({
+    Name = "🦘 JumpPower",
+    Range = {16, 500},
+    Increment = 1,
+    Suffix = " power",
+    CurrentValue = 50,
+    Flag = "JumpPower",
+    Callback = function(v)
+        Flags.JumpPower = v
+        pcall(function() if Humanoid then Humanoid.JumpPower = v end end)
+    end
+})
+
+safeSection(TabFarming, "🎮 Movement")
+
+TabFarming:CreateToggle({
+    Name = "🚫 Noclip",
+    CurrentValue = false,
+    Flag = "Noclip",
+    Callback = function(v) Flags.Noclip = v end
+})
+
+TabFarming:CreateToggle({
+    Name = "🦘 Infinite Jump",
+    CurrentValue = false,
+    Flag = "InfiniteJump",
+    Callback = function(v) Flags.InfiniteJump = v end
+})
+
+TabFarming:CreateToggle({
+    Name = "🦅 Fly",
     CurrentValue = false,
     Flag = "Fly",
     Callback = function(v)
@@ -406,52 +834,156 @@ TabFarming:CreateToggle({
         if v then enableFly() else disableFly() end
     end
 })
+
 TabFarming:CreateSlider({
-    Name = "Fly Speed",
-    Range = {10, 500},
+    Name = "🦅 Fly Speed",
+    Range = {10, 1000},
     Increment = 5,
+    Suffix = " studs/s",
     CurrentValue = 50,
     Flag = "FlySpeed",
-    Callback = function(v) Flags.FlySpeed = v end
+    Callback = function(v) FLY_SPEED = v end
 })
-TabFarming:CreateToggle({
-    Name = "Noclip",
+
+safeSection(TabVisuals, "👁️ Player ESP")
+
+TabVisuals:CreateToggle({
+    Name = "👁️ Player ESP",
     CurrentValue = false,
-    Flag = "Noclip",
-    Callback = function(v) Flags.Noclip = v end
-})
-TabFarming:CreateToggle({
-    Name = "Infinite Jump",
-    CurrentValue = false,
-    Flag = "InfiniteJump",
-    Callback = function(v) Flags.InfiniteJump = v end
-})
-TabFarming:CreateSlider({
-    Name = "WalkSpeed",
-    Range = {16, 500},
-    Increment = 1,
-    CurrentValue = 16,
-    Flag = "WalkSpeed",
+    Flag = "ESPEnabled",
     Callback = function(v)
-        Flags.WalkSpeed = v
-        if Humanoid then Humanoid.WalkSpeed = v end
-    end
-})
-TabFarming:CreateSlider({
-    Name = "JumpPower",
-    Range = {16, 500},
-    Increment = 1,
-    CurrentValue = 50,
-    Flag = "JumpPower",
-    Callback = function(v)
-        Flags.JumpPower = v
-        if Humanoid then Humanoid.JumpPower = v end
+        Flags.ESPEnabled = v
+        if v then
+            enableAllESP()
+            Players.PlayerAdded:Connect(function(plr)
+                plr.CharacterAdded:Connect(function()
+                    task.wait(0.5)
+                    if Flags.ESPEnabled then applyESP(plr) end
+                end)
+            end)
+        else
+            disableAllESP()
+        end
     end
 })
 
-TabSettings:CreateSection("Anti-AFK")
+Players.PlayerRemoving:Connect(removeESP)
+
+TabVisuals:CreateColorPicker({
+    Name = "🎨 ESP Fill Color",
+    Color = ESP_FILL,
+    Flag = "ESPFillColor",
+    Callback = function(c)
+        ESP_FILL = c
+        for _, hl in pairs(espHighlights) do pcall(function() hl.FillColor = c end) end
+    end
+})
+
+TabVisuals:CreateColorPicker({
+    Name = "🖍️ ESP Outline Color",
+    Color = ESP_OUTLINE,
+    Flag = "ESPOutlineColor",
+    Callback = function(c)
+        ESP_OUTLINE = c
+        for _, hl in pairs(espHighlights) do pcall(function() hl.OutlineColor = c end) end
+    end
+})
+
+safeSection(TabVisuals, "🌍 World")
+
+TabVisuals:CreateToggle({
+    Name = "☀️ Fullbright",
+    CurrentValue = false,
+    Flag = "BrightMode",
+    Callback = function(v)
+        Flags.BrightMode = v
+        pcall(function()
+            local L = game:GetService("Lighting")
+            if v then
+                L.Brightness = 10
+                L.ClockTime = 14
+                L.FogEnd = 1e6
+                L.GlobalShadows = false
+                L.Ambient = Color3.fromRGB(255,255,255)
+                L.OutdoorAmbient = Color3.fromRGB(255,255,255)
+            else
+                L.Brightness = 1
+                L.FogEnd = 100000
+                L.GlobalShadows = true
+                L.Ambient = Color3.fromRGB(127,127,127)
+                L.OutdoorAmbient = Color3.fromRGB(127,127,127)
+            end
+        end)
+    end
+})
+
+TabVisuals:CreateToggle({
+    Name = "🕵️ Hide Other Players",
+    CurrentValue = false,
+    Flag = "HidePlayers",
+    Callback = function(v)
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character then
+                pcall(function()
+                    for _, p in ipairs(plr.Character:GetDescendants()) do
+                        if p:IsA("BasePart") or p:IsA("Decal") then
+                            p.Transparency = v and 1 or 0
+                        end
+                    end
+                end)
+            end
+        end
+    end
+})
+
+safeSection(TabSettings, "🌐 Server")
+
+TabSettings:CreateButton({
+    Name = "🔄 Rejoin Server",
+    Callback = function()
+        local ok, err = pcall(function()
+            TeleportService:Teleport(game.PlaceId, LocalPlayer)
+        end)
+        if not ok then
+            Rayfield:Notify({Title="❌ Error", Content="Rejoin failed.", Duration=3})
+        end
+    end
+})
+
+TabSettings:CreateButton({
+    Name = "🎲 Server Hop",
+    Callback = function()
+        task.spawn(function()
+            local ok, err = pcall(function()
+                local http = game:GetService("HttpService")
+                local url = "https://games.roblox.com/v1/games/"..game.PlaceId.."/servers/Public?limit=100"
+                local raw = game:HttpGet(url)
+                local data = http:JSONDecode(raw)
+                local servers = {}
+                for _, s in ipairs(data.data or {}) do
+                    if s.id ~= game.JobId and s.playing < s.maxPlayers then
+                        table.insert(servers, s.id)
+                    end
+                end
+                if #servers > 0 then
+                    local pick = servers[math.random(1, #servers)]
+                    TeleportService:TeleportToPlaceInstance(game.PlaceId, pick, LocalPlayer)
+                    Rayfield:Notify({Title="🎲 Server Hop", Content="Joining new server...", Duration=3})
+                else
+                    Rayfield:Notify({Title="🎲 Server Hop", Content="No open servers found.", Duration=3})
+                end
+            end)
+            if not ok then
+                Rayfield:Notify({Title="❌ Error", Content="Server hop failed.", Duration=3})
+            end
+        end)
+    end
+})
+
+safeSection(TabSettings, "🛡️ Anti-AFK")
+
 TabSettings:CreateToggle({
-    Name = "Anti AFK",
+    Name = "🛡️ Anti-AFK",
     CurrentValue = false,
     Flag = "AntiAFK",
     Callback = function(v)
@@ -460,10 +992,13 @@ TabSettings:CreateToggle({
             task.spawn(function()
                 while Flags.AntiAFK do
                     pcall(function()
-                        local vu = LocalPlayer:FindFirstChild("VirtualUser") or Instance.new("VirtualUser")
-                        vu.Parent = LocalPlayer
-                        vu:CaptureController()
-                        vu:ClickButton2(Vector2.new())
+                        local vrs = LocalPlayer:FindFirstChild("VirtualUser")
+                        if not vrs then
+                            vrs = Instance.new("VirtualUser")
+                            vrs.Parent = LocalPlayer
+                        end
+                        vrs:CaptureController()
+                        vrs:ClickButton2(Vector2.new())
                     end)
                     task.wait(60)
                 end
@@ -472,12 +1007,95 @@ TabSettings:CreateToggle({
     end
 })
 
+safeSection(TabSettings, "👤 Player Info")
+
 TabSettings:CreateButton({
-    Name = "Copy Discord Invite",
+    Name = "📋 Copy UserId",
     Callback = function()
-        setclipboard("https://discord.gg/qMWFBWdcf")
-        Rayfield:Notify({Title="Copied!", Content="Discord link copied!", Duration=2})
+        pcall(function()
+            local ok = pcall(setclipboard, tostring(LocalPlayer.UserId))
+            if not ok then pcall(toclipboard, tostring(LocalPlayer.UserId)) end
+        end)
+        Rayfield:Notify({Title="📋 UserId", Content=tostring(LocalPlayer.UserId), Duration=3})
     end
 })
 
-Rayfield:Notify({Title="Cactus Hub", Content="Loaded!", Duration=3})
+TabSettings:CreateButton({
+    Name = "📋 Copy Username",
+    Callback = function()
+        pcall(function()
+            local ok = pcall(setclipboard, LocalPlayer.Name)
+            if not ok then pcall(toclipboard, LocalPlayer.Name) end
+        end)
+        Rayfield:Notify({Title="📋 Username", Content=LocalPlayer.Name, Duration=3})
+    end
+})
+
+TabSettings:CreateButton({
+    Name = "🔍 Print All State Keys (Console)",
+    Callback = function()
+        local data = safeGetState()
+        print("[CactusHub] ClientState:")
+        for k, v in pairs(data) do
+            if type(v) == "table" then
+                print("  "..tostring(k)..": [table len="..#v.."]")
+            else
+                print("  "..tostring(k)..": "..tostring(v))
+            end
+        end
+        Rayfield:Notify({Title="🔍 Printed", Content="Check console (F9).", Duration=3})
+    end
+})
+
+safeSection(TabSettings, "💾 Config")
+
+TabSettings:CreateButton({
+    Name = "💾 Save Config",
+    Callback = function()
+        local ok = pcall(function() Rayfield:SaveConfiguration() end)
+        if ok then
+            Rayfield:Notify({Title="✅ Saved", Content="Configuration saved.", Duration=3})
+        else
+            Rayfield:Notify({Title="❌ Error", Content="Save failed.", Duration=3})
+        end
+    end
+})
+
+TabSettings:CreateButton({
+    Name = "🔁 Reset All Settings",
+    Callback = function()
+        pcall(function()
+            Flags.TreadmillAuto = false
+            Flags.SmartRebirth = false
+            Flags.Noclip = false
+            Flags.InfiniteJump = false
+            Flags.ESPEnabled = false
+            Flags.WalkSpeed = 16
+            Flags.JumpPower = 50
+            Flags.AutoWin = false
+            Flags.Fly = false
+            Flags.AntiAFK = false
+            Flags.BrightMode = false
+            Flags.AutoEquipBestAura = false
+            Flags.SpeedBoost = false
+            Flags.WinsBoost = false
+            FLY_SPEED = 50
+            if Humanoid then
+                Humanoid.WalkSpeed = 16
+                Humanoid.JumpPower = 50
+            end
+            disableFly()
+            disableAllESP()
+            local L = game:GetService("Lighting")
+            L.Brightness = 1
+            L.FogEnd = 100000
+            L.GlobalShadows = true
+            L.Ambient = Color3.fromRGB(127,127,127)
+            L.OutdoorAmbient = Color3.fromRGB(127,127,127)
+        end)
+        Rayfield:Notify({Title="🔁 Reset", Content="All settings reset to default.", Duration=3})
+    end
+})
+
+pcall(function() Rayfield:LoadConfiguration() end)
+Rayfield:Notify({Title="🌵 Cactus Hub Pro", Content="✅ Loaded successfully! v3.0", Duration=4})
