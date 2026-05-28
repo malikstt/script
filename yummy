@@ -1150,24 +1150,12 @@ task.spawn(function()
 	gameTab:CreateSection("Combat")
 
 	local combatEnabled = false
+	local GoopGunServiceUtils = nil
+	local gunController = nil
 
-	featureToggle(gameTab, {
-		Name = "Auto Shoot Enemies",
-		CurrentValue = false,
-		Flag = "CombatAutoShoot",
-		Callback = function(value)
-			combatEnabled = value
-		end,
-	})
-
-	gameTab:CreateDropdown({
-		Name = "Combat Target Priority",
-		Options = {"Closest", "Lowest HP", "Highest HP", "Most Coins & Goop"},
-		CurrentOption = {"Closest"},
-		MultipleOptions = false,
-		Flag = "CombatTargetPriority",
-		Callback = function() end,
-	})
+	pcall(function()
+		GoopGunServiceUtils = require(ReplicatedStorage.Source.Features.GoopGun.GoopGunServiceUtils)
+	end)
 
 	local screenGui = Instance.new("ScreenGui")
 	screenGui.Name = "SlimeGunHUD"
@@ -1347,24 +1335,6 @@ task.spawn(function()
 		scheduleExpiry(uid)
 	end
 
-	local GameplayServiceClient, GoopGunServiceUtils
-	local function loadCombatModules()
-		local ok, result = pcall(function()
-			return require(ReplicatedStorage.Source.Features.Gameplay.GameplayServiceClient)
-		end)
-		if ok then GameplayServiceClient = result end
-		local ok3, result3 = pcall(function()
-			return require(ReplicatedStorage.Source.Features.GoopGun.GoopGunServiceUtils)
-		end)
-		if ok3 then GoopGunServiceUtils = result3 end
-	end
-
-	for i = 1, 20 do
-		loadCombatModules()
-		if GameplayServiceClient and GoopGunServiceUtils then break end
-		task.wait(0.5)
-	end
-
 	local function ensureGunEquipped()
 		local char = localPlayer.Character
 		if not char then return false end
@@ -1412,7 +1382,6 @@ task.spawn(function()
 		if not enemiesFolder then return nil, nil end
 
 		local priority = rayfieldLibrary.Flags.CombatTargetPriority and rayfieldLibrary.Flags.CombatTargetPriority.CurrentOption[1] or "Closest"
-
 		local bestEnemy, bestValue, bestId = nil, nil, nil
 
 		for _, enemy in ipairs(enemiesFolder:GetChildren()) do
@@ -1451,84 +1420,105 @@ task.spawn(function()
 		return bestEnemy, bestId
 	end
 
-	local gunController = nil
+	featureToggle(gameTab, {
+		Name = "Auto Shoot Enemies",
+		CurrentValue = false,
+		Flag = "CombatAutoShoot",
+		Callback = function(value)
+			combatEnabled = value
+			if not value then gunController = nil end
+		end,
+	})
+
+	gameTab:CreateDropdown({
+		Name = "Combat Target Priority",
+		Options = {"Closest", "Lowest HP", "Highest HP", "Most Coins & Goop"},
+		CurrentOption = {"Closest"},
+		MultipleOptions = false,
+		Flag = "CombatTargetPriority",
+		Callback = function() end,
+	})
 
 	task.spawn(function()
 		while true do
-			if combatEnabled then
-				local char = localPlayer.Character
-				if char then
-					local humanoid = char:FindFirstChildOfClass("Humanoid")
-					if humanoid and humanoid.Health > 0 then
-						if not GameplayServiceClient or not GameplayServiceClient.gameplay then
-							task.wait(0.5)
-							continue
-						end
-
-						ensureGunEquipped()
-
-						if not gunController then
-							gunController = findGunController()
-							if not gunController then task.wait(0.5) continue end
-						end
-
-						local upgrades = (dataServiceClient and dataServiceClient:get("upgrades")) or {}
-						local fireRate = 0.1
-						if GoopGunServiceUtils then
-							pcall(function() fireRate = GoopGunServiceUtils.getFireRate(upgrades) end)
-						end
-
-						local targetEnemy, targetId = selectCombatTarget()
-
-						if targetEnemy and targetId then
-							local gameplay = GameplayServiceClient.gameplay
-							local enemyData = gameplay and gameplay.enemies and gameplay.enemies[tostring(targetId)]
-
-							if enemyData and enemyData.health > 0 then
-								local healthBefore = enemyData.health
-
-								local ok, err = pcall(function()
-									local orig = gunController._getTargetEnemyId
-									gunController._getTargetEnemyId = function() return targetId end
-									gunController:onActivated()
-									gunController._getTargetEnemyId = orig
-								end)
-
-								if not ok then
-									gunController = nil
-									task.wait(0.3)
-									continue
-								end
-
-								task.wait(0.05)
-
-								local healthAfter = enemyData.health
-								local dmg = healthBefore - healthAfter
-
-								if dmg > 0 then
-									local label = getEnemyLabel(enemyData)
-									local color = getMutationColor(enemyData.mutations)
-									local uid = tostring(targetId)
-									if activePopups[uid] then
-										updatePopup(uid, dmg, healthAfter)
-									else
-										createPopup(uid, label, dmg, healthAfter, color)
-									end
-								end
-							end
-						end
-
-						task.wait(fireRate)
-					else
-						task.wait(1)
-					end
-				else
-					task.wait(1)
-				end
-			else
+			task.wait(0.1)
+			if not combatEnabled then
 				gunController = nil
-				task.wait(0.5)
+				task.wait(0.3)
+				continue
 			end
+
+			local char = localPlayer.Character
+			if not char then task.wait(0.5) continue end
+			local humanoid = char:FindFirstChildOfClass("Humanoid")
+			if not humanoid or humanoid.Health <= 0 then task.wait(1) continue end
+
+			local targetEnemy, targetId = selectCombatTarget()
+			if not targetEnemy or not targetId then task.wait(0.2) continue end
+
+			local tool = char:FindFirstChild("SlimeGun")
+			if not tool then
+				ensureGunEquipped()
+				gunController = nil
+				task.wait(0.3)
+				continue
+			end
+
+			if not gunController then
+				gunController = findGunController()
+				if not gunController then task.wait(0.5) continue end
+			end
+
+			local upgrades = (dataServiceClient and dataServiceClient:get("upgrades")) or {}
+			local fireRate = 0.1
+			if GoopGunServiceUtils then
+				pcall(function() fireRate = GoopGunServiceUtils.getFireRate(upgrades) end)
+			end
+
+			local healthBefore = targetEnemy:GetAttribute("health") or targetEnemy:GetAttribute("currentHealth") or 0
+			local humanoidInEnemy = targetEnemy:FindFirstChildWhichIsA("Humanoid")
+			if humanoidInEnemy then healthBefore = humanoidInEnemy.Health end
+
+			local ok, err = pcall(function()
+				local orig = gunController._getTargetEnemyId
+				gunController._getTargetEnemyId = function() return targetId end
+				gunController:onActivated()
+				gunController._getTargetEnemyId = orig
+			end)
+
+			if not ok then
+				gunController = nil
+				task.wait(0.3)
+				continue
+			end
+
+			task.wait(0.05)
+
+			local healthAfter = targetEnemy:GetAttribute("health") or targetEnemy:GetAttribute("currentHealth") or 0
+			if humanoidInEnemy then healthAfter = humanoidInEnemy.Health end
+			local dmg = healthBefore - healthAfter
+
+			if dmg > 0 then
+				local enemyData = {
+					enemyId = targetEnemy:GetAttribute("enemyId") or 1,
+					uniqueId = targetEnemy:GetAttribute("uniqueId") or targetId,
+					mutations = {}
+				}
+				for _, mut in ipairs({"inverted","huge","shiny","big"}) do
+					local val = targetEnemy:GetAttribute(mut)
+					if val then enemyData.mutations[mut] = true end
+				end
+				local label = getEnemyLabel(enemyData)
+				local color = getMutationColor(enemyData.mutations)
+				local uid = tostring(targetId)
+				if activePopups[uid] then
+					updatePopup(uid, dmg, healthAfter)
+				else
+					createPopup(uid, label, dmg, healthAfter, color)
+				end
+			end
+
+			task.wait(fireRate)
 		end
 	end)
 
