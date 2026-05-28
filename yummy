@@ -1112,7 +1112,7 @@ task.spawn(function()
 	})
 
 	-- ==============================
-	-- DAMAGE UI & COMBAT SYSTEM (IMPROVED)
+	-- DAMAGE UI & COMBAT SYSTEM (FIXED)
 	-- ==============================
 	local screenGui = Instance.new("ScreenGui")
 	screenGui.Name = "SlimeGunHUD"
@@ -1295,7 +1295,7 @@ task.spawn(function()
 		scheduleExpiry(uid)
 	end
 
-	-- Load Combat Modules
+	-- Load combat modules with retries
 	local GameplayServiceClient, GoopGunServiceClient, GoopGunServiceUtils
 	local function loadCombatModules()
 		local ok, result = pcall(function()
@@ -1331,6 +1331,14 @@ task.spawn(function()
 		end
 		return gun ~= nil
 	end
+
+	-- Keep gun equipped periodically
+	task.spawn(function()
+		while true do
+			task.wait(2)
+			pcall(ensureGunEquipped)
+		end
+	end)
 
 	local function selectCombatTarget()
 		local character = localPlayer.Character
@@ -1383,6 +1391,11 @@ task.spawn(function()
 			if combatEnabled then
 				local character = localPlayer.Character
 				if character and character:FindFirstChildOfClass("Humanoid") and character.Humanoid.Health > 0 then
+					-- Wait for gameplay data to be ready
+					if not GameplayServiceClient or not GameplayServiceClient.gameplay then
+						task.wait(0.5)
+						continue
+					end
 					ensureGunEquipped()
 					local upgrades = (dataServiceClient and dataServiceClient:get("upgrades")) or {}
 					local fireRate = 0.1
@@ -1392,44 +1405,36 @@ task.spawn(function()
 					local target = selectCombatTarget()
 					if target then
 						local targetId = target.Name
-						local gameplay = GameplayServiceClient and GameplayServiceClient.gameplay
+						local gameplay = GameplayServiceClient.gameplay
 						local enemy = gameplay and gameplay.enemies and gameplay.enemies[targetId]
-						local currentHealth = (enemy and enemy.health) or 0
-						if currentHealth > 0 then
+						if enemy and enemy.health > 0 then
+							-- Store health before shooting
+							local healthBefore = enemy.health
 							local shotFired = false
 							if GoopGunServiceClient then
 								local wrapper = GoopGunServiceClient.wrapper
 								if wrapper and wrapper.onEnemyHit then
 									pcall(function() wrapper.onEnemyHit(targetId) end)
 									shotFired = true
-								elseif GoopGunServiceClient.shoot then
-									pcall(function() GoopGunServiceClient.shoot(targetId) end)
-									shotFired = true
-								elseif GoopGunServiceClient.fire then
-									pcall(function() GoopGunServiceClient.fire(targetId) end)
-									shotFired = true
 								end
 							end
-							if not shotFired and not warnedOnce then
-								warn("[CactusHub] No valid shooting method found on GoopGunServiceClient")
-								warnedOnce = true
-							end
-						end
-						task.wait(0.05)
-						local newHealth = (enemy and enemy.health) or 0
-						local lastHealth = lastEnemyHealths[targetId] or currentHealth
-						local dmg = lastHealth - newHealth
-						if dmg > 0 and createPopup then
-							local enemyLabel = (enemy and getEnemyLabel(enemy)) or "Slime"
-							local accentColor = (enemy and getMutationColor(enemy.mutations)) or COLORS.normal
-							if activePopups[targetId] then
-								updatePopup(targetId, dmg, newHealth)
+							-- Small delay to let damage apply
+							task.wait(0.05)
+							-- Get new health after shot
+							local healthAfter = enemy.health
+							local dmg = healthBefore - healthAfter
+							if dmg > 0 then
+								local enemyLabel = getEnemyLabel(enemy)
+								local accentColor = getMutationColor(enemy.mutations)
+								if activePopups[targetId] then
+									updatePopup(targetId, dmg, healthAfter)
+								else
+									createPopup(targetId, enemyLabel, dmg, healthAfter, accentColor)
+								end
+								lastEnemyHealths[targetId] = healthAfter
 							else
-								createPopup(targetId, enemyLabel, dmg, newHealth, accentColor)
+								lastEnemyHealths[targetId] = healthBefore
 							end
-							lastEnemyHealths[targetId] = newHealth
-						else
-							lastEnemyHealths[targetId] = currentHealth
 						end
 					end
 					task.wait(fireRate)
@@ -1442,7 +1447,7 @@ task.spawn(function()
 		end
 	end)
 
-	-- GAME TAB — Recipes
+	-- GAME TAB — Recipes (unchanged, same as before)
 	gameTab:CreateSection("Recipes")
 
 	pcall(function()
@@ -1664,7 +1669,7 @@ task.spawn(function()
 		rayfieldLibrary:Notify({ Title="Cactus Hub", Content="Loaded — "..(#recipeIdsList).." unlocked recipes ready.", Duration=5, Image=4483362458 })
 	end)
 
-	-- INDEX TAB
+	-- INDEX TAB (unchanged)
 	local indexRunning = false
 	local indexThread, luckPollThread = nil, nil
 	local selectedCategoryOption = nil
