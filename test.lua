@@ -1131,18 +1131,20 @@ local statsTab     = mainWindow:CreateTab("Stats", 102533388850982)
 	end
 
 	local function findGunController()
-		local char = localPlayer.Character
-		if not char then return nil end
-		local tool = char:FindFirstChild("SlimeGun")
-		if not tool then return nil end
-		for _, v in ipairs(getgc(true)) do
-			if type(v) == "table" and rawget(v, "tool") == tool and rawget(v, "prevSendAt") ~= nil then
-				return v
-			end
+    local char = localPlayer.Character
+    if not char then return nil end
+    local tool = char:FindFirstChild("SlimeGun")
+    if not tool then return nil end
+    
+    if not getgc then return nil end  -- executor doesn't support it, skip silently
+    
+    for _, v in ipairs(getgc(true)) do
+        if type(v) == "table" and rawget(v, "tool") == tool and rawget(v, "prevSendAt") ~= nil then
+            return v
+        end
+    end
+    return nil
 		end
-		return nil
-	end
-
 	featureToggle(gameTab, {
 		Name = "Auto Shoot Enemies",
 		CurrentValue = false,
