@@ -57,7 +57,7 @@ task.spawn(function()
 	local mainWindow = rayfieldLibrary:CreateWindow({
 		Name = "Cactus Hub • discord.gg/qMWFBWdcf",
 		Icon = 0,
-		LoadingTitle = "Loading Interface",
+		LoadingTitle = "Loading",
 		LoadingSubtitle = "Please wait...",
 		Theme = "Default",
 		ToggleUIKeybind = "K",
@@ -784,7 +784,7 @@ task.spawn(function()
 
 	pcall(function()
 		local zoneOptions = { "Best Unlocked" }
-		local totalZones = ZonesModule and ZonesModule.getMaxZone() or 33
+		local totalZones = ZonesModule and ZonesModule.getMaxZone() or 40
 		for i = 1, totalZones do
 			local zone = ZonesModule and ZonesModule.getZone(i)
 			if zone and zone.name then
@@ -814,17 +814,17 @@ task.spawn(function()
 					if not zonesServiceRemote then error("ZonesService remote not loaded") end
 					local targetOption = rayfieldLibrary.Flags.FarmingZoneTarget and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
 					if targetOption == "Best Unlocked" then
-						for zoneNum = 33, 1, -1 do
+						for zoneNum = 40, 1, -1 do
 							if not (rayfieldLibrary.Flags.FarmingStayInBestZone and rayfieldLibrary.Flags.FarmingStayInBestZone.CurrentValue) then break end
 							zonesServiceRemote:InvokeServer("requestTeleportZone", zoneNum)
-							task.wait(1)
+							task.wait(0.25)
 							if (dataServiceClient:get("zone") or 1) == zoneNum then break end
 						end
 					else
 						local zoneNum = tonumber(targetOption:match("Zone (%d+)"))
 						if zoneNum then zonesServiceRemote:InvokeServer("requestTeleportZone", zoneNum) end
 					end
-					task.wait(10)
+					task.wait(30)
 				end
 			end)
 		end,
@@ -1613,6 +1613,7 @@ task.spawn(function()
 	local autoUfoZone = false
 	local autoUfoLoot = false
 	local lastUfoZoneId = nil
+	local lastUfoPhase = nil
 
 	ufoTab:CreateSection("Live Status")
 	local ufoPhaseLabel    = ufoTab:CreateLabel("🛸  Phase: —")
@@ -1668,7 +1669,10 @@ task.spawn(function()
 		Flag = "AutoUfoZone",
 		Callback = function(value)
 			autoUfoZone = value
-			lastUfoZoneId = nil
+			if not value then
+				lastUfoZoneId = nil
+				lastUfoPhase = nil
+			end
 		end,
 	})
 
@@ -1692,23 +1696,33 @@ task.spawn(function()
 
 	task.spawn(function()
 		while true do
+			task.wait(0.5)
 			pcall(function()
 				refreshUfoState()
-				if not ufoClient then return end
-				local state = ufoClient:getStateSource()()
 
-				if autoUfoZone and state.phase ~= "idle" and state.zoneId ~= nil then
-					if state.zoneId ~= lastUfoZoneId then
-						lastUfoZoneId = state.zoneId
-						ufoZonesRemote:InvokeServer("requestTeleportZone", state.zoneId)
-						rayfieldLibrary:Notify({
-							Title = "🛸 UFO Zone Updated",
-							Content = "Teleported to zone: " .. tostring(state.zoneId),
-							Duration = 3,
-						})
+				if not ufoClient then return end
+				local ok, state = pcall(function() return ufoClient:getStateSource()() end)
+				if not ok or not state then return end
+
+				if autoUfoZone then
+					local isActive = state.phase ~= "idle" and state.zoneId ~= nil
+					if isActive then
+						local zoneChanged = state.zoneId ~= lastUfoZoneId
+						local phaseChanged = state.phase ~= lastUfoPhase
+						if zoneChanged or phaseChanged then
+							lastUfoZoneId = state.zoneId
+							lastUfoPhase = state.phase
+							ufoZonesRemote:InvokeServer("requestTeleportZone", state.zoneId)
+							rayfieldLibrary:Notify({
+								Title = "🛸 UFO Zone",
+								Content = "Teleported to zone: " .. tostring(state.zoneId) .. " (" .. state.phase .. ")",
+								Duration = 3,
+							})
+						end
+					else
+						lastUfoZoneId = nil
+						lastUfoPhase = nil
 					end
-				elseif state.phase == "idle" then
-					lastUfoZoneId = nil
 				end
 
 				if autoUfoLoot then
@@ -1732,7 +1746,6 @@ task.spawn(function()
 					end
 				end
 			end)
-			task.wait(2)
 		end
 	end)
 
@@ -1931,7 +1944,7 @@ task.spawn(function()
 		Callback = function(enabled)
 			if not enabled then return end
 			task.spawn(function()
-				local codes = { "AAisComing","goingBananas","gullible","Sliming","test" }
+				local codes = { "AAisComing","goingBananas","gullible","Sliming","test","beammeup","aliensarehere" }
 				table.sort(codes)
 				while rayfieldLibrary.Flags.MiscRedeemCodes and rayfieldLibrary.Flags.MiscRedeemCodes.CurrentValue do
 					if not codeServiceRemote then error("CodeService remote not loaded") end
