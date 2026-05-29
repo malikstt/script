@@ -1178,7 +1178,6 @@ local function findGunController()
 
 	task.spawn(function()
     local controller = nil
-    local getgcChecked = false
     while true do
         task.wait(0.1)
         if not combatEnabled then
