@@ -638,7 +638,7 @@ local statsTab     = mainWindow:CreateTab("Stats", 102533388850982)
 	farmingTab:CreateSection("Rolling")
 
 	featureToggle(farmingTab, {
-		Name = "Auto Fast Roll",
+		Name = "Auto Fast Roll ( No Animation )",
 		CurrentValue = false,
 		Flag = "FarmingFastRoll",
 		Callback = function(enabled)
@@ -1159,7 +1159,7 @@ local function findGunController()
     return nil
 		end
 	featureToggle(gameTab, {
-		Name = "Auto Shoot Enemies",
+		Name = "Auto Shoot Enemies (getgc) ",
 		CurrentValue = false,
 		Flag = "CombatAutoShoot",
 		Callback = function(value)
