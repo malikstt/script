@@ -1177,42 +1177,43 @@ local function findGunController()
 	})
 
 	task.spawn(function()
-		local controller = nil
-		while true do
-			task.wait(0.1)
-			if not combatEnabled then
-				controller = nil
-				task.wait(0.3)
-				continue
-			end
-			local char = localPlayer.Character
-			if not char then task.wait(0.5) continue end
-			local humanoid = char:FindFirstChildWhichIsA("Humanoid")
-			if not humanoid or humanoid.Health <= 0 then task.wait(1) continue end
-			refreshEnemyCache()
-			local _, targetId = selectCombatTarget()
-			if not targetId then task.wait(0.2) continue end
-			local tool = char:FindFirstChild("SlimeGun")
-			if not tool then
-				equipSlimeGun()
-				controller = nil
-				task.wait(0.3)
-				continue
-			end
-			if not controller then
-				controller = findGunController()
-				if not controller then task.wait(0.5) continue end
-			end
-			local ok = pcall(function()
-				local orig = controller._getTargetEnemyId
-				controller._getTargetEnemyId = function() return targetId end
-				controller:onActivated()
-				controller._getTargetEnemyId = orig
-			end)
-			if not ok then controller = nil end
-			task.wait(0.05)
-		end
-	end)
+    local controller = nil
+    local getgcChecked = false
+    while true do
+        task.wait(0.1)
+        if not combatEnabled then
+            controller = nil
+            task.wait(0.3)
+            continue
+        end
+        pcall(function()
+            local char = localPlayer.Character
+            if not char then return end
+            local humanoid = char:FindFirstChildWhichIsA("Humanoid")
+            if not humanoid or humanoid.Health <= 0 then return end
+            refreshEnemyCache()
+            local _, targetId = selectCombatTarget()
+            if not targetId then return end
+            local tool = char:FindFirstChild("SlimeGun")
+            if not tool then
+                equipSlimeGun()
+                controller = nil
+                return
+            end
+            if not controller then
+                controller = findGunController()
+                if not controller then return end
+            end
+            local ok = pcall(function()
+                local orig = controller._getTargetEnemyId
+                controller._getTargetEnemyId = function() return targetId end
+                controller:onActivated()
+                controller._getTargetEnemyId = orig
+            end)
+            if not ok then controller = nil end
+        end)
+    end
+end)
 
 	gameTab:CreateSection("Progress")
 
