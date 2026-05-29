@@ -187,6 +187,30 @@ task.spawn(function()
 		end
 	end)
 
+	mainTab:CreateSection("Dashboard")
+	local dashboardBusy = false
+	featureToggle(mainTab, {
+		Name = "Dashboard",
+		CurrentValue = false,
+		Flag = "DashboardToggle",
+		Callback = function(Value)
+			if dashboardBusy then return end
+			dashboardBusy = true
+			if Value then
+				task.spawn(function()
+					loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))()
+					rayfieldLibrary:Notify({ Title = "Dashboard", Content = "Dashboard enabled!", Duration = 3 })
+					dashboardBusy = false
+				end)
+			else
+				local gui = localPlayer.PlayerGui:FindFirstChild("__MAINHUD__")
+				if gui then gui:Destroy() end
+				rayfieldLibrary:Notify({ Title = "Dashboard", Content = "Dashboard closed!", Duration = 3 })
+				dashboardBusy = false
+			end
+		end,
+	})
+
 	mainTab:CreateParagraph({ Title = "Enabled By Default", Content = "[+] Anti AFK" })
 	mainTab:CreateParagraph({
 		Title = "Latest Update",
@@ -1192,7 +1216,6 @@ task.spawn(function()
 		if not char then return nil end
 		local tool = char:FindFirstChild("SlimeGun")
 		if not tool then return nil end
-		
 		if not getgc then
 			if not getgcChecked then
 				Logger:warn("Executor", "Capability", "getgc not available — Auto Shoot disabled")
@@ -1200,12 +1223,10 @@ task.spawn(function()
 			end
 			return nil
 		end
-		
 		if not getgcChecked then
 			Logger:info("Executor", "Capability", "getgc available — Auto Shoot enabled")
 			getgcChecked = true
 		end
-		
 		for _, v in ipairs(getgc(true)) do
 			if type(v) == "table" and rawget(v, "tool") == tool and rawget(v, "prevSendAt") ~= nil then
 				return v
@@ -1331,36 +1352,27 @@ task.spawn(function()
 
 				while task.wait(0.5) and rayfieldLibrary.Flags.GameAutoUpgrade and rayfieldLibrary.Flags.GameAutoUpgrade.CurrentValue do
 					if not upgradeServiceClient_new or not dataServiceClient_new then continue end
-
 					local upgradeMode = rayfieldLibrary.Flags.GameUpgradeMode and rayfieldLibrary.Flags.GameUpgradeMode.CurrentOption or {"All"}
 					local modeSet = {}
 					for _, m in ipairs(upgradeMode) do modeSet[m] = true end
-
 					local unlockedUpgrades = dataServiceClient_new:get("upgrades") or {}
 					local coins       = dataServiceClient_new:get("coins") or 0
 					local goop        = dataServiceClient_new:get("goop") or 0
 					local rollCurrency= dataServiceClient_new:get("rollCurrency") or 0
-
 					for _, upgradeId in ipairs(upgradeIds) do
 						if unlockedUpgrades[upgradeId] == true then continue end
-
 						local costInfo = upgradeCosts[upgradeId]
 						if not costInfo then continue end
-
 						local costAmount   = costInfo.amount or 0
 						local currencyType = costInfo.currency
-
 						local modeMatches = modeSet["All"]
 							or (modeSet["Coins"] and currencyType == "coins")
 							or (modeSet["Goop"] and currencyType == "goop")
 							or (modeSet["Rolls"] and currencyType == "rollCurrency")
-
 						if not modeMatches then continue end
-
 						local canAfford = (currencyType == "coins" and coins >= costAmount)
 							or (currencyType == "goop" and goop >= costAmount)
 							or (currencyType == "rollCurrency" and rollCurrency >= costAmount)
-
 						if canAfford then
 							local success = upgradeServiceClient_new:unlockUpgrade(upgradeId)
 							if success then
@@ -2302,12 +2314,57 @@ task.spawn(function()
 
 	local function setAllOptimizations(value)
 		updatingOptimizations = true
+		if maxFpsToggle     then maxFpsToggle:Set(value) end
 		if optGPUToggle     then optGPUToggle:Set(value) end
 		if optEffectsToggle then optEffectsToggle:Set(value) end
 		if optGCToggle      then optGCToggle:Set(value) end
 		if optIntenseToggle then optIntenseToggle:Set(value) end
-		if maxFpsToggle     then maxFpsToggle:Set(value) end
 		updatingOptimizations = false
+
+		if value then
+			-- Max FPS
+			pcall(function() setfpscap(0) end)
+
+			-- Optimize GPU
+			pcall(function()
+				settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+				local lighting = game:GetService("Lighting")
+				lighting.GlobalShadows = false
+				lighting.EnvironmentDiffuseScale = 0
+				lighting.EnvironmentSpecularScale = 0
+				for _, descendant in ipairs(workspace:GetDescendants()) do
+					if descendant:IsA("BasePart") then
+						descendant.CastShadow = false
+						descendant.Reflectance = 0
+						descendant.Material = CHEAP_MATERIAL
+					end
+				end
+				local rs = game:GetService("RunService")
+				rs:Set3dRenderingEnabled(false)
+				task.wait(0.1)
+				rs:Set3dRenderingEnabled(true)
+			end)
+
+			-- Destroy Effects
+			pcall(function()
+				for _, descendant in ipairs(game:GetDescendants()) do
+					if OPT_VISUAL_TYPES[descendant.ClassName] or descendant:IsA("Fire") then
+						pcall(function() descendant:Destroy() end)
+					end
+				end
+			end)
+
+			-- Lua GC
+			if _G.__memoryCleaner then _G.__memoryCleaner:Disconnect() end
+			_G.__memoryCleaner = RunService.Heartbeat:Connect(function() gcinfo() end)
+
+			-- Intense Optimization
+			pcall(function()
+				loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/Optimization.lua"))()
+			end)
+		else
+			if _G.__memoryCleaner then _G.__memoryCleaner:Disconnect() _G.__memoryCleaner = nil end
+		end
 	end
 
 	settingsTab:CreateToggle({
