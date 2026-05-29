@@ -1,6 +1,41 @@
 task.spawn(function()
 	repeat task.wait() until game:IsLoaded()
 
+	local Logger = {}
+	Logger.LogHistory = {}
+
+	function Logger:log(level, system, feature, message, errorObj)
+		local logEntry = {
+			timestamp = os.time(),
+			level = level,
+			system = system,
+			feature = feature,
+			message = message,
+			error = errorObj
+		}
+		table.insert(self.LogHistory, logEntry)
+		
+		if #self.LogHistory > 200 then
+			table.remove(self.LogHistory, 1)
+		end
+
+		local prefix = string.format("[%s] [%s]%s", level, system, feature and " (" .. feature .. ")" or "")
+		local fullMsg = prefix .. " " .. tostring(message)
+		if errorObj then
+			fullMsg = fullMsg .. "\n  Error: " .. tostring(errorObj)
+		end
+		
+		if level == "ERROR" or level == "WARN" then
+			warn(fullMsg)
+		else
+			print(fullMsg)
+		end
+	end
+
+	function Logger:info(system, feature, message) self:log("INFO", system, feature, message) end
+	function Logger:warn(system, feature, message) self:log("WARN", system, feature, message) end
+	function Logger:error(system, feature, message, err) self:log("ERROR", system, feature, message, err) end
+
 	local Players = game:GetService("Players")
 	local localPlayer = Players.LocalPlayer
 	local RunService = game:GetService("RunService")
@@ -8,14 +43,19 @@ task.spawn(function()
 	local HttpService = game:GetService("HttpService")
 	local TweenService = game:GetService("TweenService")
 
+	Logger:info("CactusHub", "Init", "Loading Rayfield...")
+	
 	local rayfieldLibrary
 	local rayfieldOk, rayfieldErr = pcall(function()
 		rayfieldLibrary = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 	end)
+	
 	if not rayfieldOk or not rayfieldLibrary then
-		warn("[CactusHub] Rayfield failed to load: " .. tostring(rayfieldErr))
+		Logger:error("CactusHub", "RayfieldLoader", "Failed to load Rayfield", rayfieldErr)
 		return
 	end
+
+	Logger:info("CactusHub", "Init", "Rayfield loaded successfully")
 
 	local mainWindow = rayfieldLibrary:CreateWindow({
 		Name = "Cactus Hub • discord.gg/qMWFBWdcf",
@@ -42,12 +82,12 @@ task.spawn(function()
 		wrappedConfig.Callback = function(value)
 			local ok, err = pcall(originalCallback or fn, value)
 			if not ok then
+				Logger:error("Feature", config.Name, "Toggle callback error", err)
 				rayfieldLibrary:Notify({
-					Title = "Feature Failed: " .. tostring(config.Name),
-					Content = tostring(err):sub(1, 150),
-					Duration = 6,
+					Title = "Error: " .. tostring(config.Name),
+					Content = tostring(err):sub(1, 100),
+					Duration = 5,
 				})
-				warn("[CactusHub] Toggle error (" .. tostring(config.Name) .. "): " .. tostring(err))
 			end
 		end
 		return tab:CreateToggle(wrappedConfig)
@@ -60,25 +100,65 @@ task.spawn(function()
 		wrappedConfig.Callback = function()
 			local ok, err = pcall(originalCallback)
 			if not ok then
+				Logger:error("Feature", config.Name, "Button callback error", err)
 				rayfieldLibrary:Notify({
-					Title = "Button Failed: " .. tostring(config.Name),
-					Content = tostring(err):sub(1, 150),
-					Duration = 6,
+					Title = "Error: " .. tostring(config.Name),
+					Content = tostring(err):sub(1, 100),
+					Duration = 5,
 				})
-				warn("[CactusHub] Button error (" .. tostring(config.Name) .. "): " .. tostring(err))
 			end
 		end
 		return tab:CreateButton(wrappedConfig)
 	end
 
 	local mainTab      = mainWindow:CreateTab("Main", 74725529332053)
-local farmingTab   = mainWindow:CreateTab("Farming", 114367663524453)
-local gameTab      = mainWindow:CreateTab("Game", 77999805030576)
-local indexTab     = mainWindow:CreateTab("Index", 123662711814867)
-local miscTab      = mainWindow:CreateTab("Misc", 83590339425734)
-local webhookTab   = mainWindow:CreateTab("Webhook", 84577758013974)
-local settingsTab  = mainWindow:CreateTab("Settings", 120533439477016)
-local statsTab     = mainWindow:CreateTab("Stats", 102533388850982)
+	local farmingTab   = mainWindow:CreateTab("Farming", 114367663524453)
+	local gameTab      = mainWindow:CreateTab("Game", 77999805030576)
+	local indexTab     = mainWindow:CreateTab("Index", 123662711814867)
+	local miscTab      = mainWindow:CreateTab("Misc", 83590339425734)
+	local webhookTab   = mainWindow:CreateTab("Webhook", 84577758013974)
+	local settingsTab  = mainWindow:CreateTab("Settings", 120533439477016)
+	local statsTab     = mainWindow:CreateTab("Stats", 102533388850982)
+	local debugTab     = mainWindow:CreateTab("Debug", 0)
+
+	debugTab:CreateSection("System Status")
+	local debugStatus = debugTab:CreateLabel("Status: Running...")
+	local debugErrors = debugTab:CreateLabel("Errors: 0")
+	local debugWarns = debugTab:CreateLabel("Warnings: 0")
+
+	debugTab:CreateSection("Executor Info")
+	local hasRequest = pcall(function() return request ~= nil end)
+	local hasGetGC = pcall(function() return getgc ~= nil end)
+	local hasDebug = pcall(function() return debug ~= nil end)
+	
+	debugTab:CreateLabel("request() API: " .. (hasRequest and "✅" or "❌"))
+	debugTab:CreateLabel("getgc() API: " .. (hasGetGC and "✅" or "❌"))
+	debugTab:CreateLabel("debug lib: " .. (hasDebug and "✅" or "❌"))
+
+	debugTab:CreateSection("Recent Issues")
+	local errorLog = debugTab:CreateLabel("No errors logged")
+
+	task.spawn(function()
+		while true do
+			task.wait(5)
+			pcall(function()
+				local errorCount = 0
+				local warnCount = 0
+				for _, entry in ipairs(Logger.LogHistory) do
+					if entry.level == "ERROR" then errorCount = errorCount + 1 end
+					if entry.level == "WARN" then warnCount = warnCount + 1 end
+				end
+				debugErrors:Set("Errors: " .. errorCount)
+				debugWarns:Set("Warnings: " .. warnCount)
+				
+				if #Logger.LogHistory > 0 then
+					local recent = Logger.LogHistory[#Logger.LogHistory]
+					errorLog:Set(string.format("[%s] %s\n%s", recent.level, recent.system, recent.message))
+				end
+			end)
+		end
+	end)
+
 	mainTab:CreateSection("Status")
 	local fpsLabel  = mainTab:CreateLabel("FPS: Calculating...")
 	local pingLabel = mainTab:CreateLabel("Ping: Calculating...")
@@ -113,34 +193,6 @@ local statsTab     = mainWindow:CreateTab("Stats", 102533388850982)
 		Content = "[+] Fixed Auto Shoot\n[+] Faster Rolling\n[+] Auto Complete Index\n[+] Auto Move to Enemy\n[+] Auto Stack Dice\n[+] Auto Feed Fruits\n[+] Bug Fixes & Performance"
 	})
 
-	local dashboardBusy = false
-	featureToggle(mainTab, {
-		Name = "Dashboard",
-		CurrentValue = false,
-		Flag = "DashboardToggle",
-		Callback = function(Value)
-			if dashboardBusy then return end
-			dashboardBusy = true
-			if Value then
-				task.spawn(function()
-					loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))()
-					rayfieldLibrary:Notify({ Title = "Dashboard", Content = "Dashboard enabled!", Duration = 3 })
-					dashboardBusy = false
-				end)
-			else
-				local gui = localPlayer.PlayerGui:FindFirstChild("__MAINHUD__")
-				if gui then gui:Destroy() end
-				rayfieldLibrary:Notify({ Title = "Dashboard", Content = "Dashboard closed!", Duration = 3 })
-				dashboardBusy = false
-			end
-		end,
-	})
-
-	featureButton(mainTab, {
-		Name = "Save Config Manually",
-		Callback = function() rayfieldLibrary:SaveConfiguration() end,
-	})
-
 	local packages, dataServiceClient, Networker
 	local networkerRoll, inventoryServiceClient, xpTransferServiceClient
 	local rollServiceRemote, codeServiceRemote, inventoryServiceRemote
@@ -160,11 +212,13 @@ local statsTab     = mainWindow:CreateTab("Stats", 102533388850982)
 	local modulesLoaded = false
 
 	task.spawn(function()
+		Logger:info("CactusHub", "ModuleLoad", "Starting module initialization...")
+
 		local ok, err = pcall(function()
 			packages = ReplicatedStorage:WaitForChild("Packages", 15)
 			if not packages then error("Packages not found") end
 			local indexFolder = packages:WaitForChild("_Index", 15)
-			if not indexFolder then error("_Index not found") end
+			if not indexFolder then error("_Index folder not found") end
 			local networkerModule = indexFolder:WaitForChild("leifstout_networker@0.3.1", 15)
 			if not networkerModule then error("networker package not found") end
 			networkerModule = networkerModule:WaitForChild("networker", 15)
@@ -183,9 +237,9 @@ local statsTab     = mainWindow:CreateTab("Stats", 102533388850982)
 			xpTransferServiceClient = Networker.client.new("XpTransferService")
 			local function getRemoteFunction(name)
 				local folder = remotesFolder:FindFirstChild(name) or remotesFolder:WaitForChild(name, 10)
-				if not folder then warn("[CactusHub] Remote folder not found: " .. name) return nil end
+				if not folder then Logger:warn("CactusHub", "Remotes", "Remote folder not found: " .. name) return nil end
 				local rf = folder:FindFirstChild("RemoteFunction") or folder:WaitForChild("RemoteFunction", 10)
-				if not rf then warn("[CactusHub] RemoteFunction not found in: " .. name) end
+				if not rf then Logger:warn("CactusHub", "Remotes", "RemoteFunction not found in: " .. name) end
 				return rf
 			end
 			rollServiceRemote      = getRemoteFunction("RollService")
@@ -245,6 +299,7 @@ local statsTab     = mainWindow:CreateTab("Stats", 102533388850982)
 			end)
 
 			modulesLoaded = true
+			Logger:info("CactusHub", "ModuleLoad", "All modules loaded successfully!")
 			rayfieldLibrary:Notify({
 				Title = "Cactus Hub",
 				Content = "All modules loaded! Features are ready.",
@@ -252,9 +307,9 @@ local statsTab     = mainWindow:CreateTab("Stats", 102533388850982)
 			})
 		end)
 		if not ok then
-			warn("[CactusHub] Module load error: " .. tostring(err))
+			Logger:error("CactusHub", "ModuleLoad", "Module initialization failed", err)
 			rayfieldLibrary:Notify({
-				Title = "Cactus Hub — Load Warning",
+				Title = "CactusHub — Load Warning",
 				Content = "Some modules failed: " .. tostring(err):sub(1, 120) .. "\nSome features may not work.",
 				Duration = 8,
 			})
@@ -1130,34 +1185,35 @@ local statsTab     = mainWindow:CreateTab("Stats", 102533388850982)
 		return false
 	end
 
-local getgcChecked = false
+	local getgcChecked = false
 
-local function findGunController()
-    local char = localPlayer.Character
-    if not char then return nil end
-    local tool = char:FindFirstChild("SlimeGun")
-    if not tool then return nil end
-    
-    if not getgc then
-        if not getgcChecked then
-            print("[CactusHub] Executor does not support getgc — Auto Shoot disabled")
-            getgcChecked = true
-        end
-        return nil
-    end
-    
-    if not getgcChecked then
-        print("[CactusHub] Executor supports getgc — Auto Shoot enabled")
-        getgcChecked = true
-    end
-    
-    for _, v in ipairs(getgc(true)) do
-        if type(v) == "table" and rawget(v, "tool") == tool and rawget(v, "prevSendAt") ~= nil then
-            return v
-        end
-    end
-    return nil
+	local function findGunController()
+		local char = localPlayer.Character
+		if not char then return nil end
+		local tool = char:FindFirstChild("SlimeGun")
+		if not tool then return nil end
+		
+		if not getgc then
+			if not getgcChecked then
+				Logger:warn("Executor", "Capability", "getgc not available — Auto Shoot disabled")
+				getgcChecked = true
+			end
+			return nil
 		end
+		
+		if not getgcChecked then
+			Logger:info("Executor", "Capability", "getgc available — Auto Shoot enabled")
+			getgcChecked = true
+		end
+		
+		for _, v in ipairs(getgc(true)) do
+			if type(v) == "table" and rawget(v, "tool") == tool and rawget(v, "prevSendAt") ~= nil then
+				return v
+			end
+		end
+		return nil
+	end
+
 	featureToggle(gameTab, {
 		Name = "Auto Shoot Enemies (getgc) ",
 		CurrentValue = false,
@@ -1177,42 +1233,42 @@ local function findGunController()
 	})
 
 	task.spawn(function()
-    local controller = nil
-    while true do
-        task.wait(0.1)
-        if not combatEnabled then
-            controller = nil
-            task.wait(0.3)
-            continue
-        end
-        pcall(function()
-            local char = localPlayer.Character
-            if not char then return end
-            local humanoid = char:FindFirstChildWhichIsA("Humanoid")
-            if not humanoid or humanoid.Health <= 0 then return end
-            refreshEnemyCache()
-            local _, targetId = selectCombatTarget()
-            if not targetId then return end
-            local tool = char:FindFirstChild("SlimeGun")
-            if not tool then
-                equipSlimeGun()
-                controller = nil
-                return
-            end
-            if not controller then
-                controller = findGunController()
-                if not controller then return end
-            end
-            local ok = pcall(function()
-                local orig = controller._getTargetEnemyId
-                controller._getTargetEnemyId = function() return targetId end
-                controller:onActivated()
-                controller._getTargetEnemyId = orig
-            end)
-            if not ok then controller = nil end
-        end)
-    end
-end)
+		local controller = nil
+		while true do
+			task.wait(0.1)
+			if not combatEnabled then
+				controller = nil
+				task.wait(0.3)
+				continue
+			end
+			pcall(function()
+				local char = localPlayer.Character
+				if not char then return end
+				local humanoid = char:FindFirstChildWhichIsA("Humanoid")
+				if not humanoid or humanoid.Health <= 0 then return end
+				refreshEnemyCache()
+				local _, targetId = selectCombatTarget()
+				if not targetId then return end
+				local tool = char:FindFirstChild("SlimeGun")
+				if not tool then
+					equipSlimeGun()
+					controller = nil
+					return
+				end
+				if not controller then
+					controller = findGunController()
+					if not controller then return end
+				end
+				local ok = pcall(function()
+					local orig = controller._getTargetEnemyId
+					controller._getTargetEnemyId = function() return targetId end
+					controller:onActivated()
+					controller._getTargetEnemyId = orig
+				end)
+				if not ok then controller = nil end
+			end)
+		end
+	end)
 
 	gameTab:CreateSection("Progress")
 
@@ -2567,4 +2623,5 @@ end)
 	end)
 
 	rayfieldLibrary:LoadConfiguration()
+	Logger:info("CactusHub", "Init", "Script initialization complete")
 end)
