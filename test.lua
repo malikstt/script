@@ -14,17 +14,14 @@ task.spawn(function()
 			error = errorObj
 		}
 		table.insert(self.LogHistory, logEntry)
-		
 		if #self.LogHistory > 200 then
 			table.remove(self.LogHistory, 1)
 		end
-
 		local prefix = string.format("[%s] [%s]%s", level, system, feature and " (" .. feature .. ")" or "")
 		local fullMsg = prefix .. " " .. tostring(message)
 		if errorObj then
 			fullMsg = fullMsg .. "\n  Error: " .. tostring(errorObj)
 		end
-		
 		if level == "ERROR" or level == "WARN" then
 			warn(fullMsg)
 		else
@@ -44,12 +41,12 @@ task.spawn(function()
 	local TweenService = game:GetService("TweenService")
 
 	Logger:info("CactusHub", "Init", "Loading Rayfield...")
-	
+
 	local rayfieldLibrary
 	local rayfieldOk, rayfieldErr = pcall(function()
 		rayfieldLibrary = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 	end)
-	
+
 	if not rayfieldOk or not rayfieldLibrary then
 		Logger:error("CactusHub", "RayfieldLoader", "Failed to load Rayfield", rayfieldErr)
 		return
@@ -114,6 +111,7 @@ task.spawn(function()
 	local mainTab      = mainWindow:CreateTab("Main", 74725529332053)
 	local farmingTab   = mainWindow:CreateTab("Farming", 114367663524453)
 	local gameTab      = mainWindow:CreateTab("Game", 77999805030576)
+	local ufoTab       = mainWindow:CreateTab("Ufo Event", 129180210444370)
 	local indexTab     = mainWindow:CreateTab("Index", 123662711814867)
 	local miscTab      = mainWindow:CreateTab("Misc", 83590339425734)
 	local webhookTab   = mainWindow:CreateTab("Webhook", 84577758013974)
@@ -175,7 +173,7 @@ task.spawn(function()
 	mainTab:CreateParagraph({ Title = "Enabled By Default", Content = "[+] Anti AFK" })
 	mainTab:CreateParagraph({
 		Title = "Latest Update",
-		Content = "[+] Fixed Auto Shoot\n[+] Faster Rolling\n[+] Auto Complete Index\n[+] Auto Move to Enemy\n[+] Auto Stack Dice\n[+] Auto Feed Fruits\n[+] Bug Fixes & Performance"
+		Content = "[+] Fixed Auto Shoot\n[+] Faster Rolling\n[+] Auto Complete Index\n[+] Auto Move to Enemy\n[+] Auto Stack Dice\n[+] Auto Feed Fruits\n[+] UFO Event Tab Added\n[+] Auto Stay in UFO Zone\n[+] Auto Collect UFO Loot\n[+] Live UFO Phase, Zone & Countdown Display\n[+] Bug Fixes & Performance"
 	})
 
 	local packages, dataServiceClient, Networker
@@ -1579,6 +1577,163 @@ task.spawn(function()
 		})
 
 		rayfieldLibrary:Notify({ Title="Cactus Hub", Content="Loaded — "..(#recipeIdsList).." unlocked recipes ready.", Duration=5, Image=4483362458 })
+	end)
+
+	local ufoClient = nil
+	local ufoZonesRemote = ReplicatedStorage
+		:WaitForChild("Packages")
+		:WaitForChild("_Index")
+		:WaitForChild("leifstout_networker@0.3.1")
+		:WaitForChild("networker")
+		:WaitForChild("_remotes")
+		:WaitForChild("ZonesService")
+		:WaitForChild("RemoteFunction")
+
+	local ufoLootRemote = nil
+	local function getUfoLootRemote()
+		if ufoLootRemote then return ufoLootRemote end
+		local ok, remote = pcall(function()
+			return ReplicatedStorage
+				:WaitForChild("Packages", 10)
+				:WaitForChild("_Index", 10)
+				:WaitForChild("leifstout_networker@0.3.1", 10)
+				:WaitForChild("networker", 10)
+				:WaitForChild("_remotes", 10)
+				:WaitForChild("LootService", 10)
+				:WaitForChild("RemoteFunction", 10)
+		end)
+		if ok then ufoLootRemote = remote end
+		return ufoLootRemote
+	end
+
+	pcall(function()
+		ufoClient = require(ReplicatedStorage.Source.Features.UfoEvent.UfoEventServiceClient)
+	end)
+
+	local autoUfoZone = false
+	local autoUfoLoot = false
+	local lastUfoZoneId = nil
+
+	ufoTab:CreateSection("Live Status")
+	local ufoPhaseLabel    = ufoTab:CreateLabel("🛸  Phase: —")
+	local ufoZoneIdLabel   = ufoTab:CreateLabel("📍  Zone ID: —")
+	local ufoZoneNameLabel = ufoTab:CreateLabel("🗺️  Zone Name: —")
+	local ufoNextLabel     = ufoTab:CreateLabel("⏳  Next Event: —")
+	local ufoGoldenLabel   = ufoTab:CreateLabel("⭐  Golden UFO: —")
+
+	local function refreshUfoState()
+		if not ufoClient then
+			ufoPhaseLabel:Set("🛸  Phase: Module not loaded")
+			return
+		end
+		local ok, state = pcall(function() return ufoClient:getStateSource()() end)
+		if not ok or not state then return end
+
+		local zoneName = "N/A"
+		pcall(function()
+			local ZonesModule = require(ReplicatedStorage.Source.Game.Items.Zones)
+			if state.zoneId and ZonesModule.hasZone(state.zoneId) then
+				zoneName = ZonesModule.getZone(state.zoneId).name
+			end
+		end)
+
+		local nextEvent = "N/A"
+		if state.nextEventStartTime then
+			local secs = math.max(0, math.round(state.nextEventStartTime - workspace:GetServerTimeNow()))
+			local mins = math.floor(secs / 60)
+			nextEvent = string.format("%02d:%02d", mins, secs % 60)
+		end
+
+		local phaseIcon = "⚪"
+		if state.phase == "hovering" then phaseIcon = "🟢"
+		elseif state.phase == "arriving" then phaseIcon = "🟡"
+		elseif state.phase == "departing" then phaseIcon = "🔴"
+		end
+
+		local isGolden = false
+		pcall(function() isGolden = ufoClient.isGolden == true end)
+
+		ufoPhaseLabel:Set("🛸  Phase: " .. phaseIcon .. " " .. state.phase:upper())
+		ufoZoneIdLabel:Set("📍  Zone ID: " .. (state.zoneId and tostring(state.zoneId) or "None"))
+		ufoZoneNameLabel:Set("🗺️  Zone Name: " .. zoneName)
+		ufoNextLabel:Set("⏳  Next Event: " .. nextEvent)
+		ufoGoldenLabel:Set("⭐  Golden UFO: " .. (isGolden and "Yes ✅" or "No ❌"))
+	end
+
+	ufoTab:CreateSection("Automation")
+
+	featureToggle(ufoTab, {
+		Name = "Auto Stay in UFO Zone",
+		CurrentValue = false,
+		Flag = "AutoUfoZone",
+		Callback = function(value)
+			autoUfoZone = value
+			lastUfoZoneId = nil
+		end,
+	})
+
+	featureToggle(ufoTab, {
+		Name = "Auto Collect UFO Loot",
+		CurrentValue = false,
+		Flag = "AutoUfoLoot",
+		Callback = function(value)
+			autoUfoLoot = value
+		end,
+	})
+
+	ufoTab:CreateSection("Controls")
+
+	featureButton(ufoTab, {
+		Name = "Refresh Status",
+		Callback = function()
+			refreshUfoState()
+		end,
+	})
+
+	task.spawn(function()
+		while true do
+			pcall(function()
+				refreshUfoState()
+				if not ufoClient then return end
+				local state = ufoClient:getStateSource()()
+
+				if autoUfoZone and state.phase ~= "idle" and state.zoneId ~= nil then
+					if state.zoneId ~= lastUfoZoneId then
+						lastUfoZoneId = state.zoneId
+						ufoZonesRemote:InvokeServer("requestTeleportZone", state.zoneId)
+						rayfieldLibrary:Notify({
+							Title = "🛸 UFO Zone Updated",
+							Content = "Teleported to zone: " .. tostring(state.zoneId),
+							Duration = 3,
+						})
+					end
+				elseif state.phase == "idle" then
+					lastUfoZoneId = nil
+				end
+
+				if autoUfoLoot then
+					local remote = getUfoLootRemote()
+					if remote then
+						for _, folderName in ipairs({"Loot", "Debris"}) do
+							local container = workspace:FindFirstChild(folderName)
+							if container then
+								for _, item in ipairs(container:GetChildren()) do
+									local id = item:GetAttribute("uniqueId")
+										or item:GetAttribute("id")
+										or item.Name
+									if id then
+										pcall(function()
+											remote:InvokeServer("requestCollect", id)
+										end)
+									end
+								end
+							end
+						end
+					end
+				end
+			end)
+			task.wait(2)
+		end
 	end)
 
 	local indexRunning = false
