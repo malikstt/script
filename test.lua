@@ -119,45 +119,6 @@ task.spawn(function()
 	local webhookTab   = mainWindow:CreateTab("Webhook", 84577758013974)
 	local settingsTab  = mainWindow:CreateTab("Settings", 120533439477016)
 	local statsTab     = mainWindow:CreateTab("Stats", 102533388850982)
-	local debugTab     = mainWindow:CreateTab("Debug", 0)
-
-	debugTab:CreateSection("System Status")
-	local debugStatus = debugTab:CreateLabel("Status: Running...")
-	local debugErrors = debugTab:CreateLabel("Errors: 0")
-	local debugWarns = debugTab:CreateLabel("Warnings: 0")
-
-	debugTab:CreateSection("Executor Info")
-	local hasRequest = pcall(function() return request ~= nil end)
-	local hasGetGC = pcall(function() return getgc ~= nil end)
-	local hasDebug = pcall(function() return debug ~= nil end)
-	
-	debugTab:CreateLabel("request() API: " .. (hasRequest and "✅" or "❌"))
-	debugTab:CreateLabel("getgc() API: " .. (hasGetGC and "✅" or "❌"))
-	debugTab:CreateLabel("debug lib: " .. (hasDebug and "✅" or "❌"))
-
-	debugTab:CreateSection("Recent Issues")
-	local errorLog = debugTab:CreateLabel("No errors logged")
-
-	task.spawn(function()
-		while true do
-			task.wait(5)
-			pcall(function()
-				local errorCount = 0
-				local warnCount = 0
-				for _, entry in ipairs(Logger.LogHistory) do
-					if entry.level == "ERROR" then errorCount = errorCount + 1 end
-					if entry.level == "WARN" then warnCount = warnCount + 1 end
-				end
-				debugErrors:Set("Errors: " .. errorCount)
-				debugWarns:Set("Warnings: " .. warnCount)
-				
-				if #Logger.LogHistory > 0 then
-					local recent = Logger.LogHistory[#Logger.LogHistory]
-					errorLog:Set(string.format("[%s] %s\n%s", recent.level, recent.system, recent.message))
-				end
-			end)
-		end
-	end)
 
 	mainTab:CreateSection("Status")
 	local fpsLabel  = mainTab:CreateLabel("FPS: Calculating...")
@@ -2322,10 +2283,7 @@ task.spawn(function()
 		updatingOptimizations = false
 
 		if value then
-			-- Max FPS
 			pcall(function() setfpscap(0) end)
-
-			-- Optimize GPU
 			pcall(function()
 				settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
 				local lighting = game:GetService("Lighting")
@@ -2344,8 +2302,6 @@ task.spawn(function()
 				task.wait(0.1)
 				rs:Set3dRenderingEnabled(true)
 			end)
-
-			-- Destroy Effects
 			pcall(function()
 				for _, descendant in ipairs(game:GetDescendants()) do
 					if OPT_VISUAL_TYPES[descendant.ClassName] or descendant:IsA("Fire") then
@@ -2353,12 +2309,8 @@ task.spawn(function()
 					end
 				end
 			end)
-
-			-- Lua GC
 			if _G.__memoryCleaner then _G.__memoryCleaner:Disconnect() end
 			_G.__memoryCleaner = RunService.Heartbeat:Connect(function() gcinfo() end)
-
-			-- Intense Optimization
 			pcall(function()
 				loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/Optimization.lua"))()
 			end)
