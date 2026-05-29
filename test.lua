@@ -639,7 +639,7 @@ task.spawn(function()
 			stopAutoWalk()
 			local hum = char:FindFirstChildWhichIsA("Humanoid")
 			if not hum then return end
-			hum.WalkSpeed = 50
+			hum.WalkSpeed = 16
 			hum:MoveTo(safePos)
 			autoWalkConn = RunService.Heartbeat:Connect(function()
 				if not char or not char.Parent or not isAlive(enemy) then stopAutoWalk() return end
