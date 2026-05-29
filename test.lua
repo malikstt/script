@@ -1130,13 +1130,26 @@ local statsTab     = mainWindow:CreateTab("Stats", 102533388850982)
 		return false
 	end
 
-	local function findGunController()
+local getgcChecked = false
+
+local function findGunController()
     local char = localPlayer.Character
     if not char then return nil end
     local tool = char:FindFirstChild("SlimeGun")
     if not tool then return nil end
     
-    if not getgc then return nil end  -- executor doesn't support it, skip silently
+    if not getgc then
+        if not getgcChecked then
+            print("[CactusHub] Executor does not support getgc — Auto Shoot disabled")
+            getgcChecked = true
+        end
+        return nil
+    end
+    
+    if not getgcChecked then
+        print("[CactusHub] Executor supports getgc — Auto Shoot enabled")
+        getgcChecked = true
+    end
     
     for _, v in ipairs(getgc(true)) do
         if type(v) == "table" and rawget(v, "tool") == tool and rawget(v, "prevSendAt") ~= nil then
