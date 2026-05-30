@@ -462,6 +462,7 @@ task.spawn(function()
 	local RANGE = 50
 	local cachedContainer, cachedEnemies, lastCacheTime = nil, {}, 0
 	local currentTarget, tweenConn = nil, nil
+	local autoFarmWalkSpeed = 100
 	local enemySettings = {
 		TeleportStyle = "Walk",
 		TargetPriorities = { ["Most Coins & Goop"] = true },
@@ -677,7 +678,7 @@ task.spawn(function()
 			stopAutoWalk()
 			local hum = char:FindFirstChildWhichIsA("Humanoid")
 			if not hum then return end
-			hum.WalkSpeed = 16
+			hum.WalkSpeed = autoFarmWalkSpeed
 			hum:MoveTo(safePos)
 			autoWalkConn = RunService.Heartbeat:Connect(function()
 				if not char or not char.Parent or not isAlive(enemy) then stopAutoWalk() return end
@@ -865,24 +866,22 @@ task.spawn(function()
 		Callback = function(enabled)
 			if not enabled then return end
 			task.spawn(function()
-				local lastTeleportedZone = nil
 				local lastTeleportTime = 0
 				while rayfieldLibrary.Flags.FarmingStayInBestZone and rayfieldLibrary.Flags.FarmingStayInBestZone.CurrentValue do
 					if not zonesServiceRemote then error("ZonesService remote not loaded") end
 					local targetOption = rayfieldLibrary.Flags.FarmingZoneTarget and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
 					local currentZone = dataServiceClient and (dataServiceClient:get("zone") or 1) or 1
 					local targetZone = nil
-					
+
 					if targetOption == "Best Unlocked" then
 						targetZone = dataServiceClient and (dataServiceClient:get("furthestZone") or 1) or 1
 					else
 						targetZone = tonumber(targetOption:match("Zone (%d+)"))
 					end
-					
+
 					if targetZone and targetZone > 0 and currentZone ~= targetZone then
 						if tick() - lastTeleportTime > 3 then
 							zonesServiceRemote:InvokeServer("requestTeleportZone", targetZone)
-							lastTeleportedZone = targetZone
 							lastTeleportTime = tick()
 						end
 					end
@@ -1169,6 +1168,18 @@ task.spawn(function()
 		end,
 	})
 
+	gameTab:CreateSlider({
+		Name = "Auto Farm Walk Speed",
+		Range = {50, 160},
+		Increment = 1,
+		Suffix = "",
+		CurrentValue = 100,
+		Flag = "AutoFarmWalkSpeed",
+		Callback = function(val)
+			autoFarmWalkSpeed = val
+		end,
+	})
+
 	gameTab:CreateDropdown({
 		Name = "Movement Style",
 		Options = {"Walk [RECOMMENDED]", "Instant", "Smooth"},
@@ -1288,12 +1299,17 @@ task.spawn(function()
 				if not char then return end
 				local humanoid = char:FindFirstChildWhichIsA("Humanoid")
 				if not humanoid or humanoid.Health <= 0 then return end
-				refreshEnemyCache()
 				local _, targetId = selectCombatTarget()
 				if not targetId then return end
 				local tool = char:FindFirstChild("SlimeGun")
 				if not tool then
-					equipSlimeGun()
+					local backpack = localPlayer:FindFirstChildOfClass("Backpack")
+					if backpack then
+						local gunInBag = backpack:FindFirstChild("SlimeGun")
+						if gunInBag then
+							humanoid:EquipTool(gunInBag)
+						end
+					end
 					controller = nil
 					return
 				end
@@ -2471,7 +2487,6 @@ task.spawn(function()
 		Callback = function(value)
 			if value then
 				local mt = getrawmetatable(game)
-				local oldIndex = mt.__index
 				local oldNamecall = mt.__namecall
 				setreadonly(mt, false)
 				mt.__namecall = newcclosure(function(self, ...)
