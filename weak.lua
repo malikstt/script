@@ -173,7 +173,7 @@ task.spawn(function()
 	mainTab:CreateParagraph({ Title = "Enabled By Default", Content = "[+] Anti AFK" })
 	mainTab:CreateParagraph({
 		Title = "Latest Update",
-		Content = "[+] Auto Stay in UFO Zone (Auto teleport to active UFO zones)\n[+] Auto Collect UFO Loot\n[+] Live UFO Phase Display (Hovering/Arriving/Departing/Idle)\n[+] Live UFO Zone Display and State\n[+] Live Next Event Countdown Timer\n[+] Live Golden UFO if found ( yes or no )\n[+] Manual Refresh Status Button\n[+] Auto Farm Zone ( is now x4 faster tp wise )\n[+] Added beammeup / aliensarehere in Auto Redeem Codes\n[+] Added New Zones\n[+] Bug Fixes"
+		Content = "[+] Auto Stay in UFO Zone\n[+] Auto Collect UFO Loot\n[+] Live UFO Phase Display\n[+] Live UFO Zone Display and State\n[+] Live Next Event Countdown Timer\n[+] Live Golden UFO if found\n[+] Manual Refresh Status Button\n[+] Auto Farm Zone ( x4 faster tp )\n[+] Added beammeup / aliensarehere in Auto Redeem Codes\n[+] Added New Zones\n[+] No Clip for Auto Farm\n[+] Bug Fixes"
 	})
 
 	pcall(function()
@@ -182,10 +182,7 @@ task.spawn(function()
 
 		if getconnections then
 			pcall(function()
-				local suspects = {
-					ReplicatedStorage,
-					localPlayer,
-				}
+				local suspects = { ReplicatedStorage, localPlayer }
 				for _, obj in ipairs(suspects) do
 					for _, conn in ipairs(getconnections(obj.ChildAdded) or {}) do
 						pcall(function()
@@ -197,7 +194,6 @@ task.spawn(function()
 					end
 				end
 			end)
-
 			pcall(function()
 				local GuiService = game:GetService("GuiService")
 				for _, conn in ipairs(getconnections(GuiService.ErrorMessageChanged) or {}) do
@@ -210,7 +206,6 @@ task.spawn(function()
 				end
 			end)
 		end
-
 		print("AutoRejoin disabled")
 	end)
 
@@ -229,12 +224,10 @@ task.spawn(function()
 	local RecipesModule
 	local upgradeServiceClient_new
 	local dataServiceClient_new
-
 	local modulesLoaded = false
 
 	task.spawn(function()
 		Logger:info("CactusHub", "ModuleLoad", "Starting module initialization...")
-
 		local ok, err = pcall(function()
 			packages = ReplicatedStorage:WaitForChild("Packages", 15)
 			if not packages then error("Packages not found") end
@@ -304,7 +297,6 @@ task.spawn(function()
 			pcall(function()
 				RecipesModule = require(sourceFolder.Features.Crafting.Recipes)
 			end)
-
 			task.spawn(function()
 				local rs = game:GetService("ReplicatedStorage")
 				local ok1, ok2
@@ -318,7 +310,6 @@ task.spawn(function()
 					if not ok1 or not ok2 then task.wait(1) end
 				until ok1 and ok2
 			end)
-
 			modulesLoaded = true
 			Logger:info("CactusHub", "ModuleLoad", "All modules loaded successfully!")
 			rayfieldLibrary:Notify({
@@ -463,12 +454,50 @@ task.spawn(function()
 	local cachedContainer, cachedEnemies, lastCacheTime = nil, {}, 0
 	local currentTarget, tweenConn = nil, nil
 	local autoFarmWalkSpeed = 100
+	local noclipEnabled = false
+	local noclipConn = nil
+
 	local enemySettings = {
 		TeleportStyle = "Walk",
 		TargetPriorities = { ["Most Coins & Goop"] = true },
 		AutoFarm = false,
 		MutationFilter = "Any",
 	}
+
+	local function setNoclip(enabled)
+		noclipEnabled = enabled
+		if noclipConn then
+			noclipConn:Disconnect()
+			noclipConn = nil
+		end
+		if enabled then
+			noclipConn = RunService.Stepped:Connect(function()
+				local char = localPlayer.Character
+				if not char then return end
+				for _, part in ipairs(char:GetDescendants()) do
+					if part:IsA("BasePart") then
+						part.CanCollide = false
+					end
+				end
+			end)
+		else
+			local char = localPlayer.Character
+			if char then
+				for _, part in ipairs(char:GetDescendants()) do
+					if part:IsA("BasePart") then
+						part.CanCollide = true
+					end
+				end
+			end
+		end
+	end
+
+	localPlayer.CharacterAdded:Connect(function()
+		if noclipEnabled then
+			task.wait(0.1)
+			setNoclip(true)
+		end
+	end)
 
 	local function getGameplayContainer()
 		if cachedContainer and cachedContainer.Parent then return cachedContainer end
@@ -796,7 +825,6 @@ task.spawn(function()
 				end
 				DiceLuckLabel:Set("Total Stacked: x" .. string.format("%.1f", totalStacked))
 				if not stackActive or not networkerRoll then return end
-
 				local toWatch = {}
 				for _, dice in ipairs(DICE) do
 					if selectedDice[dice] then
@@ -805,7 +833,6 @@ task.spawn(function()
 					end
 				end
 				if #toWatch == 0 then return end
-
 				local allReady = true
 				for _, dice in ipairs(toWatch) do
 					local prog = progression[dice]
@@ -823,7 +850,6 @@ task.spawn(function()
 						end
 					end
 				end
-
 				if allReady and releaseActive then
 					for _, dice in ipairs(toWatch) do
 						pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
@@ -872,13 +898,11 @@ task.spawn(function()
 					local targetOption = rayfieldLibrary.Flags.FarmingZoneTarget and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
 					local currentZone = dataServiceClient and (dataServiceClient:get("zone") or 1) or 1
 					local targetZone = nil
-
 					if targetOption == "Best Unlocked" then
 						targetZone = dataServiceClient and (dataServiceClient:get("furthestZone") or 1) or 1
 					else
 						targetZone = tonumber(targetOption:match("Zone (%d+)"))
 					end
-
 					if targetZone and targetZone > 0 and currentZone ~= targetZone then
 						if tick() - lastTeleportTime > 3 then
 							zonesServiceRemote:InvokeServer("requestTeleportZone", targetZone)
@@ -1168,6 +1192,15 @@ task.spawn(function()
 		end,
 	})
 
+	featureToggle(gameTab, {
+		Name = "No Clip (Auto Farm)",
+		CurrentValue = false,
+		Flag = "AutoFarmNoclip",
+		Callback = function(value)
+			setNoclip(value)
+		end,
+	})
+
 	gameTab:CreateSlider({
 		Name = "Auto Farm Walk Speed",
 		Range = {50, 160},
@@ -1306,9 +1339,7 @@ task.spawn(function()
 					local backpack = localPlayer:FindFirstChildOfClass("Backpack")
 					if backpack then
 						local gunInBag = backpack:FindFirstChild("SlimeGun")
-						if gunInBag then
-							humanoid:EquipTool(gunInBag)
-						end
+						if gunInBag then humanoid:EquipTool(gunInBag) end
 					end
 					controller = nil
 					return
@@ -1707,7 +1738,6 @@ task.spawn(function()
 		end
 		local ok, state = pcall(function() return ufoClient:getStateSource()() end)
 		if not ok or not state then return end
-
 		local zoneName = "N/A"
 		pcall(function()
 			local ZonesModule = require(ReplicatedStorage.Source.Game.Items.Zones)
@@ -1715,23 +1745,19 @@ task.spawn(function()
 				zoneName = ZonesModule.getZone(state.zoneId).name
 			end
 		end)
-
 		local nextEvent = "N/A"
 		if state.nextEventStartTime then
 			local secs = math.max(0, math.round(state.nextEventStartTime - workspace:GetServerTimeNow()))
 			local mins = math.floor(secs / 60)
 			nextEvent = string.format("%02d:%02d", mins, secs % 60)
 		end
-
 		local phaseIcon = "⚪"
 		if state.phase == "hovering" then phaseIcon = "🟢"
 		elseif state.phase == "arriving" then phaseIcon = "🟡"
 		elseif state.phase == "departing" then phaseIcon = "🔴"
 		end
-
 		local isGolden = false
 		pcall(function() isGolden = ufoClient.isGolden == true end)
-
 		ufoPhaseLabel:Set("🛸  Phase: " .. phaseIcon .. " " .. state.phase:upper())
 		ufoZoneIdLabel:Set("📍  Zone ID: " .. (state.zoneId and tostring(state.zoneId) or "None"))
 		ufoZoneNameLabel:Set("🗺️  Zone Name: " .. zoneName)
@@ -1775,18 +1801,14 @@ task.spawn(function()
 	task.spawn(function()
 		local ufoWasActive = false
 		local farmWasEnabled = false
-
 		while true do
 			task.wait()
 			pcall(function()
 				refreshUfoState()
-
 				if not ufoClient then return end
 				local ok, state = pcall(function() return ufoClient:getStateSource()() end)
 				if not ok or not state then return end
-
 				local isActive = state.phase ~= "idle" and state.zoneId ~= nil
-
 				if autoUfoZone then
 					if isActive then
 						if not ufoWasActive then
@@ -1799,10 +1821,8 @@ task.spawn(function()
 								farmWasEnabled = false
 							end
 						end
-
 						lastUfoZoneId = state.zoneId
 						lastUfoPhase = state.phase
-
 						local currentZone = dataServiceClient and dataServiceClient:get("zone") or nil
 						if currentZone ~= state.zoneId then
 							ufoZonesRemote:InvokeServer("requestTeleportZone", state.zoneId)
@@ -1812,9 +1832,7 @@ task.spawn(function()
 							ufoWasActive = false
 							if farmWasEnabled then
 								local farmFlag = rayfieldLibrary.Flags.FarmingStayInBestZone
-								if farmFlag then
-									farmFlag:Set(true)
-								end
+								if farmFlag then farmFlag:Set(true) end
 								farmWasEnabled = false
 							end
 							lastUfoZoneId = nil
@@ -1822,7 +1840,6 @@ task.spawn(function()
 						end
 					end
 				end
-
 				if autoUfoLoot then
 					local remote = getUfoLootRemote()
 					if remote then
@@ -1830,13 +1847,9 @@ task.spawn(function()
 							local container = workspace:FindFirstChild(folderName)
 							if container then
 								for _, item in ipairs(container:GetChildren()) do
-									local id = item:GetAttribute("uniqueId")
-										or item:GetAttribute("id")
-										or item.Name
+									local id = item:GetAttribute("uniqueId") or item:GetAttribute("id") or item.Name
 									if id then
-										pcall(function()
-											remote:InvokeServer("requestCollect", id)
-										end)
+										pcall(function() remote:InvokeServer("requestCollect", id) end)
 									end
 								end
 							end
@@ -1867,14 +1880,12 @@ task.spawn(function()
 					task.wait(0.3)
 					setLuckEnabled(true)
 					task.wait(0.3)
-
 					luckPollThread = task.spawn(function()
 						while indexRunning do
 							if indexLabels.lLuck then indexLabels.lLuck:Set("🍀 Luck Override: x"..tostring(luckValueLocal)) end
 							task.wait(1)
 						end
 					end)
-
 					local modeFlag = rayfieldLibrary.Flags and rayfieldLibrary.Flags.IndexRollMode
 					local mode = modeFlag and (type(modeFlag.CurrentOption)=="table" and modeFlag.CurrentOption[1] or modeFlag.CurrentOption) or "🌱 Easiest First"
 
@@ -1959,7 +1970,6 @@ task.spawn(function()
 						end
 						indexRunning = false
 					end
-
 					if luckPollThread then task.cancel(luckPollThread) end
 					setLuckEnabled(false)
 				end)
@@ -2244,7 +2254,7 @@ task.spawn(function()
 			end
 			local userId = rayfieldLibrary.Flags.WebhookUserID.CurrentValue
 			local mention = (userId and userId ~= "") and ("<@" .. userId .. "> ") or ""
-			local success, response = pcall(function()
+			local success = pcall(function()
 				return request({
 					Url = savedWebhookUrl,
 					Method = "POST",
@@ -2553,7 +2563,6 @@ task.spawn(function()
 		if optGCToggle      then optGCToggle:Set(value) end
 		if optIntenseToggle then optIntenseToggle:Set(value) end
 		updatingOptimizations = false
-
 		if value then
 			pcall(function() setfpscap(0) end)
 			pcall(function()
@@ -2606,9 +2615,7 @@ task.spawn(function()
 		CurrentValue = false,
 		Flag = "MaxFPS",
 		Callback = function(Value)
-			if Value then
-				pcall(function() setfpscap(0) end)
-			end
+			if Value then pcall(function() setfpscap(0) end) end
 		end,
 	})
 
