@@ -731,6 +731,7 @@ task.spawn(function()
 
 	local selectedDice = {golden=true, diamond=true, void=true, galaxy=true}
 	local stackActive = false
+	local releaseActive = false
 	local paused = {golden=false, diamond=false, void=false, galaxy=false}
 
 	featureToggle(farmingTab, {
@@ -747,6 +748,15 @@ task.spawn(function()
 					end
 				end
 			end
+		end,
+	})
+
+	featureToggle(farmingTab, {
+		Name = "Auto Release Dice",
+		CurrentValue = false,
+		Flag = "autorelease",
+		Callback = function(v)
+			releaseActive = v
 		end,
 	})
 
@@ -785,6 +795,7 @@ task.spawn(function()
 				end
 				DiceLuckLabel:Set("Total Stacked: x" .. string.format("%.1f", totalStacked))
 				if not stackActive or not networkerRoll then return end
+
 				local toWatch = {}
 				for _, dice in ipairs(DICE) do
 					if selectedDice[dice] then
@@ -793,25 +804,31 @@ task.spawn(function()
 					end
 				end
 				if #toWatch == 0 then return end
+
 				local allReady = true
 				for _, dice in ipairs(toWatch) do
 					local prog = progression[dice]
 					local rolls = prog and prog.rollsUntilNext or math.huge
-					if rolls <= 1 then
-						if not paused[dice] then
-							networkerRoll:fetch("requestSetSpecialRollPaused", dice, true)
-							paused[dice] = true
+					if rolls > 1 then
+						allReady = false
+						if paused[dice] then
+							pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
+							paused[dice] = false
 						end
 					else
-						allReady = false
+						if not paused[dice] then
+							pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, true) end)
+							paused[dice] = true
+						end
 					end
 				end
-				if allReady then
+
+				if allReady and releaseActive then
 					for _, dice in ipairs(toWatch) do
-						networkerRoll:fetch("requestSetSpecialRollPaused", dice, false)
+						pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
 						paused[dice] = false
 					end
-					rayfieldLibrary:Notify({ Title = "Unleashed!", Content = "All stacked — releasing now.", Duration = 3 })
+					rayfieldLibrary:Notify({ Title = "Unleashed!", Content = "All selected dice stacked — releasing now.", Duration = 3 })
 					task.wait(2)
 				end
 			end)
@@ -1087,8 +1104,8 @@ task.spawn(function()
 				local equipped  = dataServiceClient:get("equipped") or {}
 				local teamSet   = {}
 				for _, uid in ipairs(equipped) do teamSet[uid] = true end
-				local targetOption = rayfieldLibrary.Flags.FarmingTransferTarget.CurrentOption[1]
-				local sourceOption = rayfieldLibrary.Flags.FarmingTransferSource.CurrentOption[1]
+				local targetOption = rayfieldLibrary.Flags.FarmingTransferTarget and rayfieldLibrary.Flags.FarmingTransferTarget.CurrentOption and rayfieldLibrary.Flags.FarmingTransferTarget.CurrentOption[1] or "Best Slime"
+				local sourceOption = rayfieldLibrary.Flags.FarmingTransferSource and rayfieldLibrary.Flags.FarmingTransferSource.CurrentOption and rayfieldLibrary.Flags.FarmingTransferSource.CurrentOption[1] or "Unequipped With XP"
 				local targets = {}
 				if targetOption == "Best Slime" then
 					local best = getBestSlimeUid()
@@ -1344,9 +1361,9 @@ task.spawn(function()
 					local ids = {}
 					local costs = {}
 					if not upgradeTree_local then return ids, costs end
-					for _, tree in upgradeTree_local do
-						for id, data in tree do
-							if data.cost then
+					for _, tree in ipairs(upgradeTree_local) do
+						for id, data in pairs(tree) do
+							if data and data.cost then
 								table.insert(ids, id)
 								costs[id] = data.cost
 							end
@@ -2397,7 +2414,7 @@ task.spawn(function()
 						local sendAll = rayfieldLibrary.Flags.WebhookSendAll and rayfieldLibrary.Flags.WebhookSendAll.CurrentValue
 						local sendNewOnly = rayfieldLibrary.Flags.WebhookSendNew and rayfieldLibrary.Flags.WebhookSendNew.CurrentValue
 						local sendMutated = rayfieldLibrary.Flags.WebhookSendMutated and rayfieldLibrary.Flags.WebhookSendMutated.CurrentValue
-						local minChanceStr = rayfieldLibrary.Flags.WebhookMinChance.CurrentValue
+						local minChanceStr = rayfieldLibrary.Flags.WebhookMinChance and rayfieldLibrary.Flags.WebhookMinChance.CurrentValue or ""
 						local minChanceNum = nil
 						if minChanceStr and minChanceStr ~= "" then
 							local num, suffix = minChanceStr:upper():gsub(",",""):match("^(%d+%.?%d*)([KMBTQ]?)$")
@@ -2430,7 +2447,7 @@ task.spawn(function()
 										if chanceValue > minChanceNum then shouldSend = false end
 									end
 									if shouldSend then
-										local userId = rayfieldLibrary.Flags.WebhookUserID.CurrentValue
+										local userId = rayfieldLibrary.Flags.WebhookUserID and rayfieldLibrary.Flags.WebhookUserID.CurrentValue or ""
 										local notificationKey = currentHash .. "_" .. slimeId
 										task.spawn(sendWebhookNotification, slimeId, slimeDefinition, mutations, savedWebhookUrl, userId, notificationKey)
 									end
