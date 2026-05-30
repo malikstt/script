@@ -77,7 +77,6 @@ task.spawn(function()
                         { name = "Time Remaining", value = formatTime(remaining), inline = true },
                         { name = "Players", value = tostring(playerCount) .. " / " .. tostring(maxPlayers), inline = true },
                         { name = "Click to Join", value = "[Join Server](" .. joinLink .. ")", inline = true },
-                        { name = "Job ID", value = "`" .. jobId .. "`", inline = false },
                         { name = "Paste in Executor", value = "```\n" .. executorCmd .. "\n```", inline = false }
                     }
                 }}
