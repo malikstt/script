@@ -866,30 +866,27 @@ task.spawn(function()
 			if not enabled then return end
 			task.spawn(function()
 				local lastTeleportedZone = nil
+				local lastTeleportTime = 0
 				while rayfieldLibrary.Flags.FarmingStayInBestZone and rayfieldLibrary.Flags.FarmingStayInBestZone.CurrentValue do
 					if not zonesServiceRemote then error("ZonesService remote not loaded") end
 					local targetOption = rayfieldLibrary.Flags.FarmingZoneTarget and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
 					local currentZone = dataServiceClient and (dataServiceClient:get("zone") or 1) or 1
 					local targetZone = nil
+					
 					if targetOption == "Best Unlocked" then
-						for zoneNum = 40, 1, -1 do
-							if not (rayfieldLibrary.Flags.FarmingStayInBestZone and rayfieldLibrary.Flags.FarmingStayInBestZone.CurrentValue) then break end
-							local testResult = zonesServiceRemote:InvokeServer("requestTeleportZone", zoneNum)
-							task.wait(0.1)
-							local zoneAfter = dataServiceClient:get("zone") or 1
-							if zoneAfter == zoneNum then
-								targetZone = zoneNum
-								break
-							end
-						end
+						targetZone = dataServiceClient and (dataServiceClient:get("furthestZone") or 1) or 1
 					else
 						targetZone = tonumber(targetOption:match("Zone (%d+)"))
 					end
-					if targetZone and currentZone ~= targetZone and lastTeleportedZone ~= targetZone then
-						zonesServiceRemote:InvokeServer("requestTeleportZone", targetZone)
-						lastTeleportedZone = targetZone
+					
+					if targetZone and targetZone > 0 and currentZone ~= targetZone then
+						if tick() - lastTeleportTime > 3 then
+							zonesServiceRemote:InvokeServer("requestTeleportZone", targetZone)
+							lastTeleportedZone = targetZone
+							lastTeleportTime = tick()
+						end
 					end
-					task.wait(8)
+					task.wait(5)
 				end
 			end)
 		end,
