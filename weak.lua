@@ -14,17 +14,14 @@ task.spawn(function()
 			error = errorObj
 		}
 		table.insert(self.LogHistory, logEntry)
-		
 		if #self.LogHistory > 200 then
 			table.remove(self.LogHistory, 1)
 		end
-
 		local prefix = string.format("[%s] [%s]%s", level, system, feature and " (" .. feature .. ")" or "")
 		local fullMsg = prefix .. " " .. tostring(message)
 		if errorObj then
 			fullMsg = fullMsg .. "\n  Error: " .. tostring(errorObj)
 		end
-		
 		if level == "ERROR" or level == "WARN" then
 			warn(fullMsg)
 		else
@@ -44,12 +41,12 @@ task.spawn(function()
 	local TweenService = game:GetService("TweenService")
 
 	Logger:info("CactusHub", "Init", "Loading Rayfield...")
-	
+
 	local rayfieldLibrary
 	local rayfieldOk, rayfieldErr = pcall(function()
 		rayfieldLibrary = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 	end)
-	
+
 	if not rayfieldOk or not rayfieldLibrary then
 		Logger:error("CactusHub", "RayfieldLoader", "Failed to load Rayfield", rayfieldErr)
 		return
@@ -60,7 +57,7 @@ task.spawn(function()
 	local mainWindow = rayfieldLibrary:CreateWindow({
 		Name = "Cactus Hub • discord.gg/qMWFBWdcf",
 		Icon = 0,
-		LoadingTitle = "Loading Interface",
+		LoadingTitle = "Loading",
 		LoadingSubtitle = "Please wait...",
 		Theme = "Default",
 		ToggleUIKeybind = "K",
@@ -114,50 +111,12 @@ task.spawn(function()
 	local mainTab      = mainWindow:CreateTab("Main", 74725529332053)
 	local farmingTab   = mainWindow:CreateTab("Farming", 114367663524453)
 	local gameTab      = mainWindow:CreateTab("Game", 77999805030576)
+	local ufoTab       = mainWindow:CreateTab("Ufo Event", 129180210444370)
 	local indexTab     = mainWindow:CreateTab("Index", 123662711814867)
 	local miscTab      = mainWindow:CreateTab("Misc", 83590339425734)
 	local webhookTab   = mainWindow:CreateTab("Webhook", 84577758013974)
 	local settingsTab  = mainWindow:CreateTab("Settings", 120533439477016)
 	local statsTab     = mainWindow:CreateTab("Stats", 102533388850982)
-	local debugTab     = mainWindow:CreateTab("Debug", 0)
-
-	debugTab:CreateSection("System Status")
-	local debugStatus = debugTab:CreateLabel("Status: Running...")
-	local debugErrors = debugTab:CreateLabel("Errors: 0")
-	local debugWarns = debugTab:CreateLabel("Warnings: 0")
-
-	debugTab:CreateSection("Executor Info")
-	local hasRequest = pcall(function() return request ~= nil end)
-	local hasGetGC = pcall(function() return getgc ~= nil end)
-	local hasDebug = pcall(function() return debug ~= nil end)
-	
-	debugTab:CreateLabel("request() API: " .. (hasRequest and "✅" or "❌"))
-	debugTab:CreateLabel("getgc() API: " .. (hasGetGC and "✅" or "❌"))
-	debugTab:CreateLabel("debug lib: " .. (hasDebug and "✅" or "❌"))
-
-	debugTab:CreateSection("Recent Issues")
-	local errorLog = debugTab:CreateLabel("No errors logged")
-
-	task.spawn(function()
-		while true do
-			task.wait(5)
-			pcall(function()
-				local errorCount = 0
-				local warnCount = 0
-				for _, entry in ipairs(Logger.LogHistory) do
-					if entry.level == "ERROR" then errorCount = errorCount + 1 end
-					if entry.level == "WARN" then warnCount = warnCount + 1 end
-				end
-				debugErrors:Set("Errors: " .. errorCount)
-				debugWarns:Set("Warnings: " .. warnCount)
-				
-				if #Logger.LogHistory > 0 then
-					local recent = Logger.LogHistory[#Logger.LogHistory]
-					errorLog:Set(string.format("[%s] %s\n%s", recent.level, recent.system, recent.message))
-				end
-			end)
-		end
-	end)
 
 	mainTab:CreateSection("Status")
 	local fpsLabel  = mainTab:CreateLabel("FPS: Calculating...")
@@ -187,11 +146,73 @@ task.spawn(function()
 		end
 	end)
 
+	mainTab:CreateSection("Dashboard")
+	local dashboardBusy = false
+	featureToggle(mainTab, {
+		Name = "Dashboard",
+		CurrentValue = false,
+		Flag = "DashboardToggle",
+		Callback = function(Value)
+			if dashboardBusy then return end
+			dashboardBusy = true
+			if Value then
+				task.spawn(function()
+					loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))()
+					rayfieldLibrary:Notify({ Title = "Dashboard", Content = "Dashboard enabled!", Duration = 3 })
+					dashboardBusy = false
+				end)
+			else
+				local gui = localPlayer.PlayerGui:FindFirstChild("__MAINHUD__")
+				if gui then gui:Destroy() end
+				rayfieldLibrary:Notify({ Title = "Dashboard", Content = "Dashboard closed!", Duration = 3 })
+				dashboardBusy = false
+			end
+		end,
+	})
+
 	mainTab:CreateParagraph({ Title = "Enabled By Default", Content = "[+] Anti AFK" })
 	mainTab:CreateParagraph({
 		Title = "Latest Update",
-		Content = "[+] Fixed Auto Shoot\n[+] Faster Rolling\n[+] Auto Complete Index\n[+] Auto Move to Enemy\n[+] Auto Stack Dice\n[+] Auto Feed Fruits\n[+] Bug Fixes & Performance"
+		Content = "[+] Auto Stay in UFO Zone (Auto teleport to active UFO zones)\n[+] Auto Collect UFO Loot\n[+] Live UFO Phase Display (Hovering/Arriving/Departing/Idle)\n[+] Live UFO Zone Display and State\n[+] Live Next Event Countdown Timer\n[+] Live Golden UFO if found ( yes or no )\n[+] Manual Refresh Status Button\n[+] Auto Farm Zone ( is now x4 faster tp wise )\n[+] Added beammeup / aliensarehere in Auto Redeem Codes\n[+] Added New Zones\n[+] Bug Fixes"
 	})
+
+	pcall(function()
+		local m = require(ReplicatedStorage.Source.Features.AutoRejoin.AutoRejoinServiceClient)
+		pcall(function() m:disable() end)
+
+		if getconnections then
+			pcall(function()
+				local suspects = {
+					ReplicatedStorage,
+					localPlayer,
+				}
+				for _, obj in ipairs(suspects) do
+					for _, conn in ipairs(getconnections(obj.ChildAdded) or {}) do
+						pcall(function()
+							local src = tostring(conn.Function)
+							if src:lower():find("rejoin") or src:lower():find("autorejoin") then
+								conn:Disable()
+							end
+						end)
+					end
+				end
+			end)
+
+			pcall(function()
+				local GuiService = game:GetService("GuiService")
+				for _, conn in ipairs(getconnections(GuiService.ErrorMessageChanged) or {}) do
+					pcall(function()
+						local src = tostring(conn.Function)
+						if src:lower():find("rejoin") or src:lower():find("teleport") then
+							conn:Disable()
+						end
+					end)
+				end
+			end)
+		end
+
+		print("AutoRejoin disabled")
+	end)
 
 	local packages, dataServiceClient, Networker
 	local networkerRoll, inventoryServiceClient, xpTransferServiceClient
@@ -656,7 +677,7 @@ task.spawn(function()
 			stopAutoWalk()
 			local hum = char:FindFirstChildWhichIsA("Humanoid")
 			if not hum then return end
-			hum.WalkSpeed = 50
+			hum.WalkSpeed = 16
 			hum:MoveTo(safePos)
 			autoWalkConn = RunService.Heartbeat:Connect(function()
 				if not char or not char.Parent or not isAlive(enemy) then stopAutoWalk() return end
@@ -764,6 +785,7 @@ task.spawn(function()
 				end
 				DiceLuckLabel:Set("Total Stacked: x" .. string.format("%.1f", totalStacked))
 				if not stackActive or not networkerRoll then return end
+
 				local toWatch = {}
 				for _, dice in ipairs(DICE) do
 					if selectedDice[dice] then
@@ -772,26 +794,43 @@ task.spawn(function()
 					end
 				end
 				if #toWatch == 0 then return end
+
 				local allReady = true
 				for _, dice in ipairs(toWatch) do
 					local prog = progression[dice]
 					local rolls = prog and prog.rollsUntilNext or math.huge
-					if rolls <= 1 then
-						if not paused[dice] then
-							networkerRoll:fetch("requestSetSpecialRollPaused", dice, true)
-							paused[dice] = true
-						end
-					else
+					if rolls > 1 then
 						allReady = false
+						if paused[dice] then
+							pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
+							paused[dice] = false
+						end
 					end
 				end
+
 				if allReady then
 					for _, dice in ipairs(toWatch) do
-						networkerRoll:fetch("requestSetSpecialRollPaused", dice, false)
+						if not paused[dice] then
+							pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, true) end)
+							paused[dice] = true
+						end
+					end
+					task.wait(0.2)
+					for _, dice in ipairs(toWatch) do
+						pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
 						paused[dice] = false
 					end
-					rayfieldLibrary:Notify({ Title = "Unleashed!", Content = "All stacked — releasing now.", Duration = 3 })
+					rayfieldLibrary:Notify({ Title = "Unleashed!", Content = "All selected dice stacked — releasing now.", Duration = 3 })
 					task.wait(2)
+				else
+					for _, dice in ipairs(toWatch) do
+						local prog = progression[dice]
+						local rolls = prog and prog.rollsUntilNext or math.huge
+						if rolls <= 1 and not paused[dice] then
+							pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, true) end)
+							paused[dice] = true
+						end
+					end
 				end
 			end)
 		end
@@ -801,7 +840,7 @@ task.spawn(function()
 
 	pcall(function()
 		local zoneOptions = { "Best Unlocked" }
-		local totalZones = ZonesModule and ZonesModule.getMaxZone() or 33
+		local totalZones = ZonesModule and ZonesModule.getMaxZone() or 40
 		for i = 1, totalZones do
 			local zone = ZonesModule and ZonesModule.getZone(i)
 			if zone and zone.name then
@@ -829,19 +868,25 @@ task.spawn(function()
 			task.spawn(function()
 				while rayfieldLibrary.Flags.FarmingStayInBestZone and rayfieldLibrary.Flags.FarmingStayInBestZone.CurrentValue do
 					if not zonesServiceRemote then error("ZonesService remote not loaded") end
+					if not dataServiceClient then error("DataService not loaded") end
+
 					local targetOption = rayfieldLibrary.Flags.FarmingZoneTarget and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
+					local currentZone = dataServiceClient:get("zone") or 1
+					local targetZone = nil
+
 					if targetOption == "Best Unlocked" then
-						for zoneNum = 33, 1, -1 do
-							if not (rayfieldLibrary.Flags.FarmingStayInBestZone and rayfieldLibrary.Flags.FarmingStayInBestZone.CurrentValue) then break end
-							zonesServiceRemote:InvokeServer("requestTeleportZone", zoneNum)
-							task.wait(1)
-							if (dataServiceClient:get("zone") or 1) == zoneNum then break end
-						end
+						local maxZone = dataServiceClient:get("maxZone") or dataServiceClient:get("unlockedZone") or 1
+						if type(maxZone) ~= "number" or maxZone < 1 then maxZone = 1 end
+						targetZone = maxZone
 					else
-						local zoneNum = tonumber(targetOption:match("Zone (%d+)"))
-						if zoneNum then zonesServiceRemote:InvokeServer("requestTeleportZone", zoneNum) end
+						targetZone = tonumber(targetOption:match("Zone (%d+)"))
 					end
-					task.wait(10)
+
+					if targetZone and currentZone ~= targetZone then
+						zonesServiceRemote:InvokeServer("requestTeleportZone", targetZone)
+					end
+
+					task.wait(15)
 				end
 			end)
 		end,
@@ -1192,7 +1237,6 @@ task.spawn(function()
 		if not char then return nil end
 		local tool = char:FindFirstChild("SlimeGun")
 		if not tool then return nil end
-		
 		if not getgc then
 			if not getgcChecked then
 				Logger:warn("Executor", "Capability", "getgc not available — Auto Shoot disabled")
@@ -1200,12 +1244,10 @@ task.spawn(function()
 			end
 			return nil
 		end
-		
 		if not getgcChecked then
 			Logger:info("Executor", "Capability", "getgc available — Auto Shoot enabled")
 			getgcChecked = true
 		end
-		
 		for _, v in ipairs(getgc(true)) do
 			if type(v) == "table" and rawget(v, "tool") == tool and rawget(v, "prevSendAt") ~= nil then
 				return v
@@ -1331,36 +1373,27 @@ task.spawn(function()
 
 				while task.wait(0.5) and rayfieldLibrary.Flags.GameAutoUpgrade and rayfieldLibrary.Flags.GameAutoUpgrade.CurrentValue do
 					if not upgradeServiceClient_new or not dataServiceClient_new then continue end
-
 					local upgradeMode = rayfieldLibrary.Flags.GameUpgradeMode and rayfieldLibrary.Flags.GameUpgradeMode.CurrentOption or {"All"}
 					local modeSet = {}
 					for _, m in ipairs(upgradeMode) do modeSet[m] = true end
-
 					local unlockedUpgrades = dataServiceClient_new:get("upgrades") or {}
 					local coins       = dataServiceClient_new:get("coins") or 0
 					local goop        = dataServiceClient_new:get("goop") or 0
 					local rollCurrency= dataServiceClient_new:get("rollCurrency") or 0
-
 					for _, upgradeId in ipairs(upgradeIds) do
 						if unlockedUpgrades[upgradeId] == true then continue end
-
 						local costInfo = upgradeCosts[upgradeId]
 						if not costInfo then continue end
-
 						local costAmount   = costInfo.amount or 0
 						local currencyType = costInfo.currency
-
 						local modeMatches = modeSet["All"]
 							or (modeSet["Coins"] and currencyType == "coins")
 							or (modeSet["Goop"] and currencyType == "goop")
 							or (modeSet["Rolls"] and currencyType == "rollCurrency")
-
 						if not modeMatches then continue end
-
 						local canAfford = (currencyType == "coins" and coins >= costAmount)
 							or (currencyType == "goop" and goop >= costAmount)
 							or (currencyType == "rollCurrency" and rollCurrency >= costAmount)
-
 						if canAfford then
 							local success = upgradeServiceClient_new:unlockUpgrade(upgradeId)
 							if success then
@@ -1608,6 +1641,196 @@ task.spawn(function()
 		rayfieldLibrary:Notify({ Title="Cactus Hub", Content="Loaded — "..(#recipeIdsList).." unlocked recipes ready.", Duration=5, Image=4483362458 })
 	end)
 
+	local ufoClient = nil
+	local ufoZonesRemote = ReplicatedStorage
+		:WaitForChild("Packages")
+		:WaitForChild("_Index")
+		:WaitForChild("leifstout_networker@0.3.1")
+		:WaitForChild("networker")
+		:WaitForChild("_remotes")
+		:WaitForChild("ZonesService")
+		:WaitForChild("RemoteFunction")
+
+	local ufoLootRemote = nil
+	local function getUfoLootRemote()
+		if ufoLootRemote then return ufoLootRemote end
+		local ok, remote = pcall(function()
+			return ReplicatedStorage
+				:WaitForChild("Packages", 10)
+				:WaitForChild("_Index", 10)
+				:WaitForChild("leifstout_networker@0.3.1", 10)
+				:WaitForChild("networker", 10)
+				:WaitForChild("_remotes", 10)
+				:WaitForChild("LootService", 10)
+				:WaitForChild("RemoteFunction", 10)
+		end)
+		if ok then ufoLootRemote = remote end
+		return ufoLootRemote
+	end
+
+	pcall(function()
+		ufoClient = require(ReplicatedStorage.Source.Features.UfoEvent.UfoEventServiceClient)
+	end)
+
+	local autoUfoZone = false
+	local autoUfoLoot = false
+	local lastUfoZoneId = nil
+	local lastUfoPhase = nil
+
+	ufoTab:CreateSection("Live Status")
+	local ufoPhaseLabel    = ufoTab:CreateLabel("🛸  Phase: —")
+	local ufoZoneIdLabel   = ufoTab:CreateLabel("📍  Zone ID: —")
+	local ufoZoneNameLabel = ufoTab:CreateLabel("🗺️  Zone Name: —")
+	local ufoNextLabel     = ufoTab:CreateLabel("⏳  Next Event: —")
+	local ufoGoldenLabel   = ufoTab:CreateLabel("⭐  Golden UFO: —")
+
+	local function refreshUfoState()
+		if not ufoClient then
+			ufoPhaseLabel:Set("🛸  Phase: Module not loaded")
+			return
+		end
+		local ok, state = pcall(function() return ufoClient:getStateSource()() end)
+		if not ok or not state then return end
+
+		local zoneName = "N/A"
+		pcall(function()
+			local ZonesModule = require(ReplicatedStorage.Source.Game.Items.Zones)
+			if state.zoneId and ZonesModule.hasZone(state.zoneId) then
+				zoneName = ZonesModule.getZone(state.zoneId).name
+			end
+		end)
+
+		local nextEvent = "N/A"
+		if state.nextEventStartTime then
+			local secs = math.max(0, math.round(state.nextEventStartTime - workspace:GetServerTimeNow()))
+			local mins = math.floor(secs / 60)
+			nextEvent = string.format("%02d:%02d", mins, secs % 60)
+		end
+
+		local phaseIcon = "⚪"
+		if state.phase == "hovering" then phaseIcon = "🟢"
+		elseif state.phase == "arriving" then phaseIcon = "🟡"
+		elseif state.phase == "departing" then phaseIcon = "🔴"
+		end
+
+		local isGolden = false
+		pcall(function() isGolden = ufoClient.isGolden == true end)
+
+		ufoPhaseLabel:Set("🛸  Phase: " .. phaseIcon .. " " .. state.phase:upper())
+		ufoZoneIdLabel:Set("📍  Zone ID: " .. (state.zoneId and tostring(state.zoneId) or "None"))
+		ufoZoneNameLabel:Set("🗺️  Zone Name: " .. zoneName)
+		ufoNextLabel:Set("⏳  Next Event: " .. nextEvent)
+		ufoGoldenLabel:Set("⭐  Golden UFO: " .. (isGolden and "Yes ✅" or "No ❌"))
+	end
+
+	ufoTab:CreateSection("Automation")
+
+	featureToggle(ufoTab, {
+		Name = "Auto Stay in UFO Zone",
+		CurrentValue = false,
+		Flag = "AutoUfoZone",
+		Callback = function(value)
+			autoUfoZone = value
+			if not value then
+				lastUfoZoneId = nil
+				lastUfoPhase = nil
+			end
+		end,
+	})
+
+	featureToggle(ufoTab, {
+		Name = "Auto Collect UFO Loot",
+		CurrentValue = false,
+		Flag = "AutoUfoLoot",
+		Callback = function(value)
+			autoUfoLoot = value
+		end,
+	})
+
+	ufoTab:CreateSection("Controls")
+
+	featureButton(ufoTab, {
+		Name = "Refresh Status",
+		Callback = function()
+			refreshUfoState()
+		end,
+	})
+
+	task.spawn(function()
+		local ufoWasActive = false
+		local farmWasEnabled = false
+
+		while true do
+			task.wait()
+			pcall(function()
+				refreshUfoState()
+
+				if not ufoClient then return end
+				local ok, state = pcall(function() return ufoClient:getStateSource()() end)
+				if not ok or not state then return end
+
+				local isActive = state.phase ~= "idle" and state.zoneId ~= nil
+
+				if autoUfoZone then
+					if isActive then
+						if not ufoWasActive then
+							ufoWasActive = true
+							local farmFlag = rayfieldLibrary.Flags.FarmingStayInBestZone
+							if farmFlag and farmFlag.CurrentValue then
+								farmWasEnabled = true
+								farmFlag:Set(false)
+							else
+								farmWasEnabled = false
+							end
+						end
+
+						lastUfoZoneId = state.zoneId
+						lastUfoPhase = state.phase
+
+						local currentZone = dataServiceClient and dataServiceClient:get("zone") or nil
+						if currentZone ~= state.zoneId then
+							ufoZonesRemote:InvokeServer("requestTeleportZone", state.zoneId)
+						end
+					else
+						if ufoWasActive then
+							ufoWasActive = false
+							if farmWasEnabled then
+								local farmFlag = rayfieldLibrary.Flags.FarmingStayInBestZone
+								if farmFlag then
+									farmFlag:Set(true)
+								end
+								farmWasEnabled = false
+							end
+							lastUfoZoneId = nil
+							lastUfoPhase = nil
+						end
+					end
+				end
+
+				if autoUfoLoot then
+					local remote = getUfoLootRemote()
+					if remote then
+						for _, folderName in ipairs({"Loot", "Debris"}) do
+							local container = workspace:FindFirstChild(folderName)
+							if container then
+								for _, item in ipairs(container:GetChildren()) do
+									local id = item:GetAttribute("uniqueId")
+										or item:GetAttribute("id")
+										or item.Name
+									if id then
+										pcall(function()
+											remote:InvokeServer("requestCollect", id)
+										end)
+									end
+								end
+							end
+						end
+					end
+				end
+			end)
+		end
+	end)
+
 	local indexRunning = false
 	local indexThread, luckPollThread = nil, nil
 	local selectedCategoryOption = nil
@@ -1803,7 +2026,7 @@ task.spawn(function()
 		Callback = function(enabled)
 			if not enabled then return end
 			task.spawn(function()
-				local codes = { "AAisComing","goingBananas","gullible","Sliming","test" }
+				local codes = { "AAisComing","goingBananas","gullible","Sliming","test","beammeup","aliensarehere" }
 				table.sort(codes)
 				while rayfieldLibrary.Flags.MiscRedeemCodes and rayfieldLibrary.Flags.MiscRedeemCodes.CurrentValue do
 					if not codeServiceRemote then error("CodeService remote not loaded") end
@@ -2247,15 +2470,21 @@ task.spawn(function()
 		Flag = "SettingsAntiKick",
 		Callback = function(value)
 			if value then
-				local players = game:GetService("Players")
-				local oldKick = players.LocalPlayer.Kick
-				players.LocalPlayer.Kick = function(self, msg)
-					if rayfieldLibrary.Flags.SettingsAntiKick and rayfieldLibrary.Flags.SettingsAntiKick.CurrentValue then
-						warn("[CactusHub] Blocked kick attempt: " .. tostring(msg))
-						return
+				local mt = getrawmetatable(game)
+				local oldIndex = mt.__index
+				local oldNamecall = mt.__namecall
+				setreadonly(mt, false)
+				mt.__namecall = newcclosure(function(self, ...)
+					local method = getnamecallmethod()
+					if method == "Kick" and self == localPlayer then
+						if rayfieldLibrary.Flags.SettingsAntiKick and rayfieldLibrary.Flags.SettingsAntiKick.CurrentValue then
+							warn("[CactusHub] Blocked kick attempt")
+							return
+						end
 					end
-					return oldKick(self, msg)
-				end
+					return oldNamecall(self, ...)
+				end)
+				setreadonly(mt, true)
 			end
 		end,
 	})
@@ -2268,7 +2497,7 @@ task.spawn(function()
 	})
 
 	featureToggle(settingsTab, {
-		Name = "Auto Friend Requests",
+		Name = "Auto Send & Accept Friend Requests",
 		CurrentValue = false,
 		Flag = "AutoFriend",
 		Callback = function(value)
@@ -2287,7 +2516,8 @@ task.spawn(function()
 			end)
 		end,
 	})
-	settingsTab:CreateLabel("( I'm not sure if it works )")
+
+	settingsTab:CreateParagraph({ Title = "MAY be Patched", Content = "Auto Send & Accept Friend Requests may not work depending on current Roblox API restrictions." })
 
 	settingsTab:CreateSection("Advanced Optimization")
 
@@ -2302,12 +2532,48 @@ task.spawn(function()
 
 	local function setAllOptimizations(value)
 		updatingOptimizations = true
+		if maxFpsToggle     then maxFpsToggle:Set(value) end
 		if optGPUToggle     then optGPUToggle:Set(value) end
 		if optEffectsToggle then optEffectsToggle:Set(value) end
 		if optGCToggle      then optGCToggle:Set(value) end
 		if optIntenseToggle then optIntenseToggle:Set(value) end
-		if maxFpsToggle     then maxFpsToggle:Set(value) end
 		updatingOptimizations = false
+
+		if value then
+			pcall(function() setfpscap(0) end)
+			pcall(function()
+				settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+				local lighting = game:GetService("Lighting")
+				lighting.GlobalShadows = false
+				lighting.EnvironmentDiffuseScale = 0
+				lighting.EnvironmentSpecularScale = 0
+				for _, descendant in ipairs(workspace:GetDescendants()) do
+					if descendant:IsA("BasePart") then
+						descendant.CastShadow = false
+						descendant.Reflectance = 0
+						descendant.Material = CHEAP_MATERIAL
+					end
+				end
+				local rs = game:GetService("RunService")
+				rs:Set3dRenderingEnabled(false)
+				task.wait(0.1)
+				rs:Set3dRenderingEnabled(true)
+			end)
+			pcall(function()
+				for _, descendant in ipairs(game:GetDescendants()) do
+					if OPT_VISUAL_TYPES[descendant.ClassName] or descendant:IsA("Fire") then
+						pcall(function() descendant:Destroy() end)
+					end
+				end
+			end)
+			if _G.__memoryCleaner then _G.__memoryCleaner:Disconnect() end
+			_G.__memoryCleaner = RunService.Heartbeat:Connect(function() gcinfo() end)
+			pcall(function()
+				loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/Optimization.lua"))()
+			end)
+		else
+			if _G.__memoryCleaner then _G.__memoryCleaner:Disconnect() _G.__memoryCleaner = nil end
+		end
 	end
 
 	settingsTab:CreateToggle({
