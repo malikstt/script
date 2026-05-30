@@ -16,22 +16,25 @@ local UPDATE_INTERVAL = 0.5
 local TWEEN_TIME      = 0.25
 
 local PALETTE = {
-	bg         = Color3.fromRGB(4,   5,   9),
-	panel      = Color3.fromRGB(8,   10,  16),
-	panelAlt   = Color3.fromRGB(11,  13,  21),
-	border     = Color3.fromRGB(25,  30,  48),
-	borderBright = Color3.fromRGB(45, 55, 85),
-	accent     = Color3.fromRGB(70,  150, 255),
-	accentGlow = Color3.fromRGB(40,  100, 220),
-	gold       = Color3.fromRGB(255, 210, 60),
-	diamond    = Color3.fromRGB(120, 230, 255),
-	void       = Color3.fromRGB(160, 70,  255),
-	galaxy     = Color3.fromRGB(220, 100, 255),
-	green      = Color3.fromRGB(70,  210, 100),
-	red        = Color3.fromRGB(255, 75,  75),
-	text       = Color3.fromRGB(210, 220, 240),
-	dim        = Color3.fromRGB(85,  95,  120),
-	dimmer     = Color3.fromRGB(55,  62,  85),
+	bg           = Color3.fromRGB(4,   5,   9),
+	panel        = Color3.fromRGB(8,   10,  16),
+	panelAlt     = Color3.fromRGB(11,  13,  21),
+	border       = Color3.fromRGB(25,  30,  48),
+	borderBright = Color3.fromRGB(45,  55,  85),
+	accent       = Color3.fromRGB(70,  150, 255),
+	accentGlow   = Color3.fromRGB(40,  100, 220),
+	gold         = Color3.fromRGB(255, 210, 60),
+	diamond      = Color3.fromRGB(120, 230, 255),
+	void         = Color3.fromRGB(160, 70,  255),
+	galaxy       = Color3.fromRGB(220, 100, 255),
+	green        = Color3.fromRGB(70,  210, 100),
+	red          = Color3.fromRGB(255, 75,  75),
+	text         = Color3.fromRGB(210, 220, 240),
+	dim          = Color3.fromRGB(85,  95,  120),
+	dimmer       = Color3.fromRGB(55,  62,  85),
+	ufo          = Color3.fromRGB(100, 255, 180),
+	ufoGlow      = Color3.fromRGB(50,  200, 130),
+	ufoGolden    = Color3.fromRGB(255, 230, 80),
 }
 
 local ASSET_IDS = {
@@ -84,7 +87,7 @@ end
 
 local function makeLabel(props, parent)
 	props.BackgroundTransparency = 1
-	props.Font       = props.Font or Enum.Font.GothamBold
+	props.Font        = props.Font or Enum.Font.GothamBold
 	props.TextScaled  = true
 	props.TextWrapped = false
 	return make("TextLabel", props, parent)
@@ -134,30 +137,49 @@ local function safeGet(...)
 	return tonumber(current) or 0
 end
 
-local sessionStart       = os.clock()
-local sessionStartRolls  = safeGet("stats","rolls")
-local sessionStartKills  = safeGet("stats","kills")
-local sessionStartCoins  = safeGet("coins")
-local sessionStartGoop   = safeGet("goop")
+local sessionStart      = os.clock()
+local sessionStartRolls = safeGet("stats","rolls")
+local sessionStartKills = safeGet("stats","kills")
+local sessionStartCoins = safeGet("coins")
+local sessionStartGoop  = safeGet("goop")
 
 local bestSlimeData = { name = "None", odds = "N/A", assetId = "" }
+
+local ufoState = {
+	phase        = "idle",
+	zoneId       = nil,
+	zoneName     = "N/A",
+	nextEventSecs = 0,
+	isGolden     = false,
+	clientLoaded = false,
+}
+
+local ufoClient = nil
+task.spawn(function()
+	repeat task.wait() until game:IsLoaded()
+	pcall(function()
+		ufoClient = require(ReplicatedStorage.Source.Features.UfoEvent.UfoEventServiceClient)
+		ufoState.clientLoaded = true
+	end)
+end)
 
 task.spawn(function()
 	repeat task.wait() until game:IsLoaded()
 	pcall(function()
 		local sourceFolder = ReplicatedStorage:WaitForChild("Source", 30)
 		local slimesModule = require(sourceFolder.Game.Items.Slimes)
+		local ZonesModule  = require(sourceFolder.Game.Items.Zones)
 		while true do
 			task.wait(3)
 			pcall(function()
 				local ok, d = pcall(function() return DataClient._data._data end)
 				if not ok or type(d) ~= "table" then return end
 				if d.stats and d.stats.rarestRoll and d.stats.rarestRoll.slimeData then
-					local rd       = d.stats.rarestRoll.slimeData
-					local id       = tostring(rd.id or "?")
+					local rd        = d.stats.rarestRoll.slimeData
+					local id        = tostring(rd.id or "?")
 					local mutations = rd.mutations or {}
-					local odds     = d.stats.rarestRoll.odds or 0
-					local prefix   = ""
+					local odds      = d.stats.rarestRoll.odds or 0
+					local prefix    = ""
 					if mutations.inverted then prefix = "Inverted "
 					elseif mutations.shiny and mutations.huge then prefix = "Shiny Huge "
 					elseif mutations.shiny and mutations.big  then prefix = "Shiny Big "
@@ -165,9 +187,9 @@ task.spawn(function()
 					elseif mutations.shiny then prefix = "Shiny "
 					elseif mutations.big   then prefix = "Big "
 					end
-					bestSlimeData.name   = prefix .. id:sub(1,1):upper() .. id:sub(2)
-					bestSlimeData.odds   = odds > 0 and ("1 in " .. formatNum(math.floor(odds))) or "N/A"
-					local slimeData      = slimesModule.getSlime(id)
+					bestSlimeData.name    = prefix .. id:sub(1,1):upper() .. id:sub(2)
+					bestSlimeData.odds    = odds > 0 and ("1 in " .. formatNum(math.floor(odds))) or "N/A"
+					local slimeData       = slimesModule.getSlime(id)
 					bestSlimeData.assetId = ""
 					if slimeData then
 						if mutations.inverted and slimeData.invertedIcon and slimeData.invertedIcon ~= "" then
@@ -177,15 +199,29 @@ task.spawn(function()
 						end
 					end
 				end
+
+				if ufoClient then
+					local ok2, state = pcall(function() return ufoClient:getStateSource()() end)
+					if ok2 and state then
+						ufoState.phase  = state.phase or "idle"
+						ufoState.zoneId = state.zoneId
+						if state.zoneId and ZonesModule and ZonesModule.hasZone(state.zoneId) then
+							ufoState.zoneName = ZonesModule.getZone(state.zoneId).name or ("Zone "..state.zoneId)
+						else
+							ufoState.zoneName = state.zoneId and ("Zone "..state.zoneId) or "N/A"
+						end
+						if state.nextEventStartTime then
+							ufoState.nextEventSecs = math.max(0, math.round(state.nextEventStartTime - workspace:GetServerTimeNow()))
+						else
+							ufoState.nextEventSecs = 0
+						end
+						pcall(function() ufoState.isGolden = ufoClient.isGolden == true end)
+					end
+				end
 			end)
 		end
 	end)
 end)
-
-local totalCoinsEarned = 0
-local totalGoopEarned  = 0
-local totalRollsDone   = 0
-local totalKillsDone   = 0
 
 local function buildHUD(playerGui)
 	local existing = playerGui:FindFirstChild("__MAINHUD__")
@@ -207,13 +243,6 @@ local function buildHUD(playerGui)
 		BackgroundColor3       = PALETTE.bg,
 		BackgroundTransparency = 0,
 	}, screenGui)
-
-	make("UIScale", { Scale = 1 }, sc)
-	make("UIAspectRatioConstraint", {
-		AspectRatio  = 16 / 9,
-		AspectType   = Enum.AspectType.ScaleWithParentSize,
-		DominantAxis = Enum.DominantAxis.Width,
-	}, sc)
 
 	addGradient(sc, ColorSequence.new({
 		ColorSequenceKeypoint.new(0,   Color3.fromRGB(4,  5,  11)),
@@ -243,8 +272,8 @@ local function buildHUD(playerGui)
 
 	local function makeDivider(parent)
 		local d = makeFrame({
-			Size             = UDim2.fromScale(0.88, 0.004),
-			BackgroundColor3 = PALETTE.border,
+			Size                   = UDim2.fromScale(0.88, 0.004),
+			BackgroundColor3       = PALETTE.border,
 			BackgroundTransparency = 0.3,
 		}, parent)
 		addCorner(d, 2)
@@ -263,8 +292,8 @@ local function buildHUD(playerGui)
 
 	local topCenter = makeFrame({
 		Name             = "TopCenter",
-		Size             = UDim2.fromScale(0.24, 0.078),
-		Position         = UDim2.fromScale(0.38, 0.014),
+		Size             = UDim2.new(0.22, 0, 0, 60),
+		Position         = UDim2.fromScale(0.39, 0.012),
 		BackgroundColor3 = PALETTE.panel,
 	}, sc)
 	addCorner(topCenter, 10)
@@ -276,26 +305,21 @@ local function buildHUD(playerGui)
 	makePanelGlow(topCenter, PALETTE.accentGlow)
 
 	local topAccentBar = makeFrame({
-		Size             = UDim2.fromScale(0.55, 0.022),
-		Position         = UDim2.fromScale(0.225, 0),
-		BackgroundColor3 = PALETTE.accent,
+		Size                   = UDim2.new(0.55, 0, 0, 2),
+		Position               = UDim2.fromScale(0.225, 0),
+		BackgroundColor3       = PALETTE.accent,
 		BackgroundTransparency = 0.25,
 	}, topCenter)
 	addCorner(topAccentBar, 2)
 
 	local avatarFrame = makeFrame({
 		Name             = "AvatarFrame",
-		Size             = UDim2.fromScale(0.155, 0.76),
-		Position         = UDim2.fromScale(0.025, 0.12),
+		Size             = UDim2.new(0, 44, 0, 44),
+		Position         = UDim2.fromOffset(8, 8),
 		BackgroundColor3 = PALETTE.borderBright,
 	}, topCenter)
 	addCorner(avatarFrame, 7)
 	addStroke(avatarFrame, PALETTE.accent, 1)
-	make("UIAspectRatioConstraint", {
-		AspectRatio  = 1,
-		AspectType   = Enum.AspectType.ScaleWithParentSize,
-		DominantAxis = Enum.DominantAxis.Height,
-	}, avatarFrame)
 
 	local avatarImg = makeImageLabel({
 		Size = UDim2.fromScale(1,1), Image = "", ScaleType = Enum.ScaleType.Fit,
@@ -303,8 +327,8 @@ local function buildHUD(playerGui)
 	addCorner(avatarImg, 7)
 
 	makeLabel({
-		Size           = UDim2.fromScale(0.79, 0.5),
-		Position       = UDim2.fromScale(0.2, 0.08),
+		Size           = UDim2.new(1, -60, 0, 28),
+		Position       = UDim2.fromOffset(58, 6),
 		Text           = LocalPlayer.Name,
 		TextColor3     = PALETTE.text,
 		Font           = Enum.Font.GothamBold,
@@ -312,8 +336,8 @@ local function buildHUD(playerGui)
 	}, topCenter)
 
 	makeLabel({
-		Size           = UDim2.fromScale(0.79, 0.3),
-		Position       = UDim2.fromScale(0.2, 0.62),
+		Size           = UDim2.new(1, -60, 0, 18),
+		Position       = UDim2.fromOffset(58, 36),
 		Text           = "ANALYST",
 		TextColor3     = PALETTE.accent,
 		Font           = Enum.Font.Gotham,
@@ -330,8 +354,8 @@ local function buildHUD(playerGui)
 
 	local progPanel = makeFrame({
 		Name             = "ProgressionPanel",
-		Size             = UDim2.fromScale(0.24, 0.205),
-		Position         = UDim2.fromScale(0.38, 0.105),
+		Size             = UDim2.new(0.22, 0, 0.19, 0),
+		Position         = UDim2.new(0.39, 0, 0, 78),
 		BackgroundColor3 = PALETTE.panel,
 	}, sc)
 	addCorner(progPanel, 10)
@@ -342,22 +366,22 @@ local function buildHUD(playerGui)
 	}), 90)
 
 	make("UIPadding", {
-		PaddingTop    = UDim.new(0.025, 0),
-		PaddingBottom = UDim.new(0.025, 0),
+		PaddingTop    = UDim.new(0.04, 0),
+		PaddingBottom = UDim.new(0.04, 0),
 		PaddingLeft   = UDim.new(0.04, 0),
 		PaddingRight  = UDim.new(0.04, 0),
 	}, progPanel)
-	addListLayout(progPanel, { Padding = UDim.new(0, 5) })
+	addListLayout(progPanel, { Padding = UDim.new(0, 4) })
 
 	local function makeProgRow(parent, assetId, labelText, accentColor)
 		local row = makeFrame({
-			Size             = UDim2.fromScale(1, 0.2),
+			Size             = UDim2.fromScale(1, 0.21),
 			BackgroundColor3 = PALETTE.panelAlt,
 		}, parent)
 		addCorner(row, 6)
 		addStroke(row, PALETTE.border, 1)
 
-		local ic = makeFrame({ Size = UDim2.fromScale(0.18, 1), BackgroundTransparency = 1 }, row)
+		local ic = makeFrame({ Size = UDim2.fromScale(0.16, 1), BackgroundTransparency = 1 }, row)
 		local img = makeImageLabel({
 			Size     = UDim2.fromScale(0.88, 0.72),
 			Position = UDim2.fromScale(0.06, 0.14),
@@ -367,7 +391,7 @@ local function buildHUD(playerGui)
 
 		makeLabel({
 			Size           = UDim2.fromScale(0.46, 0.74),
-			Position       = UDim2.fromScale(0.2, 0.13),
+			Position       = UDim2.fromScale(0.19, 0.13),
 			Text           = labelText,
 			TextColor3     = PALETTE.dim,
 			Font           = Enum.Font.Gotham,
@@ -375,8 +399,8 @@ local function buildHUD(playerGui)
 		}, row)
 
 		local valLbl = makeLabel({
-			Size           = UDim2.fromScale(0.3, 0.74),
-			Position       = UDim2.fromScale(0.68, 0.13),
+			Size           = UDim2.fromScale(0.32, 0.74),
+			Position       = UDim2.fromScale(0.66, 0.13),
 			Text           = "-",
 			TextColor3     = accentColor,
 			TextXAlignment = Enum.TextXAlignment.Right,
@@ -391,8 +415,8 @@ local function buildHUD(playerGui)
 
 	local timerContainer = makeFrame({
 		Name             = "TimerContainer",
-		Size             = UDim2.fromScale(0.11, 0.058),
-		Position         = UDim2.fromScale(0.445, 0.323),
+		Size             = UDim2.new(0.1, 0, 0, 52),
+		Position         = UDim2.new(0.45, 0, 0, 280),
 		BackgroundColor3 = PALETTE.panel,
 	}, sc)
 	addCorner(timerContainer, 14)
@@ -403,24 +427,24 @@ local function buildHUD(playerGui)
 	}), 90)
 
 	local timerTopLine = makeFrame({
-		Size             = UDim2.fromScale(0.5, 0.035),
-		Position         = UDim2.fromScale(0.25, 0),
-		BackgroundColor3 = PALETTE.accent,
+		Size                   = UDim2.new(0.5, 0, 0, 2),
+		Position               = UDim2.fromScale(0.25, 0),
+		BackgroundColor3       = PALETTE.accent,
 		BackgroundTransparency = 0.3,
 	}, timerContainer)
 	addCorner(timerTopLine, 2)
 
 	local timerLabel = makeLabel({
-		Size       = UDim2.fromScale(0.9, 0.7),
-		Position   = UDim2.fromScale(0.05, 0.1),
+		Size       = UDim2.new(0.9, 0, 0, 30),
+		Position   = UDim2.fromOffset(5, 6),
 		Text       = "00:00",
 		TextColor3 = PALETTE.accent,
 		Font       = Enum.Font.GothamBold,
 	}, timerContainer)
 
 	makeLabel({
-		Size       = UDim2.fromScale(0.9, 0.26),
-		Position   = UDim2.fromScale(0.05, 0.72),
+		Size       = UDim2.new(0.9, 0, 0, 14),
+		Position   = UDim2.fromOffset(5, 34),
 		Text       = "SESSION TIME",
 		TextColor3 = PALETTE.dim,
 		Font       = Enum.Font.Gotham,
@@ -428,8 +452,8 @@ local function buildHUD(playerGui)
 
 	local leftPanel = makeFrame({
 		Name             = "LeftPanel",
-		Size             = UDim2.fromScale(0.175, 0.84),
-		Position         = UDim2.fromScale(0.008, 0.08),
+		Size             = UDim2.new(0.17, 0, 0.92, 0),
+		Position         = UDim2.new(0, 6, 0.04, 0),
 		BackgroundColor3 = PALETTE.panel,
 	}, sc)
 	addCorner(leftPanel, 10)
@@ -445,11 +469,11 @@ local function buildHUD(playerGui)
 		PaddingLeft   = UDim.new(0.05, 0),
 		PaddingRight  = UDim.new(0.05, 0),
 	}, leftPanel)
-	addListLayout(leftPanel, { Padding = UDim.new(0, 5) })
+	addListLayout(leftPanel, { Padding = UDim.new(0, 4) })
 
 	local function makeStatRow(parent, assetId, labelText, accentColor, rowH)
 		local row = makeFrame({
-			Size             = UDim2.fromScale(1, rowH or 0.1),
+			Size             = UDim2.fromScale(1, rowH or 0.085),
 			BackgroundColor3 = PALETTE.panelAlt,
 		}, parent)
 		addCorner(row, 6)
@@ -492,18 +516,18 @@ local function buildHUD(playerGui)
 	local _, killsVal   = makeStatRow(leftPanel, ASSET_IDS.kills,   nil,        PALETTE.red)
 	local _, zoneVal    = makeStatRow(leftPanel, ASSET_IDS.zone,    "Zone",     PALETTE.accent)
 
-	local divLeft = makeDivider(leftPanel)
+	makeDivider(leftPanel)
 
 	makeSectionTag(leftPanel, "SESSION")
-	local _, sessRollsVal = makeStatRow(leftPanel, ASSET_IDS.goldDice,  nil, PALETTE.void)
-	local _, sessKillsVal = makeStatRow(leftPanel, ASSET_IDS.kills,     nil, PALETTE.red)
-	local _, sessCoinsVal = makeStatRow(leftPanel, ASSET_IDS.coins,     nil, PALETTE.gold)
-	local _, sessGoopVal  = makeStatRow(leftPanel, ASSET_IDS.goop,      nil, PALETTE.green)
+	local _, sessRollsVal = makeStatRow(leftPanel, ASSET_IDS.goldDice, nil, PALETTE.void)
+	local _, sessKillsVal = makeStatRow(leftPanel, ASSET_IDS.kills,    nil, PALETTE.red)
+	local _, sessCoinsVal = makeStatRow(leftPanel, ASSET_IDS.coins,    nil, PALETTE.gold)
+	local _, sessGoopVal  = makeStatRow(leftPanel, ASSET_IDS.goop,     nil, PALETTE.green)
 
 	local rightPanel = makeFrame({
 		Name             = "RightPanel",
-		Size             = UDim2.fromScale(0.175, 0.84),
-		Position         = UDim2.fromScale(0.817, 0.08),
+		Size             = UDim2.new(0.17, 0, 0.92, 0),
+		Position         = UDim2.new(0.83, 0, 0.04, 0),
 		BackgroundColor3 = PALETTE.panel,
 	}, sc)
 	addCorner(rightPanel, 10)
@@ -519,27 +543,27 @@ local function buildHUD(playerGui)
 		PaddingLeft   = UDim.new(0.05, 0),
 		PaddingRight  = UDim.new(0.05, 0),
 	}, rightPanel)
-	addListLayout(rightPanel, { Padding = UDim.new(0, 5) })
+	addListLayout(rightPanel, { Padding = UDim.new(0, 4) })
 
 	makeSectionTag(rightPanel, "BEST ROLL")
 
 	local bestSlimeRow = makeFrame({
-		Size             = UDim2.fromScale(1, 0.2),
+		Size             = UDim2.fromScale(1, 0.17),
 		BackgroundColor3 = PALETTE.panelAlt,
 	}, rightPanel)
 	addCorner(bestSlimeRow, 8)
 	addStroke(bestSlimeRow, PALETTE.void, 1)
 
 	local bestSlimeIcon = makeImageLabel({
-		Size     = UDim2.fromScale(0.32, 0.84),
+		Size     = UDim2.fromScale(0.3, 0.84),
 		Position = UDim2.fromScale(0.03, 0.08),
 		Image    = "",
 	}, bestSlimeRow)
 	make("UIAspectRatioConstraint", { AspectRatio = 1, AspectType = Enum.AspectType.ScaleWithParentSize, DominantAxis = Enum.DominantAxis.Height }, bestSlimeIcon)
 
 	local bestSlimeNameLbl = makeLabel({
-		Size           = UDim2.fromScale(0.62, 0.48),
-		Position       = UDim2.fromScale(0.36, 0.06),
+		Size           = UDim2.fromScale(0.64, 0.48),
+		Position       = UDim2.fromScale(0.34, 0.06),
 		Text           = "None",
 		TextColor3     = PALETTE.void,
 		Font           = Enum.Font.GothamBold,
@@ -547,21 +571,21 @@ local function buildHUD(playerGui)
 	}, bestSlimeRow)
 
 	local bestSlimeOddsLbl = makeLabel({
-		Size           = UDim2.fromScale(0.62, 0.38),
-		Position       = UDim2.fromScale(0.36, 0.58),
+		Size           = UDim2.fromScale(0.64, 0.38),
+		Position       = UDim2.fromScale(0.34, 0.58),
 		Text           = "N/A",
 		TextColor3     = PALETTE.dim,
 		Font           = Enum.Font.Gotham,
 		TextXAlignment = Enum.TextXAlignment.Left,
 	}, bestSlimeRow)
 
-	local divRight = makeDivider(rightPanel)
+	makeDivider(rightPanel)
 
 	makeSectionTag(rightPanel, "RATES")
 
 	local function makeRateRow(parent, assetId, labelText, accentColor)
 		local row = makeFrame({
-			Size             = UDim2.fromScale(1, 0.1),
+			Size             = UDim2.fromScale(1, 0.085),
 			BackgroundColor3 = PALETTE.panelAlt,
 		}, parent)
 		addCorner(row, 6)
@@ -593,15 +617,117 @@ local function buildHUD(playerGui)
 		return row, valLbl
 	end
 
-	local _, rpsVal = makeRateRow(rightPanel, ASSET_IDS.goldDice,  "Rolls/s",  PALETTE.void)
-	local _, cpsVal = makeRateRow(rightPanel, ASSET_IDS.coins,     "Coins/s",  PALETTE.gold)
-	local _, gpsVal = makeRateRow(rightPanel, ASSET_IDS.goop,      "Goop/s",   PALETTE.green)
-	local _, kpmVal = makeRateRow(rightPanel, ASSET_IDS.kills,     "Kills/m",  PALETTE.red)
+	local _, rpsVal = makeRateRow(rightPanel, ASSET_IDS.goldDice, "Rolls/s",  PALETTE.void)
+	local _, cpsVal = makeRateRow(rightPanel, ASSET_IDS.coins,    "Coins/s",  PALETTE.gold)
+	local _, gpsVal = makeRateRow(rightPanel, ASSET_IDS.goop,     "Goop/s",   PALETTE.green)
+	local _, kpmVal = makeRateRow(rightPanel, ASSET_IDS.kills,    "Kills/m",  PALETTE.red)
+
+	makeDivider(rightPanel)
+
+	makeSectionTag(rightPanel, "🛸 UFO EVENT")
+
+	local ufoPhaseRow = makeFrame({
+		Size             = UDim2.fromScale(1, 0.085),
+		BackgroundColor3 = PALETTE.panelAlt,
+	}, rightPanel)
+	addCorner(ufoPhaseRow, 6)
+	addStroke(ufoPhaseRow, PALETTE.ufo, 1)
+
+	makeLabel({
+		Size           = UDim2.fromScale(0.45, 0.7),
+		Position       = UDim2.fromScale(0.04, 0.15),
+		Text           = "Phase",
+		TextColor3     = PALETTE.dim,
+		Font           = Enum.Font.Gotham,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, ufoPhaseRow)
+
+	local ufoPhaseVal = makeLabel({
+		Size           = UDim2.fromScale(0.5, 0.7),
+		Position       = UDim2.fromScale(0.48, 0.15),
+		Text           = "Idle",
+		TextColor3     = PALETTE.ufo,
+		Font           = Enum.Font.GothamBold,
+		TextXAlignment = Enum.TextXAlignment.Right,
+	}, ufoPhaseRow)
+
+	local ufoZoneRow = makeFrame({
+		Size             = UDim2.fromScale(1, 0.085),
+		BackgroundColor3 = PALETTE.panelAlt,
+	}, rightPanel)
+	addCorner(ufoZoneRow, 6)
+
+	makeLabel({
+		Size           = UDim2.fromScale(0.38, 0.7),
+		Position       = UDim2.fromScale(0.04, 0.15),
+		Text           = "Zone",
+		TextColor3     = PALETTE.dim,
+		Font           = Enum.Font.Gotham,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, ufoZoneRow)
+
+	local ufoZoneVal = makeLabel({
+		Size           = UDim2.fromScale(0.56, 0.7),
+		Position       = UDim2.fromScale(0.42, 0.15),
+		Text           = "N/A",
+		TextColor3     = PALETTE.ufo,
+		Font           = Enum.Font.GothamBold,
+		TextXAlignment = Enum.TextXAlignment.Right,
+	}, ufoZoneRow)
+
+	local ufoNextRow = makeFrame({
+		Size             = UDim2.fromScale(1, 0.085),
+		BackgroundColor3 = PALETTE.panelAlt,
+	}, rightPanel)
+	addCorner(ufoNextRow, 6)
+
+	makeLabel({
+		Size           = UDim2.fromScale(0.4, 0.7),
+		Position       = UDim2.fromScale(0.04, 0.15),
+		Text           = "Next",
+		TextColor3     = PALETTE.dim,
+		Font           = Enum.Font.Gotham,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, ufoNextRow)
+
+	local ufoNextVal = makeLabel({
+		Size           = UDim2.fromScale(0.54, 0.7),
+		Position       = UDim2.fromScale(0.44, 0.15),
+		Text           = "--:--",
+		TextColor3     = PALETTE.accent,
+		Font           = Enum.Font.GothamBold,
+		TextXAlignment = Enum.TextXAlignment.Right,
+	}, ufoNextRow)
+
+	local ufoGoldenRow = makeFrame({
+		Size             = UDim2.fromScale(1, 0.085),
+		BackgroundColor3 = PALETTE.panelAlt,
+	}, rightPanel)
+	addCorner(ufoGoldenRow, 6)
+	addStroke(ufoGoldenRow, PALETTE.dimmer, 1)
+
+	makeLabel({
+		Size           = UDim2.fromScale(0.48, 0.7),
+		Position       = UDim2.fromScale(0.04, 0.15),
+		Text           = "Golden",
+		TextColor3     = PALETTE.dim,
+		Font           = Enum.Font.Gotham,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, ufoGoldenRow)
+
+	local ufoGoldenVal = makeLabel({
+		Size           = UDim2.fromScale(0.46, 0.7),
+		Position       = UDim2.fromScale(0.5, 0.15),
+		Text           = "No",
+		TextColor3     = PALETTE.dim,
+		Font           = Enum.Font.GothamBold,
+		TextXAlignment = Enum.TextXAlignment.Right,
+	}, ufoGoldenRow)
 
 	local statusPanel = makeFrame({
 		Name             = "StatusPanel",
-		Size             = UDim2.fromScale(0.24, 0.056),
-		Position         = UDim2.fromScale(0.38, 0.73),
+		Size             = UDim2.new(0.22, 0, 0, 40),
+		Position         = UDim2.new(0.39, 0, 0.88, 0),
 		BackgroundColor3 = PALETTE.panel,
 	}, sc)
 	addCorner(statusPanel, 20)
@@ -611,49 +737,55 @@ local function buildHUD(playerGui)
 		ColorSequenceKeypoint.new(1, Color3.fromRGB(7,  9,  16)),
 	}), 0)
 
-	for _, data2 in ipairs({ { UDim2.fromScale(0.012, 0.2), PALETTE.accent }, { UDim2.fromScale(0.955, 0.2), PALETTE.accent } }) do
+	for _, d2 in ipairs({ { UDim2.fromScale(0.012, 0.2), PALETTE.accent }, { UDim2.fromScale(0.955, 0.2), PALETTE.accent } }) do
 		local bar = makeFrame({
-			Size             = UDim2.fromScale(0.008, 0.6),
-			Position         = data2[1],
-			BackgroundColor3 = data2[2],
+			Size                   = UDim2.fromScale(0.008, 0.6),
+			Position               = d2[1],
+			BackgroundColor3       = d2[2],
 			BackgroundTransparency = 0.3,
 		}, statusPanel)
 		addCorner(bar, 2)
 	end
 
 	local statusLabel = makeLabel({
-		Name       = "StatusLabel",
-		Size       = UDim2.fromScale(0.96, 0.78),
-		Position   = UDim2.fromScale(0.02, 0.11),
-		Text       = "* Idle",
-		TextColor3 = PALETTE.accent,
-		Font       = Enum.Font.GothamBold,
+		Name           = "StatusLabel",
+		Size           = UDim2.fromScale(0.96, 0.78),
+		Position       = UDim2.fromScale(0.02, 0.11),
+		Text           = "* Idle",
+		TextColor3     = PALETTE.accent,
+		Font           = Enum.Font.GothamBold,
 	}, statusPanel)
 
 	return {
-		screenGui     = screenGui,
-		timerLabel    = timerLabel,
-		rebirthVal    = rebirthVal,
-		goopVal       = goopVal,
-		coinsVal      = coinsVal,
-		killsVal      = killsVal,
-		zoneVal       = zoneVal,
-		goldenVal     = goldenVal,
-		diamondVal    = diamondVal,
-		voidVal       = voidVal,
-		galaxyVal     = galaxyVal,
-		sessRollsVal  = sessRollsVal,
-		sessKillsVal  = sessKillsVal,
-		sessCoinsVal  = sessCoinsVal,
-		sessGoopVal   = sessGoopVal,
-		rpsVal        = rpsVal,
-		cpsVal        = cpsVal,
-		gpsVal        = gpsVal,
-		kpmVal        = kpmVal,
-		bestSlimeIcon = bestSlimeIcon,
+		screenGui        = screenGui,
+		timerLabel       = timerLabel,
+		rebirthVal       = rebirthVal,
+		goopVal          = goopVal,
+		coinsVal         = coinsVal,
+		killsVal         = killsVal,
+		zoneVal          = zoneVal,
+		goldenVal        = goldenVal,
+		diamondVal       = diamondVal,
+		voidVal          = voidVal,
+		galaxyVal        = galaxyVal,
+		sessRollsVal     = sessRollsVal,
+		sessKillsVal     = sessKillsVal,
+		sessCoinsVal     = sessCoinsVal,
+		sessGoopVal      = sessGoopVal,
+		rpsVal           = rpsVal,
+		cpsVal           = cpsVal,
+		gpsVal           = gpsVal,
+		kpmVal           = kpmVal,
+		bestSlimeIcon    = bestSlimeIcon,
 		bestSlimeNameLbl = bestSlimeNameLbl,
 		bestSlimeOddsLbl = bestSlimeOddsLbl,
-		statusLabel   = statusLabel,
+		statusLabel      = statusLabel,
+		ufoPhaseVal      = ufoPhaseVal,
+		ufoZoneVal       = ufoZoneVal,
+		ufoNextVal       = ufoNextVal,
+		ufoGoldenVal     = ufoGoldenVal,
+		ufoPhaseRow      = ufoPhaseRow,
+		ufoGoldenRow     = ufoGoldenRow,
 	}
 end
 
@@ -669,16 +801,16 @@ local function getProgressionText(value)
 	return formatNum(n) .. " rolls"
 end
 
-local prevRolls = safeGet("stats","rolls")
-local prevCoins = safeGet("coins")
-local prevGoop  = safeGet("goop")
-local prevKills = safeGet("stats","kills")
-local rateRps   = 0
-local rateCps   = 0
-local rateGps   = 0
-local rateKps   = 0
+local prevRolls      = safeGet("stats","rolls")
+local prevCoins      = safeGet("coins")
+local prevGoop       = safeGet("goop")
+local prevKills      = safeGet("stats","kills")
+local rateRps        = 0
+local rateCps        = 0
+local rateGps        = 0
+local rateKps        = 0
 local lastRateUpdate = os.clock()
-local RATE_WINDOW = 5
+local RATE_WINDOW    = 5
 
 local everEarnedCoins = safeGet("coins") > sessionStartCoins
 local everEarnedGoop  = safeGet("goop")  > sessionStartGoop
@@ -716,10 +848,10 @@ local function updateStats(refs)
 		rateGps = deltaG / dt
 		rateKps = deltaK / dt
 
-		prevRolls = curR
-		prevCoins = curC
-		prevGoop  = curG
-		prevKills = curK
+		prevRolls      = curR
+		prevCoins      = curC
+		prevGoop       = curG
+		prevKills      = curK
 		lastRateUpdate = now
 	end
 
@@ -776,6 +908,46 @@ local function updateStats(refs)
 			refs.bestSlimeIcon.Image = bestSlimeData.assetId
 		end
 	end
+
+	local phase = ufoState.phase or "idle"
+	local phaseDisplay = phase:sub(1,1):upper() .. phase:sub(2)
+	local phaseColor = PALETTE.dim
+	if phase == "hovering" then
+		phaseColor = PALETTE.ufo
+	elseif phase == "arriving" then
+		phaseColor = PALETTE.gold
+	elseif phase == "departing" then
+		phaseColor = PALETTE.red
+	end
+
+	if refs.ufoPhaseVal.Text ~= phaseDisplay then
+		refs.ufoPhaseVal.Text       = phaseDisplay
+		refs.ufoPhaseVal.TextColor3 = phaseColor
+		addStroke(refs.ufoPhaseRow, phase ~= "idle" and PALETTE.ufo or PALETTE.dimmer, 1)
+	end
+
+	local zoneDisplay = ufoState.zoneName or "N/A"
+	if refs.ufoZoneVal.Text ~= zoneDisplay then
+		refs.ufoZoneVal.Text = zoneDisplay
+	end
+
+	local secs = ufoState.nextEventSecs or 0
+	local nextDisplay = string.format("%02d:%02d", math.floor(secs / 60), secs % 60)
+	if refs.ufoNextVal.Text ~= nextDisplay then
+		refs.ufoNextVal.Text = nextDisplay
+	end
+
+	local goldenDisplay = ufoState.isGolden and "Yes ✅" or "No"
+	local goldenColor   = ufoState.isGolden and PALETTE.ufoGolden or PALETTE.dim
+	if refs.ufoGoldenVal.Text ~= goldenDisplay then
+		refs.ufoGoldenVal.Text       = goldenDisplay
+		refs.ufoGoldenVal.TextColor3 = goldenColor
+		if ufoState.isGolden then
+			addStroke(refs.ufoGoldenRow, PALETTE.ufoGolden, 1)
+		else
+			addStroke(refs.ufoGoldenRow, PALETTE.dimmer, 1)
+		end
+	end
 end
 
 local function runStatusEngine(refs, alive)
@@ -783,10 +955,10 @@ local function runStatusEngine(refs, alive)
 	local ROTATE_S = 4
 	local msgIndex = 0
 
-	local lastCoins = safeGet("coins")
-	local lastRolls = safeGet("stats","rolls")
-	local lastKills = safeGet("stats","kills")
-	local lastGoop  = safeGet("goop")
+	local lastCoins  = safeGet("coins")
+	local lastRolls  = safeGet("stats","rolls")
+	local lastKills  = safeGet("stats","kills")
+	local lastGoop   = safeGet("goop")
 	local coinDelta, rollDelta, killDelta, goopDelta = 0, 0, 0, 0
 	local peakCoinRate = 0
 	local startRolls   = safeGet("stats","rolls")
@@ -825,6 +997,9 @@ local function runStatusEngine(refs, alive)
 	end)
 
 	local reactive = {
+		{ check = function() return ufoState.phase == "hovering" and ufoState.isGolden end, text = function() return "⭐ Golden UFO hovering!" end, color = PALETTE.ufoGolden },
+		{ check = function() return ufoState.phase == "hovering" end, text = function() return "🛸 UFO hovering at " .. (ufoState.zoneName or "N/A") end, color = PALETTE.ufo },
+		{ check = function() return ufoState.phase == "arriving" end, text = function() return "🛸 UFO arriving soon" end, color = PALETTE.gold },
 		{ check = function() return tonumber(safeGet("specialRollProgression","galaxy","rollsUntilNext")) == 0 end,  text = function() return "Galaxy roll ready"   end, color = PALETTE.galaxy  },
 		{ check = function() return tonumber(safeGet("specialRollProgression","void","rollsUntilNext")) == 0 end,    text = function() return "Void roll ready"     end, color = PALETTE.void    },
 		{ check = function() return tonumber(safeGet("specialRollProgression","diamond","rollsUntilNext")) == 0 end, text = function() return "Diamond roll ready"  end, color = PALETTE.diamond },
@@ -845,14 +1020,22 @@ local function runStatusEngine(refs, alive)
 			end,
 			color = PALETTE.green,
 		},
-		{ check = function() return killDelta >= 25  end, text = function() return "Kill streak  +"  .. formatNum(killDelta) end,                               color = PALETTE.red  },
-		{ check = function() return coinDelta >= 5e5 end, text = function() return "Earning  "       .. formatNum(math.floor(coinDelta/WINDOW)) .. "/sec" end,  color = PALETTE.gold },
-		{ check = function() return goopDelta >= 1000 end,text = function() return "Goop rate  +"    .. formatNum(math.floor(goopDelta/WINDOW)) .. "/sec" end,  color = PALETTE.green},
-		{ check = function() return rollDelta >= 10  end, text = function() return string.format("Rolling fast  %.1f/sec", rollDelta/WINDOW) end,               color = PALETTE.void },
+		{ check = function() return killDelta >= 25  end, text = function() return "Kill streak  +"  .. formatNum(killDelta) end,                              color = PALETTE.red  },
+		{ check = function() return coinDelta >= 5e5 end, text = function() return "Earning  "       .. formatNum(math.floor(coinDelta/WINDOW)) .. "/sec" end, color = PALETTE.gold },
+		{ check = function() return goopDelta >= 1000 end,text = function() return "Goop rate  +"    .. formatNum(math.floor(goopDelta/WINDOW)) .. "/sec" end, color = PALETTE.green},
+		{ check = function() return rollDelta >= 10  end, text = function() return string.format("Rolling fast  %.1f/sec", rollDelta/WINDOW) end,              color = PALETTE.void },
 	}
 
 	local idlePool = {
 		function() local z=safeGet("zone"); local b=safeGet("furthestZone"); return {text="Zone efficiency  "..(b>0 and math.floor((z/math.max(1,b))*100) or 100).."%", color=PALETTE.accent} end,
+		function()
+			local p = ufoState.phase or "idle"
+			local s = ufoState.nextEventSecs or 0
+			if p ~= "idle" then
+				return {text="🛸 UFO active  " .. p:sub(1,1):upper()..p:sub(2), color=PALETTE.ufo}
+			end
+			return {text="🛸 Next UFO in  "..string.format("%02d:%02d", math.floor(s/60), s%60), color=PALETTE.dim}
+		end,
 		function() local n=tonumber(safeGet("specialRollProgression","galaxy","rollsUntilNext")) or 0; return {text=n>0 and "Galaxy in  "..formatNum(n).." rolls" or "Galaxy roll standing by", color=PALETTE.galaxy} end,
 		function() local n=tonumber(safeGet("specialRollProgression","void","rollsUntilNext")) or 0;   return {text=n>0 and "Void in  "..formatNum(n).." rolls" or "Void roll standing by",    color=PALETTE.void}   end,
 		function() local n=tonumber(safeGet("specialRollProgression","diamond","rollsUntilNext")) or 0;return {text=n>0 and "Diamond in  "..formatNum(n).." rolls" or "Diamond roll standing by",color=PALETTE.diamond}end,
