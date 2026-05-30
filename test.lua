@@ -55,7 +55,14 @@ task.spawn(function()
 
         local playerCount = #Players:GetPlayers()
         local maxPlayers = Players.MaxPlayers
-        local launcherCmd = string.format('Roblox.GameLauncher.joinGameInstance(%d, "%s")', placeId, jobId)
+        local joinLink = string.format(
+            "https://www.roblox.com/games/start?placeId=%d&gameInstanceId=%s",
+            placeId, jobId
+        )
+        local executorCmd = string.format(
+            'game:GetService("TeleportService"):TeleportToPlaceInstance(%d, "%s", game:GetService("Players").LocalPlayer)',
+            placeId, jobId
+        )
         local thumb = getAssetThumbnail()
 
         local ok, body = pcall(function()
@@ -69,8 +76,9 @@ task.spawn(function()
                         { name = "Multiplier", value = tostring(mult), inline = true },
                         { name = "Time Remaining", value = formatTime(remaining), inline = true },
                         { name = "Players", value = tostring(playerCount) .. " / " .. tostring(maxPlayers), inline = true },
+                        { name = "Click to Join", value = "[Join Server](" .. joinLink .. ")", inline = true },
                         { name = "Job ID", value = "`" .. jobId .. "`", inline = false },
-                        { name = "PC / Desktop (Paste in Browser)", value = "```\n" .. launcherCmd .. "\n```", inline = false }
+                        { name = "Paste in Executor", value = "```\n" .. executorCmd .. "\n```", inline = false }
                     }
                 }}
             })
