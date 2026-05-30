@@ -170,11 +170,19 @@ task.spawn(function()
 		end,
 	})
 
-	mainTab:CreateParagraph({ Title = "Enabled By Default", Content = "[+] Anti AFK" })
+	mainTab:CreateParagraph({ Title = "Enabled By Default", Content = "[+] Anti AFK\n[+] Auto Rejoin Disabled (Game Built-in)" })
 	mainTab:CreateParagraph({
 		Title = "Latest Update",
-		Content = "[+] Fixed Auto Shoot\n[+] Faster Rolling\n[+] Auto Complete Index\n[+] Auto Move to Enemy\n[+] Auto Stack Dice\n[+] Auto Feed Fruits\n[+] UFO Event Tab Added\n[+] Auto Stay in UFO Zone\n[+] Auto Collect UFO Loot\n[+] Live UFO Phase, Zone & Countdown Display\n[+] Bug Fixes & Performance"
+		Content = "[+] Auto Stay in UFO Zone (Auto teleport to active UFO zones)\n[+] Auto Collect UFO Loot\n[+] Live UFO Phase Display (Hovering/Arriving/Departing/Idle)\n[+] Live UFO Zone Display and State\n[+] Live Next Event Countdown Timer\n[+] Live Golden UFO if found ( yes or no )\n[+] Manual Refresh Status Button\n[+] Auto Farm Zone ( is now x4 faster tp wise )\n[+] Added beammeup / aliensarehere in Auto Redeem Codes\n[+] Added New Zones\n[+] Bug Fixes"
 	})
+
+	pcall(function()
+		local autoRejoinClient = require(ReplicatedStorage.Source.Features.AutoRejoin.AutoRejoinServiceClient)
+		pcall(function()
+			autoRejoinClient:disable()
+		end)
+		print("AutoRejoin disabled")
+	end)
 
 	local packages, dataServiceClient, Networker
 	local networkerRoll, inventoryServiceClient, xpTransferServiceClient
@@ -817,14 +825,14 @@ task.spawn(function()
 						for zoneNum = 40, 1, -1 do
 							if not (rayfieldLibrary.Flags.FarmingStayInBestZone and rayfieldLibrary.Flags.FarmingStayInBestZone.CurrentValue) then break end
 							zonesServiceRemote:InvokeServer("requestTeleportZone", zoneNum)
-							task.wait(0.25)
+							task.wait(0.1)
 							if (dataServiceClient:get("zone") or 1) == zoneNum then break end
 						end
 					else
 						local zoneNum = tonumber(targetOption:match("Zone (%d+)"))
 						if zoneNum then zonesServiceRemote:InvokeServer("requestTeleportZone", zoneNum) end
 					end
-					task.wait(30)
+					task.wait(8)
 				end
 			end)
 		end,
@@ -2388,15 +2396,21 @@ task.spawn(function()
 		Flag = "SettingsAntiKick",
 		Callback = function(value)
 			if value then
-				local players = game:GetService("Players")
-				local oldKick = players.LocalPlayer.Kick
-				players.LocalPlayer.Kick = function(self, msg)
-					if rayfieldLibrary.Flags.SettingsAntiKick and rayfieldLibrary.Flags.SettingsAntiKick.CurrentValue then
-						warn("[CactusHub] Blocked kick attempt: " .. tostring(msg))
-						return
+				local mt = getrawmetatable(game)
+				local oldIndex = mt.__index
+				local oldNamecall = mt.__namecall
+				setreadonly(mt, false)
+				mt.__namecall = newcclosure(function(self, ...)
+					local method = getnamecallmethod()
+					if method == "Kick" and self == localPlayer then
+						if rayfieldLibrary.Flags.SettingsAntiKick and rayfieldLibrary.Flags.SettingsAntiKick.CurrentValue then
+							warn("[CactusHub] Blocked kick attempt")
+							return
+						end
 					end
-					return oldKick(self, msg)
-				end
+					return oldNamecall(self, ...)
+				end)
+				setreadonly(mt, true)
 			end
 		end,
 	})
@@ -2409,7 +2423,7 @@ task.spawn(function()
 	})
 
 	featureToggle(settingsTab, {
-		Name = "Auto Friend Requests",
+		Name = "Auto Send & Accept Friend Requests",
 		CurrentValue = false,
 		Flag = "AutoFriend",
 		Callback = function(value)
@@ -2428,7 +2442,8 @@ task.spawn(function()
 			end)
 		end,
 	})
-	settingsTab:CreateLabel("( I'm not sure if it works )")
+
+	settingsTab:CreateParagraph({ Title = "MAY be Patched", Content = "Auto Send & Accept Friend Requests may not work depending on current Roblox API restrictions." })
 
 	settingsTab:CreateSection("Advanced Optimization")
 
