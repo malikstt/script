@@ -731,6 +731,7 @@ task.spawn(function()
 
 	local selectedDice = {golden=true, diamond=true, void=true, galaxy=true}
 	local stackActive = false
+	local releaseActive = false
 	local paused = {golden=false, diamond=false, void=false, galaxy=false}
 
 	featureToggle(farmingTab, {
@@ -747,6 +748,15 @@ task.spawn(function()
 					end
 				end
 			end
+		end,
+	})
+
+	featureToggle(farmingTab, {
+		Name = "Auto Release Dice",
+		CurrentValue = false,
+		Flag = "autorelease",
+		Callback = function(v)
+			releaseActive = v
 		end,
 	})
 
@@ -805,37 +815,26 @@ task.spawn(function()
 							pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
 							paused[dice] = false
 						end
-					end
-				end
-
-				if allReady then
-					for _, dice in ipairs(toWatch) do
+					else
 						if not paused[dice] then
 							pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, true) end)
 							paused[dice] = true
 						end
 					end
-					task.wait(0.2)
+				end
+
+				if allReady and releaseActive then
 					for _, dice in ipairs(toWatch) do
 						pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
 						paused[dice] = false
 					end
 					rayfieldLibrary:Notify({ Title = "Unleashed!", Content = "All selected dice stacked — releasing now.", Duration = 3 })
 					task.wait(2)
-				else
-					for _, dice in ipairs(toWatch) do
-						local prog = progression[dice]
-						local rolls = prog and prog.rollsUntilNext or math.huge
-						if rolls <= 1 and not paused[dice] then
-							pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, true) end)
-							paused[dice] = true
-						end
-					end
 				end
 			end)
 		end
 	end)
-
+		
 	farmingTab:CreateSection("Zones")
 
 	pcall(function()
