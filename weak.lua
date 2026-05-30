@@ -834,7 +834,7 @@ task.spawn(function()
 			end)
 		end
 	end)
-		
+
 	farmingTab:CreateSection("Zones")
 
 	pcall(function()
@@ -865,27 +865,31 @@ task.spawn(function()
 		Callback = function(enabled)
 			if not enabled then return end
 			task.spawn(function()
+				local lastTeleportedZone = nil
 				while rayfieldLibrary.Flags.FarmingStayInBestZone and rayfieldLibrary.Flags.FarmingStayInBestZone.CurrentValue do
 					if not zonesServiceRemote then error("ZonesService remote not loaded") end
-					if not dataServiceClient then error("DataService not loaded") end
-
 					local targetOption = rayfieldLibrary.Flags.FarmingZoneTarget and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
-					local currentZone = dataServiceClient:get("zone") or 1
+					local currentZone = dataServiceClient and (dataServiceClient:get("zone") or 1) or 1
 					local targetZone = nil
-
 					if targetOption == "Best Unlocked" then
-						local maxZone = dataServiceClient:get("maxZone") or dataServiceClient:get("unlockedZone") or 1
-						if type(maxZone) ~= "number" or maxZone < 1 then maxZone = 1 end
-						targetZone = maxZone
+						for zoneNum = 40, 1, -1 do
+							if not (rayfieldLibrary.Flags.FarmingStayInBestZone and rayfieldLibrary.Flags.FarmingStayInBestZone.CurrentValue) then break end
+							local testResult = zonesServiceRemote:InvokeServer("requestTeleportZone", zoneNum)
+							task.wait(0.1)
+							local zoneAfter = dataServiceClient:get("zone") or 1
+							if zoneAfter == zoneNum then
+								targetZone = zoneNum
+								break
+							end
+						end
 					else
 						targetZone = tonumber(targetOption:match("Zone (%d+)"))
 					end
-
-					if targetZone and currentZone ~= targetZone then
+					if targetZone and currentZone ~= targetZone and lastTeleportedZone ~= targetZone then
 						zonesServiceRemote:InvokeServer("requestTeleportZone", targetZone)
+						lastTeleportedZone = targetZone
 					end
-
-					task.wait(15)
+					task.wait(8)
 				end
 			end)
 		end,
@@ -1100,8 +1104,8 @@ task.spawn(function()
 				local equipped  = dataServiceClient:get("equipped") or {}
 				local teamSet   = {}
 				for _, uid in ipairs(equipped) do teamSet[uid] = true end
-				local targetOption = rayfieldLibrary.Flags.FarmingTransferTarget.CurrentOption[1]
-				local sourceOption = rayfieldLibrary.Flags.FarmingTransferSource.CurrentOption[1]
+				local targetOption = rayfieldLibrary.Flags.FarmingTransferTarget and rayfieldLibrary.Flags.FarmingTransferTarget.CurrentOption and rayfieldLibrary.Flags.FarmingTransferTarget.CurrentOption[1] or "Best Slime"
+				local sourceOption = rayfieldLibrary.Flags.FarmingTransferSource and rayfieldLibrary.Flags.FarmingTransferSource.CurrentOption and rayfieldLibrary.Flags.FarmingTransferSource.CurrentOption[1] or "Unequipped With XP"
 				local targets = {}
 				if targetOption == "Best Slime" then
 					local best = getBestSlimeUid()
@@ -1357,9 +1361,9 @@ task.spawn(function()
 					local ids = {}
 					local costs = {}
 					if not upgradeTree_local then return ids, costs end
-					for _, tree in upgradeTree_local do
-						for id, data in tree do
-							if data.cost then
+					for _, tree in ipairs(upgradeTree_local) do
+						for id, data in pairs(tree) do
+							if data and data.cost then
 								table.insert(ids, id)
 								costs[id] = data.cost
 							end
@@ -2410,7 +2414,7 @@ task.spawn(function()
 						local sendAll = rayfieldLibrary.Flags.WebhookSendAll and rayfieldLibrary.Flags.WebhookSendAll.CurrentValue
 						local sendNewOnly = rayfieldLibrary.Flags.WebhookSendNew and rayfieldLibrary.Flags.WebhookSendNew.CurrentValue
 						local sendMutated = rayfieldLibrary.Flags.WebhookSendMutated and rayfieldLibrary.Flags.WebhookSendMutated.CurrentValue
-						local minChanceStr = rayfieldLibrary.Flags.WebhookMinChance.CurrentValue
+						local minChanceStr = rayfieldLibrary.Flags.WebhookMinChance and rayfieldLibrary.Flags.WebhookMinChance.CurrentValue or ""
 						local minChanceNum = nil
 						if minChanceStr and minChanceStr ~= "" then
 							local num, suffix = minChanceStr:upper():gsub(",",""):match("^(%d+%.?%d*)([KMBTQ]?)$")
@@ -2443,7 +2447,7 @@ task.spawn(function()
 										if chanceValue > minChanceNum then shouldSend = false end
 									end
 									if shouldSend then
-										local userId = rayfieldLibrary.Flags.WebhookUserID.CurrentValue
+										local userId = rayfieldLibrary.Flags.WebhookUserID and rayfieldLibrary.Flags.WebhookUserID.CurrentValue or ""
 										local notificationKey = currentHash .. "_" .. slimeId
 										task.spawn(sendWebhookNotification, slimeId, slimeDefinition, mutations, savedWebhookUrl, userId, notificationKey)
 									end
