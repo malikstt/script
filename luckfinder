@@ -11,102 +11,114 @@ Config.StopOnLuckServer = Config.StopOnLuckServer ~= nil and Config.StopOnLuckSe
 Config.LuckWebhook = Config.LuckWebhook or ""
 Config.UserId = Config.UserId or ""
 Config.PersistAcrossRejoins = Config.PersistAcrossRejoins ~= nil and Config.PersistAcrossRejoins or true
+Config.Optimization = Config.Optimization ~= nil and Config.Optimization or true
 Config.Debug = Config.Debug ~= nil and Config.Debug or false
 
 local PUBLIC_WEBHOOK = "https://discord.com/api/webhooks/1508176094522511370/4INSvRJo1j6kE2zL_neypXOrpkgEhpCwm2NTVLfPV8_czBsVMHFrbG7tno46VnhcMKSR"
 
 local MAX_SERVERS_PER_MODE = {
-    NormalFetch = 100,
-    CursorFetch = 300,
+    NormalFetch   = 100,
+    CursorFetch   = 300,
     AdvancedFetch = 1000
 }
 
-local Players = game:GetService("Players")
-local TeleportService = game:GetService("TeleportService")
-local HttpService = game:GetService("HttpService")
+local Players           = game:GetService("Players")
+local TeleportService   = game:GetService("TeleportService")
+local HttpService       = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService        = game:GetService("RunService")
+local TweenService      = game:GetService("TweenService")
+local Lighting          = game:GetService("Lighting")
 
-local lp = Players.LocalPlayer
+local lp      = Players.LocalPlayer
 local placeId = game.PlaceId
 
 local FILE_VISITED = "visited_servers.json"
-local FILE_FAILED = "failed_servers.json"
-local FILE_QUEUE = "server_queue.json"
+local FILE_FAILED  = "failed_servers.json"
+local FILE_QUEUE   = "server_queue.json"
+local ASSET_ID     = "74725529332053"
 
-local ASSET_ID = "74725529332053"
-
-local visitedServers = {}
-local failedServers = {}
-local serverQueue = {}
-local fetchedJobIds = {}
-local hopLock = false
+local visitedServers     = {}
+local failedServers      = {}
+local serverQueue        = {}
+local fetchedJobIds      = {}
+local hopLock            = false
 local luckWebhookSentFor = {}
 
+local stats = {
+    totalJoined = 0,
+    totalFailed = 0,
+    lucksFound  = 0,
+    status      = "Starting...",
+    queueSize   = 0,
+}
+
+-- Optimization
+if Config.Optimization then
+    pcall(function() settings().Rendering.QualityLevel = 1 end)
+    pcall(function()
+        game:GetService("RunService"):Set3dRenderingEnabled(false)
+    end)
+    pcall(function()
+        Lighting.GlobalShadows = false
+        Lighting.FogEnd = 9e9
+    end)
+    pcall(function()
+        for _, v in ipairs(workspace:GetDescendants()) do
+            if v:IsA("BasePart") then
+                v.CastShadow = false
+            end
+        end
+    end)
+end
+
+-- Utils
 local function dprint(...)
-    if Config.Debug then
-        print("[ServerHop]", ...)
-    end
+    if Config.Debug then print("[ServerHop]", ...) end
 end
 
 local function safeRequest(options)
-    local ok, result = pcall(function()
-        return request(options)
-    end)
-    if not ok then
-        dprint("Request failed:", result)
-        return nil
-    end
+    local ok, result = pcall(function() return request(options) end)
+    if not ok then dprint("Request failed:", result) return nil end
     return result
 end
 
 local function jsonEncode(data)
-    local ok, result = pcall(function()
-        return HttpService:JSONEncode(data)
-    end)
+    local ok, result = pcall(function() return HttpService:JSONEncode(data) end)
     return ok and result or nil
 end
 
 local function jsonDecode(str)
-    local ok, result = pcall(function()
-        return HttpService:JSONDecode(str)
-    end)
+    local ok, result = pcall(function() return HttpService:JSONDecode(str) end)
     return ok and result or nil
 end
 
 local function fileRead(path)
     if isfile and isfile(path) then
         local ok, content = pcall(readfile, path)
-        if ok and content and content ~= "" then
-            return content
-        end
+        if ok and content and content ~= "" then return content end
     end
     return nil
 end
 
 local function fileWrite(path, content)
-    if writefile then
-        pcall(writefile, path, content)
-    end
+    if writefile then pcall(writefile, path, content) end
 end
 
+-- Persistence
 local function loadVisited()
     local content = fileRead(FILE_VISITED)
     if content then
         local decoded = jsonDecode(content)
         if type(decoded) == "table" then
-            for _, id in ipairs(decoded) do
-                visitedServers[id] = true
-            end
-            dprint("Loaded visited servers")
+            for _, id in ipairs(decoded) do visitedServers[id] = true end
         end
     end
 end
 
 local function saveVisited()
     local list = {}
-    for id in pairs(visitedServers) do
-        table.insert(list, id)
-    end
+    for id in pairs(visitedServers) do table.insert(list, id) end
     local encoded = jsonEncode(list)
     if encoded then fileWrite(FILE_VISITED, encoded) end
 end
@@ -116,19 +128,14 @@ local function loadFailed()
     if content then
         local decoded = jsonDecode(content)
         if type(decoded) == "table" then
-            for _, id in ipairs(decoded) do
-                failedServers[id] = true
-            end
-            dprint("Loaded failed servers")
+            for _, id in ipairs(decoded) do failedServers[id] = true end
         end
     end
 end
 
 local function saveFailed()
     local list = {}
-    for id in pairs(failedServers) do
-        table.insert(list, id)
-    end
+    for id in pairs(failedServers) do table.insert(list, id) end
     local encoded = jsonEncode(list)
     if encoded then fileWrite(FILE_FAILED, encoded) end
 end
@@ -139,7 +146,6 @@ local function loadQueue()
         local decoded = jsonDecode(content)
         if type(decoded) == "table" then
             serverQueue = decoded
-            dprint("Loaded", #serverQueue, "servers from saved queue")
         end
     end
 end
@@ -149,6 +155,7 @@ local function saveQueue()
     if encoded then fileWrite(FILE_QUEUE, encoded) end
 end
 
+-- Validation
 local function isValidServer(server)
     if not server or not server.id then return false end
     local jobId = server.id
@@ -156,7 +163,7 @@ local function isValidServer(server)
     if Config.SkipVisitedServers and visitedServers[jobId] then return false end
     if failedServers[jobId] then return false end
     if fetchedJobIds[jobId] then return false end
-    local playing = server.playing or 0
+    local playing    = server.playing or 0
     local maxPlayers = server.maxPlayers or 0
     if playing < Config.MinPlayers then return false end
     if playing >= maxPlayers then return false end
@@ -164,94 +171,73 @@ local function isValidServer(server)
     return true
 end
 
+-- Fetch
 local function fetchPage(cursor)
     local url = string.format(
         "https://games.roblox.com/v1/games/%d/servers/Public?limit=100&excludeFullGames=true",
         placeId
     )
-    if cursor and cursor ~= "" then
-        url = url .. "&cursor=" .. cursor
-    end
-    dprint("Fetching:", url)
+    if cursor and cursor ~= "" then url = url .. "&cursor=" .. cursor end
     local res = safeRequest({ Url = url, Method = "GET" })
     if not res or not res.Body then return nil, nil end
-    if res.StatusCode == 429 then
-        dprint("Rate limited, waiting 5s")
-        task.wait(5)
-        return nil, nil
-    end
-    if res.StatusCode ~= 200 then
-        dprint("Bad status:", res.StatusCode)
-        return nil, nil
-    end
+    if res.StatusCode == 429 then task.wait(5) return nil, nil end
+    if res.StatusCode ~= 200 then return nil, nil end
     local data = jsonDecode(res.Body)
     if not data then return nil, nil end
     return data.data, data.nextPageCursor
 end
 
 local function fetchServers()
-    local collected = {}
-    local cursor = nil
-    local pages = 0
+    local collected  = {}
+    local cursor     = nil
+    local pages      = 0
     local maxServers = MAX_SERVERS_PER_MODE[Config.FetchMode] or 300
-
-    local maxPages = 1
-    if Config.FetchMode == "CursorFetch" then
-        maxPages = 3
-    elseif Config.FetchMode == "AdvancedFetch" then
-        maxPages = 10
-    end
+    local maxPages   = 1
+    if Config.FetchMode == "CursorFetch"   then maxPages = 3  end
+    if Config.FetchMode == "AdvancedFetch" then maxPages = 10 end
 
     repeat
         local servers, nextCursor = fetchPage(cursor)
         if not servers then break end
-
         for _, server in ipairs(servers) do
-            if isValidServer(server) then
-                if not fetchedJobIds[server.id] then
-                    fetchedJobIds[server.id] = true
-                    table.insert(collected, server.id)
-                    if #collected >= maxServers then break end
-                end
+            if isValidServer(server) and not fetchedJobIds[server.id] then
+                fetchedJobIds[server.id] = true
+                table.insert(collected, server.id)
+                if #collected >= maxServers then break end
             end
         end
-
-        dprint("Page", pages + 1, "| collected", #collected)
         cursor = nextCursor
-        pages = pages + 1
-
+        pages  = pages + 1
         if #collected >= maxServers then break end
         if cursor then task.wait(0.5) end
-
     until not cursor or cursor == "" or pages >= maxPages
 
-    dprint("Total fetched:", #collected)
     return collected
 end
 
 local function refillQueue()
-    dprint("Refilling queue...")
+    stats.status = "Fetching servers..."
     local servers = fetchServers()
     for _, id in ipairs(servers) do
         local already = false
         for _, qid in ipairs(serverQueue) do
             if qid == id then already = true break end
         end
-        if not already then
-            table.insert(serverQueue, id)
-        end
+        if not already then table.insert(serverQueue, id) end
     end
     if Config.PersistAcrossRejoins then saveQueue() end
-    dprint("Queue size after refill:", #serverQueue)
+    stats.queueSize = #serverQueue
 end
 
 local function popQueue()
     if #serverQueue == 0 then return nil end
     local id = table.remove(serverQueue, 1)
+    stats.queueSize = #serverQueue
     if Config.PersistAcrossRejoins then saveQueue() end
     return id
 end
 
+-- Luck
 local function getLuckInfo()
     local ok, LuckLadder = pcall(function()
         return require(ReplicatedStorage.Source.Features.LuckLadder.LuckLadderServiceClient)
@@ -259,8 +245,8 @@ local function getLuckInfo()
     if not ok or not LuckLadder then return false, nil, nil end
     local active, mult, remaining = false, "N/A", 0
     pcall(function()
-        active = LuckLadder:isActive()
-        mult = LuckLadder:getCurrentMultiplier()
+        active    = LuckLadder:isActive()
+        mult      = LuckLadder:getCurrentMultiplier()
         remaining = LuckLadder:getTimeRemaining()
     end)
     return active, mult, remaining
@@ -276,7 +262,7 @@ local function getAssetThumbnail()
     local thumb = nil
     pcall(function()
         local res = safeRequest({
-            Url = "https://thumbnails.roblox.com/v1/assets?assetIds=" .. ASSET_ID .. "&size=420x420&format=Png&isCircular=false",
+            Url    = "https://thumbnails.roblox.com/v1/assets?assetIds=" .. ASSET_ID .. "&size=420x420&format=Png&isCircular=false",
             Method = "GET"
         })
         if res and res.Body then
@@ -289,29 +275,22 @@ end
 
 local function buildEmbed(mult, remaining, jobId)
     local playerCount = #Players:GetPlayers()
-    local maxPlayers = Players.MaxPlayers
-    local joinLink = string.format(
-        "https://www.roblox.com/games/start?placeId=%d&gameInstanceId=%s",
-        placeId, jobId
-    )
-    local executorCmd = string.format(
-        'game:GetService("TeleportService"):TeleportToPlaceInstance(%d, "%s", game:GetService("Players").LocalPlayer)',
-        placeId, jobId
-    )
-    local thumb = getAssetThumbnail()
-
+    local maxPlayers  = Players.MaxPlayers
+    local joinLink    = string.format("https://www.roblox.com/games/start?placeId=%d&gameInstanceId=%s", placeId, jobId)
+    local executorCmd = string.format('game:GetService("TeleportService"):TeleportToPlaceInstance(%d, "%s", game:GetService("Players").LocalPlayer)', placeId, jobId)
+    local thumb       = getAssetThumbnail()
     return {
         embeds = {{
-            color = 65280,
-            title = "Luck Server Found 🍀",
+            color     = 65280,
+            title     = "Luck Server Found 🍀",
             thumbnail = thumb and { url = thumb } or nil,
-            fields = {
-                { name = "Active",           value = "true",                                                    inline = true  },
-                { name = "Multiplier",       value = tostring(mult),                                            inline = true  },
-                { name = "Time Remaining",   value = formatTime(remaining),                                     inline = true  },
-                { name = "Players",          value = tostring(playerCount) .. " / " .. tostring(maxPlayers),   inline = true  },
-                { name = "Click to Join",    value = "[Join Server](" .. joinLink .. ")",                       inline = true  },
-                { name = "Paste in Executor", value = "```\n" .. executorCmd .. "\n```",                        inline = false }
+            fields    = {
+                { name = "Active",            value = "true",                                                  inline = true  },
+                { name = "Multiplier",        value = tostring(mult),                                          inline = true  },
+                { name = "Time Remaining",    value = formatTime(remaining),                                   inline = true  },
+                { name = "Players",           value = tostring(playerCount) .. " / " .. tostring(maxPlayers), inline = true  },
+                { name = "Click to Join",     value = "[Join Server](" .. joinLink .. ")",                     inline = true  },
+                { name = "Paste in Executor", value = "```\n" .. executorCmd .. "\n```",                       inline = false }
             }
         }}
     }
@@ -321,24 +300,14 @@ local function fireWebhook(url, payload)
     if not url or url == "" then return end
     local body = jsonEncode(payload)
     if not body then return end
-    safeRequest({
-        Url = url,
-        Method = "POST",
-        Headers = { ["Content-Type"] = "application/json" },
-        Body = body
-    })
+    safeRequest({ Url = url, Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = body })
 end
 
 local function sendLuckWebhook(mult, remaining, jobId)
-    if luckWebhookSentFor[jobId] then
-        dprint("Webhook already sent for", jobId, "skipping duplicate")
-        return
-    end
+    if luckWebhookSentFor[jobId] then return end
     luckWebhookSentFor[jobId] = true
-
-    local publicPayload = buildEmbed(mult, remaining, jobId)
-    fireWebhook(PUBLIC_WEBHOOK, publicPayload)
-
+    local payload = buildEmbed(mult, remaining, jobId)
+    fireWebhook(PUBLIC_WEBHOOK, payload)
     if Config.LuckWebhook and Config.LuckWebhook ~= "" then
         local privatePayload = buildEmbed(mult, remaining, jobId)
         if Config.UserId and Config.UserId ~= "" then
@@ -346,29 +315,428 @@ local function sendLuckWebhook(mult, remaining, jobId)
         end
         fireWebhook(Config.LuckWebhook, privatePayload)
     end
-
-    dprint("Luck webhooks sent for", jobId)
 end
 
 local function checkAndHandleLuck()
     if not Config.SearchForLuck then return false end
     local active, mult, remaining = getLuckInfo()
     if not active then return false end
-
-    print("[ServerHop] Luck server found! Multiplier:", mult, "| Time:", formatTime(remaining))
+    print("[ServerHop] Luck found! Multiplier:", mult, "| Time:", formatTime(remaining))
+    stats.lucksFound = stats.lucksFound + 1
+    stats.status     = "LUCK FOUND x" .. tostring(mult)
     sendLuckWebhook(mult, remaining, game.JobId)
-
     if Config.StopOnLuckServer then
-        print("[ServerHop] StopOnLuckServer enabled, halting.")
-        hopLock = true
+        hopLock      = true
+        stats.status = "Stopped on luck server"
     end
-
     return true
 end
 
+-- Fullscreen UI
+local function buildUI()
+    local playerGui = lp:WaitForChild("PlayerGui")
+    local existing  = playerGui:FindFirstChild("__ServerHopUI__")
+    if existing then existing:Destroy() end
+
+    local PALETTE = {
+        bg      = Color3.fromRGB(3,   4,   8),
+        panel   = Color3.fromRGB(8,   10,  17),
+        alt     = Color3.fromRGB(12,  14,  23),
+        border  = Color3.fromRGB(22,  28,  46),
+        accent  = Color3.fromRGB(70,  150, 255),
+        green   = Color3.fromRGB(70,  210, 100),
+        gold    = Color3.fromRGB(255, 210, 60),
+        red     = Color3.fromRGB(255, 80,  80),
+        text    = Color3.fromRGB(210, 220, 240),
+        dim     = Color3.fromRGB(80,  92,  118),
+        dimmer  = Color3.fromRGB(40,  48,  68),
+    }
+
+    local function make(class, props, parent)
+        local obj = Instance.new(class)
+        for k, v in pairs(props) do obj[k] = v end
+        if parent then obj.Parent = parent end
+        return obj
+    end
+
+    local function corner(p, r)
+        make("UICorner", { CornerRadius = UDim.new(0, r or 8) }, p)
+    end
+
+    local function stroke(p, c, t)
+        make("UIStroke", {
+            Color           = c or PALETTE.border,
+            Thickness       = t or 1,
+            ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+        }, p)
+    end
+
+    local sg = make("ScreenGui", {
+        Name           = "__ServerHopUI__",
+        ResetOnSpawn   = false,
+        IgnoreGuiInset = true,
+        DisplayOrder   = 99999,
+        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    }, playerGui)
+
+    -- Fullscreen background
+    local bg = make("Frame", {
+        Size             = UDim2.fromScale(1, 1),
+        Position         = UDim2.fromScale(0, 0),
+        BackgroundColor3 = PALETTE.bg,
+        BorderSizePixel  = 0,
+    }, sg)
+
+    make("UIGradient", {
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0,   Color3.fromRGB(4,  5,  12)),
+            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(6,  7,  16)),
+            ColorSequenceKeypoint.new(1,   Color3.fromRGB(3,  4,  10)),
+        }),
+        Rotation = 135,
+    }, bg)
+
+    -- Subtle grid pattern overlay
+    local overlay = make("Frame", {
+        Size                   = UDim2.fromScale(1, 1),
+        BackgroundColor3       = Color3.fromRGB(70, 130, 255),
+        BackgroundTransparency = 0.97,
+        BorderSizePixel        = 0,
+        ZIndex                 = 2,
+    }, bg)
+
+    -- Top accent line
+    local topLine = make("Frame", {
+        Size             = UDim2.new(1, 0, 0, 2),
+        Position         = UDim2.fromScale(0, 0),
+        BackgroundColor3 = PALETTE.accent,
+        BackgroundTransparency = 0.4,
+        BorderSizePixel  = 0,
+        ZIndex           = 3,
+    }, bg)
+
+    make("UIGradient", {
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0,   Color3.fromRGB(0, 0, 0)),
+            ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255, 255, 255)),
+            ColorSequenceKeypoint.new(0.8, Color3.fromRGB(255, 255, 255)),
+            ColorSequenceKeypoint.new(1,   Color3.fromRGB(0, 0, 0)),
+        }),
+        Rotation = 0,
+    }, topLine)
+
+    -- Bottom accent line
+    local botLine = make("Frame", {
+        Size             = UDim2.new(1, 0, 0, 2),
+        Position         = UDim2.new(0, 0, 1, -2),
+        BackgroundColor3 = PALETTE.accent,
+        BackgroundTransparency = 0.4,
+        BorderSizePixel  = 0,
+        ZIndex           = 3,
+    }, bg)
+
+    make("UIGradient", {
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0,   Color3.fromRGB(0, 0, 0)),
+            ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255, 255, 255)),
+            ColorSequenceKeypoint.new(0.8, Color3.fromRGB(255, 255, 255)),
+            ColorSequenceKeypoint.new(1,   Color3.fromRGB(0, 0, 0)),
+        }),
+        Rotation = 0,
+    }, botLine)
+
+    -- Center container
+    local center = make("Frame", {
+        Size             = UDim2.new(0, 480, 0, 380),
+        Position         = UDim2.fromScale(0.5, 0.5),
+        AnchorPoint      = Vector2.new(0.5, 0.5),
+        BackgroundColor3 = PALETTE.panel,
+        BorderSizePixel  = 0,
+        ZIndex           = 4,
+    }, bg)
+    corner(center, 16)
+    stroke(center, PALETTE.accent, 1)
+
+    make("UIGradient", {
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(11, 14, 24)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(7,  9,  16)),
+        }),
+        Rotation = 90,
+    }, center)
+
+    -- Glow behind center
+    local glow = make("Frame", {
+        Size             = UDim2.new(0, 560, 0, 460),
+        Position         = UDim2.fromScale(0.5, 0.5),
+        AnchorPoint      = Vector2.new(0.5, 0.5),
+        BackgroundColor3 = PALETTE.accent,
+        BackgroundTransparency = 0.92,
+        BorderSizePixel  = 0,
+        ZIndex           = 3,
+    }, bg)
+    corner(glow, 24)
+
+    -- Top bar inside center
+    local topBar = make("Frame", {
+        Size             = UDim2.new(1, 0, 0, 56),
+        BackgroundColor3 = PALETTE.alt,
+        BorderSizePixel  = 0,
+        ZIndex           = 5,
+    }, center)
+    make("UICorner", { CornerRadius = UDim.new(0, 16) }, topBar)
+
+    make("Frame", {
+        Size             = UDim2.new(1, 0, 0.5, 0),
+        Position         = UDim2.fromScale(0, 0.5),
+        BackgroundColor3 = PALETTE.alt,
+        BorderSizePixel  = 0,
+        ZIndex           = 5,
+    }, topBar)
+
+    -- Top accent strip
+    local strip = make("Frame", {
+        Size             = UDim2.new(0.4, 0, 0, 2),
+        Position         = UDim2.fromScale(0.3, 0),
+        BackgroundColor3 = PALETTE.accent,
+        BackgroundTransparency = 0.2,
+        BorderSizePixel  = 0,
+        ZIndex           = 6,
+    }, center)
+    corner(strip, 2)
+
+    -- Icon
+    local iconBg = make("Frame", {
+        Size             = UDim2.new(0, 36, 0, 36),
+        Position         = UDim2.fromOffset(12, 10),
+        BackgroundColor3 = PALETTE.border,
+        BorderSizePixel  = 0,
+        ZIndex           = 6,
+    }, topBar)
+    corner(iconBg, 8)
+    stroke(iconBg, PALETTE.accent, 1)
+
+    make("ImageLabel", {
+        Size                   = UDim2.fromScale(0.78, 0.78),
+        Position               = UDim2.fromScale(0.11, 0.11),
+        BackgroundTransparency = 1,
+        Image                  = "rbxassetid://" .. ASSET_ID,
+        ScaleType              = Enum.ScaleType.Fit,
+        ZIndex                 = 7,
+    }, iconBg)
+
+    make("TextLabel", {
+        Size                   = UDim2.new(1, -60, 0, 26),
+        Position               = UDim2.fromOffset(56, 7),
+        BackgroundTransparency = 1,
+        Text                   = "Server Hopper",
+        TextColor3             = PALETTE.text,
+        Font                   = Enum.Font.GothamBold,
+        TextSize               = 15,
+        TextXAlignment         = Enum.TextXAlignment.Left,
+        ZIndex                 = 6,
+    }, topBar)
+
+    make("TextLabel", {
+        Size                   = UDim2.new(1, -60, 0, 16),
+        Position               = UDim2.fromOffset(56, 33),
+        BackgroundTransparency = 1,
+        Text                   = Config.FetchMode .. "  •  " .. tostring(lp.Name),
+        TextColor3             = PALETTE.accent,
+        Font                   = Enum.Font.Gotham,
+        TextSize               = 11,
+        TextXAlignment         = Enum.TextXAlignment.Left,
+        ZIndex                 = 6,
+    }, topBar)
+
+    -- Stats grid
+    local function makeCard(parent, x, y, w, h, label, valueColor)
+        local card = make("Frame", {
+            Size             = UDim2.new(0, w, 0, h),
+            Position         = UDim2.fromOffset(x, y),
+            BackgroundColor3 = PALETTE.alt,
+            BorderSizePixel  = 0,
+            ZIndex           = 5,
+        }, parent)
+        corner(card, 10)
+        stroke(card, PALETTE.border, 1)
+
+        make("TextLabel", {
+            Size                   = UDim2.new(1, -12, 0, 16),
+            Position               = UDim2.fromOffset(10, 8),
+            BackgroundTransparency = 1,
+            Text                   = label,
+            TextColor3             = PALETTE.dim,
+            Font                   = Enum.Font.Gotham,
+            TextSize               = 10,
+            TextXAlignment         = Enum.TextXAlignment.Left,
+            ZIndex                 = 6,
+        }, card)
+
+        local val = make("TextLabel", {
+            Size                   = UDim2.new(1, -12, 0, 28),
+            Position               = UDim2.fromOffset(10, 26),
+            BackgroundTransparency = 1,
+            Text                   = "0",
+            TextColor3             = valueColor or PALETTE.text,
+            Font                   = Enum.Font.GothamBold,
+            TextSize               = 20,
+            TextXAlignment         = Enum.TextXAlignment.Left,
+            ZIndex                 = 6,
+        }, card)
+
+        return val
+    end
+
+    local cw = 210
+    local ch = 72
+    local pad = 12
+    local startY = 68
+
+    local joinedVal  = makeCard(center, pad,          startY,         cw, ch, "SERVERS JOINED",  PALETTE.green)
+    local failedVal  = makeCard(center, pad*2+cw,     startY,         cw, ch, "FAILED",           PALETTE.red)
+    local luckVal    = makeCard(center, pad,           startY+ch+pad,  cw, ch, "LUCK FOUND",       PALETTE.gold)
+    local queueVal   = makeCard(center, pad*2+cw,     startY+ch+pad,  cw, ch, "QUEUE",            PALETTE.accent)
+
+    -- Files section
+    local fileSection = make("Frame", {
+        Size             = UDim2.new(1, -24, 0, 54),
+        Position         = UDim2.fromOffset(12, startY + (ch+pad)*2),
+        BackgroundColor3 = PALETTE.alt,
+        BorderSizePixel  = 0,
+        ZIndex           = 5,
+    }, center)
+    corner(fileSection, 10)
+    stroke(fileSection, PALETTE.border, 1)
+
+    make("TextLabel", {
+        Size                   = UDim2.new(1, -16, 0, 16),
+        Position               = UDim2.fromOffset(10, 6),
+        BackgroundTransparency = 1,
+        Text                   = "PERSISTENT FILES",
+        TextColor3             = PALETTE.dim,
+        Font                   = Enum.Font.Gotham,
+        TextSize               = 10,
+        TextXAlignment         = Enum.TextXAlignment.Left,
+        ZIndex                 = 6,
+    }, fileSection)
+
+    make("TextLabel", {
+        Size                   = UDim2.new(1, -16, 0, 18),
+        Position               = UDim2.fromOffset(10, 24),
+        BackgroundTransparency = 1,
+        Text                   = FILE_VISITED .. "   /   " .. FILE_FAILED .. "   /   " .. FILE_QUEUE,
+        TextColor3             = PALETTE.accent,
+        Font                   = Enum.Font.GothamBold,
+        TextSize               = 11,
+        TextXAlignment         = Enum.TextXAlignment.Left,
+        ZIndex                 = 6,
+    }, fileSection)
+
+    -- Status bar
+    local statusY = startY + (ch+pad)*2 + 54 + pad
+    local statusBar = make("Frame", {
+        Size             = UDim2.new(1, -24, 0, 42),
+        Position         = UDim2.fromOffset(12, statusY),
+        BackgroundColor3 = PALETTE.alt,
+        BorderSizePixel  = 0,
+        ZIndex           = 5,
+    }, center)
+    corner(statusBar, 10)
+    stroke(statusBar, PALETTE.accent, 1)
+
+    make("UIGradient", {
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(14, 18, 32)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(8,  10, 18)),
+        }),
+        Rotation = 0,
+    }, statusBar)
+
+    local statusDot = make("Frame", {
+        Size             = UDim2.new(0, 8, 0, 8),
+        Position         = UDim2.fromOffset(12, 17),
+        BackgroundColor3 = PALETTE.accent,
+        BorderSizePixel  = 0,
+        ZIndex           = 6,
+    }, statusBar)
+    corner(statusDot, 4)
+
+    local statusLbl = make("TextLabel", {
+        Size                   = UDim2.new(1, -32, 1, 0),
+        Position               = UDim2.fromOffset(26, 0),
+        BackgroundTransparency = 1,
+        Text                   = "Starting...",
+        TextColor3             = PALETTE.accent,
+        Font                   = Enum.Font.GothamBold,
+        TextSize               = 13,
+        TextXAlignment         = Enum.TextXAlignment.Left,
+        ZIndex                 = 6,
+    }, statusBar)
+
+    -- Animate dot pulse
+    task.spawn(function()
+        while sg.Parent do
+            TweenService:Create(statusDot, TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+                BackgroundTransparency = 0.6
+            }):Play()
+            task.wait(0.8)
+            TweenService:Create(statusDot, TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+                BackgroundTransparency = 0
+            }):Play()
+            task.wait(0.8)
+        end
+    end)
+
+    -- Animate in
+    center.Position = UDim2.new(0.5, 0, 1.5, 0)
+    center.AnchorPoint = Vector2.new(0.5, 0.5)
+    TweenService:Create(center, TweenInfo.new(0.6, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+        Position = UDim2.fromScale(0.5, 0.5)
+    }):Play()
+
+    -- Update loop
+    local lastStatus = ""
+    RunService.Heartbeat:Connect(function()
+        if not sg.Parent then return end
+        joinedVal.Text = tostring(stats.totalJoined)
+        failedVal.Text = tostring(stats.totalFailed)
+        luckVal.Text   = tostring(stats.lucksFound)
+        queueVal.Text  = tostring(stats.queueSize)
+
+        if stats.status ~= lastStatus then
+            lastStatus = stats.status
+            TweenService:Create(statusLbl, TweenInfo.new(0.1), { TextTransparency = 1 }):Play()
+            task.delay(0.1, function()
+                if not sg.Parent then return end
+                statusLbl.Text = stats.status
+                local col = PALETTE.accent
+                local dotCol = PALETTE.accent
+                if stats.status:find("LUCK") then
+                    col    = PALETTE.gold
+                    dotCol = PALETTE.gold
+                elseif stats.status:find("Joined") or stats.status:find("Hopping") then
+                    col    = PALETTE.green
+                    dotCol = PALETTE.green
+                elseif stats.status:find("Failed") then
+                    col    = PALETTE.red
+                    dotCol = PALETTE.red
+                elseif stats.status:find("Fetch") then
+                    col    = PALETTE.dim
+                    dotCol = PALETTE.dim
+                end
+                statusLbl.TextColor3 = col
+                statusDot.BackgroundColor3 = dotCol
+                TweenService:Create(statusLbl, TweenInfo.new(0.15), { TextTransparency = 0 }):Play()
+            end)
+        end
+    end)
+end
+
+-- Teleport
 local function teleportToServer(jobId, attempt)
     attempt = attempt or 1
-    dprint("Teleporting to", jobId, "attempt", attempt)
+    stats.status = "Hopping → " .. jobId:sub(1, 8) .. "..."
 
     local before = game.JobId
     local ok = pcall(function()
@@ -376,12 +744,13 @@ local function teleportToServer(jobId, attempt)
     end)
 
     if not ok then
-        dprint("Teleport request failed for", jobId)
         if Config.RetryFailedTeleport and attempt < Config.MaxTeleportRetries then
             task.wait(2)
             return teleportToServer(jobId, attempt + 1)
         else
             failedServers[jobId] = true
+            stats.totalFailed    = stats.totalFailed + 1
+            stats.status         = "Failed: " .. jobId:sub(1, 8)
             if Config.PersistAcrossRejoins then saveFailed() end
             return false
         end
@@ -394,25 +763,32 @@ local function teleportToServer(jobId, attempt)
     end
 
     if game.JobId ~= before then
-        dprint("Hopped successfully to", jobId)
         visitedServers[jobId] = true
+        stats.totalJoined     = stats.totalJoined + 1
+        stats.status          = "Joined #" .. stats.totalJoined
         if Config.PersistAcrossRejoins then saveVisited() end
         return true
     else
-        dprint("JobId unchanged after teleport to", jobId)
         if Config.RetryFailedTeleport and attempt < Config.MaxTeleportRetries then
             task.wait(2)
             return teleportToServer(jobId, attempt + 1)
         else
             failedServers[jobId] = true
+            stats.totalFailed    = stats.totalFailed + 1
+            stats.status         = "Failed: " .. jobId:sub(1, 8)
             if Config.PersistAcrossRejoins then saveFailed() end
             return false
         end
     end
 end
 
+-- Main
 local function run()
     print("[ServerHop] Starting — Mode:", Config.FetchMode)
+
+    if Config.Optimization then
+        buildUI()
+    end
 
     if Config.PersistAcrossRejoins then
         loadVisited()
@@ -421,6 +797,7 @@ local function run()
     end
 
     visitedServers[game.JobId] = true
+    stats.queueSize = #serverQueue
 
     if Config.SearchForLuck then
         local found = checkAndHandleLuck()
@@ -436,36 +813,26 @@ local function run()
 
     while not hopLock do
         if #serverQueue < 5 then
-            dprint("Queue low, refilling...")
             refillQueue()
         end
 
         if #serverQueue == 0 then
             print("[ServerHop] No valid servers found. Stopping.")
+            stats.status = "No servers found"
             break
         end
 
         local jobId = popQueue()
         if not jobId then continue end
 
-        if Config.SkipVisitedServers and visitedServers[jobId] then
-            dprint("Skipping visited:", jobId)
-            continue
-        end
+        if Config.SkipVisitedServers and visitedServers[jobId] then continue end
+        if failedServers[jobId] then continue end
 
-        if failedServers[jobId] then
-            dprint("Skipping failed:", jobId)
-            continue
-        end
-
-        dprint("Hopping to:", jobId)
         local success = teleportToServer(jobId)
 
         if success then
             task.wait(3)
-            if Config.SearchForLuck then
-                checkAndHandleLuck()
-            end
+            if Config.SearchForLuck then checkAndHandleLuck() end
             if hopLock then break end
         end
 
@@ -473,6 +840,7 @@ local function run()
     end
 
     print("[ServerHop] Session ended.")
+    stats.status = "Session ended"
 end
 
 run()
