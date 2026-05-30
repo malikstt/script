@@ -26,6 +26,8 @@ local FILE_VISITED = "visited_servers.json"
 local FILE_FAILED = "failed_servers.json"
 local FILE_QUEUE = "server_queue.json"
 
+local ASSET_ID = "74725529332053"
+
 local visitedServers = {}
 local failedServers = {}
 local serverQueue = {}
@@ -94,13 +96,11 @@ end
 
 local function saveVisited()
     local list = {}
-    for id, _ in pairs(visitedServers) do
+    for id in pairs(visitedServers) do
         table.insert(list, id)
     end
     local encoded = jsonEncode(list)
-    if encoded then
-        fileWrite(FILE_VISITED, encoded)
-    end
+    if encoded then fileWrite(FILE_VISITED, encoded) end
 end
 
 local function loadFailed()
@@ -118,13 +118,11 @@ end
 
 local function saveFailed()
     local list = {}
-    for id, _ in pairs(failedServers) do
+    for id in pairs(failedServers) do
         table.insert(list, id)
     end
     local encoded = jsonEncode(list)
-    if encoded then
-        fileWrite(FILE_FAILED, encoded)
-    end
+    if encoded then fileWrite(FILE_FAILED, encoded) end
 end
 
 local function loadQueue()
@@ -140,9 +138,7 @@ end
 
 local function saveQueue()
     local encoded = jsonEncode(serverQueue)
-    if encoded then
-        fileWrite(FILE_QUEUE, encoded)
-    end
+    if encoded then fileWrite(FILE_QUEUE, encoded) end
 end
 
 local function isValidServer(server)
@@ -211,7 +207,7 @@ local function fetchServers()
             end
         end
 
-        dprint("Page", pages + 1, "collected", #collected, "servers so far")
+        dprint("Page", pages + 1, "| collected", #collected)
         cursor = nextCursor
         pages = pages + 1
 
@@ -236,18 +232,14 @@ local function refillQueue()
             table.insert(serverQueue, id)
         end
     end
-    if Config.PersistAcrossRejoins then
-        saveQueue()
-    end
+    if Config.PersistAcrossRejoins then saveQueue() end
     dprint("Queue size after refill:", #serverQueue)
 end
 
 local function popQueue()
     if #serverQueue == 0 then return nil end
     local id = table.remove(serverQueue, 1)
-    if Config.PersistAcrossRejoins then
-        saveQueue()
-    end
+    if Config.PersistAcrossRejoins then saveQueue() end
     return id
 end
 
@@ -256,7 +248,6 @@ local function getLuckInfo()
         return require(ReplicatedStorage.Source.Features.LuckLadder.LuckLadderServiceClient)
     end)
     if not ok or not LuckLadder then return false, nil, nil end
-
     local active, mult, remaining = false, "N/A", 0
     pcall(function()
         active = LuckLadder:isActive()
@@ -272,46 +263,66 @@ local function formatTime(sec)
     return string.format("%02d:%02d", math.floor(sec / 60), math.floor(sec % 60))
 end
 
-local function getPing()
-    local ok, ping = pcall(function()
-        return math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue())
+local function getAssetThumbnail()
+    local thumb = nil
+    pcall(function()
+        local res = safeRequest({
+            Url = "https://thumbnails.roblox.com/v1/assets?assetIds=" .. ASSET_ID .. "&size=420x420&format=Png&isCircular=false",
+            Method = "GET"
+        })
+        if res and res.Body then
+            local data = jsonDecode(res.Body)
+            thumb = data and data.data and data.data[1] and data.data[1].imageUrl
+        end
     end)
-    return ok and ping or nil
+    return thumb
 end
 
 local function sendLuckWebhook(mult, remaining, jobId)
     if not Config.LuckWebhook or Config.LuckWebhook == "" then return end
 
     local playerCount = #Players:GetPlayers()
-    local ping = getPing()
-    local joinLink = string.format(
-        "https://www.roblox.com/games/start?placeId=%d&gameInstanceId=%s",
-        placeId, jobId
-    )
-    local launcherCmd = string.format(
-        'Roblox.GameLauncher.joinGameInstance(%d, "%s")',
-        placeId, jobId
-    )
-
-    local pingStr = ping and (tostring(ping) .. " ms") or "N/A"
-
-    local fields = {
-        { name = "Luck Multiplier", value = tostring(mult), inline = true },
-        { name = "Time Remaining", value = formatTime(remaining), inline = true },
-        { name = "Players", value = tostring(playerCount), inline = true },
-        { name = "Ping", value = pingStr, inline = true },
-        { name = "Place ID", value = tostring(placeId), inline = true },
-        { name = "Job ID", value = "`" .. jobId .. "`", inline = false },
-        { name = "Join Link", value = "[Click to Join](" .. joinLink .. ")", inline = false },
-        { name = "Browser Join Command", value = "```\n" .. launcherCmd .. "\n```", inline = false },
-    }
+    local maxPlayers = Players.MaxPlayers
+    local launcherCmd = string.format('Roblox.GameLauncher.joinGameInstance(%d, "%s")', placeId, jobId)
+    local thumb = getAssetThumbnail()
 
     local body = jsonEncode({
         embeds = {{
-            title = "Luck Server Found! 🍀",
             color = 65280,
-            fields = fields,
-            description = "An active luck event has been detected on this server."
+            title = "Luck Server Found 🍀",
+            thumbnail = thumb and { url = thumb } or nil,
+            fields = {
+                {
+                    name = "Active",
+                    value = "true",
+                    inline = true
+                },
+                {
+                    name = "Multiplier",
+                    value = tostring(mult),
+                    inline = true
+                },
+                {
+                    name = "Time Remaining",
+                    value = formatTime(remaining),
+                    inline = true
+                },
+                {
+                    name = "Players",
+                    value = tostring(playerCount) .. " / " .. tostring(maxPlayers),
+                    inline = true
+                },
+                {
+                    name = "Job ID",
+                    value = "`" .. jobId .. "`",
+                    inline = false
+                },
+                {
+                    name = "PC / Desktop (Paste in Browser)",
+                    value = "```\n" .. launcherCmd .. "\n```",
+                    inline = false
+                }
+            }
         }}
     })
 
@@ -336,7 +347,7 @@ local function checkAndHandleLuck()
     sendLuckWebhook(mult, remaining, game.JobId)
 
     if Config.StopOnLuckServer then
-        print("[ServerHop] StopOnLuckServer enabled, halting hop.")
+        print("[ServerHop] StopOnLuckServer enabled, halting.")
         hopLock = true
     end
 
@@ -371,12 +382,12 @@ local function teleportToServer(jobId, attempt)
     end
 
     if game.JobId ~= before then
-        dprint("Successfully hopped to", jobId)
+        dprint("Hopped successfully to", jobId)
         visitedServers[jobId] = true
         if Config.PersistAcrossRejoins then saveVisited() end
         return true
     else
-        dprint("Server did not change after teleport to", jobId)
+        dprint("JobId unchanged after teleport to", jobId)
         if Config.RetryFailedTeleport and attempt < Config.MaxTeleportRetries then
             task.wait(2)
             return teleportToServer(jobId, attempt + 1)
@@ -426,34 +437,30 @@ local function run()
         if not jobId then continue end
 
         if Config.SkipVisitedServers and visitedServers[jobId] then
-            dprint("Skipping already visited:", jobId)
+            dprint("Skipping visited:", jobId)
             continue
         end
 
         if failedServers[jobId] then
-            dprint("Skipping failed server:", jobId)
+            dprint("Skipping failed:", jobId)
             continue
         end
 
-        dprint("Attempting hop to:", jobId)
+        dprint("Hopping to:", jobId)
         local success = teleportToServer(jobId)
 
         if success then
             task.wait(3)
-
             if Config.SearchForLuck then
                 checkAndHandleLuck()
             end
-
             if hopLock then break end
-        else
-            dprint("Failed to hop to:", jobId)
         end
 
         task.wait(0.5)
     end
 
-    print("[ServerHop] Hop session ended.")
+    print("[ServerHop] Session ended.")
 end
 
 run()
