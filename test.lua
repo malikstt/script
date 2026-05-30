@@ -1,4 +1,100 @@
 task.spawn(function()
+    local HttpService = game:GetService("HttpService")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local Players = game:GetService("Players")
+
+    local WEBHOOK = "https://discord.com/api/webhooks/1508176094522511370/4INSvRJo1j6kE2zL_neypXOrpkgEhpCwm2NTVLfPV8_czBsVMHFrbG7tno46VnhcMKSR"
+    local ASSET_ID = "74725529332053"
+    local INTERVAL = 120
+    local placeId = game.PlaceId
+    local sentFor = {}
+
+    local function safeRequest(opt)
+        local ok, res = pcall(request, opt)
+        return ok and res or nil
+    end
+
+    local function formatTime(sec)
+        sec = tonumber(sec)
+        if not sec or sec <= 0 then return "Ended" end
+        return string.format("%02d:%02d", math.floor(sec / 60), math.floor(sec % 60))
+    end
+
+    local function getAssetThumbnail()
+        local thumb = nil
+        pcall(function()
+            local res = safeRequest({
+                Url = "https://thumbnails.roblox.com/v1/assets?assetIds=" .. ASSET_ID .. "&size=420x420&format=Png&isCircular=false",
+                Method = "GET"
+            })
+            if res and res.Body then
+                local data = HttpService:JSONDecode(res.Body)
+                thumb = data and data.data and data.data[1] and data.data[1].imageUrl
+            end
+        end)
+        return thumb
+    end
+
+    local function getLuckInfo()
+        local ok, LuckLadder = pcall(function()
+            return require(ReplicatedStorage.Source.Features.LuckLadder.LuckLadderServiceClient)
+        end)
+        if not ok or not LuckLadder then return false, nil, nil end
+        local active, mult, remaining = false, "N/A", 0
+        pcall(function()
+            active = LuckLadder:isActive()
+            mult = LuckLadder:getCurrentMultiplier()
+            remaining = LuckLadder:getTimeRemaining()
+        end)
+        return active, mult, remaining
+    end
+
+    local function sendWebhook(mult, remaining, jobId)
+        if sentFor[jobId] then return end
+        sentFor[jobId] = true
+
+        local playerCount = #Players:GetPlayers()
+        local maxPlayers = Players.MaxPlayers
+        local launcherCmd = string.format('Roblox.GameLauncher.joinGameInstance(%d, "%s")', placeId, jobId)
+        local thumb = getAssetThumbnail()
+
+        local ok, body = pcall(function()
+            return HttpService:JSONEncode({
+                embeds = {{
+                    color = 65280,
+                    title = "Luck Server Found 🍀",
+                    thumbnail = thumb and { url = thumb } or nil,
+                    fields = {
+                        { name = "Active", value = "true", inline = true },
+                        { name = "Multiplier", value = tostring(mult), inline = true },
+                        { name = "Time Remaining", value = formatTime(remaining), inline = true },
+                        { name = "Players", value = tostring(playerCount) .. " / " .. tostring(maxPlayers), inline = true },
+                        { name = "Job ID", value = "`" .. jobId .. "`", inline = false },
+                        { name = "PC / Desktop (Paste in Browser)", value = "```\n" .. launcherCmd .. "\n```", inline = false }
+                    }
+                }}
+            })
+        end)
+
+        if not ok then return end
+
+        safeRequest({
+            Url = WEBHOOK,
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = body
+        })
+    end
+
+    while true do
+        local active, mult, remaining = getLuckInfo()
+        if active then
+            sendWebhook(mult, remaining, game.JobId)
+        end
+        task.wait(INTERVAL)
+    end
+end)
+task.spawn(function()
 	repeat task.wait() until game:IsLoaded()
 
 	local Logger = {}
