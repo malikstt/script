@@ -118,9 +118,17 @@ task.spawn(function()
 	local settingsTab  = mainWindow:CreateTab("Settings", 120533439477016)
 	local statsTab     = mainWindow:CreateTab("Stats", 102533388850982)
 
-	mainTab:CreateSection("Status")
-	local fpsLabel  = mainTab:CreateLabel("FPS: Calculating...")
-	local pingLabel = mainTab:CreateLabel("Ping: Calculating...")
+	-- Anti AFK (always at top, enabled by default noted in paragraph below)
+	local virtualUser = game:GetService("VirtualUser")
+	localPlayer.Idled:Connect(function()
+		virtualUser:CaptureController()
+		virtualUser:ClickButton2(Vector2.new())
+	end)
+
+	-- FPS / Ping in one line
+	local fpsValue = "..."
+	local pingValue = "..."
+	local statusLabel = mainTab:CreateLabel("FPS: ... / PING: ...ms")
 
 	pcall(function()
 		local frameCount = 0
@@ -129,9 +137,10 @@ task.spawn(function()
 			frameCount = frameCount + 1
 			local now = tick()
 			if now - lastTime >= 1 then
-				fpsLabel:Set("FPS: " .. math.floor(frameCount / (now - lastTime)))
+				fpsValue = math.floor(frameCount / (now - lastTime))
 				frameCount = 0
 				lastTime = now
+				statusLabel:Set("FPS: " .. tostring(fpsValue) .. " / PING: " .. tostring(pingValue) .. "ms")
 			end
 		end)
 	end)
@@ -140,16 +149,26 @@ task.spawn(function()
 		while true do
 			pcall(function()
 				local ping = game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue()
-				pingLabel:Set("Ping: " .. math.floor(ping) .. "ms")
+				pingValue = math.floor(ping)
+				statusLabel:Set("FPS: " .. tostring(fpsValue) .. " / PING: " .. tostring(pingValue) .. "ms")
 			end)
 			task.wait(1)
 		end
 	end)
 
+	-- Copy Discord Invite button
+	featureButton(mainTab, {
+		Name = "Copy Discord Invite",
+		Callback = function()
+			setclipboard("https://discord.gg/qMWFBWdcf")
+			rayfieldLibrary:Notify({ Title = "Copied!", Content = "Discord invite link copied to clipboard.", Duration = 3 })
+		end,
+	})
+
 	mainTab:CreateSection("Dashboard")
 	local dashboardBusy = false
 	featureToggle(mainTab, {
-		Name = "Dashboard",
+		Name = "Dashboard [ SAVE GPU ]",
 		CurrentValue = false,
 		Flag = "DashboardToggle",
 		Callback = function(Value)
@@ -462,12 +481,45 @@ task.spawn(function()
 	local RANGE = 50
 	local cachedContainer, cachedEnemies, lastCacheTime = nil, {}, 0
 	local currentTarget, tweenConn = nil, nil
+	local autoFarmWalkSpeed = 100
 	local enemySettings = {
 		TeleportStyle = "Walk",
 		TargetPriorities = { ["Most Coins & Goop"] = true },
 		AutoFarm = false,
 		MutationFilter = "Any",
 	}
+
+	-- Noclip state
+	local noclipEnabled = false
+	local noclipConn = nil
+
+	local function setNoclip(enabled)
+		noclipEnabled = enabled
+		if noclipConn then
+			noclipConn:Disconnect()
+			noclipConn = nil
+		end
+		if enabled then
+			noclipConn = RunService.Stepped:Connect(function()
+				local char = localPlayer.Character
+				if not char then return end
+				for _, part in ipairs(char:GetDescendants()) do
+					if part:IsA("BasePart") and part.CanCollide then
+						part.CanCollide = false
+					end
+				end
+			end)
+		else
+			local char = localPlayer.Character
+			if char then
+				for _, part in ipairs(char:GetDescendants()) do
+					if part:IsA("BasePart") then
+						part.CanCollide = true
+					end
+				end
+			end
+		end
+	end
 
 	local function getGameplayContainer()
 		if cachedContainer and cachedContainer.Parent then return cachedContainer end
@@ -677,7 +729,7 @@ task.spawn(function()
 			stopAutoWalk()
 			local hum = char:FindFirstChildWhichIsA("Humanoid")
 			if not hum then return end
-			hum.WalkSpeed = 16
+			hum.WalkSpeed = autoFarmWalkSpeed
 			hum:MoveTo(safePos)
 			autoWalkConn = RunService.Heartbeat:Connect(function()
 				if not char or not char.Parent or not isAlive(enemy) then stopAutoWalk() return end
@@ -865,31 +917,26 @@ task.spawn(function()
 		Callback = function(enabled)
 			if not enabled then return end
 			task.spawn(function()
-				local lastTeleportedZone = nil
+				local lastTeleportTime = 0
 				while rayfieldLibrary.Flags.FarmingStayInBestZone and rayfieldLibrary.Flags.FarmingStayInBestZone.CurrentValue do
 					if not zonesServiceRemote then error("ZonesService remote not loaded") end
 					local targetOption = rayfieldLibrary.Flags.FarmingZoneTarget and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
 					local currentZone = dataServiceClient and (dataServiceClient:get("zone") or 1) or 1
 					local targetZone = nil
+
 					if targetOption == "Best Unlocked" then
-						for zoneNum = 40, 1, -1 do
-							if not (rayfieldLibrary.Flags.FarmingStayInBestZone and rayfieldLibrary.Flags.FarmingStayInBestZone.CurrentValue) then break end
-							local testResult = zonesServiceRemote:InvokeServer("requestTeleportZone", zoneNum)
-							task.wait(0.1)
-							local zoneAfter = dataServiceClient:get("zone") or 1
-							if zoneAfter == zoneNum then
-								targetZone = zoneNum
-								break
-							end
-						end
+						targetZone = dataServiceClient and (dataServiceClient:get("furthestZone") or 1) or 1
 					else
 						targetZone = tonumber(targetOption:match("Zone (%d+)"))
 					end
-					if targetZone and currentZone ~= targetZone and lastTeleportedZone ~= targetZone then
-						zonesServiceRemote:InvokeServer("requestTeleportZone", targetZone)
-						lastTeleportedZone = targetZone
+
+					if targetZone and targetZone > 0 and currentZone ~= targetZone then
+						if tick() - lastTeleportTime > 3 then
+							zonesServiceRemote:InvokeServer("requestTeleportZone", targetZone)
+							lastTeleportTime = tick()
+						end
 					end
-					task.wait(8)
+					task.wait(5)
 				end
 			end)
 		end,
@@ -1165,10 +1212,23 @@ task.spawn(function()
 		Flag = "AutoFarm",
 		Callback = function(value)
 			enemySettings.AutoFarm = value
+			setNoclip(value)
 			if not value then
 				currentTarget = nil
 				stopAutoWalk()
 			end
+		end,
+	})
+
+	gameTab:CreateSlider({
+		Name = "Auto Farm Walk Speed",
+		Range = {50, 160},
+		Increment = 1,
+		Suffix = "",
+		CurrentValue = 100,
+		Flag = "AutoFarmWalkSpeed",
+		Callback = function(val)
+			autoFarmWalkSpeed = val
 		end,
 	})
 
@@ -1291,12 +1351,17 @@ task.spawn(function()
 				if not char then return end
 				local humanoid = char:FindFirstChildWhichIsA("Humanoid")
 				if not humanoid or humanoid.Health <= 0 then return end
-				refreshEnemyCache()
 				local _, targetId = selectCombatTarget()
 				if not targetId then return end
 				local tool = char:FindFirstChild("SlimeGun")
 				if not tool then
-					equipSlimeGun()
+					local backpack = localPlayer:FindFirstChildOfClass("Backpack")
+					if backpack then
+						local gunInBag = backpack:FindFirstChild("SlimeGun")
+						if gunInBag then
+							humanoid:EquipTool(gunInBag)
+						end
+					end
 					controller = nil
 					return
 				end
@@ -2474,7 +2539,6 @@ task.spawn(function()
 		Callback = function(value)
 			if value then
 				local mt = getrawmetatable(game)
-				local oldIndex = mt.__index
 				local oldNamecall = mt.__namecall
 				setreadonly(mt, false)
 				mt.__namecall = newcclosure(function(self, ...)
@@ -2875,12 +2939,6 @@ task.spawn(function()
 				statLabels.equipped:Set("Equipped: "..getEquippedDisplay())
 			end)
 		end
-	end)
-
-	local virtualUser = game:GetService("VirtualUser")
-	localPlayer.Idled:Connect(function()
-		virtualUser:CaptureController()
-		virtualUser:ClickButton2(Vector2.new())
 	end)
 
 	game:GetService("GuiService").ErrorMessageChanged:Connect(function()
