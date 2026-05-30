@@ -1733,8 +1733,11 @@ task.spawn(function()
 	})
 
 	task.spawn(function()
+		local ufoWasActive = false
+		local farmWasEnabled = false
+
 		while true do
-			task.wait(0.5)
+			task.wait()
 			pcall(function()
 				refreshUfoState()
 
@@ -1742,24 +1745,41 @@ task.spawn(function()
 				local ok, state = pcall(function() return ufoClient:getStateSource()() end)
 				if not ok or not state then return end
 
+				local isActive = state.phase ~= "idle" and state.zoneId ~= nil
+
 				if autoUfoZone then
-					local isActive = state.phase ~= "idle" and state.zoneId ~= nil
 					if isActive then
-						local zoneChanged = state.zoneId ~= lastUfoZoneId
-						local phaseChanged = state.phase ~= lastUfoPhase
-						if zoneChanged or phaseChanged then
-							lastUfoZoneId = state.zoneId
-							lastUfoPhase = state.phase
+						if not ufoWasActive then
+							ufoWasActive = true
+							local farmFlag = rayfieldLibrary.Flags.FarmingStayInBestZone
+							if farmFlag and farmFlag.CurrentValue then
+								farmWasEnabled = true
+								farmFlag:Set(false)
+							else
+								farmWasEnabled = false
+							end
+						end
+
+						lastUfoZoneId = state.zoneId
+						lastUfoPhase = state.phase
+
+						local currentZone = dataServiceClient and dataServiceClient:get("zone") or nil
+						if currentZone ~= state.zoneId then
 							ufoZonesRemote:InvokeServer("requestTeleportZone", state.zoneId)
-							rayfieldLibrary:Notify({
-								Title = "🛸 UFO Zone",
-								Content = "Teleported to zone: " .. tostring(state.zoneId) .. " (" .. state.phase .. ")",
-								Duration = 3,
-							})
 						end
 					else
-						lastUfoZoneId = nil
-						lastUfoPhase = nil
+						if ufoWasActive then
+							ufoWasActive = false
+							if farmWasEnabled then
+								local farmFlag = rayfieldLibrary.Flags.FarmingStayInBestZone
+								if farmFlag then
+									farmFlag:Set(true)
+								end
+								farmWasEnabled = false
+							end
+							lastUfoZoneId = nil
+							lastUfoPhase = nil
+						end
 					end
 				end
 
