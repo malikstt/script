@@ -177,10 +177,40 @@ task.spawn(function()
 	})
 
 	pcall(function()
-		local autoRejoinClient = require(ReplicatedStorage.Source.Features.AutoRejoin.AutoRejoinServiceClient)
-		pcall(function()
-			autoRejoinClient:disable()
-		end)
+		local m = require(ReplicatedStorage.Source.Features.AutoRejoin.AutoRejoinServiceClient)
+		pcall(function() m:disable() end)
+
+		if getconnections then
+			pcall(function()
+				local suspects = {
+					ReplicatedStorage,
+					localPlayer,
+				}
+				for _, obj in ipairs(suspects) do
+					for _, conn in ipairs(getconnections(obj.ChildAdded) or {}) do
+						pcall(function()
+							local src = tostring(conn.Function)
+							if src:lower():find("rejoin") or src:lower():find("autorejoin") then
+								conn:Disable()
+							end
+						end)
+					end
+				end
+			end)
+
+			pcall(function()
+				local GuiService = game:GetService("GuiService")
+				for _, conn in ipairs(getconnections(GuiService.ErrorMessageChanged) or {}) do
+					pcall(function()
+						local src = tostring(conn.Function)
+						if src:lower():find("rejoin") or src:lower():find("teleport") then
+							conn:Disable()
+						end
+					end)
+				end
+			end)
+		end
+
 		print("AutoRejoin disabled")
 	end)
 
