@@ -2513,7 +2513,7 @@ task.spawn(function()
     })
 
     optEffectsToggle = featureToggle(settingsTab, {
-        Name = "Destroy Effects (Particles & Fire)", CurrentValue=false, Flag="DestroyEffects",
+        Name = "Destroy Effects", CurrentValue=false, Flag="DestroyEffects",
         Callback = function(Value)
             if updatingOptimizations or not Value then return end
             for _, d in ipairs(game:GetDescendants()) do if OPT_VISUAL_TYPES[d.ClassName] or d:IsA("Fire") then pcall(function() d:Destroy() end) end end
