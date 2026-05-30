@@ -94,7 +94,6 @@ task.spawn(function()
 	local settingsTab = mainWindow:CreateTab("Settings", 120533439477016)
 	local statsTab    = mainWindow:CreateTab("Stats", 102533388850982)
 
-	-- FPS / PING single line
 	local fpsValue = "..."
 	local pingValue = "..."
 	local statusLabel = mainTab:CreateLabel("FPS: ... / PING: ...ms")
@@ -405,7 +404,95 @@ task.spawn(function()
 		MutationFilter = "Any",
 	}
 
-	-- Noclip
+	local zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
+
+	local function getZoneBoundary(zoneId)
+		if not zoneId then return nil end
+		local zoneIdStr = tostring(zoneId)
+		if zoneBoundaryCache.zoneId == zoneIdStr and zoneBoundaryCache.min then
+			return zoneBoundaryCache
+		end
+		local ok, result = pcall(function()
+			local zonesFolder = workspace:FindFirstChild("Zones")
+			if not zonesFolder then return nil end
+			local zoneFolder = zonesFolder:FindFirstChild(zoneIdStr)
+			if not zoneFolder then return nil end
+			local decorFolder = zoneFolder:FindFirstChild("decor")
+			if not decorFolder then return nil end
+			local outerRocks = decorFolder:FindFirstChild("Outer Rocks")
+			if not outerRocks then return nil end
+			local minPos = Vector3.new(math.huge, math.huge, math.huge)
+			local maxPos = Vector3.new(-math.huge, -math.huge, -math.huge)
+			local function processModel(model)
+				for _, part in ipairs(model:GetDescendants()) do
+					if part:IsA("BasePart") then
+						local pos = part.Position
+						local size = part.Size
+						local halfSize = size / 2
+						minPos = Vector3.new(
+							math.min(minPos.X, pos.X - halfSize.X),
+							math.min(minPos.Y, pos.Y - halfSize.Y),
+							math.min(minPos.Z, pos.Z - halfSize.Z)
+						)
+						maxPos = Vector3.new(
+							math.max(maxPos.X, pos.X + halfSize.X),
+							math.max(maxPos.Y, pos.Y + halfSize.Y),
+							math.max(maxPos.Z, pos.Z + halfSize.Z)
+						)
+					end
+				end
+				if outerRocks:IsA("BasePart") then
+					local pos = outerRocks.Position
+					local size = outerRocks.Size
+					local halfSize = size / 2
+					minPos = Vector3.new(
+						math.min(minPos.X, pos.X - halfSize.X),
+						math.min(minPos.Y, pos.Y - halfSize.Y),
+						math.min(minPos.Z, pos.Z - halfSize.Z)
+					)
+					maxPos = Vector3.new(
+						math.max(maxPos.X, pos.X + halfSize.X),
+						math.max(maxPos.Y, pos.Y + halfSize.Y),
+						math.max(maxPos.Z, pos.Z + halfSize.Z)
+					)
+				end
+			end
+			if outerRocks:IsA("Model") or outerRocks:IsA("Folder") then
+				processModel(outerRocks)
+			elseif outerRocks:IsA("BasePart") then
+				local pos = outerRocks.Position
+				local size = outerRocks.Size
+				local halfSize = size / 2
+				minPos = Vector3.new(pos.X - halfSize.X, pos.Y - halfSize.Y, pos.Z - halfSize.Z)
+				maxPos = Vector3.new(pos.X + halfSize.X, pos.Y + halfSize.Y, pos.Z + halfSize.Z)
+			end
+			if minPos.X == math.huge then return nil end
+			local shrink = 10
+			local safeMin = Vector3.new(minPos.X + shrink, minPos.Y, minPos.Z + shrink)
+			local safeMax = Vector3.new(maxPos.X - shrink, maxPos.Y, maxPos.Z - shrink)
+			local center = Vector3.new((safeMin.X + safeMax.X) / 2, (safeMin.Y + safeMax.Y) / 2, (safeMin.Z + safeMax.Z) / 2)
+			return { zoneId = zoneIdStr, min = safeMin, max = safeMax, center = center }
+		end)
+		if ok and result then
+			zoneBoundaryCache = result
+			return zoneBoundaryCache
+		end
+		return nil
+	end
+
+	local function isOutsideBoundary(position, boundary)
+		if not boundary or not boundary.min or not boundary.max then return false end
+		return position.X < boundary.min.X or position.X > boundary.max.X
+			or position.Z < boundary.min.Z or position.Z > boundary.max.Z
+	end
+
+	local function isEnemyInsideBoundary(enemy, boundary)
+		if not boundary then return true end
+		local root = enemy:FindFirstChild("HumanoidRootPart") or enemy.PrimaryPart or enemy:FindFirstChildWhichIsA("BasePart")
+		if not root then return false end
+		return not isOutsideBoundary(root.Position, boundary)
+	end
+
 	local noclipEnabled = false
 	local noclipConn = nil
 
@@ -494,12 +581,14 @@ task.spawn(function()
 		return { enemy=enemy, root=root, coins=coins, goop=goop, health=health, dist=dist }
 	end
 
-	local function computeScores(rootPos)
+	local function computeScores(rootPos, boundary)
 		local entries = {}
 		for _, enemy in ipairs(cachedEnemies) do
 			if isAlive(enemy) and matchesMutationFilter(enemy) then
-				local e = getEnemyScore(enemy, rootPos)
-				if e then table.insert(entries, e) end
+				if not boundary or isEnemyInsideBoundary(enemy, boundary) then
+					local e = getEnemyScore(enemy, rootPos)
+					if e then table.insert(entries, e) end
+				end
 			end
 		end
 		if #entries == 0 then return {}, {} end
@@ -523,12 +612,95 @@ task.spawn(function()
 		return scores, entries
 	end
 
-	local function selectTarget()
+	local function getSafePosition(targetCFrame)
+		local origin = targetCFrame.Position + Vector3.new(0, 50, 0)
+		local result = workspace:Raycast(origin, Vector3.new(0, -100, 0))
+		if result then return result.Position + Vector3.new(0, 3, 0) end
+		return targetCFrame.Position + Vector3.new(0, 3, 0)
+	end
+
+	local autoWalkConn = nil
+
+	local function stopAutoWalk()
+		if autoWalkConn then autoWalkConn:Disconnect() autoWalkConn = nil end
+		local char = localPlayer.Character
+		if char then
+			local hum = char:FindFirstChildWhichIsA("Humanoid")
+			if hum then hum.WalkSpeed = 16 hum:MoveTo(char.HumanoidRootPart.Position) end
+		end
+	end
+
+	local function clampPositionToBoundary(pos, boundary)
+		if not boundary or not boundary.min or not boundary.max then return pos end
+		return Vector3.new(
+			math.clamp(pos.X, boundary.min.X, boundary.max.X),
+			pos.Y,
+			math.clamp(pos.Z, boundary.min.Z, boundary.max.Z)
+		)
+	end
+
+	local function moveToEnemy(enemy, boundary)
+		local char = localPlayer.Character
+		if not char then return end
+		local root = getEnemyRoot(enemy)
+		if not root then return end
+		local safePos = getSafePosition(root.CFrame)
+		if boundary then
+			safePos = clampPositionToBoundary(safePos, boundary)
+		end
+		local targetCF = CFrame.new(safePos)
+		if enemySettings.TeleportStyle == "Instant" then
+			if tweenConn then tweenConn:Disconnect() tweenConn = nil end
+			stopAutoWalk()
+			char:PivotTo(targetCF)
+		elseif enemySettings.TeleportStyle == "Smooth" then
+			if tweenConn then tweenConn:Disconnect() tweenConn = nil end
+			stopAutoWalk()
+			local startCF = char:GetPivot()
+			local startTime = tick()
+			local duration = 0.25
+			tweenConn = RunService.RenderStepped:Connect(function()
+				if not char or not char.Parent then tweenConn:Disconnect() tweenConn = nil return end
+				local alpha = math.clamp((tick() - startTime) / duration, 0, 1)
+				local newPos = startCF.Position:Lerp(safePos, alpha)
+				local rayResult = workspace:Raycast(newPos + Vector3.new(0, 10, 0), Vector3.new(0, -20, 0))
+				if rayResult then newPos = rayResult.Position + Vector3.new(0, 3, 0) end
+				char:PivotTo(CFrame.new(newPos))
+				if alpha >= 1 then tweenConn:Disconnect() tweenConn = nil end
+			end)
+		elseif enemySettings.TeleportStyle == "Walk" then
+			if tweenConn then tweenConn:Disconnect() tweenConn = nil end
+			stopAutoWalk()
+			local hum = char:FindFirstChildWhichIsA("Humanoid")
+			if not hum then return end
+			hum.WalkSpeed = autoFarmWalkSpeed
+			hum:MoveTo(safePos)
+			autoWalkConn = RunService.Heartbeat:Connect(function()
+				if not char or not char.Parent or not isAlive(enemy) then stopAutoWalk() return end
+				local rp = char:FindFirstChild("HumanoidRootPart")
+				if not rp then stopAutoWalk() return end
+				local dist = (rp.Position - safePos).Magnitude
+				if dist < 5 then
+					stopAutoWalk()
+				else
+					local newRoot = getEnemyRoot(enemy)
+					if newRoot then
+						local newSafe = getSafePosition(newRoot.CFrame)
+						if boundary then newSafe = clampPositionToBoundary(newSafe, boundary) end
+						safePos = newSafe
+						hum:MoveTo(safePos)
+					end
+				end
+			end)
+		end
+	end
+
+	local function selectTarget(boundary)
 		local char = localPlayer.Character
 		if not char then return nil end
 		local rp = char:FindFirstChild("HumanoidRootPart")
 		if not rp then return nil end
-		local scores = computeScores(rp.Position)
+		local scores = computeScores(rp.Position, boundary)
 		local best, bestScore = nil, -math.huge
 		for enemy, score in pairs(scores) do
 			if score > bestScore then bestScore = score best = enemy end
@@ -577,71 +749,7 @@ task.spawn(function()
 		return bestEnemy, bestId
 	end
 
-	local function getSafePosition(targetCFrame)
-		local origin = targetCFrame.Position + Vector3.new(0, 50, 0)
-		local result = workspace:Raycast(origin, Vector3.new(0, -100, 0))
-		if result then return result.Position + Vector3.new(0, 3, 0) end
-		return targetCFrame.Position + Vector3.new(0, 3, 0)
-	end
-
-	local autoWalkConn = nil
-
-	local function stopAutoWalk()
-		if autoWalkConn then autoWalkConn:Disconnect() autoWalkConn = nil end
-		local char = localPlayer.Character
-		if char then
-			local hum = char:FindFirstChildWhichIsA("Humanoid")
-			if hum then hum.WalkSpeed = 16 hum:MoveTo(char.HumanoidRootPart.Position) end
-		end
-	end
-
-	local function moveToEnemy(enemy)
-		local char = localPlayer.Character
-		if not char then return end
-		local root = getEnemyRoot(enemy)
-		if not root then return end
-		local safePos = getSafePosition(root.CFrame)
-		local targetCF = CFrame.new(safePos)
-		if enemySettings.TeleportStyle == "Instant" then
-			if tweenConn then tweenConn:Disconnect() tweenConn = nil end
-			stopAutoWalk()
-			char:PivotTo(targetCF)
-		elseif enemySettings.TeleportStyle == "Smooth" then
-			if tweenConn then tweenConn:Disconnect() tweenConn = nil end
-			stopAutoWalk()
-			local startCF = char:GetPivot()
-			local startTime = tick()
-			local duration = 0.25
-			tweenConn = RunService.RenderStepped:Connect(function()
-				if not char or not char.Parent then tweenConn:Disconnect() tweenConn = nil return end
-				local alpha = math.clamp((tick() - startTime) / duration, 0, 1)
-				local newPos = startCF.Position:Lerp(safePos, alpha)
-				local rayResult = workspace:Raycast(newPos + Vector3.new(0, 10, 0), Vector3.new(0, -20, 0))
-				if rayResult then newPos = rayResult.Position + Vector3.new(0, 3, 0) end
-				char:PivotTo(CFrame.new(newPos))
-				if alpha >= 1 then tweenConn:Disconnect() tweenConn = nil end
-			end)
-		elseif enemySettings.TeleportStyle == "Walk" then
-			if tweenConn then tweenConn:Disconnect() tweenConn = nil end
-			stopAutoWalk()
-			local hum = char:FindFirstChildWhichIsA("Humanoid")
-			if not hum then return end
-			hum.WalkSpeed = autoFarmWalkSpeed
-			hum:MoveTo(safePos)
-			autoWalkConn = RunService.Heartbeat:Connect(function()
-				if not char or not char.Parent or not isAlive(enemy) then stopAutoWalk() return end
-				local rp = char:FindFirstChild("HumanoidRootPart")
-				if not rp then stopAutoWalk() return end
-				local dist = (rp.Position - safePos).Magnitude
-				if dist < 5 then
-					stopAutoWalk()
-				else
-					local newRoot = getEnemyRoot(enemy)
-					if newRoot then safePos = getSafePosition(newRoot.CFrame) hum:MoveTo(safePos) end
-				end
-			end)
-		end
-	end
+	local lastBoundaryRefresh = 0
 
 	RunService.Heartbeat:Connect(function()
 		pcall(function()
@@ -650,17 +758,52 @@ task.spawn(function()
 				if currentTarget then currentTarget = nil stopAutoWalk() end
 				return
 			end
-			if currentTarget and isAlive(currentTarget) and currentTarget.Parent then return end
-			stopAutoWalk()
-			local newTarget = selectTarget()
+
+			local char = localPlayer.Character
+			if not char then return end
+			local charRoot = char:FindFirstChild("HumanoidRootPart")
+			if not charRoot then return end
+
+			local currentZoneId = dataServiceClient and dataServiceClient:get("zone") or nil
+			local boundary = nil
+			if currentZoneId then
+				if tick() - lastBoundaryRefresh > 5 then
+					lastBoundaryRefresh = tick()
+					zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
+				end
+				boundary = getZoneBoundary(currentZoneId)
+			end
+
+			if boundary and isOutsideBoundary(charRoot.Position, boundary) then
+				stopAutoWalk()
+				currentTarget = nil
+				local safeCenter = boundary.center
+				local rayResult = workspace:Raycast(safeCenter + Vector3.new(0, 50, 0), Vector3.new(0, -100, 0))
+				if rayResult then safeCenter = rayResult.Position + Vector3.new(0, 3, 0) end
+				char:PivotTo(CFrame.new(safeCenter))
+				task.wait(0.5)
+				return
+			end
+
+			if currentTarget and isAlive(currentTarget) and currentTarget.Parent then
+				if boundary and not isEnemyInsideBoundary(currentTarget, boundary) then
+					stopAutoWalk()
+					currentTarget = nil
+				else
+					return
+				end
+			else
+				stopAutoWalk()
+			end
+
+			local newTarget = selectTarget(boundary)
 			if newTarget and newTarget ~= currentTarget then
 				currentTarget = newTarget
-				moveToEnemy(currentTarget)
+				moveToEnemy(currentTarget, boundary)
 			end
 		end)
 	end)
 
-	-- ===================== FARMING TAB =====================
 	farmingTab:CreateSection("Rolling")
 
 	featureToggle(farmingTab, {
@@ -801,7 +944,6 @@ task.spawn(function()
 			task.spawn(function()
 				local lastTeleportTime = 0
 				while true do
-					-- CHECK FLAG EVERY ITERATION - this is the key fix
 					local flag = rayfieldLibrary.Flags.FarmingStayInBestZone
 					if not flag or not flag.CurrentValue then break end
 					if not zonesServiceRemote then
@@ -821,6 +963,7 @@ task.spawn(function()
 							if tick() - lastTeleportTime > 3 then
 								zonesServiceRemote:InvokeServer("requestTeleportZone", targetZone)
 								lastTeleportTime = tick()
+								zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
 							end
 						end
 					end)
@@ -1083,7 +1226,6 @@ task.spawn(function()
 		end,
 	})
 
-	-- ===================== GAME TAB =====================
 	gameTab:CreateSection("Auto Farm")
 
 	featureToggle(gameTab, {
@@ -1506,7 +1648,6 @@ task.spawn(function()
 		rayfieldLibrary:Notify({ Title="Cactus Hub", Content="Loaded — "..(#recipeIdsList).." unlocked recipes ready.", Duration=5, Image=4483362458 })
 	end)
 
-	-- ===================== UFO TAB =====================
 	local ufoClient = nil
 	local ufoZonesRemote = ReplicatedStorage:WaitForChild("Packages"):WaitForChild("_Index"):WaitForChild("leifstout_networker@0.3.1"):WaitForChild("networker"):WaitForChild("_remotes"):WaitForChild("ZonesService"):WaitForChild("RemoteFunction")
 	local ufoLootRemote = nil
@@ -1639,7 +1780,6 @@ task.spawn(function()
 		end
 	end)
 
-	-- ===================== INDEX TAB =====================
 	local indexRunning = false
 	local indexThread, luckPollThread = nil, nil
 	local selectedCategoryOption = nil
@@ -1688,7 +1828,6 @@ task.spawn(function()
 						local catLabel  = catId:sub(1,1):upper()..catId:sub(2)
 						local lastTargetId = nil
 						while indexRunning do
-							-- Check flag every iteration
 							local flag = rayfieldLibrary.Flags.IndexAutoComplete
 							if not flag or not flag.CurrentValue then indexRunning = false break end
 							local missing = getMissingSlimes(catId)
@@ -1816,7 +1955,6 @@ task.spawn(function()
 		end
 	end)
 
-	-- ===================== MISC TAB =====================
 	miscTab:CreateSection("Codes & Rewards")
 
 	featureToggle(miscTab, {
@@ -1978,7 +2116,6 @@ task.spawn(function()
 		end
 	end)
 
-	-- ===================== WEBHOOK TAB =====================
 	webhookTab:CreateSection("Warning")
 	webhookTab:CreateParagraph({ Title = "⚠️ WARNING", Content = "WEBHOOK WILL ONLY WORK IF YOU MANUALLY ENABLE AUTO ROLL IN GAME\nPLEASE DISABLE FAST ROLL (from Farming Tab) if you have it enabled" })
 	webhookTab:CreateSection("Configuration")
@@ -2185,7 +2322,6 @@ task.spawn(function()
 		end
 	end)
 
-	-- ===================== SETTINGS TAB =====================
 	settingsTab:CreateParagraph({ Title = "🍀 Want a serverhop script for luck servers?", Content = "Join the Discord! discord.gg/qMWFBWdcf" })
 	settingsTab:CreateSection("System")
 
@@ -2324,7 +2460,6 @@ task.spawn(function()
 		end,
 	})
 
-	-- ===================== STATS TAB =====================
 	local function safeGet(...)
 		local ok, data = pcall(function() return dataServiceClient._data._data end)
 		if not ok or type(data) ~= "table" then return 0 end
