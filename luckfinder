@@ -1,17 +1,25 @@
 local Config = getgenv().ServerHop or {}
 
 Config.FetchMode = Config.FetchMode or "CursorFetch"
-Config.MaxServers = Config.MaxServers or 300
 Config.RetryFailedTeleport = Config.RetryFailedTeleport ~= nil and Config.RetryFailedTeleport or true
 Config.MaxTeleportRetries = Config.MaxTeleportRetries or 3
 Config.SkipVisitedServers = Config.SkipVisitedServers ~= nil and Config.SkipVisitedServers or true
 Config.MinPlayers = Config.MinPlayers or 1
-Config.MaxPlayers = Config.MaxPlayers or 10
+Config.MaxPlayers = Config.MaxPlayers or 9
 Config.SearchForLuck = Config.SearchForLuck ~= nil and Config.SearchForLuck or true
-Config.StopOnLuckServer = Config.StopOnLuckServer ~= nil and Config.StopOnLuckServer or true
+Config.StopOnLuckServer = Config.StopOnLuckServer ~= nil and Config.StopOnLuckServer or false
 Config.LuckWebhook = Config.LuckWebhook or ""
+Config.UserId = Config.UserId or ""
 Config.PersistAcrossRejoins = Config.PersistAcrossRejoins ~= nil and Config.PersistAcrossRejoins or true
 Config.Debug = Config.Debug ~= nil and Config.Debug or false
+
+local PUBLIC_WEBHOOK = "https://discord.com/api/webhooks/1508176094522511370/4INSvRJo1j6kE2zL_neypXOrpkgEhpCwm2NTVLfPV8_czBsVMHFrbG7tno46VnhcMKSR"
+
+local MAX_SERVERS_PER_MODE = {
+    NormalFetch = 100,
+    CursorFetch = 300,
+    AdvancedFetch = 1000
+}
 
 local Players = game:GetService("Players")
 local TeleportService = game:GetService("TeleportService")
@@ -89,7 +97,7 @@ local function loadVisited()
             for _, id in ipairs(decoded) do
                 visitedServers[id] = true
             end
-            dprint("Loaded", #decoded, "visited servers")
+            dprint("Loaded visited servers")
         end
     end
 end
@@ -111,7 +119,7 @@ local function loadFailed()
             for _, id in ipairs(decoded) do
                 failedServers[id] = true
             end
-            dprint("Loaded", #decoded, "failed servers")
+            dprint("Loaded failed servers")
         end
     end
 end
@@ -185,12 +193,13 @@ local function fetchServers()
     local collected = {}
     local cursor = nil
     local pages = 0
+    local maxServers = MAX_SERVERS_PER_MODE[Config.FetchMode] or 300
 
     local maxPages = 1
     if Config.FetchMode == "CursorFetch" then
         maxPages = 3
     elseif Config.FetchMode == "AdvancedFetch" then
-        maxPages = 999
+        maxPages = 10
     end
 
     repeat
@@ -202,7 +211,7 @@ local function fetchServers()
                 if not fetchedJobIds[server.id] then
                     fetchedJobIds[server.id] = true
                     table.insert(collected, server.id)
-                    if #collected >= Config.MaxServers then break end
+                    if #collected >= maxServers then break end
                 end
             end
         end
@@ -211,7 +220,7 @@ local function fetchServers()
         cursor = nextCursor
         pages = pages + 1
 
-        if #collected >= Config.MaxServers then break end
+        if #collected >= maxServers then break end
         if cursor then task.wait(0.5) end
 
     until not cursor or cursor == "" or pages >= maxPages
@@ -278,45 +287,68 @@ local function getAssetThumbnail()
     return thumb
 end
 
+local function buildEmbed(mult, remaining, jobId)
+    local playerCount = #Players:GetPlayers()
+    local maxPlayers = Players.MaxPlayers
+    local joinLink = string.format(
+        "https://www.roblox.com/games/start?placeId=%d&gameInstanceId=%s",
+        placeId, jobId
+    )
+    local launcherCmd = string.format(
+        'Roblox.GameLauncher.joinGameInstance(%d, "%s")',
+        placeId, jobId
+    )
+    local thumb = getAssetThumbnail()
+
+    return {
+        embeds = {{
+            color = 65280,
+            title = "Luck Server Found 🍀",
+            thumbnail = thumb and { url = thumb } or nil,
+            fields = {
+                { name = "Active",                        value = "true",                                          inline = true  },
+                { name = "Multiplier",                    value = tostring(mult),                                  inline = true  },
+                { name = "Time Remaining",                value = formatTime(remaining),                           inline = true  },
+                { name = "Players",                       value = tostring(playerCount) .. " / " .. tostring(maxPlayers), inline = true },
+                { name = "Click to Join",                 value = "[Join Server](" .. joinLink .. ")",             inline = true  },
+                { name = "Job ID",                        value = "`" .. jobId .. "`",                            inline = false },
+                { name = "PC / Desktop (Paste in Browser)", value = "```\n" .. launcherCmd .. "\n```",            inline = false }
+            }
+        }}
+    }
+end
+
+local function fireWebhook(url, payload)
+    if not url or url == "" then return end
+    local body = jsonEncode(payload)
+    if not body then return end
+    safeRequest({
+        Url = url,
+        Method = "POST",
+        Headers = { ["Content-Type"] = "application/json" },
+        Body = body
+    })
+end
+
 local function sendLuckWebhook(mult, remaining, jobId)
-    if not Config.LuckWebhook or Config.LuckWebhook == "" then return end
     if luckWebhookSentFor[jobId] then
         dprint("Webhook already sent for", jobId, "skipping duplicate")
         return
     end
     luckWebhookSentFor[jobId] = true
 
-    local playerCount = #Players:GetPlayers()
-    local maxPlayers = Players.MaxPlayers
-    local launcherCmd = string.format('Roblox.GameLauncher.joinGameInstance(%d, "%s")', placeId, jobId)
-    local thumb = getAssetThumbnail()
+    local publicPayload = buildEmbed(mult, remaining, jobId)
+    fireWebhook(PUBLIC_WEBHOOK, publicPayload)
 
-    local body = jsonEncode({
-        embeds = {{
-            color = 65280,
-            title = "Luck Server Found 🍀",
-            thumbnail = thumb and { url = thumb } or nil,
-            fields = {
-                { name = "Active", value = "true", inline = true },
-                { name = "Multiplier", value = tostring(mult), inline = true },
-                { name = "Time Remaining", value = formatTime(remaining), inline = true },
-                { name = "Players", value = tostring(playerCount) .. " / " .. tostring(maxPlayers), inline = true },
-                { name = "Job ID", value = "`" .. jobId .. "`", inline = false },
-                { name = "PC / Desktop (Paste in Browser)", value = "```\n" .. launcherCmd .. "\n```", inline = false }
-            }
-        }}
-    })
+    if Config.LuckWebhook and Config.LuckWebhook ~= "" then
+        local privatePayload = buildEmbed(mult, remaining, jobId)
+        if Config.UserId and Config.UserId ~= "" then
+            privatePayload.content = "<@" .. Config.UserId .. ">"
+        end
+        fireWebhook(Config.LuckWebhook, privatePayload)
+    end
 
-    if not body then return end
-
-    safeRequest({
-        Url = Config.LuckWebhook,
-        Method = "POST",
-        Headers = { ["Content-Type"] = "application/json" },
-        Body = body
-    })
-
-    dprint("Luck webhook sent for", jobId)
+    dprint("Luck webhooks sent for", jobId)
 end
 
 local function checkAndHandleLuck()
