@@ -170,7 +170,7 @@ task.spawn(function()
 		end,
 	})
 
-	mainTab:CreateParagraph({ Title = "Enabled By Default", Content = "[+] Anti AFK\n[+] Auto Rejoin Disabled (Game Built-in)" })
+	mainTab:CreateParagraph({ Title = "Enabled By Default", Content = "[+] Anti AFK" })
 	mainTab:CreateParagraph({
 		Title = "Latest Update",
 		Content = "[+] Auto Stay in UFO Zone (Auto teleport to active UFO zones)\n[+] Auto Collect UFO Loot\n[+] Live UFO Phase Display (Hovering/Arriving/Departing/Idle)\n[+] Live UFO Zone Display and State\n[+] Live Next Event Countdown Timer\n[+] Live Golden UFO if found ( yes or no )\n[+] Manual Refresh Status Button\n[+] Auto Farm Zone ( is now x4 faster tp wise )\n[+] Added beammeup / aliensarehere in Auto Redeem Codes\n[+] Added New Zones\n[+] Bug Fixes"
