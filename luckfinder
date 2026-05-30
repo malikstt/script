@@ -22,6 +22,8 @@ local MAX_SERVERS_PER_MODE = {
     AdvancedFetch = 1000
 }
 
+local FILE_MAX_AGE_SECONDS = 1800 -- 30 minutes
+
 local Players           = game:GetService("Players")
 local TeleportService   = game:GetService("TeleportService")
 local HttpService       = game:GetService("HttpService")
@@ -88,6 +90,12 @@ local function jsonDecode(str)
     return ok and result or nil
 end
 
+-- Returns current Unix timestamp as an integer
+local function getUnixTime()
+    -- os.time() is available in Roblox Lua and returns seconds since epoch
+    return os.time()
+end
+
 local function fileRead(path)
     if isfile and isfile(path) then
         local ok, content = pcall(readfile, path)
@@ -100,11 +108,45 @@ local function fileWrite(path, content)
     if writefile then pcall(writefile, path, content) end
 end
 
+local function fileDelete(path)
+    if isfile and isfile(path) then
+        if delfile then pcall(delfile, path) end
+    end
+end
+
+-- Check if a decoded JSON table's timestamp is older than FILE_MAX_AGE_SECONDS
+-- Returns true if the file is stale (should be discarded)
+local function isFileStale(decoded)
+    if type(decoded) ~= "table" then return true end
+    local ts = decoded._timestamp
+    if not ts or type(ts) ~= "number" then
+        -- No timestamp means old format — treat as stale
+        return true
+    end
+    local age = getUnixTime() - ts
+    return age > FILE_MAX_AGE_SECONDS
+end
+
+-- Wrap any data table with a timestamp before saving
+local function wrapWithTimestamp(data)
+    data._timestamp = getUnixTime()
+    return data
+end
+
+------------------------------------------------------------------------
+-- Stats
+------------------------------------------------------------------------
+
 local function loadStats()
     local content = fileRead(FILE_STATS)
     if content then
         local decoded = jsonDecode(content)
         if type(decoded) == "table" then
+            if isFileStale(decoded) then
+                dprint("stats_session.json is stale (>30 min). Resetting.")
+                fileDelete(FILE_STATS)
+                return
+            end
             stats.totalJoined = decoded.totalJoined or 0
             stats.totalFailed = decoded.totalFailed or 0
             stats.lucksFound  = decoded.lucksFound  or 0
@@ -113,20 +155,33 @@ local function loadStats()
 end
 
 local function saveStats()
-    local encoded = jsonEncode({
+    local payload = wrapWithTimestamp({
         totalJoined = stats.totalJoined,
         totalFailed = stats.totalFailed,
         lucksFound  = stats.lucksFound,
     })
+    local encoded = jsonEncode(payload)
     if encoded then fileWrite(FILE_STATS, encoded) end
 end
+
+------------------------------------------------------------------------
+-- Visited servers
+------------------------------------------------------------------------
 
 local function loadVisited()
     local content = fileRead(FILE_VISITED)
     if content then
         local decoded = jsonDecode(content)
         if type(decoded) == "table" then
-            for _, id in ipairs(decoded) do visitedServers[id] = true end
+            if isFileStale(decoded) then
+                dprint("visited_servers.json is stale (>30 min). Resetting.")
+                fileDelete(FILE_VISITED)
+                return
+            end
+            local list = decoded.data
+            if type(list) == "table" then
+                for _, id in ipairs(list) do visitedServers[id] = true end
+            end
         end
     end
 end
@@ -134,16 +189,29 @@ end
 local function saveVisited()
     local list = {}
     for id in pairs(visitedServers) do table.insert(list, id) end
-    local encoded = jsonEncode(list)
+    local payload = wrapWithTimestamp({ data = list })
+    local encoded = jsonEncode(payload)
     if encoded then fileWrite(FILE_VISITED, encoded) end
 end
+
+------------------------------------------------------------------------
+-- Failed servers
+------------------------------------------------------------------------
 
 local function loadFailed()
     local content = fileRead(FILE_FAILED)
     if content then
         local decoded = jsonDecode(content)
         if type(decoded) == "table" then
-            for _, id in ipairs(decoded) do failedServers[id] = true end
+            if isFileStale(decoded) then
+                dprint("failed_servers.json is stale (>30 min). Resetting.")
+                fileDelete(FILE_FAILED)
+                return
+            end
+            local list = decoded.data
+            if type(list) == "table" then
+                for _, id in ipairs(list) do failedServers[id] = true end
+            end
         end
     end
 end
@@ -151,24 +219,43 @@ end
 local function saveFailed()
     local list = {}
     for id in pairs(failedServers) do table.insert(list, id) end
-    local encoded = jsonEncode(list)
+    local payload = wrapWithTimestamp({ data = list })
+    local encoded = jsonEncode(payload)
     if encoded then fileWrite(FILE_FAILED, encoded) end
 end
+
+------------------------------------------------------------------------
+-- Server queue
+------------------------------------------------------------------------
 
 local function loadQueue()
     local content = fileRead(FILE_QUEUE)
     if content then
         local decoded = jsonDecode(content)
         if type(decoded) == "table" then
-            serverQueue = decoded
+            if isFileStale(decoded) then
+                dprint("server_queue.json is stale (>30 min). Resetting.")
+                fileDelete(FILE_QUEUE)
+                serverQueue = {}
+                return
+            end
+            local list = decoded.data
+            if type(list) == "table" then
+                serverQueue = list
+            end
         end
     end
 end
 
 local function saveQueue()
-    local encoded = jsonEncode(serverQueue)
+    local payload = wrapWithTimestamp({ data = serverQueue })
+    local encoded = jsonEncode(payload)
     if encoded then fileWrite(FILE_QUEUE, encoded) end
 end
+
+------------------------------------------------------------------------
+-- Server validation & fetching
+------------------------------------------------------------------------
 
 local function isValidServer(server)
     if not server or not server.id then return false end
@@ -247,6 +334,10 @@ local function popQueue()
     if Config.PersistAcrossRejoins then saveQueue() end
     return id
 end
+
+------------------------------------------------------------------------
+-- Luck detection
+------------------------------------------------------------------------
 
 local function getLuckInfo()
     local ok, LuckLadder = pcall(function()
@@ -343,6 +434,10 @@ local function checkAndHandleLuck()
     return true
 end
 
+------------------------------------------------------------------------
+-- UI
+------------------------------------------------------------------------
+
 local function buildUI()
     local playerGui = lp:WaitForChild("PlayerGui")
     local existing  = playerGui:FindFirstChild("__ServerHopUI__")
@@ -384,7 +479,6 @@ local function buildUI()
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     }, playerGui)
 
-    -- Fullscreen bg
     local bg = make("Frame", {
         Size             = UDim2.fromScale(1, 1),
         BackgroundColor3 = PALETTE.bg,
@@ -400,7 +494,6 @@ local function buildUI()
         Rotation = 135,
     }, bg)
 
-    -- Top line
     local tl = make("Frame", {
         Size             = UDim2.new(1, 0, 0, 2),
         BackgroundColor3 = PALETTE.accent,
@@ -410,7 +503,6 @@ local function buildUI()
     }, bg)
     make("UIGradient", { Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.new(0,0,0)), ColorSequenceKeypoint.new(0.3, Color3.new(1,1,1)), ColorSequenceKeypoint.new(0.7, Color3.new(1,1,1)), ColorSequenceKeypoint.new(1, Color3.new(0,0,0)) }) }, tl)
 
-    -- Bottom line
     local bl = make("Frame", {
         Size             = UDim2.new(1, 0, 0, 2),
         Position         = UDim2.new(0, 0, 1, -2),
@@ -421,7 +513,6 @@ local function buildUI()
     }, bg)
     make("UIGradient", { Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.new(0,0,0)), ColorSequenceKeypoint.new(0.3, Color3.new(1,1,1)), ColorSequenceKeypoint.new(0.7, Color3.new(1,1,1)), ColorSequenceKeypoint.new(1, Color3.new(0,0,0)) }) }, bl)
 
-    -- Fullscreen content layout
     local content = make("Frame", {
         Size             = UDim2.fromScale(1, 1),
         BackgroundTransparency = 1,
@@ -429,7 +520,6 @@ local function buildUI()
         ZIndex           = 3,
     }, bg)
 
-    -- Header bar full width
     local header = make("Frame", {
         Size             = UDim2.new(1, 0, 0, 72),
         BackgroundColor3 = PALETTE.panel,
@@ -455,7 +545,6 @@ local function buildUI()
     }, header)
     make("UIGradient", { Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.new(0,0,0)), ColorSequenceKeypoint.new(0.2, Color3.new(1,1,1)), ColorSequenceKeypoint.new(0.8, Color3.new(1,1,1)), ColorSequenceKeypoint.new(1, Color3.new(0,0,0)) }) }, headerBorder)
 
-    -- Icon in header
     local iconBg = make("Frame", {
         Size             = UDim2.new(0, 48, 0, 48),
         Position         = UDim2.fromOffset(20, 12),
@@ -499,7 +588,6 @@ local function buildUI()
         ZIndex                 = 5,
     }, header)
 
-    -- Stats cards row - full width
     local cardsRow = make("Frame", {
         Size             = UDim2.new(1, -40, 0, 180),
         Position         = UDim2.fromOffset(20, 92),
@@ -510,7 +598,6 @@ local function buildUI()
 
     local function makeCard(parent, idx, total, label, valueColor)
         local gap    = 16
-        local totalGap = gap * (total - 1)
         local cardW  = (1 / total)
         local card   = make("Frame", {
             Size             = UDim2.new(cardW, idx < total and -gap or 0, 1, 0),
@@ -529,7 +616,6 @@ local function buildUI()
             Rotation = 90,
         }, card)
 
-        -- Top color accent
         local cardTop = make("Frame", {
             Size             = UDim2.new(0.5, 0, 0, 3),
             Position         = UDim2.fromScale(0.25, 0),
@@ -572,7 +658,6 @@ local function buildUI()
     local luckVal   = makeCard(cardsRow, 3, 4, "LUCK FOUND",      PALETTE.gold)
     local queueVal  = makeCard(cardsRow, 4, 4, "QUEUE",           PALETTE.accent)
 
-    -- Files bar full width
     local filesBar = make("Frame", {
         Size             = UDim2.new(1, -40, 0, 56),
         Position         = UDim2.fromOffset(20, 292),
@@ -607,7 +692,6 @@ local function buildUI()
         ZIndex                 = 5,
     }, filesBar)
 
-    -- Status bar full width
     local statusBar = make("Frame", {
         Size             = UDim2.new(1, -40, 0, 60),
         Position         = UDim2.fromOffset(20, 364),
@@ -646,7 +730,6 @@ local function buildUI()
         ZIndex                 = 5,
     }, statusBar)
 
-    -- Dot pulse
     task.spawn(function()
         while sg.Parent do
             TweenService:Create(dot, TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), { BackgroundTransparency = 0.65 }):Play()
@@ -656,7 +739,6 @@ local function buildUI()
         end
     end)
 
-    -- Slide in from top
     content.Position = UDim2.new(0, 0, -1, 0)
     TweenService:Create(content, TweenInfo.new(0.65, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
         Position = UDim2.fromScale(0, 0)
@@ -665,6 +747,7 @@ local function buildUI()
     local lastStatus = ""
     RunService.Heartbeat:Connect(function()
         if not sg.Parent then return end
+        -- FIX: Convert to string explicitly so TextLabel always reflects latest value
         joinedVal.Text = tostring(stats.totalJoined)
         failedVal.Text = tostring(stats.totalFailed)
         luckVal.Text   = tostring(stats.lucksFound)
@@ -681,60 +764,64 @@ local function buildUI()
                 if stats.status:find("Joined") then col = PALETTE.green end
                 if stats.status:find("Failed") then col = PALETTE.red   end
                 if stats.status:find("Fetch")  then col = PALETTE.dim   end
-                statusLbl.TextColor3    = col
-                dot.BackgroundColor3    = col
+                statusLbl.TextColor3 = col
+                dot.BackgroundColor3 = col
                 TweenService:Create(statusLbl, TweenInfo.new(0.15), { TextTransparency = 0 }):Play()
             end)
         end
     end)
 end
 
+------------------------------------------------------------------------
+-- Teleport  (FIX: removed broken JobId-change detection;
+--            TeleportToPlaceInstance causes a full game reload so the
+--            script never resumes after it fires — we count the hop as
+--            successful as soon as the pcall itself succeeds.)
+------------------------------------------------------------------------
+
 local function teleportToServer(jobId, attempt)
     attempt = attempt or 1
     stats.status = "Hopping → " .. jobId:sub(1, 8) .. "..."
-    local before = game.JobId
-    local ok = pcall(function()
+    dprint("Teleporting to", jobId, "(attempt", attempt .. ")")
+
+    local ok, err = pcall(function()
         TeleportService:TeleportToPlaceInstance(placeId, jobId, lp)
     end)
+
     if not ok then
+        dprint("TeleportToPlaceInstance error:", err)
         if Config.RetryFailedTeleport and attempt < Config.MaxTeleportRetries then
             task.wait(2)
             return teleportToServer(jobId, attempt + 1)
-        else
-            failedServers[jobId] = true
-            stats.totalFailed    = stats.totalFailed + 1
-            stats.status         = "Failed: " .. jobId:sub(1, 8)
-            saveStats()
-            if Config.PersistAcrossRejoins then saveFailed() end
-            return false
         end
-    end
-    local deadline = os.clock() + 10
-    while os.clock() < deadline do
-        if game.JobId ~= before then break end
-        task.wait(0.25)
-    end
-    if game.JobId ~= before then
-        visitedServers[jobId] = true
-        stats.totalJoined     = stats.totalJoined + 1
-        stats.status          = "Joined #" .. stats.totalJoined
+        failedServers[jobId] = true
+        stats.totalFailed    = stats.totalFailed + 1
+        stats.status         = "Failed: " .. jobId:sub(1, 8)
         saveStats()
-        if Config.PersistAcrossRejoins then saveVisited() end
-        return true
-    else
-        if Config.RetryFailedTeleport and attempt < Config.MaxTeleportRetries then
-            task.wait(2)
-            return teleportToServer(jobId, attempt + 1)
-        else
-            failedServers[jobId] = true
-            stats.totalFailed    = stats.totalFailed + 1
-            stats.status         = "Failed: " .. jobId:sub(1, 8)
-            saveStats()
-            if Config.PersistAcrossRejoins then saveFailed() end
-            return false
-        end
+        if Config.PersistAcrossRejoins then saveFailed() end
+        return false
     end
+
+    -- The teleport call succeeded — the engine will now load the new server.
+    -- Mark the hop as joined immediately so the counter is correct before
+    -- the client reloads.  Any wait-for-JobId-change loop would hang here
+    -- because this script is about to be destroyed by the teleport.
+    visitedServers[jobId] = true
+    stats.totalJoined     = stats.totalJoined + 1
+    stats.status          = "Joined #" .. stats.totalJoined
+    dprint("Teleport dispatched. totalJoined =", stats.totalJoined)
+    saveStats()
+    if Config.PersistAcrossRejoins then saveVisited() end
+
+    -- Give Roblox a moment to actually start the teleport before the loop
+    -- in run() tries to pop the next server.
+    task.wait(8)
+    return true
 end
+
+------------------------------------------------------------------------
+-- Entry point
+------------------------------------------------------------------------
 
 local function run()
     print("[ServerHop] Starting — Mode:", Config.FetchMode)
@@ -779,6 +866,8 @@ local function run()
         local success = teleportToServer(jobId)
 
         if success then
+            -- Script will be destroyed by the teleport; lines below only
+            -- run if the engine somehow kept us alive (edge case).
             task.wait(3)
             if Config.SearchForLuck then checkAndHandleLuck() end
             if hopLock then break end
