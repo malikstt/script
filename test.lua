@@ -854,18 +854,25 @@ task.spawn(function()
 					local targetOption = rayfieldLibrary.Flags.FarmingZoneTarget and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
 					local currentZone = dataServiceClient and (dataServiceClient:get("zone") or 1) or 1
 					local targetZone = nil
-					
 					if targetOption == "Best Unlocked" then
-						targetZone = dataServiceClient and (dataServiceClient:get("maxZone") or 1) or 1
+						for zoneNum = 40, 1, -1 do
+							if not (rayfieldLibrary.Flags.FarmingStayInBestZone and rayfieldLibrary.Flags.FarmingStayInBestZone.CurrentValue) then break end
+							local testResult = zonesServiceRemote:InvokeServer("requestTeleportZone", zoneNum)
+							task.wait(0.1)
+							local zoneAfter = dataServiceClient:get("zone") or 1
+							if zoneAfter == zoneNum then
+								targetZone = zoneNum
+								break
+							end
+						end
 					else
-						targetZone = tonumber(targetOption:match("Zone (%d+)")) or currentZone
+						targetZone = tonumber(targetOption:match("Zone (%d+)"))
 					end
-					
 					if targetZone and currentZone ~= targetZone and lastTeleportedZone ~= targetZone then
 						zonesServiceRemote:InvokeServer("requestTeleportZone", targetZone)
 						lastTeleportedZone = targetZone
 					end
-					task.wait(15)
+					task.wait(8)
 				end
 			end)
 		end,
@@ -927,7 +934,7 @@ task.spawn(function()
 		local fruitDef = FruitsModule.getFruit(fruitId)
 		if not fruitDef then return false end
 		local trees = slimeData.unlockedTrees
-		return type(trees) == "table" and trees[fruitDef.treeId] == true end
+		return type(trees) == "table" and trees[fruitDef.treeId] == true
 	end
 
 	local function getBestSlimeEntry()
