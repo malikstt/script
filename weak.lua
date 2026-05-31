@@ -900,52 +900,46 @@ task.spawn(function()
     end
 
     -- =====================================================================
-    -- AUTOFARM HEARTBEAT — fixed zone change handling
+    -- ZONE CHANGE WATCHER — runs in its own thread, no Heartbeat interference
     -- =====================================================================
     local lastExtensionZone = nil
-    local lastKnownZone = nil
-    local zoneChangeDebounce = false
+    local lastBoundaryRefresh = 0
 
-    local function handleZoneChange(newZoneId)
-        if zoneChangeDebounce then return end
-        zoneChangeDebounce = true
-
-        -- Wipe everything related to the old zone
-        stopAutoWalk()
-        currentTarget = nil
-        zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
-        lastCacheTime = 0
-        cachedEnemies = {}
-
-        -- Wait a moment for the workspace Zones folder to populate the new zone
-        task.delay(1.5, function()
-            if not enemySettings.AutoFarm then
-                zoneChangeDebounce = false
-                return
-            end
-            local zoneIdStr = tostring(newZoneId)
-            lastExtensionZone = newZoneId
-
-            -- Retry extension creation up to 5 times if the zone folder isn't ready yet
-            local attempts = 0
-            repeat
-                attempts = attempts + 1
-                createZoneExtensions(newZoneId)
-                local zonesFolder = workspace:FindFirstChild("Zones")
-                local zoneFolder = zonesFolder and zonesFolder:FindFirstChild(zoneIdStr)
-                local poi = zoneFolder and zoneFolder:FindFirstChild("POI")
-                local baseplate = poi and poi:FindFirstChild("Baseplate")
-                if baseplate then break end
-                task.wait(0.5)
-            until attempts >= 5
-
-            -- Force boundary rebuild for the new zone
-            zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
-            getZoneBoundary(newZoneId)
-
-            zoneChangeDebounce = false
-        end)
-    end
+    task.spawn(function()
+        while true do
+            task.wait(1)
+            pcall(function()
+                if not enemySettings.AutoFarm then return end
+                if not dataServiceClient then return end
+                local currentZoneId = dataServiceClient:get("zone")
+                if not currentZoneId then return end
+                local zoneIdStr = tostring(currentZoneId)
+                if tostring(lastExtensionZone) == zoneIdStr then return end
+                -- Zone changed — rebuild everything
+                lastExtensionZone = currentZoneId
+                stopAutoWalk()
+                currentTarget = nil
+                zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
+                lastCacheTime = 0
+                cachedEnemies = {}
+                -- Wait for the workspace zone folder to be ready
+                local attempts = 0
+                repeat
+                    attempts = attempts + 1
+                    task.wait(0.5)
+                    createZoneExtensions(currentZoneId)
+                    local zonesFolder = workspace:FindFirstChild("Zones")
+                    local zoneFolder = zonesFolder and zonesFolder:FindFirstChild(zoneIdStr)
+                    local poi = zoneFolder and zoneFolder:FindFirstChild("POI")
+                    local baseplate = poi and poi:FindFirstChild("Baseplate")
+                    if baseplate then break end
+                until attempts >= 6
+                -- Force fresh boundary build
+                zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
+                getZoneBoundary(currentZoneId)
+            end)
+        end
+    end)
 
     RunService.Heartbeat:Connect(function()
         pcall(function()
@@ -961,18 +955,6 @@ task.spawn(function()
             if not charRoot then return end
 
             local currentZoneId = dataServiceClient and dataServiceClient:get("zone") or nil
-
-            -- Detect zone change and handle it properly
-            if currentZoneId ~= lastKnownZone then
-                lastKnownZone = currentZoneId
-                if currentZoneId then
-                    handleZoneChange(currentZoneId)
-                end
-                return -- Skip this frame to let handleZoneChange settle
-            end
-
-            if zoneChangeDebounce then return end -- Still transitioning
-
             local boundary = nil
             if currentZoneId then
                 boundary = getZoneBoundary(currentZoneId)
@@ -1160,7 +1142,6 @@ task.spawn(function()
                                 return
                             end
                         end
-
                         local targetOption = rayfieldLibrary.Flags.FarmingZoneTarget and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
                         local currentZone = dataServiceClient and (dataServiceClient:get("zone") or 1) or 1
                         local targetZone = nil
@@ -1450,27 +1431,14 @@ task.spawn(function()
                     local hum = char:FindFirstChildWhichIsA("Humanoid")
                     if hum then hum.WalkSpeed = 40 end
                 end
-                -- Initialize zone state fresh on enable
+                -- Seed the extension zone so the watcher thread picks it up fresh
                 local currentZoneId = dataServiceClient and dataServiceClient:get("zone") or nil
-                lastKnownZone = currentZoneId
-                zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
-                lastCacheTime = 0
-                cachedEnemies = {}
-                currentTarget = nil
-                zoneChangeDebounce = false
                 if currentZoneId then
-                    lastExtensionZone = currentZoneId
-                    createZoneExtensions(currentZoneId)
-                    task.delay(0.5, function()
-                        zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
-                        getZoneBoundary(currentZoneId)
-                    end)
+                    lastExtensionZone = nil -- force the watcher to rebuild on next tick
                 end
             else
                 currentTarget = nil
-                lastKnownZone = nil
                 lastExtensionZone = nil
-                zoneChangeDebounce = false
                 stopAutoWalk()
             end
         end,
