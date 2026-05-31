@@ -1,14 +1,9 @@
-if not LPH_OBFUSCATED then
-	loadstring(game:HttpGet("https://raw.githubusercontent.com/Luraph/macrosdk/main/luraphsdk.lua"))()
-end
-
 task.spawn(function()
 	repeat task.wait() until game:IsLoaded()
 
 	local Logger = {}
 	Logger.LogHistory = {}
 
-	--LPH_NO_VIRTUALIZE
 	function Logger:log(level, system, feature, message, errorObj)
 		local logEntry = { timestamp = os.time(), level = level, system = system, feature = feature, message = message, error = errorObj }
 		table.insert(self.LogHistory, logEntry)
@@ -39,7 +34,7 @@ task.spawn(function()
 	Logger:info("CactusHub", "Init", "Loading Rayfield...")
 	local rayfieldLibrary
 	local rayfieldOk, rayfieldErr = pcall(function()
-		rayfieldLibrary = loadstring(game:HttpGet(LPH_ENCSTR("https://sirius.menu/rayfield")))()
+		rayfieldLibrary = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 	end)
 	if not rayfieldOk or not rayfieldLibrary then
 		Logger:error("CactusHub", "RayfieldLoader", "Failed to load Rayfield", rayfieldErr)
@@ -47,14 +42,15 @@ task.spawn(function()
 	end
 	Logger:info("CactusHub", "Init", "Rayfield loaded successfully")
 
+	-- Global manual override tracking table
+	-- Each key is a feature name, value is the tick() time when user last manually changed it
 	local manualOverrideTimes = {}
-	local MANUAL_OVERRIDE_DURATION = 3
+	local MANUAL_OVERRIDE_DURATION = 3 -- seconds to respect manual changes
 
 	local function markManualOverride(featureKey)
 		manualOverrideTimes[featureKey] = tick()
 	end
 
-	--LPH_JIT
 	local function isManualOverrideActive(featureKey)
 		local t = manualOverrideTimes[featureKey]
 		if not t then return false end
@@ -62,7 +58,7 @@ task.spawn(function()
 	end
 
 	local mainWindow = rayfieldLibrary:CreateWindow({
-		Name = LPH_ENCSTR("Cactus Hub • discord.gg/qMWFBWdcf"),
+		Name = "Cactus Hub • discord.gg/qMWFBWdcf",
 		Icon = 0,
 		LoadingTitle = "Loading",
 		LoadingSubtitle = "Please wait...",
@@ -70,12 +66,11 @@ task.spawn(function()
 		ToggleUIKeybind = "K",
 		DisableRayfieldPrompts = false,
 		DisableBuildWarnings = true,
-		ConfigurationSaving = { Enabled = true, FolderName = LPH_ENCSTR("CactusHub"), FileName = LPH_ENCSTR("Config") },
-		Discord = { Enabled = true, Invite = LPH_ENCSTR("qMWFBWdcf"), RememberJoins = true },
+		ConfigurationSaving = { Enabled = true, FolderName = "CactusHub", FileName = "Config" },
+		Discord = { Enabled = true, Invite = "qMWFBWdcf", RememberJoins = true },
 		KeySystem = false,
 	})
 
-	--LPH_NO_VIRTUALIZE
 	local function featureToggle(tab, config, fn)
 		local wrappedConfig = {}
 		for k, v in pairs(config) do wrappedConfig[k] = v end
@@ -90,7 +85,6 @@ task.spawn(function()
 		return tab:CreateToggle(wrappedConfig)
 	end
 
-	--LPH_NO_VIRTUALIZE
 	local function featureButton(tab, config)
 		local wrappedConfig = {}
 		for k, v in pairs(config) do wrappedConfig[k] = v end
@@ -119,7 +113,6 @@ task.spawn(function()
 	local pingValue = "..."
 	local statusLabel = mainTab:CreateLabel("FPS: ... / PING: ...ms")
 
-	--LPH_NO_VIRTUALIZE
 	pcall(function()
 		local frameCount = 0
 		local lastTime = tick()
@@ -149,7 +142,7 @@ task.spawn(function()
 	featureButton(mainTab, {
 		Name = "Copy Discord Invite",
 		Callback = function()
-			setclipboard(LPH_ENCSTR("https://discord.gg/qMWFBWdcf"))
+			setclipboard("https://discord.gg/qMWFBWdcf")
 			rayfieldLibrary:Notify({ Title = "Copied!", Content = "Discord invite link copied to clipboard.", Duration = 3 })
 		end,
 	})
@@ -165,7 +158,7 @@ task.spawn(function()
 			dashboardBusy = true
 			if Value then
 				task.spawn(function()
-					loadstring(game:HttpGet(LPH_ENCSTR("https://raw.githubusercontent.com/malikstt/script/main/no")))()
+					loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))()
 					rayfieldLibrary:Notify({ Title = "Dashboard", Content = "Dashboard enabled!", Duration = 3 })
 					dashboardBusy = false
 				end)
@@ -184,7 +177,6 @@ task.spawn(function()
 		Content = "[+] Auto Stay in UFO Zone\n[+] Auto Collect UFO Loot\n[+] Live UFO Phase Display\n[+] Live UFO Zone Display and State\n[+] Live Next Event Countdown Timer\n[+] Live Golden UFO if found\n[+] Manual Refresh Status Button\n[+] Auto Farm Zone ( x4 faster tp )\n[+] Added beammeup / aliensarehere in Auto Redeem Codes\n[+] Added New Zones\n[+] Bug Fixes"
 	})
 
-	--LPH_NO_VIRTUALIZE
 	pcall(function()
 		local m = require(ReplicatedStorage.Source.Features.AutoRejoin.AutoRejoinServiceClient)
 		pcall(function() m:disable() end)
@@ -235,7 +227,7 @@ task.spawn(function()
 			if not packages then error("Packages not found") end
 			local indexFolder = packages:WaitForChild("_Index", 15)
 			if not indexFolder then error("_Index folder not found") end
-			local networkerModule = indexFolder:WaitForChild(LPH_ENCSTR("leifstout_networker@0.3.1"), 15)
+			local networkerModule = indexFolder:WaitForChild("leifstout_networker@0.3.1", 15)
 			if not networkerModule then error("networker package not found") end
 			networkerModule = networkerModule:WaitForChild("networker", 15)
 			if not networkerModule then error("networker module not found") end
@@ -339,7 +331,6 @@ task.spawn(function()
 		task.wait(0.3)
 	end
 
-	--LPH_JIT
 	local function getMaxLuckCap()
 		if rollSliceModule and rollSliceModule.maxLuck then
 			local ok, val = pcall(rollSliceModule.maxLuck)
@@ -356,13 +347,11 @@ task.spawn(function()
 		task.wait(0.3)
 	end
 
-	--LPH_JIT
 	local function calcOptimalLuck(effectiveOdds)
 		if not effectiveOdds or effectiveOdds <= 0 then return getMaxLuckCap() end
 		return math.min(math.max(1, math.floor((1 / effectiveOdds) * 0.63)), getMaxLuckCap())
 	end
 
-	--LPH_JIT
 	local function formatOdds(odds)
 		if not odds or odds <= 0 then return "N/A" end
 		local n = math.floor(1 / odds + 0.5)
@@ -375,7 +364,6 @@ task.spawn(function()
 		return "1 in " .. n
 	end
 
-	--LPH_JIT
 	local function getEffectiveOdds(slime, catId)
 		local mutOdds = MUTATION_ODDS[catId]
 		if mutOdds then return slime.rollOdds * mutOdds end
@@ -433,7 +421,6 @@ task.spawn(function()
 
 	local zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
 
-	--LPH_JIT
 	local function getZoneBoundary(zoneId)
 		if not zoneId then return nil end
 		local zoneIdStr = tostring(zoneId)
@@ -466,14 +453,12 @@ task.spawn(function()
 		return nil
 	end
 
-	--LPH_JIT
 	local function isOutsideBoundary(position, boundary)
 		if not boundary or not boundary.min or not boundary.max then return false end
 		return position.X < boundary.min.X or position.X > boundary.max.X
 			or position.Z < boundary.min.Z or position.Z > boundary.max.Z
 	end
 
-	--LPH_JIT
 	local function isEnemyInsideBoundary(enemy, boundary)
 		if not boundary then return true end
 		local root = enemy:FindFirstChild("HumanoidRootPart") or enemy.PrimaryPart or enemy:FindFirstChildWhichIsA("BasePart")
@@ -495,7 +480,6 @@ task.spawn(function()
 	local noclipEnabled = false
 	local noclipConn = nil
 
-	--LPH_NO_VIRTUALIZE
 	local function setNoclip(enabled)
 		noclipEnabled = enabled
 		if noclipConn then noclipConn:Disconnect() noclipConn = nil end
@@ -517,7 +501,6 @@ task.spawn(function()
 		end
 	end
 
-	--LPH_JIT
 	local function getGameplayContainer()
 		if cachedContainer and cachedContainer.Parent then return cachedContainer end
 		for _, child in ipairs(workspace:GetChildren()) do
@@ -526,12 +509,10 @@ task.spawn(function()
 		return nil
 	end
 
-	--LPH_JIT
 	local function getEnemyRoot(enemy)
 		return enemy:FindFirstChild("HumanoidRootPart") or enemy.PrimaryPart or enemy:FindFirstChildWhichIsA("BasePart")
 	end
 
-	--LPH_JIT
 	local function getMutation(enemy)
 		for _, mut in ipairs({"inverted","huge","shiny","big"}) do
 			local ok, val = pcall(function() return enemy:GetAttribute(mut) end)
@@ -544,7 +525,6 @@ task.spawn(function()
 		return nil
 	end
 
-	--LPH_JIT
 	local function isAlive(enemy)
 		if not enemy or not enemy.Parent then return false end
 		local h = enemy:FindFirstChildWhichIsA("Humanoid")
@@ -554,13 +534,11 @@ task.spawn(function()
 		return true
 	end
 
-	--LPH_JIT
 	local function matchesMutationFilter(enemy)
 		if enemySettings.MutationFilter == "Any" then return true end
 		return getMutation(enemy) == enemySettings.MutationFilter:lower()
 	end
 
-	--LPH_JIT
 	local function refreshEnemyCache()
 		if tick() - lastCacheTime < 2 then return end
 		lastCacheTime = tick()
@@ -574,7 +552,6 @@ task.spawn(function()
 		end
 	end
 
-	--LPH_JIT
 	local function getEnemyScore(enemy, rootPos)
 		local root = getEnemyRoot(enemy)
 		if not root then return nil end
@@ -588,7 +565,6 @@ task.spawn(function()
 		return { enemy=enemy, root=root, coins=coins, goop=goop, health=health, dist=dist }
 	end
 
-	--LPH_JIT
 	local function computeScores(rootPos, boundary)
 		local entries = {}
 		for _, enemy in ipairs(cachedEnemies) do
@@ -620,7 +596,6 @@ task.spawn(function()
 		return scores, entries
 	end
 
-	--LPH_JIT
 	local function getSafePosition(targetCFrame, boundary)
 		local pos = targetCFrame.Position
 		if boundary then
@@ -638,7 +613,6 @@ task.spawn(function()
 
 	local autoWalkConn = nil
 
-	--LPH_NO_VIRTUALIZE
 	local function stopAutoWalk()
 		if autoWalkConn then autoWalkConn:Disconnect() autoWalkConn = nil end
 		local char = localPlayer.Character
@@ -648,7 +622,6 @@ task.spawn(function()
 		end
 	end
 
-	--LPH_NO_VIRTUALIZE
 	local function moveToEnemy(enemy, boundary)
 		local char = localPlayer.Character
 		if not char then return end
@@ -708,7 +681,6 @@ task.spawn(function()
 		end
 	end
 
-	--LPH_JIT
 	local function selectTarget(boundary)
 		local char = localPlayer.Character
 		if not char then return nil end
@@ -722,7 +694,6 @@ task.spawn(function()
 		return best
 	end
 
-	--LPH_JIT
 	local function selectCombatTarget()
 		local char = localPlayer.Character
 		if not char then return nil, nil end
@@ -766,7 +737,6 @@ task.spawn(function()
 
 	local lastBoundaryRefresh = 0
 
-	--LPH_NO_VIRTUALIZE
 	RunService.Heartbeat:Connect(function()
 		pcall(function()
 			refreshEnemyCache()
@@ -954,6 +924,7 @@ task.spawn(function()
 			MultipleOptions = false,
 			Flag = "FarmingZoneTarget",
 			Callback = function(option)
+				-- When user manually picks a zone from the dropdown, mark override
 				markManualOverride("FarmingZoneTarget")
 			end
 		})
@@ -967,7 +938,9 @@ task.spawn(function()
 			if not enabled then return end
 			task.spawn(function()
 				local lastTeleportTime = 0
+				-- Track the zone the script last teleported to
 				local lastScriptZone = nil
+				-- Track the zone the player was on when the loop last checked
 				local lastObservedZone = dataServiceClient and dataServiceClient:get("zone") or nil
 
 				while true do
@@ -988,15 +961,20 @@ task.spawn(function()
 							targetZone = tonumber(targetOption:match("Zone (%d+)"))
 						end
 
+						-- Detect if the player manually changed their zone:
+						-- A manual change is when currentZone changed but it wasn't the script that changed it
 						if lastObservedZone ~= nil and currentZone ~= lastObservedZone and currentZone ~= lastScriptZone then
+							-- Player manually teleported somewhere else — apply override
 							markManualOverride("AutoFarmZone")
 						end
 						lastObservedZone = currentZone
 
+						-- Check if the zone dropdown itself was recently manually changed
 						local zoneDropdownOverride = isManualOverrideActive("FarmingZoneTarget")
 						local zoneManualOverride = isManualOverrideActive("AutoFarmZone")
 
 						if zoneDropdownOverride or zoneManualOverride then
+							-- Respect the manual change, do not teleport yet
 							return
 						end
 
@@ -1243,6 +1221,7 @@ task.spawn(function()
 			pcall(function()
 				if not (rayfieldLibrary.Flags.FarmingTransferXP and rayfieldLibrary.Flags.FarmingTransferXP.CurrentValue) then return end
 				if not dataServiceClient or not xpTransferServiceClient then return end
+				-- Respect manual override on transfer settings
 				if isManualOverrideActive("FarmingTransferTarget") or isManualOverrideActive("FarmingTransferSource") then return end
 				local inventory = dataServiceClient:get("inventory") or {}
 				local equipped  = dataServiceClient:get("equipped") or {}
@@ -1367,7 +1346,6 @@ task.spawn(function()
 	local combatEnabled = false
 	local getgcChecked = false
 
-	--LPH_NO_VIRTUALIZE
 	local function findGunController()
 		local char = localPlayer.Character
 		if not char then return nil end
@@ -1586,7 +1564,6 @@ task.spawn(function()
 			return base, sizeMut, modMut
 		end
 
-		--LPH_JIT
 		local function scoreUniqueId(uid)
 			local _, sizeMut, modMut = parseUniqueId(uid)
 			local score = 0
@@ -1663,7 +1640,7 @@ task.spawn(function()
 		end
 
 		local function getCraftingRemote()
-			local remotesF = ReplicatedStorage:WaitForChild("Packages",15):WaitForChild("_Index",15):WaitForChild(LPH_ENCSTR("leifstout_networker@0.3.1"),15):WaitForChild("networker",15):WaitForChild("_remotes",15)
+			local remotesF = ReplicatedStorage:WaitForChild("Packages",15):WaitForChild("_Index",15):WaitForChild("leifstout_networker@0.3.1",15):WaitForChild("networker",15):WaitForChild("_remotes",15)
 			return remotesF:WaitForChild("CraftingService",10):WaitForChild("RemoteFunction",10)
 		end
 
@@ -1734,6 +1711,7 @@ task.spawn(function()
 						while true do
 							local flag = rayfieldLibrary.Flags.CraftingAutoToggle
 							if not flag or not flag.CurrentValue then break end
+							-- Respect manual override on recipe selection
 							if not isManualOverrideActive("CraftingSelectedRecipes") then
 								pcall(function()
 									local minMax = math.huge
@@ -1775,13 +1753,13 @@ task.spawn(function()
 	end)
 
 	local ufoClient = nil
-	local ufoZonesRemote = ReplicatedStorage:WaitForChild("Packages"):WaitForChild("_Index"):WaitForChild(LPH_ENCSTR("leifstout_networker@0.3.1")):WaitForChild("networker"):WaitForChild("_remotes"):WaitForChild("ZonesService"):WaitForChild("RemoteFunction")
+	local ufoZonesRemote = ReplicatedStorage:WaitForChild("Packages"):WaitForChild("_Index"):WaitForChild("leifstout_networker@0.3.1"):WaitForChild("networker"):WaitForChild("_remotes"):WaitForChild("ZonesService"):WaitForChild("RemoteFunction")
 	local ufoLootRemote = nil
 
 	local function getUfoLootRemote()
 		if ufoLootRemote then return ufoLootRemote end
 		local ok, remote = pcall(function()
-			return ReplicatedStorage:WaitForChild("Packages",10):WaitForChild("_Index",10):WaitForChild(LPH_ENCSTR("leifstout_networker@0.3.1"),10):WaitForChild("networker",10):WaitForChild("_remotes",10):WaitForChild("LootService",10):WaitForChild("RemoteFunction",10)
+			return ReplicatedStorage:WaitForChild("Packages",10):WaitForChild("_Index",10):WaitForChild("leifstout_networker@0.3.1",10):WaitForChild("networker",10):WaitForChild("_remotes",10):WaitForChild("LootService",10):WaitForChild("RemoteFunction",10)
 		end)
 		if ok then ufoLootRemote = remote end
 		return ufoLootRemote
@@ -2109,7 +2087,7 @@ task.spawn(function()
 		Callback = function(enabled)
 			if not enabled then return end
 			task.spawn(function()
-				local codes = { LPH_ENCSTR("AAisComing"),LPH_ENCSTR("goingBananas"),LPH_ENCSTR("gullible"),LPH_ENCSTR("Sliming"),LPH_ENCSTR("test"),LPH_ENCSTR("beammeup"),LPH_ENCSTR("aliensarehere") }
+				local codes = { "AAisComing","goingBananas","gullible","Sliming","test","beammeup","aliensarehere" }
 				table.sort(codes)
 				while true do
 					local flag = rayfieldLibrary.Flags.MiscRedeemCodes
@@ -2196,6 +2174,7 @@ task.spawn(function()
 					while true do
 						local flag = rayfieldLibrary.Flags.MiscUsePotions
 						if not flag or not flag.CurrentValue then break end
+						-- Respect manual override on potion type selection
 						if not isManualOverrideActive("MiscPotionTypes") then
 							pcall(function()
 								if not boostServiceRemote or not dataServiceClient then return end
@@ -2248,6 +2227,7 @@ task.spawn(function()
 					while true do
 						local flag = rayfieldLibrary.Flags.MiscUseDice
 						if not flag or not flag.CurrentValue then break end
+						-- Respect manual override on dice type selection
 						if not isManualOverrideActive("MiscDiceTypes") then
 							pcall(function()
 								if not inventoryServiceRemote or not dataServiceClient then return end
@@ -2288,7 +2268,7 @@ task.spawn(function()
 	webhookTab:CreateSection("Configuration")
 
 	local savedWebhookUrl = ""
-	local WEBHOOK_AVATAR = LPH_ENCSTR("https://media.discordapp.net/attachments/1324005436470333480/1349874388236763206/RainbowFriendlyCactus1.png")
+	local WEBHOOK_AVATAR = "https://media.discordapp.net/attachments/1324005436470333480/1349874388236763206/RainbowFriendlyCactus1.png"
 
 	featureToggle(webhookTab, { Name = "Enable Webhook", CurrentValue = false, Flag = "WebhookEnabled", Callback = function() end })
 
@@ -2337,7 +2317,6 @@ task.spawn(function()
 		end
 	})
 
-	--LPH_JIT
 	local function formatNumber(num)
 		if type(num) ~= "number" then return tostring(num) end
 		local suffixes = {{1e24,"Sp"},{1e21,"Sx"},{1e18,"Qn"},{1e15,"Qd"},{1e12,"T"},{1e9,"B"},{1e6,"M"},{1e3,"K"}}
@@ -2423,7 +2402,7 @@ task.spawn(function()
 			local assetNumber = string.match(tostring(iconAssetId), "rbxassetid://(%d+)")
 			if assetNumber then
 				pcall(function()
-					local r = request({ Url = LPH_ENCSTR("https://thumbnails.roblox.com/v1/assets?assetIds=")..assetNumber..LPH_ENCSTR("&size=420x420&format=Png&isCircular=false"), Method = "GET" })
+					local r = request({ Url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetNumber.."&size=420x420&format=Png&isCircular=false", Method = "GET" })
 					if r and r.Success then
 						local decoded = HttpService:JSONDecode(r.Body)
 						if decoded and decoded.data and decoded.data[1] then thumbnailUrl = decoded.data[1].imageUrl end
@@ -2503,7 +2482,6 @@ task.spawn(function()
 	settingsTab:CreateParagraph({ Title = "🍀 Want a serverhop script for luck servers?", Content = "Join the Discord! discord.gg/qMWFBWdcf" })
 	settingsTab:CreateSection("System")
 
-	--LPH_NO_VIRTUALIZE
 	featureToggle(settingsTab, {
 		Name = "Anti Kick",
 		CurrentValue = false,
@@ -2587,7 +2565,7 @@ task.spawn(function()
 			end)
 			if _G.__memoryCleaner then _G.__memoryCleaner:Disconnect() end
 			_G.__memoryCleaner = RunService.Heartbeat:Connect(function() gcinfo() end)
-			pcall(function() loadstring(game:HttpGet(LPH_ENCSTR("https://raw.githubusercontent.com/malikstt/script/main/Optimization.lua")))() end)
+			pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/Optimization.lua"))() end)
 		else
 			if _G.__memoryCleaner then _G.__memoryCleaner:Disconnect() _G.__memoryCleaner = nil end
 		end
@@ -2618,7 +2596,6 @@ task.spawn(function()
 		end,
 	})
 
-	--LPH_NO_VIRTUALIZE
 	optGCToggle = featureToggle(settingsTab, {
 		Name = "Lua GC (Memory Cleaner)", CurrentValue=false, Flag="LuaGC",
 		Callback = function(Value)
@@ -2636,11 +2613,10 @@ task.spawn(function()
 		Name = "Intense Optimization", CurrentValue=false, Flag="IntenseOptimization",
 		Callback = function(Value)
 			if updatingOptimizations or not Value then return end
-			pcall(function() loadstring(game:HttpGet(LPH_ENCSTR("https://raw.githubusercontent.com/malikstt/script/main/Optimization.lua")))() end)
+			pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/Optimization.lua"))() end)
 		end,
 	})
 
-	--LPH_JIT
 	local function safeGet(...)
 		local ok, data = pcall(function() return dataServiceClient._data._data end)
 		if not ok or type(data) ~= "table" then return 0 end
@@ -2653,11 +2629,9 @@ task.spawn(function()
 		return cur
 	end
 
-	--LPH_JIT
 	local function safeNum(...) return tonumber(safeGet(...)) or 0 end
 
 	local SUFFIXES = {{1e24,"Sp"},{1e21,"Sx"},{1e18,"Qn"},{1e15,"Qd"},{1e12,"T"},{1e9,"B"},{1e6,"M"},{1e3,"K"}}
-	--LPH_JIT
 	local function fmt(n)
 		n = tonumber(n) or 0
 		for _, pair in ipairs(SUFFIXES) do
@@ -2666,7 +2640,6 @@ task.spawn(function()
 		return tostring(math.floor(n))
 	end
 
-	--LPH_JIT
 	local function fmtTime(seconds)
 		seconds = math.floor(tonumber(seconds) or 0)
 		local days = math.floor(seconds/86400)
@@ -2678,7 +2651,6 @@ task.spawn(function()
 		else return math.floor(seconds%60).."s" end
 	end
 
-	--LPH_JIT
 	local function countKeys(t)
 		if type(t) ~= "table" then return 0 end
 		local c = 0
@@ -2780,7 +2752,6 @@ task.spawn(function()
 		end
 	end)
 
-	--LPH_JIT
 	local function getRate(windowVal, lastMove, startVal, curVal)
 		local now = os.clock()
 		if (now-lastMove) > STALE then return 0 end
@@ -2856,7 +2827,6 @@ task.spawn(function()
 		end
 	end)
 
-	--LPH_NO_VIRTUALIZE
 	game:GetService("GuiService").ErrorMessageChanged:Connect(function()
 		if rayfieldLibrary.Flags.SettingsAutoRejoin and rayfieldLibrary.Flags.SettingsAutoRejoin.CurrentValue then
 			pcall(function()
