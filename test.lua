@@ -42,21 +42,6 @@ task.spawn(function()
 	end
 	Logger:info("CactusHub", "Init", "Rayfield loaded successfully")
 
-	-- Global manual override tracking table
-	-- Each key is a feature name, value is the tick() time when user last manually changed it
-	local manualOverrideTimes = {}
-	local MANUAL_OVERRIDE_DURATION = 3 -- seconds to respect manual changes
-
-	local function markManualOverride(featureKey)
-		manualOverrideTimes[featureKey] = tick()
-	end
-
-	local function isManualOverrideActive(featureKey)
-		local t = manualOverrideTimes[featureKey]
-		if not t then return false end
-		return (tick() - t) < MANUAL_OVERRIDE_DURATION
-	end
-
 	local mainWindow = rayfieldLibrary:CreateWindow({
 		Name = "Cactus Hub • discord.gg/qMWFBWdcf",
 		Icon = 0,
@@ -847,7 +832,6 @@ task.spawn(function()
 		MultipleOptions = true,
 		Flag = "diceDropdown",
 		Callback = function(choices)
-			markManualOverride("diceDropdown")
 			for _, dice in ipairs(DICE) do selectedDice[dice] = false end
 			for _, choice in ipairs(choices) do
 				if choice == "All" then for _, dice in ipairs(DICE) do selectedDice[dice] = true end break
@@ -917,17 +901,7 @@ task.spawn(function()
 			if zone and zone.name then table.insert(zoneOptions, zone.name .. " (Zone " .. i .. ")")
 			else table.insert(zoneOptions, "Zone " .. i) end
 		end
-		farmingTab:CreateDropdown({
-			Name = "Zone Target",
-			Options = zoneOptions,
-			CurrentOption = { "Best Unlocked" },
-			MultipleOptions = false,
-			Flag = "FarmingZoneTarget",
-			Callback = function(option)
-				-- When user manually picks a zone from the dropdown, mark override
-				markManualOverride("FarmingZoneTarget")
-			end
-		})
+		farmingTab:CreateDropdown({ Name = "Zone Target", Options = zoneOptions, CurrentOption = { "Best Unlocked" }, MultipleOptions = false, Flag = "FarmingZoneTarget", Callback = function() end })
 	end)
 
 	featureToggle(farmingTab, {
@@ -938,11 +912,6 @@ task.spawn(function()
 			if not enabled then return end
 			task.spawn(function()
 				local lastTeleportTime = 0
-				-- Track the zone the script last teleported to
-				local lastScriptZone = nil
-				-- Track the zone the player was on when the loop last checked
-				local lastObservedZone = dataServiceClient and dataServiceClient:get("zone") or nil
-
 				while true do
 					local flag = rayfieldLibrary.Flags.FarmingStayInBestZone
 					if not flag or not flag.CurrentValue then break end
@@ -954,33 +923,13 @@ task.spawn(function()
 						local targetOption = rayfieldLibrary.Flags.FarmingZoneTarget and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
 						local currentZone = dataServiceClient and (dataServiceClient:get("zone") or 1) or 1
 						local targetZone = nil
-
 						if targetOption == "Best Unlocked" then
 							targetZone = dataServiceClient and (dataServiceClient:get("maxZone") or 1) or 1
 						else
 							targetZone = tonumber(targetOption:match("Zone (%d+)"))
 						end
-
-						-- Detect if the player manually changed their zone:
-						-- A manual change is when currentZone changed but it wasn't the script that changed it
-						if lastObservedZone ~= nil and currentZone ~= lastObservedZone and currentZone ~= lastScriptZone then
-							-- Player manually teleported somewhere else — apply override
-							markManualOverride("AutoFarmZone")
-						end
-						lastObservedZone = currentZone
-
-						-- Check if the zone dropdown itself was recently manually changed
-						local zoneDropdownOverride = isManualOverrideActive("FarmingZoneTarget")
-						local zoneManualOverride = isManualOverrideActive("AutoFarmZone")
-
-						if zoneDropdownOverride or zoneManualOverride then
-							-- Respect the manual change, do not teleport yet
-							return
-						end
-
 						if targetZone and targetZone > 0 and currentZone ~= targetZone then
 							if tick() - lastTeleportTime > 3 then
-								lastScriptZone = targetZone
 								zonesServiceRemote:InvokeServer("requestTeleportZone", targetZone)
 								lastTeleportTime = tick()
 								zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
@@ -1150,17 +1099,7 @@ task.spawn(function()
 		end,
 	})
 
-	farmingTab:CreateDropdown({
-		Name = "Slimes to Feed",
-		Options = {"Best","Split Across Team"},
-		CurrentOption = {"Best"},
-		MultipleOptions = false,
-		Flag = "SlimeModeDropdown",
-		Callback = function(option)
-			markManualOverride("SlimeModeDropdown")
-			selectedSlimeMode = type(option) == "table" and option[1] or option
-		end
-	})
+	farmingTab:CreateDropdown({ Name = "Slimes to Feed", Options = {"Best","Split Across Team"}, CurrentOption = {"Best"}, MultipleOptions = false, Flag = "SlimeModeDropdown", Callback = function(option) selectedSlimeMode = type(option) == "table" and option[1] or option end })
 
 	pcall(function()
 		local fruitOptions = {"Any"}
@@ -1173,13 +1112,8 @@ task.spawn(function()
 		table.sort(fruitNames)
 		for _, name in ipairs(fruitNames) do table.insert(fruitOptions, name) end
 		farmingTab:CreateDropdown({
-			Name = "Fruits to Feed",
-			Options = fruitOptions,
-			CurrentOption = {"Any"},
-			MultipleOptions = true,
-			Flag = "FruitDropdown",
+			Name = "Fruits to Feed", Options = fruitOptions, CurrentOption = {"Any"}, MultipleOptions = true, Flag = "FruitDropdown",
 			Callback = function(options)
-				markManualOverride("FruitDropdown")
 				local picked = type(options) == "table" and options or {options}
 				selectedFruitIds = {}
 				for _, label in ipairs(picked) do
@@ -1192,28 +1126,8 @@ task.spawn(function()
 	end)
 
 	featureToggle(farmingTab, { Name = "Auto Transfer XP", CurrentValue = false, Flag = "FarmingTransferXP", Callback = function() end })
-
-	farmingTab:CreateDropdown({
-		Name = "Transfer To",
-		Options = {"Best Slime","Whole Team"},
-		CurrentOption = {"Best Slime"},
-		MultipleOptions = false,
-		Flag = "FarmingTransferTarget",
-		Callback = function(option)
-			markManualOverride("FarmingTransferTarget")
-		end
-	})
-
-	farmingTab:CreateDropdown({
-		Name = "Transfer From",
-		Options = {"All Slimes","Unequipped With XP"},
-		CurrentOption = {"Unequipped With XP"},
-		MultipleOptions = false,
-		Flag = "FarmingTransferSource",
-		Callback = function(option)
-			markManualOverride("FarmingTransferSource")
-		end
-	})
+	farmingTab:CreateDropdown({ Name="Transfer To", Options={"Best Slime","Whole Team"}, CurrentOption={"Best Slime"}, MultipleOptions=false, Flag="FarmingTransferTarget", Callback=function() end })
+	farmingTab:CreateDropdown({ Name="Transfer From", Options={"All Slimes","Unequipped With XP"}, CurrentOption={"Unequipped With XP"}, MultipleOptions=false, Flag="FarmingTransferSource", Callback=function() end })
 
 	task.spawn(function()
 		while true do
@@ -1221,8 +1135,6 @@ task.spawn(function()
 			pcall(function()
 				if not (rayfieldLibrary.Flags.FarmingTransferXP and rayfieldLibrary.Flags.FarmingTransferXP.CurrentValue) then return end
 				if not dataServiceClient or not xpTransferServiceClient then return end
-				-- Respect manual override on transfer settings
-				if isManualOverrideActive("FarmingTransferTarget") or isManualOverrideActive("FarmingTransferSource") then return end
 				local inventory = dataServiceClient:get("inventory") or {}
 				local equipped  = dataServiceClient:get("equipped") or {}
 				local teamSet   = {}
@@ -1308,7 +1220,6 @@ task.spawn(function()
 		MultipleOptions = false,
 		Flag = "TeleportStyle",
 		Callback = function(option)
-			markManualOverride("TeleportStyle")
 			local val = type(option) == "table" and option[1] or option
 			if val == "Walk [RECOMMENDED]" then val = "Walk" end
 			enemySettings.TeleportStyle = val
@@ -1323,7 +1234,6 @@ task.spawn(function()
 		MultipleOptions = true,
 		Flag = "TargetPriority",
 		Callback = function(options)
-			markManualOverride("TargetPriority")
 			enemySettings.TargetPriorities = {}
 			for _, opt in ipairs(options) do enemySettings.TargetPriorities[opt] = true end
 		end
@@ -1336,7 +1246,6 @@ task.spawn(function()
 		MultipleOptions = false,
 		Flag = "MutationFilter",
 		Callback = function(option)
-			markManualOverride("MutationFilter")
 			enemySettings.MutationFilter = type(option) == "table" and option[1] or option
 		end
 	})
@@ -1364,16 +1273,7 @@ task.spawn(function()
 
 	featureToggle(gameTab, { Name = "Auto Shoot Enemies (getgc)", CurrentValue = false, Flag = "CombatAutoShoot", Callback = function(value) combatEnabled = value end })
 
-	gameTab:CreateDropdown({
-		Name = "Combat Target Priority",
-		Options = {"Closest","Lowest HP","Highest HP","Most Coins & Goop"},
-		CurrentOption = {"Closest"},
-		MultipleOptions = false,
-		Flag = "CombatTargetPriority",
-		Callback = function(option)
-			markManualOverride("CombatTargetPriority")
-		end
-	})
+	gameTab:CreateDropdown({ Name = "Combat Target Priority", Options = {"Closest","Lowest HP","Highest HP","Most Coins & Goop"}, CurrentOption = {"Closest"}, MultipleOptions = false, Flag = "CombatTargetPriority", Callback = function() end })
 
 	task.spawn(function()
 		local controller = nil
@@ -1510,16 +1410,7 @@ task.spawn(function()
 		end,
 	})
 
-	gameTab:CreateDropdown({
-		Name = "Upgrade Mode",
-		Options = {"All","Coins","Goop","Rolls"},
-		CurrentOption = {"All"},
-		MultipleOptions = true,
-		Flag = "GameUpgradeMode",
-		Callback = function(option)
-			markManualOverride("GameUpgradeMode")
-		end
-	})
+	gameTab:CreateDropdown({ Name = "Upgrade Mode", Options = {"All","Coins","Goop","Rolls"}, CurrentOption = {"All"}, MultipleOptions = true, Flag = "GameUpgradeMode", Callback = function() end })
 
 	gameTab:CreateSection("Recipes")
 
@@ -1673,18 +1564,7 @@ task.spawn(function()
 			return maxCrafts == math.huge and 0 or maxCrafts
 		end
 
-		gameTab:CreateDropdown({
-			Name = "Select Recipes to Craft",
-			Options = #recipeIdsList > 0 and recipeIdsList or {"None"},
-			CurrentOption = craftingState.selectedRecipeIds,
-			MultipleOptions = true,
-			Flag = "CraftingSelectedRecipes",
-			Callback = function(options)
-				markManualOverride("CraftingSelectedRecipes")
-				craftingState.selectedRecipeIds = options
-			end
-		})
-
+		gameTab:CreateDropdown({ Name = "Select Recipes to Craft", Options = #recipeIdsList > 0 and recipeIdsList or {"None"}, CurrentOption = craftingState.selectedRecipeIds, MultipleOptions = true, Flag = "CraftingSelectedRecipes", Callback = function(options) craftingState.selectedRecipeIds = options end })
 		gameTab:CreateSlider({ Name="Craft Amount", Range={1,99}, Increment=1, Suffix="x", CurrentValue=1, Flag="CraftingAmount", Callback=function(val) craftingState.craftAmount = val end })
 
 		featureButton(gameTab, {
@@ -1711,19 +1591,16 @@ task.spawn(function()
 						while true do
 							local flag = rayfieldLibrary.Flags.CraftingAutoToggle
 							if not flag or not flag.CurrentValue then break end
-							-- Respect manual override on recipe selection
-							if not isManualOverrideActive("CraftingSelectedRecipes") then
-								pcall(function()
-									local minMax = math.huge
-									for _, recipeId in ipairs(craftingState.selectedRecipeIds) do
-										local m = getMaxCraftsForRecipe(recipeId)
-										if m < minMax then minMax = m end
-									end
-									local autoCraftMax = minMax == math.huge and 1 or math.max(1, minMax)
-									local craftAmount  = math.min(craftingState.autoCraftAmount, autoCraftMax)
-									if craftAmount > 0 then doCraftAll(craftAmount) end
-								end)
-							end
+							pcall(function()
+								local minMax = math.huge
+								for _, recipeId in ipairs(craftingState.selectedRecipeIds) do
+									local m = getMaxCraftsForRecipe(recipeId)
+									if m < minMax then minMax = m end
+								end
+								local autoCraftMax = minMax == math.huge and 1 or math.max(1, minMax)
+								local craftAmount  = math.min(craftingState.autoCraftAmount, autoCraftMax)
+								if craftAmount > 0 then doCraftAll(craftAmount) end
+							end)
 							task.wait(5)
 						end
 						craftingState.autoCraftThread = nil
@@ -1736,19 +1613,7 @@ task.spawn(function()
 			end,
 		})
 
-		gameTab:CreateDropdown({
-			Name = "Protect Categories",
-			Options = {"Best Slime","Equipped Slimes","Xp Slimes"},
-			CurrentOption = {"Best Slime","Equipped Slimes","Xp Slimes"},
-			MultipleOptions = true,
-			Flag = "CraftingProtectCategories",
-			Callback = function(options)
-				markManualOverride("CraftingProtectCategories")
-				craftingState.protectCategories = options
-				protectedPets = buildProtectedSet(options)
-			end
-		})
-
+		gameTab:CreateDropdown({ Name = "Protect Categories", Options = {"Best Slime","Equipped Slimes","Xp Slimes"}, CurrentOption = {"Best Slime","Equipped Slimes","Xp Slimes"}, MultipleOptions = true, Flag = "CraftingProtectCategories", Callback = function(options) craftingState.protectCategories = options protectedPets = buildProtectedSet(options) end })
 		rayfieldLibrary:Notify({ Title="Cactus Hub", Content="Loaded — "..(#recipeIdsList).." unlocked recipes ready.", Duration=5, Image=4483362458 })
 	end)
 
@@ -2025,29 +1890,10 @@ task.spawn(function()
 			end
 		end
 		selectedCategoryOption = categoryOptions[1]
-		indexTab:CreateDropdown({
-			Name = "Category",
-			Options = categoryOptions,
-			CurrentOption = {categoryOptions[1]},
-			MultipleOptions = false,
-			Flag = "IndexCategory",
-			Callback = function(option)
-				markManualOverride("IndexCategory")
-				selectedCategoryOption = type(option)=="table" and option[1] or option
-			end
-		})
+		indexTab:CreateDropdown({ Name = "Category", Options = categoryOptions, CurrentOption = {categoryOptions[1]}, MultipleOptions = false, Flag = "IndexCategory", Callback = function(option) selectedCategoryOption = type(option)=="table" and option[1] or option end })
 	end)
 
-	indexTab:CreateDropdown({
-		Name = "Roll Mode",
-		Options = {"🌱 Easiest First","🎯 Rarest First"},
-		CurrentOption = {"🌱 Easiest First"},
-		MultipleOptions = false,
-		Flag = "IndexRollMode",
-		Callback = function(option)
-			markManualOverride("IndexRollMode")
-		end
-	})
+	indexTab:CreateDropdown({ Name="Roll Mode", Options={"🌱 Easiest First","🎯 Rarest First"}, CurrentOption={"🌱 Easiest First"}, MultipleOptions=false, Flag="IndexRollMode", Callback=function() end })
 
 	indexTab:CreateSection("Status")
 	indexLabels.lTarget   = indexTab:CreateLabel("🎯 Target: —")
@@ -2174,20 +2020,17 @@ task.spawn(function()
 					while true do
 						local flag = rayfieldLibrary.Flags.MiscUsePotions
 						if not flag or not flag.CurrentValue then break end
-						-- Respect manual override on potion type selection
-						if not isManualOverrideActive("MiscPotionTypes") then
-							pcall(function()
-								if not boostServiceRemote or not dataServiceClient then return end
-								local boosts = dataServiceClient:get("boosts") or {}
-								local selectedPotions = rayfieldLibrary.Flags.MiscPotionTypes and rayfieldLibrary.Flags.MiscPotionTypes.CurrentOption or {}
-								for _, potionType in ipairs(selectedPotions) do
-									local boostData = boosts[potionType]
-									if boostData and (boostData.amount or 0) > 0 then
-										pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
-									end
+						pcall(function()
+							if not boostServiceRemote or not dataServiceClient then return end
+							local boosts = dataServiceClient:get("boosts") or {}
+							local selectedPotions = rayfieldLibrary.Flags.MiscPotionTypes and rayfieldLibrary.Flags.MiscPotionTypes.CurrentOption or {}
+							for _, potionType in ipairs(selectedPotions) do
+								local boostData = boosts[potionType]
+								if boostData and (boostData.amount or 0) > 0 then
+									pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
 								end
-							end)
-						end
+							end
+						end)
 						task.wait(1)
 					end
 				end)
@@ -2195,16 +2038,7 @@ task.spawn(function()
 		})
 
 		if #sortedBoostKinds > 0 then
-			miscTab:CreateDropdown({
-				Name = "Potion Types",
-				Options = sortedBoostKinds,
-				CurrentOption = {sortedBoostKinds[1]},
-				MultipleOptions = true,
-				Flag = "MiscPotionTypes",
-				Callback = function(option)
-					markManualOverride("MiscPotionTypes")
-				end
-			})
+			miscTab:CreateDropdown({ Name="Potion Types", Options=sortedBoostKinds, CurrentOption={sortedBoostKinds[1]}, MultipleOptions=true, Flag="MiscPotionTypes", Callback=function() end })
 		else
 			miscTab:CreateLabel("Potion types not yet loaded — enable after modules load.")
 		end
@@ -2227,20 +2061,17 @@ task.spawn(function()
 					while true do
 						local flag = rayfieldLibrary.Flags.MiscUseDice
 						if not flag or not flag.CurrentValue then break end
-						-- Respect manual override on dice type selection
-						if not isManualOverrideActive("MiscDiceTypes") then
-							pcall(function()
-								if not inventoryServiceRemote or not dataServiceClient then return end
-								local items = dataServiceClient:get("items") or {}
-								local selectedDiceItems = rayfieldLibrary.Flags.MiscDiceTypes and rayfieldLibrary.Flags.MiscDiceTypes.CurrentOption or {}
-								for _, diceName in ipairs(selectedDiceItems) do
-									local itemId = nameToIdMap and nameToIdMap[diceName]
-									if itemId and (items[itemId] or 0) > 0 then
-										pcall(function() inventoryServiceRemote:InvokeServer("requestUseItem", itemId) end)
-									end
+						pcall(function()
+							if not inventoryServiceRemote or not dataServiceClient then return end
+							local items = dataServiceClient:get("items") or {}
+							local selectedDiceItems = rayfieldLibrary.Flags.MiscDiceTypes and rayfieldLibrary.Flags.MiscDiceTypes.CurrentOption or {}
+							for _, diceName in ipairs(selectedDiceItems) do
+								local itemId = nameToIdMap and nameToIdMap[diceName]
+								if itemId and (items[itemId] or 0) > 0 then
+									pcall(function() inventoryServiceRemote:InvokeServer("requestUseItem", itemId) end)
 								end
-							end)
-						end
+							end
+						end)
 						task.wait(1)
 					end
 				end)
@@ -2248,16 +2079,7 @@ task.spawn(function()
 		})
 
 		if #diceNames > 0 then
-			miscTab:CreateDropdown({
-				Name = "Dice & Item Types",
-				Options = diceNames,
-				CurrentOption = {diceNames[1]},
-				MultipleOptions = true,
-				Flag = "MiscDiceTypes",
-				Callback = function(option)
-					markManualOverride("MiscDiceTypes")
-				end
-			})
+			miscTab:CreateDropdown({ Name="Dice & Item Types", Options=diceNames, CurrentOption={diceNames[1]}, MultipleOptions=true, Flag="MiscDiceTypes", Callback=function() end })
 		else
 			miscTab:CreateLabel("Dice types not yet loaded — enable after modules load.")
 		end
@@ -2305,17 +2127,7 @@ task.spawn(function()
 	featureToggle(webhookTab, { Name="Send All Slimes", CurrentValue=false, Flag="WebhookSendAll", Callback=function() end })
 	featureToggle(webhookTab, { Name="Send New Slimes Only", CurrentValue=false, Flag="WebhookSendNew", Callback=function() end })
 	featureToggle(webhookTab, { Name="Send Mutated Slimes", CurrentValue=false, Flag="WebhookSendMutated", Callback=function() end })
-
-	webhookTab:CreateDropdown({
-		Name = "Mutations Filter",
-		Options = {"All","Shiny","Big","Huge","Inverted"},
-		CurrentOption = {"All"},
-		MultipleOptions = true,
-		Flag = "WebhookMutations",
-		Callback = function(option)
-			markManualOverride("WebhookMutations")
-		end
-	})
+	webhookTab:CreateDropdown({ Name="Mutations Filter", Options={"All","Shiny","Big","Huge","Inverted"}, CurrentOption={"All"}, MultipleOptions=true, Flag="WebhookMutations", Callback=function() end })
 
 	local function formatNumber(num)
 		if type(num) ~= "number" then return tostring(num) end
