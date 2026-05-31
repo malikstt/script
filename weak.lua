@@ -128,6 +128,7 @@ task.spawn(function()
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local HttpService = game:GetService("HttpService")
     local TweenService = game:GetService("TweenService")
+    local Workspace = game:GetService("Workspace")
 
     local virtualUser = game:GetService("VirtualUser")
     localPlayer.Idled:Connect(function()
@@ -135,13 +136,64 @@ task.spawn(function()
         virtualUser:ClickButton2(Vector2.new())
     end)
 
-    -- =====================================================================
-    -- DECOR NOCLIP: continuously disable CanCollide on all decor parts
-    -- for the local client only, without destroying anything
-    -- =====================================================================
+    local function extendBaseplate()
+        local currentZone = nil
+        pcall(function()
+            local dataServiceClient = require(ReplicatedStorage.Packages.DataService).client
+            currentZone = dataServiceClient:get("zone") or nil
+        end)
+        if not currentZone then return end
+        
+        local zonesFolder = Workspace:FindFirstChild("Zones")
+        if not zonesFolder then return end
+        local zoneFolder = zonesFolder:FindFirstChild(tostring(currentZone))
+        if not zoneFolder then return end
+        
+        local poi = zoneFolder:FindFirstChild("POI")
+        if not poi then return end
+        
+        local baseplate = poi:FindFirstChild("Baseplate")
+        if not baseplate or not baseplate:IsA("BasePart") then return end
+        
+        local size = baseplate.Size
+        local cf = baseplate.CFrame
+        local extensionSize = 300
+        
+        local extensions = {"ExtensionLeft", "ExtensionRight", "ExtensionFront", "ExtensionBack"}
+        for _, name in ipairs(extensions) do
+            local existing = poi:FindFirstChild(name)
+            if existing then existing:Destroy() end
+        end
+        
+        local directions = {
+            {-(size.X / 2 + extensionSize / 2), 0, 0, "ExtensionLeft"},
+            {(size.X / 2 + extensionSize / 2), 0, 0, "ExtensionRight"},
+            {0, 0, -(size.Z / 2 + extensionSize / 2), "ExtensionFront"},
+            {0, 0, (size.Z / 2 + extensionSize / 2), "ExtensionBack"}
+        }
+        
+        for _, dir in ipairs(directions) do
+            local plate = Instance.new("Part")
+            plate.Size = Vector3.new(extensionSize, size.Y, extensionSize)
+            plate.CFrame = cf * CFrame.new(dir[1], dir[2], dir[3])
+            plate.Anchored = true
+            plate.CanCollide = true
+            plate.Transparency = baseplate.Transparency
+            plate.Material = baseplate.Material
+            plate.Color = baseplate.Color
+            plate.Name = dir[4]
+            plate.Parent = poi
+            
+            local texture = baseplate:FindFirstChildWhichIsA("Texture") or baseplate:FindFirstChildWhichIsA("Decal")
+            if texture then
+                texture:Clone().Parent = plate
+            end
+        end
+    end
+
     RunService.Stepped:Connect(function()
         pcall(function()
-            local zonesFolder = workspace:FindFirstChild("Zones")
+            local zonesFolder = Workspace:FindFirstChild("Zones")
             if not zonesFolder then return end
             for _, zoneFolder in ipairs(zonesFolder:GetChildren()) do
                 local decorFolder = zoneFolder:FindFirstChild("decor")
@@ -518,9 +570,6 @@ task.spawn(function()
         return nil
     end
 
-    -- =====================================================================
-    -- ZONE BOUNDARY
-    -- =====================================================================
     local zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
 
     local function getZoneBoundary(zoneId)
@@ -844,11 +893,9 @@ task.spawn(function()
         return bestEnemy, bestId
     end
 
-    -- =====================================================================
-    -- AUTOFARM HEARTBEAT
-    -- =====================================================================
     local lastKnownZone = nil
     local zoneChangeDebounce = false
+    local lastExtendTime = 0
 
     local function handleZoneChange(newZoneId)
         if zoneChangeDebounce then return end
@@ -859,6 +906,11 @@ task.spawn(function()
         zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
         lastCacheTime = 0
         cachedEnemies = {}
+
+        if tick() - lastExtendTime > 5 then
+            pcall(extendBaseplate)
+            lastExtendTime = tick()
+        end
 
         task.delay(1.5, function()
             if not enemySettings.AutoFarm then
