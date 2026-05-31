@@ -498,7 +498,7 @@ task.spawn(function()
     end
 
     -- =====================================================================
-    -- ZONE EXTENSIONS (keeps baseplate extended so character never falls off)
+    -- ZONE EXTENSIONS
     -- =====================================================================
     local zoneExtensions = {}
 
@@ -574,7 +574,7 @@ task.spawn(function()
     end
 
     -- =====================================================================
-    -- ZONE BOUNDARY via POI.Baseplate — no shrink, generous outward buffer
+    -- ZONE BOUNDARY
     -- =====================================================================
     local zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
 
@@ -596,9 +596,6 @@ task.spawn(function()
 
             local pos  = baseplate.Position
             local size = baseplate.Size
-            -- No shrink. Add a generous 180 stud outward buffer to account for
-            -- the extensions we place, so the boundary check never fires while
-            -- the character is standing on a valid surface.
             local buffer = 180
 
             local minPos = Vector3.new(pos.X - size.X / 2 - buffer, pos.Y, pos.Z - size.Z / 2 - buffer)
@@ -779,7 +776,6 @@ task.spawn(function()
         local char = localPlayer.Character
         if char then
             local hum = char:FindFirstChildWhichIsA("Humanoid")
-            -- Reset to 40 instead of 16
             if hum then hum.WalkSpeed = 40 hum:MoveTo(char.HumanoidRootPart.Position) end
         end
     end
@@ -903,8 +899,53 @@ task.spawn(function()
         return bestEnemy, bestId
     end
 
-    local lastBoundaryRefresh = 0
+    -- =====================================================================
+    -- AUTOFARM HEARTBEAT — fixed zone change handling
+    -- =====================================================================
     local lastExtensionZone = nil
+    local lastKnownZone = nil
+    local zoneChangeDebounce = false
+
+    local function handleZoneChange(newZoneId)
+        if zoneChangeDebounce then return end
+        zoneChangeDebounce = true
+
+        -- Wipe everything related to the old zone
+        stopAutoWalk()
+        currentTarget = nil
+        zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
+        lastCacheTime = 0
+        cachedEnemies = {}
+
+        -- Wait a moment for the workspace Zones folder to populate the new zone
+        task.delay(1.5, function()
+            if not enemySettings.AutoFarm then
+                zoneChangeDebounce = false
+                return
+            end
+            local zoneIdStr = tostring(newZoneId)
+            lastExtensionZone = newZoneId
+
+            -- Retry extension creation up to 5 times if the zone folder isn't ready yet
+            local attempts = 0
+            repeat
+                attempts = attempts + 1
+                createZoneExtensions(newZoneId)
+                local zonesFolder = workspace:FindFirstChild("Zones")
+                local zoneFolder = zonesFolder and zonesFolder:FindFirstChild(zoneIdStr)
+                local poi = zoneFolder and zoneFolder:FindFirstChild("POI")
+                local baseplate = poi and poi:FindFirstChild("Baseplate")
+                if baseplate then break end
+                task.wait(0.5)
+            until attempts >= 5
+
+            -- Force boundary rebuild for the new zone
+            zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
+            getZoneBoundary(newZoneId)
+
+            zoneChangeDebounce = false
+        end)
+    end
 
     RunService.Heartbeat:Connect(function()
         pcall(function()
@@ -920,17 +961,20 @@ task.spawn(function()
             if not charRoot then return end
 
             local currentZoneId = dataServiceClient and dataServiceClient:get("zone") or nil
+
+            -- Detect zone change and handle it properly
+            if currentZoneId ~= lastKnownZone then
+                lastKnownZone = currentZoneId
+                if currentZoneId then
+                    handleZoneChange(currentZoneId)
+                end
+                return -- Skip this frame to let handleZoneChange settle
+            end
+
+            if zoneChangeDebounce then return end -- Still transitioning
+
             local boundary = nil
             if currentZoneId then
-                if tick() - lastBoundaryRefresh > 5 then
-                    lastBoundaryRefresh = tick()
-                    zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
-                end
-                -- Create extensions when zone changes
-                if tostring(currentZoneId) ~= tostring(lastExtensionZone) then
-                    lastExtensionZone = currentZoneId
-                    createZoneExtensions(currentZoneId)
-                end
                 boundary = getZoneBoundary(currentZoneId)
             end
 
@@ -1109,12 +1153,11 @@ task.spawn(function()
                         break
                     end
                     pcall(function()
-                        -- If UFO auto zone is active and UFO event is ongoing, skip teleport entirely
                         local autoUfoFlag = rayfieldLibrary.Flags.AutoUfoZone
                         if autoUfoFlag and autoUfoFlag.CurrentValue and ufoClient then
                             local ok, state = pcall(function() return ufoClient:getStateSource()() end)
                             if ok and state and state.phase ~= "idle" and state.zoneId ~= nil then
-                                return -- UFO event active, do not interfere
+                                return
                             end
                         end
 
@@ -1130,7 +1173,6 @@ task.spawn(function()
                             if tick() - lastTeleportTime > 3 then
                                 zonesServiceRemote:InvokeServer("requestTeleportZone", targetZone)
                                 lastTeleportTime = tick()
-                                zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
                             end
                         end
                     end)
@@ -1403,19 +1445,32 @@ task.spawn(function()
             enemySettings.AutoFarm = value
             setNoclip(value)
             if value then
-                -- When enabled, set walkspeed to 40 baseline and create extensions for current zone
                 local char = localPlayer.Character
                 if char then
                     local hum = char:FindFirstChildWhichIsA("Humanoid")
                     if hum then hum.WalkSpeed = 40 end
                 end
+                -- Initialize zone state fresh on enable
                 local currentZoneId = dataServiceClient and dataServiceClient:get("zone") or nil
+                lastKnownZone = currentZoneId
+                zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
+                lastCacheTime = 0
+                cachedEnemies = {}
+                currentTarget = nil
+                zoneChangeDebounce = false
                 if currentZoneId then
                     lastExtensionZone = currentZoneId
                     createZoneExtensions(currentZoneId)
+                    task.delay(0.5, function()
+                        zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
+                        getZoneBoundary(currentZoneId)
+                    end)
                 end
             else
                 currentTarget = nil
+                lastKnownZone = nil
+                lastExtensionZone = nil
+                zoneChangeDebounce = false
                 stopAutoWalk()
             end
         end,
