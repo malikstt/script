@@ -128,84 +128,11 @@ task.spawn(function()
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local HttpService = game:GetService("HttpService")
     local TweenService = game:GetService("TweenService")
-    local Workspace = game:GetService("Workspace")
 
     local virtualUser = game:GetService("VirtualUser")
     localPlayer.Idled:Connect(function()
         virtualUser:CaptureController()
         virtualUser:ClickButton2(Vector2.new())
-    end)
-
-    local function extendBaseplate()
-        local currentZone = nil
-        pcall(function()
-            local dataServiceClient = require(ReplicatedStorage.Packages.DataService).client
-            currentZone = dataServiceClient:get("zone") or nil
-        end)
-        if not currentZone then return end
-        
-        local zonesFolder = Workspace:FindFirstChild("Zones")
-        if not zonesFolder then return end
-        local zoneFolder = zonesFolder:FindFirstChild(tostring(currentZone))
-        if not zoneFolder then return end
-        
-        local poi = zoneFolder:FindFirstChild("POI")
-        if not poi then return end
-        
-        local baseplate = poi:FindFirstChild("Baseplate")
-        if not baseplate or not baseplate:IsA("BasePart") then return end
-        
-        local size = baseplate.Size
-        local cf = baseplate.CFrame
-        local extensionSize = 300
-        
-        local extensions = {"ExtensionLeft", "ExtensionRight", "ExtensionFront", "ExtensionBack"}
-        for _, name in ipairs(extensions) do
-            local existing = poi:FindFirstChild(name)
-            if existing then existing:Destroy() end
-        end
-        
-        local directions = {
-            {-(size.X / 2 + extensionSize / 2), 0, 0, "ExtensionLeft"},
-            {(size.X / 2 + extensionSize / 2), 0, 0, "ExtensionRight"},
-            {0, 0, -(size.Z / 2 + extensionSize / 2), "ExtensionFront"},
-            {0, 0, (size.Z / 2 + extensionSize / 2), "ExtensionBack"}
-        }
-        
-        for _, dir in ipairs(directions) do
-            local plate = Instance.new("Part")
-            plate.Size = Vector3.new(extensionSize, size.Y, extensionSize)
-            plate.CFrame = cf * CFrame.new(dir[1], dir[2], dir[3])
-            plate.Anchored = true
-            plate.CanCollide = true
-            plate.Transparency = baseplate.Transparency
-            plate.Material = baseplate.Material
-            plate.Color = baseplate.Color
-            plate.Name = dir[4]
-            plate.Parent = poi
-            
-            local texture = baseplate:FindFirstChildWhichIsA("Texture") or baseplate:FindFirstChildWhichIsA("Decal")
-            if texture then
-                texture:Clone().Parent = plate
-            end
-        end
-    end
-
-    RunService.Stepped:Connect(function()
-        pcall(function()
-            local zonesFolder = Workspace:FindFirstChild("Zones")
-            if not zonesFolder then return end
-            for _, zoneFolder in ipairs(zonesFolder:GetChildren()) do
-                local decorFolder = zoneFolder:FindFirstChild("decor")
-                if decorFolder then
-                    for _, child in ipairs(decorFolder:GetDescendants()) do
-                        if child:IsA("BasePart") then
-                            child.CanCollide = false
-                        end
-                    end
-                end
-            end
-        end)
     end)
 
     Logger:info("CactusHub", "Init", "Loading Rayfield...")
@@ -570,6 +497,9 @@ task.spawn(function()
         return nil
     end
 
+    -- =====================================================================
+    -- ZONE BOUNDARY via POI.Baseplate (reliable, matches what the game uses)
+    -- =====================================================================
     local zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
 
     local function getZoneBoundary(zoneId)
@@ -590,10 +520,12 @@ task.spawn(function()
 
             local pos  = baseplate.Position
             local size = baseplate.Size
-            local buffer = 180
+            local halfX = size.X / 2
+            local halfZ = size.Z / 2
+            local shrink = 8
 
-            local minPos = Vector3.new(pos.X - size.X / 2 - buffer, pos.Y, pos.Z - size.Z / 2 - buffer)
-            local maxPos = Vector3.new(pos.X + size.X / 2 + buffer, pos.Y, pos.Z + size.Z / 2 + buffer)
+            local minPos = Vector3.new(pos.X - halfX + shrink, pos.Y, pos.Z - halfZ + shrink)
+            local maxPos = Vector3.new(pos.X + halfX - shrink, pos.Y, pos.Z + halfZ - shrink)
             local center = Vector3.new(pos.X, pos.Y, pos.Z)
 
             return { zoneId = zoneIdStr, min = minPos, max = maxPos, center = center }
@@ -770,7 +702,7 @@ task.spawn(function()
         local char = localPlayer.Character
         if char then
             local hum = char:FindFirstChildWhichIsA("Humanoid")
-            if hum then hum.WalkSpeed = 40 hum:MoveTo(char.HumanoidRootPart.Position) end
+            if hum then hum.WalkSpeed = 16 hum:MoveTo(char.HumanoidRootPart.Position) end
         end
     end
 
@@ -893,48 +825,7 @@ task.spawn(function()
         return bestEnemy, bestId
     end
 
-    local lastKnownZone = nil
-    local zoneChangeDebounce = false
-    local lastExtendTime = 0
-
-    local function handleZoneChange(newZoneId)
-        if zoneChangeDebounce then return end
-        zoneChangeDebounce = true
-
-        stopAutoWalk()
-        currentTarget = nil
-        zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
-        lastCacheTime = 0
-        cachedEnemies = {}
-
-        if tick() - lastExtendTime > 5 then
-            pcall(extendBaseplate)
-            lastExtendTime = tick()
-        end
-
-        task.delay(1.5, function()
-            if not enemySettings.AutoFarm then
-                zoneChangeDebounce = false
-                return
-            end
-
-            local attempts = 0
-            repeat
-                attempts = attempts + 1
-                local zonesFolder = workspace:FindFirstChild("Zones")
-                local zoneFolder = zonesFolder and zonesFolder:FindFirstChild(tostring(newZoneId))
-                local poi = zoneFolder and zoneFolder:FindFirstChild("POI")
-                local baseplate = poi and poi:FindFirstChild("Baseplate")
-                if baseplate then break end
-                task.wait(0.5)
-            until attempts >= 5
-
-            zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
-            getZoneBoundary(newZoneId)
-
-            zoneChangeDebounce = false
-        end)
-    end
+    local lastBoundaryRefresh = 0
 
     RunService.Heartbeat:Connect(function()
         pcall(function()
@@ -950,19 +841,12 @@ task.spawn(function()
             if not charRoot then return end
 
             local currentZoneId = dataServiceClient and dataServiceClient:get("zone") or nil
-
-            if currentZoneId ~= lastKnownZone then
-                lastKnownZone = currentZoneId
-                if currentZoneId then
-                    handleZoneChange(currentZoneId)
-                end
-                return
-            end
-
-            if zoneChangeDebounce then return end
-
             local boundary = nil
             if currentZoneId then
+                if tick() - lastBoundaryRefresh > 5 then
+                    lastBoundaryRefresh = tick()
+                    zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
+                end
                 boundary = getZoneBoundary(currentZoneId)
             end
 
@@ -1141,14 +1025,6 @@ task.spawn(function()
                         break
                     end
                     pcall(function()
-                        local autoUfoFlag = rayfieldLibrary.Flags.AutoUfoZone
-                        if autoUfoFlag and autoUfoFlag.CurrentValue and ufoClient then
-                            local ok, state = pcall(function() return ufoClient:getStateSource()() end)
-                            if ok and state and state.phase ~= "idle" and state.zoneId ~= nil then
-                                return
-                            end
-                        end
-
                         local targetOption = rayfieldLibrary.Flags.FarmingZoneTarget and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
                         local currentZone = dataServiceClient and (dataServiceClient:get("zone") or 1) or 1
                         local targetZone = nil
@@ -1161,6 +1037,7 @@ task.spawn(function()
                             if tick() - lastTeleportTime > 3 then
                                 zonesServiceRemote:InvokeServer("requestTeleportZone", targetZone)
                                 lastTeleportTime = tick()
+                                zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
                             end
                         end
                     end)
@@ -1432,29 +1309,8 @@ task.spawn(function()
         Callback = function(value)
             enemySettings.AutoFarm = value
             setNoclip(value)
-            if value then
-                local char = localPlayer.Character
-                if char then
-                    local hum = char:FindFirstChildWhichIsA("Humanoid")
-                    if hum then hum.WalkSpeed = 40 end
-                end
-                local currentZoneId = dataServiceClient and dataServiceClient:get("zone") or nil
-                lastKnownZone = currentZoneId
-                zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
-                lastCacheTime = 0
-                cachedEnemies = {}
+            if not value then
                 currentTarget = nil
-                zoneChangeDebounce = false
-                if currentZoneId then
-                    task.delay(0.5, function()
-                        zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
-                        getZoneBoundary(currentZoneId)
-                    end)
-                end
-            else
-                currentTarget = nil
-                lastKnownZone = nil
-                zoneChangeDebounce = false
                 stopAutoWalk()
             end
         end,
@@ -2614,7 +2470,7 @@ task.spawn(function()
                 lighting.EnvironmentDiffuseScale = 0
                 lighting.EnvironmentSpecularScale = 0
                 for _, d in ipairs(workspace:GetDescendants()) do
-                    if d:IsA("BasePart") and d.Name ~= "Baseplate" then d.CastShadow=false d.Reflectance=0 d.Material=CHEAP_MATERIAL end
+                    if d:IsA("BasePart") then d.CastShadow=false d.Reflectance=0 d.Material=CHEAP_MATERIAL end
                 end
                 local rs = game:GetService("RunService")
                 rs:Set3dRenderingEnabled(false) task.wait(0.1) rs:Set3dRenderingEnabled(true)
@@ -2643,9 +2499,7 @@ task.spawn(function()
             settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
             local lighting = game:GetService("Lighting")
             lighting.GlobalShadows=false lighting.EnvironmentDiffuseScale=0 lighting.EnvironmentSpecularScale=0
-            for _, d in ipairs(workspace:GetDescendants()) do
-                if d:IsA("BasePart") and d.Name ~= "Baseplate" then d.CastShadow=false d.Reflectance=0 d.Material=CHEAP_MATERIAL end
-            end
+            for _, d in ipairs(workspace:GetDescendants()) do if d:IsA("BasePart") then d.CastShadow=false d.Reflectance=0 d.Material=CHEAP_MATERIAL end end
             local rs = game:GetService("RunService")
             rs:Set3dRenderingEnabled(false) task.wait(0.1) rs:Set3dRenderingEnabled(true)
         end,
