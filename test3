@@ -1,18 +1,12 @@
 task.spawn(function()
 	repeat task.wait() until game:IsLoaded()
 
-	-- =====================================================================
-	-- EXECUTOR COMPATIBILITY
-	-- =====================================================================
 	local requestFunc = syn and syn.request or fluxus and fluxus.request or http and http.request or http_request or request
 	local setClipboard = setclipboard or toclipboard or set_clipboard
 	local getConnections = getconnections or get_signal_cons or getsignalconnections
 	local getExecutorName = identifyexecutor or getexecutorname
 	local executor = getExecutorName and getExecutorName() or "Unknown"
 
-	-- =====================================================================
-	-- LOGGER
-	-- =====================================================================
 	local Logger = {}
 	Logger.LogHistory = {}
 
@@ -25,14 +19,10 @@ task.spawn(function()
 		if errorObj then fullMsg = fullMsg .. "\n  Error: " .. tostring(errorObj) end
 		if level == "ERROR" or level == "WARN" then warn(fullMsg) else print(fullMsg) end
 	end
+	function Logger:info(s, f, m) self:log("INFO", s, f, m) end
+	function Logger:warn(s, f, m) self:log("WARN", s, f, m) end
+	function Logger:error(s, f, m, e) self:log("ERROR", s, f, m, e) end
 
-	function Logger:info(system, feature, message) self:log("INFO", system, feature, message) end
-	function Logger:warn(system, feature, message) self:log("WARN", system, feature, message) end
-	function Logger:error(system, feature, message, err) self:log("ERROR", system, feature, message, err) end
-
-	-- =====================================================================
-	-- RAYFIELD LOAD
-	-- =====================================================================
 	Logger:info("CactusHub", "Init", "Loading Rayfield...")
 	local Rayfield
 	local rayfieldOk, rayfieldErr = pcall(function()
@@ -44,62 +34,73 @@ task.spawn(function()
 	end
 	Logger:info("CactusHub", "Init", "Rayfield loaded successfully")
 
-	-- =====================================================================
-	-- COMPATIBILITY WARNINGS
-	-- =====================================================================
+	local function notify(title, content, duration)
+		pcall(function() Rayfield:Notify({ Title = title, Content = content, Duration = duration or 3 }) end)
+	end
+
 	local function showWarning(feature, reason)
-		local msg = string.format("[Cactus Hub] %s not available: %s", feature, reason)
 		Logger:warn("Executor", feature, reason)
 		task.spawn(function()
-			pcall(function()
-				Rayfield:Notify({ Title = "⚠️ Executor Compatibility", Content = msg, Duration = 5 })
-			end)
+			notify("⚠️ Executor Compatibility", string.format("[Cactus Hub] %s not available: %s", feature, reason), 5)
 		end)
 	end
 
-	-- =====================================================================
-	-- FEATURE WRAPPERS (same pattern as script 1)
-	-- =====================================================================
-	local function featureToggle(tab, config)
-		local wrappedConfig = {}
-		for k, v in pairs(config) do wrappedConfig[k] = v end
-		local originalCallback = config.Callback
-		wrappedConfig.Callback = function(value)
-			local ok, err = pcall(originalCallback, value)
+	local function safeCb(name, fn)
+		return function(...)
+			local ok, err = pcall(fn, ...)
 			if not ok then
-				Logger:error("Feature", config.Name, "Toggle callback error", err)
-				Rayfield:Notify({ Title = "Error: " .. tostring(config.Name), Content = tostring(err):sub(1, 100), Duration = 5 })
+				Logger:error("Callback", name, "Error", err)
+				notify("Error: " .. tostring(name), tostring(err):sub(1, 100), 5)
 			end
 		end
-		return tab:CreateToggle(wrappedConfig)
+	end
+
+	local function featureToggle(tab, config)
+		local wrapped = {}
+		for k, v in pairs(config) do wrapped[k] = v end
+		local cb = config.Callback
+		wrapped.Callback = safeCb(config.Name or "Toggle", cb)
+		return tab:CreateToggle(wrapped)
 	end
 
 	local function featureButton(tab, config)
-		local wrappedConfig = {}
-		for k, v in pairs(config) do wrappedConfig[k] = v end
-		local originalCallback = config.Callback
-		wrappedConfig.Callback = function()
-			local ok, err = pcall(originalCallback)
-			if not ok then
-				Logger:error("Feature", config.Name, "Button callback error", err)
-				Rayfield:Notify({ Title = "Error: " .. tostring(config.Name), Content = tostring(err):sub(1, 100), Duration = 5 })
-			end
-		end
-		return tab:CreateButton(wrappedConfig)
+		local wrapped = {}
+		for k, v in pairs(config) do wrapped[k] = v end
+		local cb = config.Callback
+		wrapped.Callback = safeCb(config.Name or "Button", cb)
+		return tab:CreateButton(wrapped)
 	end
 
-	-- =====================================================================
-	-- SERVICES & LOCALS
-	-- =====================================================================
+	local function featureSlider(tab, config)
+		local wrapped = {}
+		for k, v in pairs(config) do wrapped[k] = v end
+		local cb = config.Callback
+		wrapped.Callback = safeCb(config.Name or "Slider", cb)
+		return tab:CreateSlider(wrapped)
+	end
+
+	local function featureDropdown(tab, config)
+		local wrapped = {}
+		for k, v in pairs(config) do wrapped[k] = v end
+		local cb = config.Callback
+		wrapped.Callback = safeCb(config.Name or "Dropdown", cb)
+		return tab:CreateDropdown(wrapped)
+	end
+
+	local function featureInput(tab, config)
+		local wrapped = {}
+		for k, v in pairs(config) do wrapped[k] = v end
+		local cb = config.Callback
+		wrapped.Callback = safeCb(config.Name or "Input", cb)
+		return tab:CreateInput(wrapped)
+	end
+
 	local RS = game:GetService("ReplicatedStorage")
 	local Players = game:GetService("Players")
 	local HttpSvc = game:GetService("HttpService")
 	local RunSvc = game:GetService("RunService")
 	local lp = Players.LocalPlayer
 
-	-- =====================================================================
-	-- NETWORK (deferred so FireRemote/InvokeRemote can reference it)
-	-- =====================================================================
 	local Network
 	local networkLoaded = false
 
@@ -120,12 +121,10 @@ task.spawn(function()
 			return
 		end
 		local r = Network:FindFirstChild(name)
-		if r then
-			local ok, err = pcall(function() r:FireServer(...) end)
-			if ok then Logger:info("Remote", name, "Fired") else Logger:error("Remote", name, "FireServer failed", err) end
-		else
-			Logger:warn("Remote", name, "Not found in Network folder")
-		end
+		if not r then Logger:warn("Remote", name, "Not found in Network folder") return end
+		local args = { ... }
+		local ok, err = pcall(function() r:FireServer(table.unpack(args)) end)
+		if not ok then Logger:error("Remote", name, "FireServer failed", err) end
 	end
 
 	local function InvokeRemote(name, ...)
@@ -134,44 +133,35 @@ task.spawn(function()
 			return nil
 		end
 		local r = Network:FindFirstChild(name)
-		if r then
-			local ok, result = pcall(function() return r:InvokeServer(...) end)
-			if ok then Logger:info("Remote", name, "Invoked") return result
-			else Logger:error("Remote", name, "InvokeServer failed", result) end
-		else
-			Logger:warn("Remote", name, "Not found in Network folder")
-		end
-		return nil
+		if not r then Logger:warn("Remote", name, "Not found in Network folder") return nil end
+		local args = { ... }
+		local ok, result = pcall(function() return r:InvokeServer(table.unpack(args)) end)
+		if not ok then Logger:error("Remote", name, "InvokeServer failed", result) return nil end
+		return result
 	end
 
-	-- =====================================================================
-	-- MODULES
-	-- =====================================================================
 	local modulesLoaded = false
 	local RarityData, EntitiesData, MutationData, WeightsData, WaveData
 
 	task.spawn(function()
 		Logger:info("CactusHub", "ModuleLoad", "Starting module initialization...")
 		local ok, err = pcall(function()
-			RarityData      = require(RS.Shared.Data.RarityData)
-			EntitiesData    = require(RS.Shared.Data.EntitiesData)
-			MutationData    = require(RS.Shared.Data.MutationData)
-			WeightsData     = require(RS.Shared.Data.WeightsData)
-			WaveData        = require(RS.Shared.Data.WaveData).Waves
-			modulesLoaded   = true
+			RarityData   = require(RS.Shared.Data.RarityData)
+			EntitiesData = require(RS.Shared.Data.EntitiesData)
+			MutationData = require(RS.Shared.Data.MutationData)
+			WeightsData  = require(RS.Shared.Data.WeightsData)
+			WaveData     = require(RS.Shared.Data.WaveData).Waves
+			modulesLoaded = true
 		end)
 		if not ok then
 			Logger:error("CactusHub", "ModuleLoad", "Module initialization failed", err)
-			Rayfield:Notify({ Title = "CactusHub — Load Warning", Content = "Some modules failed: " .. tostring(err):sub(1, 120) .. "\nSome features may not work.", Duration = 8 })
+			notify("CactusHub — Load Warning", "Some modules failed: " .. tostring(err):sub(1, 120) .. "\nSome features may not work.", 8)
 		else
 			Logger:info("CactusHub", "ModuleLoad", "All modules loaded successfully!")
-			Rayfield:Notify({ Title = "Cactus Hub", Content = "Modules loaded! Features are ready.", Duration = 4 })
+			notify("Cactus Hub", "Modules loaded! Features are ready.", 4)
 		end
 	end)
 
-	-- =====================================================================
-	-- EXECUTION LOG WEBHOOK (executor ping)
-	-- =====================================================================
 	if requestFunc then
 		pcall(function()
 			local embed = {{
@@ -191,9 +181,6 @@ task.spawn(function()
 		showWarning("HTTP request", "No request function found — webhook features will be disabled")
 	end
 
-	-- =====================================================================
-	-- ANTI-AFK
-	-- =====================================================================
 	local function disableIdleConnections()
 		if not getConnections then
 			showWarning("Anti-AFK", "getconnections API missing — idle connections not disabled")
@@ -209,48 +196,41 @@ task.spawn(function()
 	end
 	disableIdleConnections()
 
-	-- =====================================================================
-	-- DATA HELPERS (wait for modules)
-	-- =====================================================================
 	local raritiesList      = {}
 	local rarities_with_all = { "All" }
 	local mutationsList     = { "None" }
-	local mutations_with_all= { "All" }
+	local mutations_with_all = { "All" }
 	local brainrotsByRarity = {}
 	local allBrainrots      = {}
-	local brainrots_with_all= { "All" }
+	local brainrots_with_all = { "All" }
 	local weightsList       = {}
 	local weights_with_all  = { "All" }
 
 	task.spawn(function()
 		repeat task.wait(0.5) until modulesLoaded
-
-		raritiesList = RarityData.Order or {}
-		for _, r in ipairs(raritiesList) do table.insert(rarities_with_all, r) end
-
-		for _, m in ipairs(MutationData.ValidMutations or {}) do table.insert(mutationsList, m) end
-		mutations_with_all = { "All" }
-		for _, m in ipairs(mutationsList) do table.insert(mutations_with_all, m) end
-
-		for bname, bdata in pairs(EntitiesData.Brainrots or {}) do
-			local r = bdata.Rarity
-			if not brainrotsByRarity[r] then brainrotsByRarity[r] = {} end
-			table.insert(brainrotsByRarity[r], bname)
-			table.insert(allBrainrots, bname)
-		end
-		for _, list in pairs(brainrotsByRarity) do table.sort(list) end
-		table.sort(allBrainrots)
-		for _, b in ipairs(allBrainrots) do table.insert(brainrots_with_all, b) end
-
-		for wname in pairs(WeightsData.Weights or {}) do table.insert(weightsList, wname) end
-		table.sort(weightsList)
-		weights_with_all = { "All" }
-		for _, w in ipairs(weightsList) do table.insert(weights_with_all, w) end
+		local ok, err = pcall(function()
+			raritiesList = RarityData.Order or {}
+			for _, r in ipairs(raritiesList) do table.insert(rarities_with_all, r) end
+			for _, m in ipairs(MutationData.ValidMutations or {}) do table.insert(mutationsList, m) end
+			mutations_with_all = { "All" }
+			for _, m in ipairs(mutationsList) do table.insert(mutations_with_all, m) end
+			for bname, bdata in pairs(EntitiesData.Brainrots or {}) do
+				local r = bdata.Rarity
+				if not brainrotsByRarity[r] then brainrotsByRarity[r] = {} end
+				table.insert(brainrotsByRarity[r], bname)
+				table.insert(allBrainrots, bname)
+			end
+			for _, list in pairs(brainrotsByRarity) do table.sort(list) end
+			table.sort(allBrainrots)
+			for _, b in ipairs(allBrainrots) do table.insert(brainrots_with_all, b) end
+			for wname in pairs(WeightsData.Weights or {}) do table.insert(weightsList, wname) end
+			table.sort(weightsList)
+			weights_with_all = { "All" }
+			for _, w in ipairs(weightsList) do table.insert(weights_with_all, w) end
+		end)
+		if not ok then Logger:error("DataHelpers", "Init", "Failed to build data lists", err) end
 	end)
 
-	-- =====================================================================
-	-- UTILITY FUNCTIONS
-	-- =====================================================================
 	local function expandAll(selected, fullList)
 		for _, v in ipairs(selected) do
 			if v == "All" then return fullList end
@@ -272,9 +252,12 @@ task.spawn(function()
 
 	local function GetPlot()
 		local ok, result = pcall(function()
-			for _, plot in ipairs(workspace.Plots:GetChildren()) do
+			local plots = workspace:FindFirstChild("Plots")
+			if not plots then return nil end
+			for _, plot in ipairs(plots:GetChildren()) do
 				if plot:GetAttribute("Owner") == lp.Name then return plot end
 			end
+			return nil
 		end)
 		if ok and result then return result end
 		Logger:warn("Plot", nil, "Plot not found for " .. lp.Name)
@@ -283,17 +266,21 @@ task.spawn(function()
 
 	local function GetSlots(plot)
 		if not plot then return {} end
-		local folder = plot:FindFirstChild("Slots")
-		if not folder then return {} end
-		local slots = {}
-		for _, part in ipairs(folder:GetChildren()) do
-			if part:IsA("BasePart") then
-				local n = tonumber(part.Name:match("%d+"))
-				if n then table.insert(slots, { part = part, num = n }) end
+		local ok, result = pcall(function()
+			local folder = plot:FindFirstChild("Slots")
+			if not folder then return {} end
+			local slots = {}
+			for _, part in ipairs(folder:GetChildren()) do
+				if part:IsA("BasePart") then
+					local n = tonumber(part.Name:match("%d+"))
+					if n then table.insert(slots, { part = part, num = n }) end
+				end
 			end
-		end
-		table.sort(slots, function(a, b) return a.num < b.num end)
-		return slots
+			table.sort(slots, function(a, b) return a.num < b.num end)
+			return slots
+		end)
+		if ok and result then return result end
+		return {}
 	end
 
 	local function GetEmptySlots(plot)
@@ -305,18 +292,19 @@ task.spawn(function()
 	end
 
 	local function GetBackpackTools()
-		local bp = lp:FindFirstChild("Backpack")
-		if not bp then return {} end
-		local tools = {}
-		for _, t in ipairs(bp:GetChildren()) do
-			if t:IsA("Tool") then table.insert(tools, t.Name) end
-		end
-		return tools
+		local ok, result = pcall(function()
+			local bp = lp:FindFirstChild("Backpack")
+			if not bp then return {} end
+			local tools = {}
+			for _, t in ipairs(bp:GetChildren()) do
+				if t:IsA("Tool") then table.insert(tools, t.Name) end
+			end
+			return tools
+		end)
+		if ok and result then return result end
+		return {}
 	end
 
-	-- =====================================================================
-	-- STATE TABLES
-	-- =====================================================================
 	local collectConfig  = { enabled = false, delay = 1,   loop = nil }
 	local slotCollect    = { selected = {}, map = {}, dropdown = nil, auto = false, delay = 1, loop = nil }
 	local rarityCollect  = { rarities = {}, auto = false, delay = 1, loop = nil }
@@ -337,9 +325,6 @@ task.spawn(function()
 		pingUID = "", rarities = {}, mutations = {}, specifics = {},
 	}
 
-	-- =====================================================================
-	-- SLOT MAP REFRESH
-	-- =====================================================================
 	local function refreshSlotMaps()
 		local ok, err = pcall(function()
 			local plot = GetPlot()
@@ -354,8 +339,8 @@ task.spawn(function()
 			local vals = {}
 			for k in pairs(slotMap) do table.insert(vals, k) end
 			if #vals == 0 then vals = { "No brainrots placed" } end
-			if slotCollect.dropdown then slotCollect.dropdown:Refresh(vals) end
-			if upgradeSlots.dropdown then upgradeSlots.dropdown:Refresh(vals) end
+			if slotCollect.dropdown then pcall(function() slotCollect.dropdown:Refresh(vals) end) end
+			if upgradeSlots.dropdown then pcall(function() upgradeSlots.dropdown:Refresh(vals) end) end
 			slotCollect.map = slotMap
 			upgradeSlots.map = upgradeMap
 			Logger:info("SlotMaps", nil, "Refreshed, " .. #vals .. " slots")
@@ -363,9 +348,6 @@ task.spawn(function()
 		if not ok then Logger:error("SlotMaps", nil, "Refresh failed", err) end
 	end
 
-	-- =====================================================================
-	-- COLLECT
-	-- =====================================================================
 	local function collectFromSlot(slotNum)
 		local ok, err = pcall(function()
 			local plot = GetPlot()
@@ -384,7 +366,7 @@ task.spawn(function()
 			end
 			FireRemote("rev_B_Collect", slotNum)
 		end)
-		if not ok then Logger:error("Collect", "Slot" .. slotNum, "collectFromSlot failed", err) end
+		if not ok then Logger:error("Collect", "Slot" .. tostring(slotNum), "collectFromSlot failed", err) end
 	end
 
 	local function autoCollectLoop()
@@ -437,9 +419,6 @@ task.spawn(function()
 		Logger:info("RarityCollect", nil, "Loop ended")
 	end
 
-	-- =====================================================================
-	-- PLACE / REMOVE
-	-- =====================================================================
 	local function autoPlaceLoop()
 		while placeConfig.auto do
 			local ok, err = pcall(function()
@@ -458,8 +437,10 @@ task.spawn(function()
 						end
 					end
 					if matched then
-						local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
-						local tObj = lp.Backpack:FindFirstChild(toolName)
+						local char = lp.Character
+						local hum = char and char:FindFirstChildOfClass("Humanoid")
+						local bp = lp:FindFirstChild("Backpack")
+						local tObj = bp and bp:FindFirstChild(toolName)
 						if hum and tObj then
 							hum:EquipTool(tObj)
 							task.wait(0.2)
@@ -499,7 +480,7 @@ task.spawn(function()
 						if matched then
 							FireRemote("rev_S_Interact", slot.num)
 							task.wait(removeConfig.delay)
-							Logger:info("AutoRemove", "Slot" .. slot.num, "Removed ID: " .. id)
+							Logger:info("AutoRemove", "Slot" .. slot.num, "Removed ID: " .. tostring(id))
 						end
 					end
 				end
@@ -510,9 +491,6 @@ task.spawn(function()
 		Logger:info("AutoRemove", nil, "Loop ended")
 	end
 
-	-- =====================================================================
-	-- KICK
-	-- =====================================================================
 	local function autoKickLoop()
 		local modeMap = {
 			custom     = function() return kickConfig.scale end,
@@ -524,7 +502,8 @@ task.spawn(function()
 		}
 		while kickConfig.running do
 			local ok, err = pcall(function()
-				local scale = modeMap[kickConfig.mode] and modeMap[kickConfig.mode]() or 0.99
+				local scaleFn = modeMap[kickConfig.mode]
+				local scale = scaleFn and scaleFn() or 0.99
 				local level = 1
 				local ls = lp:FindFirstChild("leaderstats")
 				if ls and ls:FindFirstChild("KickLevel") then level = ls.KickLevel.Value end
@@ -534,7 +513,8 @@ task.spawn(function()
 				task.wait(0.1)
 				local char = lp.Character
 				local hum = char and char:FindFirstChildOfClass("Humanoid")
-				local safe = workspace:FindFirstChild("Lobby") and workspace.Lobby:FindFirstChild("Safe")
+				local lobby = workspace:FindFirstChild("Lobby")
+				local safe = lobby and lobby:FindFirstChild("Safe")
 				if hum and safe then
 					hum.WalkSpeed = 80
 					hum:MoveTo(safe.Position)
@@ -547,9 +527,6 @@ task.spawn(function()
 		Logger:info("AutoKick", nil, "Loop ended")
 	end
 
-	-- =====================================================================
-	-- SELL
-	-- =====================================================================
 	local function sellByRarityLoop()
 		while sellRarity.auto do
 			local ok, err = pcall(function()
@@ -559,8 +536,10 @@ task.spawn(function()
 					for _, rar in ipairs(rars) do
 						for _, bname in ipairs(brainrotsByRarity[rar] or {}) do
 							if toolName == bname then
-								local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
-								local tool = lp.Backpack:FindFirstChild(toolName)
+								local char = lp.Character
+								local hum = char and char:FindFirstChildOfClass("Humanoid")
+								local bp = lp:FindFirstChild("Backpack")
+								local tool = bp and bp:FindFirstChild(toolName)
 								if hum and tool then
 									hum:EquipTool(tool) task.wait(0.2)
 									InvokeRemote("ref_B_Sell") task.wait(0.2)
@@ -587,8 +566,10 @@ task.spawn(function()
 				for _, toolName in ipairs(GetBackpackTools()) do
 					for _, target in ipairs(targets) do
 						if toolName == target then
-							local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
-							local tool = lp.Backpack:FindFirstChild(toolName)
+							local char = lp.Character
+							local hum = char and char:FindFirstChildOfClass("Humanoid")
+							local bp = lp:FindFirstChild("Backpack")
+							local tool = bp and bp:FindFirstChild(toolName)
 							if hum and tool then
 								hum:EquipTool(tool) task.wait(0.2)
 								InvokeRemote("ref_B_Sell") task.wait(0.2)
@@ -612,12 +593,14 @@ task.spawn(function()
 				if #sellMutation.mutations == 0 then return end
 				local muts = expandAll(sellMutation.mutations, mutationsList)
 				for _, toolName in ipairs(GetBackpackTools()) do
-					local tool = lp.Backpack:FindFirstChild(toolName)
+					local bp = lp:FindFirstChild("Backpack")
+					local tool = bp and bp:FindFirstChild(toolName)
 					if tool then
 						local mut = tool:GetAttribute("Mutation") or "None"
 						for _, m in ipairs(muts) do
 							if mut == m then
-								local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
+								local char = lp.Character
+								local hum = char and char:FindFirstChildOfClass("Humanoid")
 								if hum then
 									hum:EquipTool(tool) task.wait(0.2)
 									InvokeRemote("ref_B_Sell") task.wait(0.2)
@@ -636,13 +619,10 @@ task.spawn(function()
 		Logger:info("SellMutation", nil, "Loop ended")
 	end
 
-	-- =====================================================================
-	-- UPGRADES
-	-- =====================================================================
 	local function upgradeSelectedSlots()
 		for _, n in ipairs(upgradeSlots.selected) do
 			local ok, err = pcall(function() FireRemote("rev_B_Upgrade", n) end)
-			if not ok then Logger:error("UpgradeSlots", "Slot" .. n, "Upgrade failed", err)
+			if not ok then Logger:error("UpgradeSlots", "Slot" .. tostring(n), "Upgrade failed", err)
 			else Logger:info("UpgradeSlots", nil, "Upgraded slot " .. n) end
 			task.wait(0.1)
 		end
@@ -664,7 +644,7 @@ task.spawn(function()
 								if id == bname then
 									FireRemote("rev_B_Upgrade", slot.num)
 									task.wait(0.1)
-									Logger:info("UpgradeRarity", nil, "Upgraded slot " .. slot.num .. " ID: " .. id)
+									Logger:info("UpgradeRarity", nil, "Upgraded slot " .. slot.num .. " ID: " .. tostring(id))
 									break
 								end
 							end
@@ -678,9 +658,6 @@ task.spawn(function()
 		Logger:info("UpgradeRarity", nil, "Loop ended")
 	end
 
-	-- =====================================================================
-	-- WEBHOOK HELPERS
-	-- =====================================================================
 	local function formatChance(chancePercent)
 		if not chancePercent or chancePercent <= 0 then return "Unknown" end
 		local inverse = 100 / chancePercent
@@ -693,43 +670,54 @@ task.spawn(function()
 
 	local function findRarityFromName(itemName)
 		if not RarityData or not RarityData.BrainrotPool then return "Unknown" end
-		for rarity, pool in pairs(RarityData.BrainrotPool) do
-			for _, entry in ipairs(pool) do
-				if entry.Name == itemName then return rarity end
+		local ok, result = pcall(function()
+			for rarity, pool in pairs(RarityData.BrainrotPool) do
+				for _, entry in ipairs(pool) do
+					if entry.Name == itemName then return rarity end
+				end
 			end
-		end
+			return "Unknown"
+		end)
+		if ok and result then return result end
 		return "Unknown"
 	end
 
 	local function getBrainrotInfo(bname, forcedRarity)
-		local rarity, chance = "Unknown", 0
-		if RarityData and RarityData.BrainrotPool then
-			for r, pool in pairs(RarityData.BrainrotPool) do
-				for _, item in ipairs(pool) do
-					if item.Name == bname then rarity = r chance = item.Chance or 0 break end
+		local ok, result = pcall(function()
+			local rarity, chance = "Unknown", 0
+			if RarityData and RarityData.BrainrotPool then
+				for r, pool in pairs(RarityData.BrainrotPool) do
+					for _, item in ipairs(pool) do
+						if item.Name == bname then rarity = r chance = item.Chance or 0 break end
+					end
+					if rarity ~= "Unknown" then break end
 				end
-				if rarity ~= "Unknown" then break end
 			end
-		end
-		if forcedRarity then rarity = forcedRarity end
-		if rarity == "Unknown" and EntitiesData and EntitiesData.Brainrots and EntitiesData.Brainrots[bname] then
-			rarity = EntitiesData.Brainrots[bname].Rarity or "Unknown"
-		end
-		local rc = RarityData and RarityData.Colors and RarityData.Colors[rarity]
-		local color = rc and (math.floor(rc.R * 255) * 65536 + math.floor(rc.G * 255) * 256 + math.floor(rc.B * 255)) or 0x00BFFF
-		local speed = WaveData and WaveData[rarity] and WaveData[rarity].Speed or "?"
-		local assetId = nil
-		if EntitiesData and EntitiesData.Brainrots and EntitiesData.Brainrots[bname] then
-			local img = EntitiesData.Brainrots[bname].Image
-			if type(img) == "string" then assetId = tonumber(img:match("rbxassetid://(%d+)")) end
-		end
-		return { rarity = rarity, chance = chance, chanceFormatted = formatChance(chance), color = color, speed = speed, assetId = assetId }
+			if forcedRarity then rarity = forcedRarity end
+			if rarity == "Unknown" and EntitiesData and EntitiesData.Brainrots and EntitiesData.Brainrots[bname] then
+				rarity = EntitiesData.Brainrots[bname].Rarity or "Unknown"
+			end
+			local rc = RarityData and RarityData.Colors and RarityData.Colors[rarity]
+			local color = rc and (math.floor(rc.R*255)*65536 + math.floor(rc.G*255)*256 + math.floor(rc.B*255)) or 0x00BFFF
+			local speed = WaveData and WaveData[rarity] and WaveData[rarity].Speed or "?"
+			local assetId = nil
+			if EntitiesData and EntitiesData.Brainrots and EntitiesData.Brainrots[bname] then
+				local img = EntitiesData.Brainrots[bname].Image
+				if type(img) == "string" then assetId = tonumber(img:match("rbxassetid://(%d+)")) end
+			end
+			return { rarity=rarity, chance=chance, chanceFormatted=formatChance(chance), color=color, speed=speed, assetId=assetId }
+		end)
+		if ok and result then return result end
+		Logger:error("BrainrotInfo", bname, "getBrainrotInfo failed", result)
+		return { rarity="Unknown", chance=0, chanceFormatted="Unknown", color=0x00BFFF, speed="?", assetId=nil }
 	end
 
 	local function getThumbnail(assetId)
 		if not assetId or not requestFunc then return nil end
-		local url = ("https://thumbnails.roblox.com/v1/assets?assetIds=%d&size=420x420&format=Png"):format(assetId)
-		local ok, res = pcall(requestFunc, { Url = url, Method = "GET" })
+		local ok, res = pcall(requestFunc, {
+			Url = ("https://thumbnails.roblox.com/v1/assets?assetIds=%d&size=420x420&format=Png"):format(assetId),
+			Method = "GET",
+		})
 		if ok and res and res.Success then
 			local ok2, data = pcall(function() return HttpSvc:JSONDecode(res.Body) end)
 			if ok2 and data and data.data and data.data[1] then return data.data[1].imageUrl end
@@ -739,8 +727,7 @@ task.spawn(function()
 	end
 
 	local function sendWebhook(bname, mutation, earnedValue, forcedRarity)
-		if not WH.enabled then return end
-		if WH.url == "" then return end
+		if not WH.enabled or WH.url == "" then return end
 		if not requestFunc then showWarning("Webhook", "No HTTP function available") return end
 		mutation = mutation or "None"
 		if WH.mode == "MutatedOnly" and (mutation == "None" or mutation == "") then return end
@@ -771,10 +758,9 @@ task.spawn(function()
 				local mul = md and md.Value or 1
 				mutationText = string.format("\n✨ Mutation: **%s** (x%.1f)", mutation, mul)
 			end
-			local description = string.format("||%s|| got a **%s %s**!%s", lp.Name, info.rarity, bname, mutationText)
 			local embed = {
 				title = "🎲 NEW BRAINROT CAPTURED",
-				description = description,
+				description = string.format("||%s|| got a **%s %s**!%s", lp.Name, info.rarity, bname, mutationText),
 				color = info.color,
 				fields = {
 					{ name = "🌀 Rarity", value = info.rarity, inline = true },
@@ -805,17 +791,14 @@ task.spawn(function()
 
 	local function sendTestWebhook()
 		if not WH.enabled or WH.url == "" then
-			Rayfield:Notify({ Title = "Webhook", Content = "Enable webhook and enter a URL first.", Duration = 3 })
+			notify("Webhook", "Enable webhook and enter a URL first.", 3)
 			return
 		end
-		if not requestFunc then
-			showWarning("Webhook", "No HTTP function available")
-			return
-		end
+		if not requestFunc then showWarning("Webhook", "No HTTP function available") return end
 		local payload = {
 			username = "Cactus Hub",
 			avatar_url = "https://media.discordapp.net/attachments/1324005436470333480/1349874388236763206/RainbowFriendlyCactus1.png",
-			embeds = {{ title = "Cactus Hub - Test Ping", description = ("Webhook works for ||%s||!"):format(lp.Name), color = 0x57F287, footer = { text = "Cactus Hub" }, timestamp = DateTime.now():ToIsoDate() }}
+			embeds = {{ title="Cactus Hub - Test Ping", description=("Webhook works for ||%s||!"):format(lp.Name), color=0x57F287, footer={text="Cactus Hub"}, timestamp=DateTime.now():ToIsoDate() }}
 		}
 		if WH.pingUID ~= "" then payload.content = "<@" .. WH.pingUID .. ">" end
 		task.spawn(function()
@@ -824,32 +807,24 @@ task.spawn(function()
 				Headers = { ["Content-Type"] = "application/json" },
 				Body = HttpSvc:JSONEncode(payload),
 			})
-			if ok then
-				Rayfield:Notify({ Title = "Webhook", Content = "Test ping sent!", Duration = 3 })
-			else
-				Logger:error("Webhook", "TestPing", "Send failed", res)
-				Rayfield:Notify({ Title = "Error", Content = tostring(res):sub(1, 100), Duration = 5 })
-			end
+			if ok then notify("Webhook", "Test ping sent!", 3)
+			else Logger:error("Webhook", "TestPing", "Send failed", res) notify("Error", tostring(res):sub(1,100), 5) end
 		end)
 	end
 
-	-- =====================================================================
-	-- BACKPACK LISTENER
-	-- =====================================================================
-	lp.Backpack.ChildAdded:Connect(function(tool)
-		if not tool:IsA("Tool") then return end
-		task.wait(1.1)
-		local ok, err = pcall(function()
-			local mutation = tool:GetAttribute("Mutation") or "None"
-			local webhookRarity = findRarityFromName(tool.Name)
-			sendWebhook(tool.Name, mutation, nil, webhookRarity)
+	local ok_bl, err_bl = pcall(function()
+		lp.Backpack.ChildAdded:Connect(function(tool)
+			if not tool:IsA("Tool") then return end
+			task.wait(1.1)
+			local ok, err = pcall(function()
+				local mutation = tool:GetAttribute("Mutation") or "None"
+				sendWebhook(tool.Name, mutation, nil, findRarityFromName(tool.Name))
+			end)
+			if not ok then Logger:error("BackpackListener", tool.Name, "sendWebhook error", err) end
 		end)
-		if not ok then Logger:error("BackpackListener", tool.Name, "sendWebhook error", err) end
 	end)
+	if not ok_bl then Logger:error("BackpackListener", nil, "Failed to connect ChildAdded", err_bl) end
 
-	-- =====================================================================
-	-- RAYFIELD WINDOW
-	-- =====================================================================
 	local Window = Rayfield:CreateWindow({
 		Name = "Cactus Hub • discord.gg/qMWFBWdcf",
 		LoadingTitle = "Cactus Hub",
@@ -859,10 +834,12 @@ task.spawn(function()
 		KeySystem = false,
 	})
 
-	-- =====================================================================
-	-- MAIN TAB
-	-- =====================================================================
-	local mainTab = Window:CreateTab("Main", 94483582151513)
+	local mainTab    = Window:CreateTab("Main",              94483582151513)
+	local farmingTab = Window:CreateTab("Farming",           123674526631914)
+	local bcTab      = Window:CreateTab("Brainrots & Cash",  96942169425973)
+	local miscTab    = Window:CreateTab("Misc",              135748283315148)
+	local webhookTab = Window:CreateTab("Webhook",           122447804258070)
+
 	local fpsLabel  = mainTab:CreateLabel("FPS: --")
 	local pingLabel = mainTab:CreateLabel("Ping: --")
 
@@ -890,38 +867,31 @@ task.spawn(function()
 	mainTab:CreateSection("Utilities")
 
 	featureButton(mainTab, {
-		Name = "Copy Discord Invite",
-		Flag = "CopyDiscordInvite",
+		Name = "Copy Discord Invite", Flag = "CopyDiscordInvite",
 		Callback = function()
 			if setClipboard then
 				setClipboard("https://discord.gg/qMWFBWdcf")
-				Rayfield:Notify({ Title = "Copied", Content = "Discord invite copied.", Duration = 3 })
+				notify("Copied", "Discord invite copied.", 3)
 			else
 				showWarning("Clipboard", "setclipboard/toclipboard/set_clipboard missing")
-				Rayfield:Notify({ Title = "Error", Content = "Clipboard not supported.", Duration = 3 })
+				notify("Error", "Clipboard not supported.", 3)
 			end
 		end,
 	})
 
-	-- =====================================================================
-	-- FARMING TAB
-	-- =====================================================================
-	local farmingTab = Window:CreateTab("Farming", 123674526631914)
 	farmingTab:CreateSection("Kick Settings")
-
-	farmingTab:CreateDropdown({
+	featureDropdown(farmingTab, {
 		Name = "Kick Accuracy Mode",
-		Options = { "custom", "50-60", "60-70", "70-80", "80-90", "90-100" },
+		Options = { "custom","50-60","60-70","70-80","80-90","90-100" },
 		CurrentOption = "custom", Flag = "KickMode",
 		Callback = function(opt) kickConfig.mode = opt end,
 	})
-	farmingTab:CreateSlider({
-		Name = "Custom Kick Accuracy", Range = { 0, 100 }, Increment = 1, Suffix = "%",
+	featureSlider(farmingTab, {
+		Name = "Custom Kick Accuracy", Range = {0,100}, Increment = 1, Suffix = "%",
 		CurrentValue = 99, Flag = "CustomKickAccuracy",
 		Callback = function(v) kickConfig.scale = v / 100 end,
 	})
 	farmingTab:CreateParagraph({ Title = "⚠️ WARNING", Content = "Using 99% too many times can trigger anti-cheat. Use lower ranges for safety." })
-
 	featureToggle(farmingTab, {
 		Name = "Start Auto Farm", CurrentValue = false, Flag = "AutoFarm",
 		Callback = function(v)
@@ -936,10 +906,9 @@ task.spawn(function()
 	})
 
 	farmingTab:CreateSection("Auto Place")
-	farmingTab:CreateDropdown({ Name = "Specific Brainrots", Options = brainrots_with_all, Multi = true, Flag = "PlaceSpecificBrainrots", Callback = function(sel) placeConfig.specifics = sel end })
-	farmingTab:CreateDropdown({ Name = "Rarities", Options = rarities_with_all, Multi = true, Flag = "PlaceRarities", Callback = function(sel) placeConfig.rarities = sel end })
-	farmingTab:CreateSlider({ Name = "Place Delay", Range = { 0.1, 5 }, Increment = 0.1, Suffix = "s", CurrentValue = 0.5, Flag = "PlaceDelay", Callback = function(v) placeConfig.delay = v end })
-
+	featureDropdown(farmingTab, { Name="Specific Brainrots", Options=brainrots_with_all, Multi=true, Flag="PlaceSpecificBrainrots", Callback=function(sel) placeConfig.specifics = sel end })
+	featureDropdown(farmingTab, { Name="Rarities", Options=rarities_with_all, Multi=true, Flag="PlaceRarities", Callback=function(sel) placeConfig.rarities = sel end })
+	featureSlider(farmingTab, { Name="Place Delay", Range={0.1,5}, Increment=0.1, Suffix="s", CurrentValue=0.5, Flag="PlaceDelay", Callback=function(v) placeConfig.delay = v end })
 	featureToggle(farmingTab, {
 		Name = "Auto Place", CurrentValue = false, Flag = "AutoPlace",
 		Callback = function(v)
@@ -954,10 +923,9 @@ task.spawn(function()
 	})
 
 	farmingTab:CreateSection("Auto Remove")
-	farmingTab:CreateDropdown({ Name = "Specific Brainrots", Options = brainrots_with_all, Multi = true, Flag = "RemoveSpecificBrainrots", Callback = function(sel) removeConfig.specifics = sel end })
-	farmingTab:CreateDropdown({ Name = "Rarities", Options = rarities_with_all, Multi = true, Flag = "RemoveRarities", Callback = function(sel) removeConfig.rarities = sel end })
-	farmingTab:CreateSlider({ Name = "Remove Delay", Range = { 0.1, 5 }, Increment = 0.1, Suffix = "s", CurrentValue = 0.5, Flag = "RemoveDelay", Callback = function(v) removeConfig.delay = v end })
-
+	featureDropdown(farmingTab, { Name="Specific Brainrots", Options=brainrots_with_all, Multi=true, Flag="RemoveSpecificBrainrots", Callback=function(sel) removeConfig.specifics = sel end })
+	featureDropdown(farmingTab, { Name="Rarities", Options=rarities_with_all, Multi=true, Flag="RemoveRarities", Callback=function(sel) removeConfig.rarities = sel end })
+	featureSlider(farmingTab, { Name="Remove Delay", Range={0.1,5}, Increment=0.1, Suffix="s", CurrentValue=0.5, Flag="RemoveDelay", Callback=function(v) removeConfig.delay = v end })
 	featureToggle(farmingTab, {
 		Name = "Auto Remove", CurrentValue = false, Flag = "AutoRemove",
 		Callback = function(v)
@@ -970,11 +938,6 @@ task.spawn(function()
 			end
 		end,
 	})
-
-	-- =====================================================================
-	-- BRAINROTS & CASH TAB
-	-- =====================================================================
-	local bcTab = Window:CreateTab("Brainrots & Cash", 96942169425973)
 
 	bcTab:CreateSection("Auto Collect All")
 	featureToggle(bcTab, {
@@ -989,20 +952,18 @@ task.spawn(function()
 			end
 		end,
 	})
-	bcTab:CreateSlider({ Name = "Collect Interval", Range = { 0.1, 10 }, Increment = 0.1, Suffix = "s", CurrentValue = 1, Flag = "CollectInterval", Callback = function(v) collectConfig.delay = v end })
+	featureSlider(bcTab, { Name="Collect Interval", Range={0.1,10}, Increment=0.1, Suffix="s", CurrentValue=1, Flag="CollectInterval", Callback=function(v) collectConfig.delay = v end })
 
 	bcTab:CreateSection("Collect by Slot")
-	featureButton(bcTab, { Name = "Refresh Slots", Flag = "RefreshSlots", Callback = refreshSlotMaps })
-
-	slotCollect.dropdown = bcTab:CreateDropdown({
-		Name = "Select Slots", Options = { "Press Refresh first" }, Multi = true, Flag = "SlotCollectSelected",
-		Callback = function(sel)
+	featureButton(bcTab, { Name="Refresh Slots", Flag="RefreshSlots", Callback=refreshSlotMaps })
+	slotCollect.dropdown = featureDropdown(bcTab, {
+		Name="Select Slots", Options={"Press Refresh first"}, Multi=true, Flag="SlotCollectSelected",
+		Callback=function(sel)
 			local nums = {}
 			for _, lbl in ipairs(sel) do if slotCollect.map[lbl] then table.insert(nums, slotCollect.map[lbl]) end end
 			slotCollect.selected = nums
 		end,
 	})
-
 	featureToggle(bcTab, {
 		Name = "Auto Collect Selected Slots", CurrentValue = false, Flag = "AutoCollectSelectedSlots",
 		Callback = function(v)
@@ -1015,11 +976,10 @@ task.spawn(function()
 			end
 		end,
 	})
-	bcTab:CreateSlider({ Name = "Slot Collect Interval", Range = { 0.1, 10 }, Increment = 0.1, Suffix = "s", CurrentValue = 1, Flag = "SlotCollectInterval", Callback = function(v) slotCollect.delay = v end })
+	featureSlider(bcTab, { Name="Slot Collect Interval", Range={0.1,10}, Increment=0.1, Suffix="s", CurrentValue=1, Flag="SlotCollectInterval", Callback=function(v) slotCollect.delay = v end })
 
 	bcTab:CreateSection("Collect by Rarity")
-	bcTab:CreateDropdown({ Name = "Select Rarities", Options = rarities_with_all, Multi = true, Flag = "CollectRarities", Callback = function(sel) rarityCollect.rarities = sel end })
-
+	featureDropdown(bcTab, { Name="Select Rarities", Options=rarities_with_all, Multi=true, Flag="CollectRarities", Callback=function(sel) rarityCollect.rarities = sel end })
 	featureToggle(bcTab, {
 		Name = "Auto Collect by Rarity", CurrentValue = false, Flag = "AutoCollectByRarity",
 		Callback = function(v)
@@ -1032,24 +992,21 @@ task.spawn(function()
 			end
 		end,
 	})
-	bcTab:CreateSlider({ Name = "Rarity Collect Interval", Range = { 0.1, 10 }, Increment = 0.1, Suffix = "s", CurrentValue = 1, Flag = "RarityCollectInterval", Callback = function(v) rarityCollect.delay = v end })
+	featureSlider(bcTab, { Name="Rarity Collect Interval", Range={0.1,10}, Increment=0.1, Suffix="s", CurrentValue=1, Flag="RarityCollectInterval", Callback=function(v) rarityCollect.delay = v end })
 
 	bcTab:CreateSection("Quick Sell")
 	featureButton(bcTab, {
-		Name = "Sell Equipped", Flag = "SellEquipped",
-		Callback = function()
+		Name="Sell Equipped", Flag="SellEquipped",
+		Callback=function()
 			local char = lp.Character
 			local hum = char and char:FindFirstChildOfClass("Humanoid")
 			if hum then hum:UnequipTools() task.wait(0.2) FireRemote("rev_S_Interact", 1) end
 		end,
 	})
-	featureButton(bcTab, {
-		Name = "Sell All Brainrots", Flag = "SellAllBrainrots",
-		Callback = function() InvokeRemote("ref_B_SellAll") end,
-	})
+	featureButton(bcTab, { Name="Sell All Brainrots", Flag="SellAllBrainrots", Callback=function() InvokeRemote("ref_B_SellAll") end })
 
 	bcTab:CreateSection("Sell by Rarity")
-	bcTab:CreateDropdown({ Name = "Select Rarities", Options = rarities_with_all, Multi = true, Flag = "SellRarities", Callback = function(sel) sellRarity.rarities = sel end })
+	featureDropdown(bcTab, { Name="Select Rarities", Options=rarities_with_all, Multi=true, Flag="SellRarities", Callback=function(sel) sellRarity.rarities = sel end })
 	featureToggle(bcTab, {
 		Name = "Auto Sell by Rarity", CurrentValue = false, Flag = "AutoSellByRarity",
 		Callback = function(v)
@@ -1062,10 +1019,10 @@ task.spawn(function()
 			end
 		end,
 	})
-	bcTab:CreateSlider({ Name = "Sell Interval", Range = { 1, 60 }, Increment = 1, Suffix = "s", CurrentValue = 5, Flag = "SellRarityInterval", Callback = function(v) sellRarity.delay = v end })
+	featureSlider(bcTab, { Name="Sell Interval", Range={1,60}, Increment=1, Suffix="s", CurrentValue=5, Flag="SellRarityInterval", Callback=function(v) sellRarity.delay = v end })
 
 	bcTab:CreateSection("Sell Specific")
-	bcTab:CreateDropdown({ Name = "Select Brainrots", Options = brainrots_with_all, Multi = true, Flag = "SellSpecificBrainrots", Callback = function(sel) sellSpecific.targets = sel end })
+	featureDropdown(bcTab, { Name="Select Brainrots", Options=brainrots_with_all, Multi=true, Flag="SellSpecificBrainrots", Callback=function(sel) sellSpecific.targets = sel end })
 	featureToggle(bcTab, {
 		Name = "Auto Sell Specific", CurrentValue = false, Flag = "AutoSellSpecific",
 		Callback = function(v)
@@ -1078,10 +1035,10 @@ task.spawn(function()
 			end
 		end,
 	})
-	bcTab:CreateSlider({ Name = "Sell Interval", Range = { 1, 60 }, Increment = 1, Suffix = "s", CurrentValue = 5, Flag = "SellSpecificInterval", Callback = function(v) sellSpecific.delay = v end })
+	featureSlider(bcTab, { Name="Sell Interval", Range={1,60}, Increment=1, Suffix="s", CurrentValue=5, Flag="SellSpecificInterval", Callback=function(v) sellSpecific.delay = v end })
 
 	bcTab:CreateSection("Sell by Mutation")
-	bcTab:CreateDropdown({ Name = "Select Mutations", Options = mutations_with_all, Multi = true, Flag = "SellMutations", Callback = function(sel) sellMutation.mutations = sel end })
+	featureDropdown(bcTab, { Name="Select Mutations", Options=mutations_with_all, Multi=true, Flag="SellMutations", Callback=function(sel) sellMutation.mutations = sel end })
 	featureToggle(bcTab, {
 		Name = "Auto Sell by Mutation", CurrentValue = false, Flag = "AutoSellByMutation",
 		Callback = function(v)
@@ -1094,15 +1051,10 @@ task.spawn(function()
 			end
 		end,
 	})
-	bcTab:CreateSlider({ Name = "Sell Interval", Range = { 1, 60 }, Increment = 1, Suffix = "s", CurrentValue = 5, Flag = "SellMutationInterval", Callback = function(v) sellMutation.delay = v end })
-
-	-- =====================================================================
-	-- MISC TAB
-	-- =====================================================================
-	local miscTab = Window:CreateTab("Misc", 135748283315148)
+	featureSlider(bcTab, { Name="Sell Interval", Range={1,60}, Increment=1, Suffix="s", CurrentValue=5, Flag="SellMutationInterval", Callback=function(v) sellMutation.delay = v end })
 
 	miscTab:CreateSection("Shop - Speed")
-	miscTab:CreateSlider({ Name = "Amount to Buy", Range = { 1, 50 }, Increment = 1, Suffix = "x", CurrentValue = 1, Flag = "SpeedAmount", Callback = function(v) shopSpeed.amount = v end })
+	featureSlider(miscTab, { Name="Amount to Buy", Range={1,50}, Increment=1, Suffix="x", CurrentValue=1, Flag="SpeedAmount", Callback=function(v) shopSpeed.amount = v end })
 	featureToggle(miscTab, {
 		Name = "Auto Buy Speed", CurrentValue = false, Flag = "AutoBuySpeed",
 		Callback = function(v)
@@ -1123,7 +1075,7 @@ task.spawn(function()
 	})
 
 	miscTab:CreateSection("Shop - Weights")
-	miscTab:CreateDropdown({ Name = "Select Weights", Options = weights_with_all, Multi = true, Flag = "AutoBuyWeightsList", Callback = function(sel) shopWeights.selected = sel end })
+	featureDropdown(miscTab, { Name="Select Weights", Options=weights_with_all, Multi=true, Flag="AutoBuyWeightsList", Callback=function(sel) shopWeights.selected = sel end })
 	featureToggle(miscTab, {
 		Name = "Auto Buy Weights", CurrentValue = false, Flag = "AutoBuyWeights",
 		Callback = function(v)
@@ -1187,17 +1139,15 @@ task.spawn(function()
 	})
 
 	miscTab:CreateSection("Upgrades")
-	featureButton(miscTab, { Name = "Refresh Slots", Flag = "UpgradeRefreshSlots", Callback = refreshSlotMaps })
-
-	upgradeSlots.dropdown = miscTab:CreateDropdown({
-		Name = "Select Slots", Options = { "Press Refresh first" }, Multi = true, Flag = "UpgradeSlotsSelected",
-		Callback = function(sel)
+	featureButton(miscTab, { Name="Refresh Slots", Flag="UpgradeRefreshSlots", Callback=refreshSlotMaps })
+	upgradeSlots.dropdown = featureDropdown(miscTab, {
+		Name="Select Slots", Options={"Press Refresh first"}, Multi=true, Flag="UpgradeSlotsSelected",
+		Callback=function(sel)
 			local nums = {}
 			for _, lbl in ipairs(sel) do if upgradeSlots.map[lbl] then table.insert(nums, upgradeSlots.map[lbl]) end end
 			upgradeSlots.selected = nums
 		end,
 	})
-
 	featureToggle(miscTab, {
 		Name = "Auto Upgrade Selected Slots", CurrentValue = false, Flag = "AutoUpgradeSelectedSlots",
 		Callback = function(v)
@@ -1216,8 +1166,7 @@ task.spawn(function()
 			end
 		end,
 	})
-
-	miscTab:CreateDropdown({ Name = "Upgrade by Rarity", Options = rarities_with_all, Multi = true, Flag = "UpgradeRarities", Callback = function(sel) upgradeRarity.rarities = sel end })
+	featureDropdown(miscTab, { Name="Upgrade by Rarity", Options=rarities_with_all, Multi=true, Flag="UpgradeRarities", Callback=function(sel) upgradeRarity.rarities = sel end })
 	featureToggle(miscTab, {
 		Name = "Auto Upgrade by Rarity", CurrentValue = false, Flag = "AutoUpgradeByRarity",
 		Callback = function(v)
@@ -1231,40 +1180,30 @@ task.spawn(function()
 		end,
 	})
 
-	-- =====================================================================
-	-- WEBHOOK TAB
-	-- =====================================================================
-	local webhookTab = Window:CreateTab("Webhook", 122447804258070)
 	webhookTab:CreateSection("Setup")
-
-	webhookTab:CreateInput({ Name = "Webhook URL", CurrentValue = "", PlaceholderText = "https://discord.com/api/webhooks/...", Flag = "WebhookURL", Callback = function(text) WH.url = text or "" end })
-	webhookTab:CreateInput({ Name = "Ping User ID", CurrentValue = "", PlaceholderText = "e.g. 123456789012345678", Flag = "PingUserID", Callback = function(text) WH.pingUID = text or "" end })
-	webhookTab:CreateInput({
-		Name = "Min Earn", CurrentValue = "", PlaceholderText = "1m, 500k, 1b, blank = off", Flag = "MinEarn",
-		Callback = function(text)
-			if not text or text == "" then
-				WH.minEarn = nil
+	featureInput(webhookTab, { Name="Webhook URL", CurrentValue="", PlaceholderText="https://discord.com/api/webhooks/...", Flag="WebhookURL", Callback=function(text) WH.url = text or "" end })
+	featureInput(webhookTab, { Name="Ping User ID", CurrentValue="", PlaceholderText="e.g. 123456789012345678", Flag="PingUserID", Callback=function(text) WH.pingUID = text or "" end })
+	featureInput(webhookTab, {
+		Name="Min Earn", CurrentValue="", PlaceholderText="1m, 500k, 1b, blank = off", Flag="MinEarn",
+		Callback=function(text)
+			if not text or text == "" then WH.minEarn = nil
 			else
 				local val = parseShortNumber(text)
 				WH.minEarn = val
-				if not val then Rayfield:Notify({ Title = "Webhook", Content = "Invalid number format.", Duration = 3 }) end
+				if not val then notify("Webhook", "Invalid number format.", 3) end
 			end
 		end,
 	})
-
-	featureToggle(webhookTab, { Name = "Enable Discord Webhook", CurrentValue = false, Flag = "EnableDiscordWebhook", Callback = function(v) WH.enabled = v end })
-	featureButton(webhookTab, { Name = "Send Test Ping", Flag = "SendTestPing", Callback = sendTestWebhook })
+	featureToggle(webhookTab, { Name="Enable Discord Webhook", CurrentValue=false, Flag="EnableDiscordWebhook", Callback=function(v) WH.enabled = v end })
+	featureButton(webhookTab, { Name="Send Test Ping", Flag="SendTestPing", Callback=sendTestWebhook })
 
 	webhookTab:CreateSection("Filters")
-	webhookTab:CreateDropdown({ Name = "Send Mode", Options = { "All", "MutatedOnly", "RarityOnly" }, CurrentOption = "All", Flag = "SendMode", Callback = function(opt) WH.mode = opt end })
-	webhookTab:CreateDropdown({ Name = "Rarity Filter", Options = rarities_with_all, Multi = true, Flag = "RarityFilter", Callback = function(sel) WH.rarities = sel end })
-	webhookTab:CreateDropdown({ Name = "Mutation Filter", Options = mutations_with_all, Multi = true, Flag = "MutationFilter", Callback = function(sel) WH.mutations = sel end })
-	webhookTab:CreateDropdown({ Name = "Specific Brainrot Filter", Options = brainrots_with_all, Multi = true, Flag = "SpecificBrainrotFilter", Callback = function(sel) WH.specifics = sel end })
+	featureDropdown(webhookTab, { Name="Send Mode", Options={"All","MutatedOnly","RarityOnly"}, CurrentOption="All", Flag="SendMode", Callback=function(opt) WH.mode = opt end })
+	featureDropdown(webhookTab, { Name="Rarity Filter", Options=rarities_with_all, Multi=true, Flag="RarityFilter", Callback=function(sel) WH.rarities = sel end })
+	featureDropdown(webhookTab, { Name="Mutation Filter", Options=mutations_with_all, Multi=true, Flag="MutationFilter", Callback=function(sel) WH.mutations = sel end })
+	featureDropdown(webhookTab, { Name="Specific Brainrot Filter", Options=brainrots_with_all, Multi=true, Flag="SpecificBrainrotFilter", Callback=function(sel) WH.specifics = sel end })
 
-	-- =====================================================================
-	-- FINALIZE
-	-- =====================================================================
 	refreshSlotMaps()
-	Rayfield:Notify({ Title = "Cactus Hub", Content = "Loaded! Join discord.gg/qMWFBWdcf", Duration = 4 })
+	notify("Cactus Hub", "Loaded! Join discord.gg/qMWFBWdcf", 4)
 	Logger:info("CactusHub", "Init", "Script initialization complete")
 end)
