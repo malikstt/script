@@ -135,6 +135,27 @@ task.spawn(function()
         virtualUser:ClickButton2(Vector2.new())
     end)
 
+    -- =====================================================================
+    -- DECOR NOCLIP: continuously disable CanCollide on all decor parts
+    -- for the local client only, without destroying anything
+    -- =====================================================================
+    RunService.Stepped:Connect(function()
+        pcall(function()
+            local zonesFolder = workspace:FindFirstChild("Zones")
+            if not zonesFolder then return end
+            for _, zoneFolder in ipairs(zonesFolder:GetChildren()) do
+                local decorFolder = zoneFolder:FindFirstChild("decor")
+                if decorFolder then
+                    for _, child in ipairs(decorFolder:GetDescendants()) do
+                        if child:IsA("BasePart") then
+                            child.CanCollide = false
+                        end
+                    end
+                end
+            end
+        end)
+    end)
+
     Logger:info("CactusHub", "Init", "Loading Rayfield...")
     local rayfieldLibrary
     local rayfieldOk, rayfieldErr = pcall(function()
@@ -498,82 +519,6 @@ task.spawn(function()
     end
 
     -- =====================================================================
-    -- ZONE EXTENSIONS
-    -- =====================================================================
-    local zoneExtensions = {}
-
-    local function destroyExtensions(zoneId)
-        if zoneExtensions[zoneId] then
-            for _, ext in ipairs(zoneExtensions[zoneId]) do
-                if ext and ext.Parent then pcall(function() ext:Destroy() end) end
-            end
-            zoneExtensions[zoneId] = nil
-        end
-    end
-
-    local function createZoneExtensions(zoneId)
-        if not zoneId then return end
-        local zoneIdStr = tostring(zoneId)
-        destroyExtensions(zoneIdStr)
-
-        pcall(function()
-            local zonesFolder = workspace:FindFirstChild("Zones")
-            if not zonesFolder then return end
-            local zoneFolder = zonesFolder:FindFirstChild(zoneIdStr)
-            if not zoneFolder then return end
-
-            local decorFolder = zoneFolder:FindFirstChild("decor")
-            if decorFolder then
-                for _, child in ipairs(decorFolder:GetChildren()) do
-                    pcall(function() child:Destroy() end)
-                end
-            end
-
-            local poi = zoneFolder:FindFirstChild("POI")
-            if not poi then return end
-            local baseplate = poi:FindFirstChild("Baseplate")
-            if not baseplate or not baseplate:IsA("BasePart") then return end
-
-            local size = baseplate.Size
-            local cf = baseplate.CFrame
-            local extensionSize = 200
-
-            zoneExtensions[zoneIdStr] = {}
-
-            local offsets = {
-                { CFrame.new(0, 0, -(size.Z / 2 + extensionSize / 2)), "ExtFront" },
-                { CFrame.new(0, 0,  (size.Z / 2 + extensionSize / 2)), "ExtBack"  },
-                { CFrame.new(-(size.X / 2 + extensionSize / 2), 0, 0), "ExtLeft"  },
-                { CFrame.new( (size.X / 2 + extensionSize / 2), 0, 0), "ExtRight" },
-            }
-
-            for _, entry in ipairs(offsets) do
-                local offsetCF, name = entry[1], entry[2]
-                local isZSide = name == "ExtFront" or name == "ExtBack"
-                local plate = Instance.new("Part")
-                plate.Size = isZSide
-                    and Vector3.new(size.X + extensionSize * 2, size.Y, extensionSize)
-                    or  Vector3.new(extensionSize, size.Y, size.Z)
-                plate.CFrame = cf * offsetCF
-                plate.Anchored = true
-                plate.CanCollide = true
-                plate.Transparency = baseplate.Transparency
-                plate.Material = baseplate.Material
-                plate.Color = baseplate.Color
-                plate.TopSurface = baseplate.TopSurface
-                plate.BottomSurface = baseplate.BottomSurface
-                plate.Name = name
-                plate.Parent = poi
-
-                local texture = baseplate:FindFirstChildWhichIsA("Texture") or baseplate:FindFirstChildWhichIsA("Decal")
-                if texture then texture:Clone().Parent = plate end
-
-                table.insert(zoneExtensions[zoneIdStr], plate)
-            end
-        end)
-    end
-
-    -- =====================================================================
     -- ZONE BOUNDARY
     -- =====================================================================
     local zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
@@ -900,46 +845,44 @@ task.spawn(function()
     end
 
     -- =====================================================================
-    -- ZONE CHANGE WATCHER — runs in its own thread, no Heartbeat interference
+    -- AUTOFARM HEARTBEAT
     -- =====================================================================
-    local lastExtensionZone = nil
-    local lastBoundaryRefresh = 0
+    local lastKnownZone = nil
+    local zoneChangeDebounce = false
 
-    task.spawn(function()
-        while true do
-            task.wait(1)
-            pcall(function()
-                if not enemySettings.AutoFarm then return end
-                if not dataServiceClient then return end
-                local currentZoneId = dataServiceClient:get("zone")
-                if not currentZoneId then return end
-                local zoneIdStr = tostring(currentZoneId)
-                if tostring(lastExtensionZone) == zoneIdStr then return end
-                -- Zone changed — rebuild everything
-                lastExtensionZone = currentZoneId
-                stopAutoWalk()
-                currentTarget = nil
-                zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
-                lastCacheTime = 0
-                cachedEnemies = {}
-                -- Wait for the workspace zone folder to be ready
-                local attempts = 0
-                repeat
-                    attempts = attempts + 1
-                    task.wait(0.5)
-                    createZoneExtensions(currentZoneId)
-                    local zonesFolder = workspace:FindFirstChild("Zones")
-                    local zoneFolder = zonesFolder and zonesFolder:FindFirstChild(zoneIdStr)
-                    local poi = zoneFolder and zoneFolder:FindFirstChild("POI")
-                    local baseplate = poi and poi:FindFirstChild("Baseplate")
-                    if baseplate then break end
-                until attempts >= 6
-                -- Force fresh boundary build
-                zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
-                getZoneBoundary(currentZoneId)
-            end)
-        end
-    end)
+    local function handleZoneChange(newZoneId)
+        if zoneChangeDebounce then return end
+        zoneChangeDebounce = true
+
+        stopAutoWalk()
+        currentTarget = nil
+        zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
+        lastCacheTime = 0
+        cachedEnemies = {}
+
+        task.delay(1.5, function()
+            if not enemySettings.AutoFarm then
+                zoneChangeDebounce = false
+                return
+            end
+
+            local attempts = 0
+            repeat
+                attempts = attempts + 1
+                local zonesFolder = workspace:FindFirstChild("Zones")
+                local zoneFolder = zonesFolder and zonesFolder:FindFirstChild(tostring(newZoneId))
+                local poi = zoneFolder and zoneFolder:FindFirstChild("POI")
+                local baseplate = poi and poi:FindFirstChild("Baseplate")
+                if baseplate then break end
+                task.wait(0.5)
+            until attempts >= 5
+
+            zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
+            getZoneBoundary(newZoneId)
+
+            zoneChangeDebounce = false
+        end)
+    end
 
     RunService.Heartbeat:Connect(function()
         pcall(function()
@@ -955,6 +898,17 @@ task.spawn(function()
             if not charRoot then return end
 
             local currentZoneId = dataServiceClient and dataServiceClient:get("zone") or nil
+
+            if currentZoneId ~= lastKnownZone then
+                lastKnownZone = currentZoneId
+                if currentZoneId then
+                    handleZoneChange(currentZoneId)
+                end
+                return
+            end
+
+            if zoneChangeDebounce then return end
+
             local boundary = nil
             if currentZoneId then
                 boundary = getZoneBoundary(currentZoneId)
@@ -1142,6 +1096,7 @@ task.spawn(function()
                                 return
                             end
                         end
+
                         local targetOption = rayfieldLibrary.Flags.FarmingZoneTarget and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
                         local currentZone = dataServiceClient and (dataServiceClient:get("zone") or 1) or 1
                         local targetZone = nil
@@ -1431,14 +1386,23 @@ task.spawn(function()
                     local hum = char:FindFirstChildWhichIsA("Humanoid")
                     if hum then hum.WalkSpeed = 40 end
                 end
-                -- Seed the extension zone so the watcher thread picks it up fresh
                 local currentZoneId = dataServiceClient and dataServiceClient:get("zone") or nil
+                lastKnownZone = currentZoneId
+                zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
+                lastCacheTime = 0
+                cachedEnemies = {}
+                currentTarget = nil
+                zoneChangeDebounce = false
                 if currentZoneId then
-                    lastExtensionZone = nil -- force the watcher to rebuild on next tick
+                    task.delay(0.5, function()
+                        zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
+                        getZoneBoundary(currentZoneId)
+                    end)
                 end
             else
                 currentTarget = nil
-                lastExtensionZone = nil
+                lastKnownZone = nil
+                zoneChangeDebounce = false
                 stopAutoWalk()
             end
         end,
@@ -2598,7 +2562,7 @@ task.spawn(function()
                 lighting.EnvironmentDiffuseScale = 0
                 lighting.EnvironmentSpecularScale = 0
                 for _, d in ipairs(workspace:GetDescendants()) do
-                    if d:IsA("BasePart") then d.CastShadow=false d.Reflectance=0 d.Material=CHEAP_MATERIAL end
+                    if d:IsA("BasePart") and d.Name ~= "Baseplate" then d.CastShadow=false d.Reflectance=0 d.Material=CHEAP_MATERIAL end
                 end
                 local rs = game:GetService("RunService")
                 rs:Set3dRenderingEnabled(false) task.wait(0.1) rs:Set3dRenderingEnabled(true)
@@ -2627,7 +2591,9 @@ task.spawn(function()
             settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
             local lighting = game:GetService("Lighting")
             lighting.GlobalShadows=false lighting.EnvironmentDiffuseScale=0 lighting.EnvironmentSpecularScale=0
-            for _, d in ipairs(workspace:GetDescendants()) do if d:IsA("BasePart") then d.CastShadow=false d.Reflectance=0 d.Material=CHEAP_MATERIAL end end
+            for _, d in ipairs(workspace:GetDescendants()) do
+                if d:IsA("BasePart") and d.Name ~= "Baseplate" then d.CastShadow=false d.Reflectance=0 d.Material=CHEAP_MATERIAL end
+            end
             local rs = game:GetService("RunService")
             rs:Set3dRenderingEnabled(false) task.wait(0.1) rs:Set3dRenderingEnabled(true)
         end,
