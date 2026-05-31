@@ -498,7 +498,83 @@ task.spawn(function()
     end
 
     -- =====================================================================
-    -- ZONE BOUNDARY via POI.Baseplate (reliable, matches what the game uses)
+    -- ZONE EXTENSIONS (keeps baseplate extended so character never falls off)
+    -- =====================================================================
+    local zoneExtensions = {}
+
+    local function destroyExtensions(zoneId)
+        if zoneExtensions[zoneId] then
+            for _, ext in ipairs(zoneExtensions[zoneId]) do
+                if ext and ext.Parent then pcall(function() ext:Destroy() end) end
+            end
+            zoneExtensions[zoneId] = nil
+        end
+    end
+
+    local function createZoneExtensions(zoneId)
+        if not zoneId then return end
+        local zoneIdStr = tostring(zoneId)
+        destroyExtensions(zoneIdStr)
+
+        pcall(function()
+            local zonesFolder = workspace:FindFirstChild("Zones")
+            if not zonesFolder then return end
+            local zoneFolder = zonesFolder:FindFirstChild(zoneIdStr)
+            if not zoneFolder then return end
+
+            local decorFolder = zoneFolder:FindFirstChild("decor")
+            if decorFolder then
+                for _, child in ipairs(decorFolder:GetChildren()) do
+                    pcall(function() child:Destroy() end)
+                end
+            end
+
+            local poi = zoneFolder:FindFirstChild("POI")
+            if not poi then return end
+            local baseplate = poi:FindFirstChild("Baseplate")
+            if not baseplate or not baseplate:IsA("BasePart") then return end
+
+            local size = baseplate.Size
+            local cf = baseplate.CFrame
+            local extensionSize = 200
+
+            zoneExtensions[zoneIdStr] = {}
+
+            local offsets = {
+                { CFrame.new(0, 0, -(size.Z / 2 + extensionSize / 2)), "ExtFront" },
+                { CFrame.new(0, 0,  (size.Z / 2 + extensionSize / 2)), "ExtBack"  },
+                { CFrame.new(-(size.X / 2 + extensionSize / 2), 0, 0), "ExtLeft"  },
+                { CFrame.new( (size.X / 2 + extensionSize / 2), 0, 0), "ExtRight" },
+            }
+
+            for _, entry in ipairs(offsets) do
+                local offsetCF, name = entry[1], entry[2]
+                local isZSide = name == "ExtFront" or name == "ExtBack"
+                local plate = Instance.new("Part")
+                plate.Size = isZSide
+                    and Vector3.new(size.X + extensionSize * 2, size.Y, extensionSize)
+                    or  Vector3.new(extensionSize, size.Y, size.Z)
+                plate.CFrame = cf * offsetCF
+                plate.Anchored = true
+                plate.CanCollide = true
+                plate.Transparency = baseplate.Transparency
+                plate.Material = baseplate.Material
+                plate.Color = baseplate.Color
+                plate.TopSurface = baseplate.TopSurface
+                plate.BottomSurface = baseplate.BottomSurface
+                plate.Name = name
+                plate.Parent = poi
+
+                local texture = baseplate:FindFirstChildWhichIsA("Texture") or baseplate:FindFirstChildWhichIsA("Decal")
+                if texture then texture:Clone().Parent = plate end
+
+                table.insert(zoneExtensions[zoneIdStr], plate)
+            end
+        end)
+    end
+
+    -- =====================================================================
+    -- ZONE BOUNDARY via POI.Baseplate — no shrink, generous outward buffer
     -- =====================================================================
     local zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
 
@@ -518,15 +594,15 @@ task.spawn(function()
             local baseplate = poi:FindFirstChild("Baseplate")
             if not baseplate or not baseplate:IsA("BasePart") then return nil end
 
-            -- Build boundary from Baseplate position and size directly
             local pos  = baseplate.Position
             local size = baseplate.Size
-            local halfX = size.X / 2
-            local halfZ = size.Z / 2
-            local shrink = 8 -- small inset so character never clips the edge
+            -- No shrink. Add a generous 180 stud outward buffer to account for
+            -- the extensions we place, so the boundary check never fires while
+            -- the character is standing on a valid surface.
+            local buffer = 180
 
-            local minPos = Vector3.new(pos.X - halfX + shrink, pos.Y, pos.Z - halfZ + shrink)
-            local maxPos = Vector3.new(pos.X + halfX - shrink, pos.Y, pos.Z + halfZ - shrink)
+            local minPos = Vector3.new(pos.X - size.X / 2 - buffer, pos.Y, pos.Z - size.Z / 2 - buffer)
+            local maxPos = Vector3.new(pos.X + size.X / 2 + buffer, pos.Y, pos.Z + size.Z / 2 + buffer)
             local center = Vector3.new(pos.X, pos.Y, pos.Z)
 
             return { zoneId = zoneIdStr, min = minPos, max = maxPos, center = center }
@@ -683,7 +759,6 @@ task.spawn(function()
 
     local function getSafePosition(targetCFrame, boundary)
         local pos = targetCFrame.Position
-        -- Clamp to boundary FIRST so we never raycast outside the zone
         if boundary then
             pos = Vector3.new(
                 math.clamp(pos.X, boundary.min.X, boundary.max.X),
@@ -704,7 +779,8 @@ task.spawn(function()
         local char = localPlayer.Character
         if char then
             local hum = char:FindFirstChildWhichIsA("Humanoid")
-            if hum then hum.WalkSpeed = 16 hum:MoveTo(char.HumanoidRootPart.Position) end
+            -- Reset to 40 instead of 16
+            if hum then hum.WalkSpeed = 40 hum:MoveTo(char.HumanoidRootPart.Position) end
         end
     end
 
@@ -730,7 +806,6 @@ task.spawn(function()
                 if not char or not char.Parent then tweenConn:Disconnect() tweenConn = nil return end
                 local alpha = math.clamp((tick() - startTime) / duration, 0, 1)
                 local newPos = startCF.Position:Lerp(safePos, alpha)
-                -- clamp mid-tween too
                 if boundary then
                     newPos = Vector3.new(
                         math.clamp(newPos.X, boundary.min.X, boundary.max.X),
@@ -754,7 +829,6 @@ task.spawn(function()
                 if not char or not char.Parent or not isAlive(enemy) then stopAutoWalk() return end
                 local rp = char:FindFirstChild("HumanoidRootPart")
                 if not rp then stopAutoWalk() return end
-                -- If character drifted outside boundary, pull back to center
                 if boundary and isOutsideBoundary(rp.Position, boundary) then
                     stopAutoWalk()
                     local safeCenter = getSafePosition(CFrame.new(boundary.center), boundary)
@@ -830,6 +904,7 @@ task.spawn(function()
     end
 
     local lastBoundaryRefresh = 0
+    local lastExtensionZone = nil
 
     RunService.Heartbeat:Connect(function()
         pcall(function()
@@ -851,10 +926,14 @@ task.spawn(function()
                     lastBoundaryRefresh = tick()
                     zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
                 end
+                -- Create extensions when zone changes
+                if tostring(currentZoneId) ~= tostring(lastExtensionZone) then
+                    lastExtensionZone = currentZoneId
+                    createZoneExtensions(currentZoneId)
+                end
                 boundary = getZoneBoundary(currentZoneId)
             end
 
-            -- Pull character back into boundary if they escaped
             if boundary and isOutsideBoundary(charRoot.Position, boundary) then
                 stopAutoWalk()
                 currentTarget = nil
@@ -1030,12 +1109,19 @@ task.spawn(function()
                         break
                     end
                     pcall(function()
+                        -- If UFO auto zone is active and UFO event is ongoing, skip teleport entirely
+                        local autoUfoFlag = rayfieldLibrary.Flags.AutoUfoZone
+                        if autoUfoFlag and autoUfoFlag.CurrentValue and ufoClient then
+                            local ok, state = pcall(function() return ufoClient:getStateSource()() end)
+                            if ok and state and state.phase ~= "idle" and state.zoneId ~= nil then
+                                return -- UFO event active, do not interfere
+                            end
+                        end
+
                         local targetOption = rayfieldLibrary.Flags.FarmingZoneTarget and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
                         local currentZone = dataServiceClient and (dataServiceClient:get("zone") or 1) or 1
                         local targetZone = nil
                         if targetOption == "Best Unlocked" then
-                            -- FIX: use maxZone (current rebirth's highest unlocked zone)
-                            -- furthestZone is all-time and irrelevant after rebirth resets progress
                             targetZone = dataServiceClient and (dataServiceClient:get("maxZone") or 1) or 1
                         else
                             targetZone = tonumber(targetOption:match("Zone (%d+)"))
@@ -1316,7 +1402,19 @@ task.spawn(function()
         Callback = function(value)
             enemySettings.AutoFarm = value
             setNoclip(value)
-            if not value then
+            if value then
+                -- When enabled, set walkspeed to 40 baseline and create extensions for current zone
+                local char = localPlayer.Character
+                if char then
+                    local hum = char:FindFirstChildWhichIsA("Humanoid")
+                    if hum then hum.WalkSpeed = 40 end
+                end
+                local currentZoneId = dataServiceClient and dataServiceClient:get("zone") or nil
+                if currentZoneId then
+                    lastExtensionZone = currentZoneId
+                    createZoneExtensions(currentZoneId)
+                end
+            else
                 currentTarget = nil
                 stopAutoWalk()
             end
@@ -2513,7 +2611,7 @@ task.spawn(function()
     })
 
     optEffectsToggle = featureToggle(settingsTab, {
-        Name = "Destroy Effects (Particles & Fire)", CurrentValue=false, Flag="DestroyEffects",
+        Name = "Destroy Effects", CurrentValue=false, Flag="DestroyEffects",
         Callback = function(Value)
             if updatingOptimizations or not Value then return end
             for _, d in ipairs(game:GetDescendants()) do if OPT_VISUAL_TYPES[d.ClassName] or d:IsA("Fire") then pcall(function() d:Destroy() end) end end
