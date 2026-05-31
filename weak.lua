@@ -45,7 +45,7 @@ task.spawn(function()
 	-- Global manual override tracking table
 	-- Each key is a feature name, value is the tick() time when user last manually changed it
 	local manualOverrideTimes = {}
-	local MANUAL_OVERRIDE_DURATION = 30 -- seconds to respect manual changes
+	local MANUAL_OVERRIDE_DURATION = 3 -- seconds to respect manual changes
 
 	local function markManualOverride(featureKey)
 		manualOverrideTimes[featureKey] = tick()
