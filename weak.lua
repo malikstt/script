@@ -93,9 +93,6 @@ end)
 task.spawn(function()
 	repeat task.wait() until game:IsLoaded()
 
-	-- ============================================================
-	-- LOGGER
-	-- ============================================================
 	local Logger = {}
 	Logger.LogHistory = {}
 
@@ -113,9 +110,6 @@ task.spawn(function()
 	function Logger:warn(s, f, m)       self:log("WARN",  s, f, m)    end
 	function Logger:error(s, f, m, e)   self:log("ERROR", s, f, m, e) end
 
-	-- ============================================================
-	-- SERVICES (cached once)
-	-- ============================================================
 	local Players           = game:GetService("Players")
 	local RunService        = game:GetService("RunService")
 	local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -123,16 +117,12 @@ task.spawn(function()
 	local TweenService      = game:GetService("TweenService")
 	local localPlayer       = Players.LocalPlayer
 
-	-- Anti-AFK
 	local virtualUser = game:GetService("VirtualUser")
 	localPlayer.Idled:Connect(function()
 		virtualUser:CaptureController()
 		virtualUser:ClickButton2(Vector2.new())
 	end)
 
-	-- ============================================================
-	-- RAYFIELD LOAD
-	-- ============================================================
 	Logger:info("CactusHub", "Init", "Loading Rayfield...")
 	local rayfieldLibrary
 	local rayfieldOk, rayfieldErr = pcall(function()
@@ -158,9 +148,6 @@ task.spawn(function()
 		KeySystem             = false,
 	})
 
-	-- ============================================================
-	-- WRAPPER HELPERS
-	-- ============================================================
 	local function featureToggle(tab, config, fn)
 		local wc = {}
 		for k, v in pairs(config) do wc[k] = v end
@@ -189,9 +176,6 @@ task.spawn(function()
 		return tab:CreateButton(wc)
 	end
 
-	-- ============================================================
-	-- TABS
-	-- ============================================================
 	local mainTab     = mainWindow:CreateTab("Main",        74725529332053)
 	local farmingTab  = mainWindow:CreateTab("Farming",    114367663524453)
 	local gameTab     = mainWindow:CreateTab("Game",        77999805030576)
@@ -202,9 +186,6 @@ task.spawn(function()
 	local settingsTab = mainWindow:CreateTab("Settings",   120533439477016)
 	local statsTab    = mainWindow:CreateTab("Stats",      102533388850982)
 
-	-- ============================================================
-	-- FPS / PING DISPLAY  (interval-based, no per-frame alloc)
-	-- ============================================================
 	local fpsValue   = "..."
 	local pingValue  = "..."
 	local statusLabel = mainTab:CreateLabel("FPS: ... / PING: ...ms")
@@ -235,9 +216,6 @@ task.spawn(function()
 		end
 	end)
 
-	-- ============================================================
-	-- MAIN TAB BUTTONS / PARAGRAPHS
-	-- ============================================================
 	featureButton(mainTab, {
 		Name     = "Copy Discord Invite",
 		Callback = function()
@@ -276,7 +254,6 @@ task.spawn(function()
 		Content = "[+] Auto Stay in UFO Zone\n[+] Auto Collect UFO Loot\n[+] Live UFO Phase Display\n[+] Live UFO Zone Display and State\n[+] Live Next Event Countdown Timer\n[+] Live Golden UFO if found\n[+] Manual Refresh Status Button\n[+] Auto Farm Zone ( x4 faster tp )\n[+] Added beammeup / aliensarehere in Auto Redeem Codes\n[+] Added New Zones\n[+] Bug Fixes"
 	})
 
-	-- Disable AutoRejoin module
 	pcall(function()
 		local m = require(ReplicatedStorage.Source.Features.AutoRejoin.AutoRejoinServiceClient)
 		pcall(function() m:disable() end)
@@ -304,9 +281,6 @@ task.spawn(function()
 		print("AutoRejoin disabled")
 	end)
 
-	-- ============================================================
-	-- MODULE REFERENCES
-	-- ============================================================
 	local packages, dataServiceClient, Networker
 	local networkerRoll, inventoryServiceClient, xpTransferServiceClient
 	local rollServiceRemote, codeServiceRemote, inventoryServiceRemote
@@ -398,7 +372,6 @@ task.spawn(function()
 
 			pcall(function() RecipesModule = require(sourceFolder.Features.Crafting.Recipes) end)
 
-			-- lazy-load upgrade+data clients
 			task.spawn(function()
 				local rs = game:GetService("ReplicatedStorage")
 				local ok1, ok2
@@ -419,9 +392,6 @@ task.spawn(function()
 		end
 	end)
 
-	-- ============================================================
-	-- CONSTANTS / SHARED STATE
-	-- ============================================================
 	local CATEGORY_IDS   = { "basic", "shiny", "big", "huge", "inverted" }
 	local MUTATION_ODDS  = { basic = nil, shiny = 0.004, big = 0.01, huge = 0.001, inverted = 0.0004 }
 	local DICE           = { "golden", "diamond", "void", "galaxy" }
@@ -529,9 +499,6 @@ task.spawn(function()
 		return nil
 	end
 
-	-- ============================================================
-	-- ZONE BOUNDARY (cached, refreshed by AutoFarm loop)
-	-- ============================================================
 	local zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
 
 	local function getZoneBoundary(zoneId)
@@ -581,9 +548,6 @@ task.spawn(function()
 		return not isOutsideBoundary(root.Position, boundary)
 	end
 
-	-- ============================================================
-	-- AUTO FARM STATE
-	-- ============================================================
 	local RANGE                = 50
 	local cachedContainer      = nil
 	local cachedEnemies        = {}
@@ -660,7 +624,6 @@ task.spawn(function()
 		return getMutation(enemy) == enemySettings.MutationFilter:lower()
 	end
 
-	-- Cache refresh: max once every 2 seconds
 	local function refreshEnemyCache()
 		local now = tick()
 		if now - lastCacheTime < 2 then return end
@@ -871,12 +834,9 @@ task.spawn(function()
 		return bestEnemy, bestId
 	end
 
-	-- ============================================================
-	-- MAIN AUTOFARM HEARTBEAT  (throttled to ~10 Hz)
-	-- ============================================================
 	local lastBoundaryRefresh = 0
 	local farmAccum           = 0
-	local FARM_INTERVAL       = 0.1   -- run logic at 10 Hz max
+	local FARM_INTERVAL       = 0.1
 
 	RunService.Heartbeat:Connect(function(dt)
 		farmAccum = farmAccum + dt
@@ -932,9 +892,6 @@ task.spawn(function()
 		end)
 	end)
 
-	-- ============================================================
-	-- FARMING TAB — ROLLING
-	-- ============================================================
 	farmingTab:CreateSection("Rolling")
 
 	featureToggle(farmingTab, {
@@ -1008,7 +965,6 @@ task.spawn(function()
 
 	local DiceLuckLabel = farmingTab:CreateLabel("Total Stacked: x0")
 
-	-- Dice stacker loop (0.5 s interval — unchanged from original)
 	task.spawn(function()
 		while true do
 			task.wait(0.5)
@@ -1058,9 +1014,6 @@ task.spawn(function()
 		end
 	end)
 
-	-- ============================================================
-	-- FARMING TAB — ZONES
-	-- ============================================================
 	farmingTab:CreateSection("Zones")
 
 	pcall(function()
@@ -1135,9 +1088,6 @@ task.spawn(function()
 		end,
 	})
 
-	-- ============================================================
-	-- FARMING TAB — SLIMES & XP
-	-- ============================================================
 	farmingTab:CreateSection("Slimes & XP")
 
 	featureToggle(farmingTab, {
@@ -1165,7 +1115,7 @@ task.spawn(function()
 	local selectedSlimeMode = "Best"
 	local feedConnection   = nil
 	local feedAccum        = 0
-	local FEED_INTERVAL    = 3   -- feed every 3 s, not every frame
+	local FEED_INTERVAL    = 3
 
 	local function getOwnedFruitIds()
 		if not dataServiceClient or not FruitsModule then return {} end
@@ -1376,9 +1326,6 @@ task.spawn(function()
 		end
 	end)
 
-	-- ============================================================
-	-- FARMING TAB — LOOT
-	-- ============================================================
 	farmingTab:CreateSection("Loot")
 
 	featureToggle(farmingTab, {
@@ -1410,9 +1357,6 @@ task.spawn(function()
 		end,
 	})
 
-	-- ============================================================
-	-- GAME TAB — AUTO FARM CONTROLS
-	-- ============================================================
 	gameTab:CreateSection("Auto Farm")
 
 	featureToggle(gameTab, {
@@ -1465,9 +1409,6 @@ task.spawn(function()
 		end,
 	})
 
-	-- ============================================================
-	-- GAME TAB — CONTROLS (Auto Shoot)
-	-- ============================================================
 	gameTab:CreateSection("Controls")
 
 	local combatEnabled  = false
@@ -1492,7 +1433,6 @@ task.spawn(function()
 	featureToggle(gameTab, { Name = "Auto Shoot Enemies (getgc)", CurrentValue = false, Flag = "CombatAutoShoot", Callback = function(value) combatEnabled = value end })
 	gameTab:CreateDropdown({ Name = "Combat Target Priority", Options = { "Closest", "Lowest HP", "Highest HP", "Most Coins & Goop" }, CurrentOption = { "Closest" }, MultipleOptions = false, Flag = "CombatTargetPriority", Callback = function() end })
 
-	-- Auto Shoot loop (0.1 s — getgc is expensive; kept at original interval since it only runs when combat is on)
 	task.spawn(function()
 		local controller = nil
 		while true do
@@ -1527,9 +1467,6 @@ task.spawn(function()
 		end
 	end)
 
-	-- ============================================================
-	-- GAME TAB — PROGRESS
-	-- ============================================================
 	gameTab:CreateSection("Progress")
 
 	featureToggle(gameTab, {
@@ -1561,9 +1498,6 @@ task.spawn(function()
 
 	gameTab:CreateInput({ Name = "Minimum Zone To Rebirth", CurrentValue = "", PlaceholderText = "e.g. 10", RemoveTextAfterFocusLost = false, Flag = "GameMinZoneRebirth", Callback = function() end })
 
-	-- ============================================================
-	-- GAME TAB — UPGRADES
-	-- ============================================================
 	gameTab:CreateSection("Upgrades")
 
 	featureToggle(gameTab, {
@@ -1638,9 +1572,6 @@ task.spawn(function()
 
 	gameTab:CreateDropdown({ Name = "Upgrade Mode", Options = { "All", "Coins", "Goop", "Rolls" }, CurrentOption = { "All" }, MultipleOptions = true, Flag = "GameUpgradeMode", Callback = function() end })
 
-	-- ============================================================
-	-- GAME TAB — RECIPES / CRAFTING
-	-- ============================================================
 	gameTab:CreateSection("Recipes")
 
 	pcall(function()
@@ -1761,7 +1692,6 @@ task.spawn(function()
 			return { "requestCraftRecipe", recipeId, ingredientIds, tostring(amount) }
 		end
 
-		-- Cache the crafting remote instead of re-walking every craft
 		local craftingRemoteCache = nil
 		local function getCraftingRemote()
 			if craftingRemoteCache then return craftingRemoteCache end
@@ -1868,9 +1798,6 @@ task.spawn(function()
 		rayfieldLibrary:Notify({ Title = "Cactus Hub", Content = "Loaded — " .. (#recipeIdsList) .. " unlocked recipes ready.", Duration = 5, Image = 4483362458 })
 	end)
 
-	-- ============================================================
-	-- UFO TAB
-	-- ============================================================
 	local ufoZonesRemote = nil
 	pcall(function()
 		ufoZonesRemote = ReplicatedStorage
@@ -1903,7 +1830,6 @@ task.spawn(function()
 	local ufoClient = nil
 	pcall(function() ufoClient = require(ReplicatedStorage.Source.Features.UfoEvent.UfoEventServiceClient) end)
 
-	-- Cache ZonesModule for UFO so it isn't required inside the loop
 	local ufoZonesModuleCache = nil
 	local function getUfoZonesModule()
 		if ufoZonesModuleCache then return ufoZonesModuleCache end
@@ -2034,9 +1960,6 @@ task.spawn(function()
 		end
 	end)
 
-	-- ============================================================
-	-- INDEX TAB
-	-- ============================================================
 	local indexRunning    = false
 	local indexThread     = nil
 	local luckPollThread  = nil
@@ -2210,7 +2133,6 @@ task.spawn(function()
 		)
 	end
 
-	-- Index progress update: every 5 s (was 2 s)
 	task.spawn(function()
 		while true do
 			task.wait(5)
@@ -2228,9 +2150,6 @@ task.spawn(function()
 		end
 	end)
 
-	-- ============================================================
-	-- MISC TAB
-	-- ============================================================
 	miscTab:CreateSection("Codes & Rewards")
 
 	featureToggle(miscTab, {
@@ -2395,9 +2314,6 @@ task.spawn(function()
 		end
 	end)
 
-	-- ============================================================
-	-- WEBHOOK TAB
-	-- ============================================================
 	webhookTab:CreateSection("Warning")
 	webhookTab:CreateParagraph({ Title = "⚠️ WARNING", Content = "WEBHOOK WILL ONLY WORK IF YOU MANUALLY ENABLE AUTO ROLL IN GAME\nPLEASE DISABLE FAST ROLL (from Farming Tab) if you have it enabled" })
 	webhookTab:CreateSection("Configuration")
@@ -2507,7 +2423,6 @@ task.spawn(function()
 		return not unlocked[slimeId]
 	end
 
-	-- recentWebhookNotifications — capped at 500 to prevent infinite growth
 	local recentWebhookNotifications = {}
 	local webhookNotifCount          = 0
 	local WEBHOOK_NOTIF_CAP          = 500
@@ -2589,7 +2504,6 @@ task.spawn(function()
 		end)
 	end
 
-	-- Webhook watcher: poll at 0.5 s (was 0.1 s)
 	local lastRollResultsHash = nil
 	task.spawn(function()
 		while true do
@@ -2651,9 +2565,6 @@ task.spawn(function()
 		end
 	end)
 
-	-- ============================================================
-	-- SETTINGS TAB
-	-- ============================================================
 	settingsTab:CreateParagraph({ Title = "🍀 Want a serverhop script for luck servers?", Content = "Join the Discord! discord.gg/qMWFBWdcf" })
 	settingsTab:CreateSection("System")
 
@@ -2708,9 +2619,6 @@ task.spawn(function()
 
 	settingsTab:CreateParagraph({ Title = "MAY be Patched", Content = "Auto Send & Accept Friend Requests may not work depending on current Roblox API restrictions." })
 
-	-- ============================================================
-	-- SETTINGS TAB — ADVANCED OPTIMIZATION
-	-- ============================================================
 	settingsTab:CreateSection("Advanced Optimization")
 
 	local OPT_VISUAL_TYPES = {
@@ -2722,7 +2630,6 @@ task.spawn(function()
 	local updatingOptimizations = false
 	local optGPUToggle, optEffectsToggle, optGCToggle, optIntenseToggle, maxFpsToggle
 
-	-- GC cleaner: calls collectgarbage() on a 30-second interval (not every frame)
 	local gcCleanerConn = nil
 	local gcAccum       = 0
 	local GC_INTERVAL   = 30
@@ -2826,9 +2733,6 @@ task.spawn(function()
 		end,
 	})
 
-	-- ============================================================
-	-- STATS TAB
-	-- ============================================================
 	local function safeGet(...)
 		local ok, data = pcall(function() return dataServiceClient._data._data end)
 		if not ok or type(data) ~= "table" then return 0 end
@@ -2995,7 +2899,6 @@ task.spawn(function()
 	lbl("inv",      "Total Slimes: --  |  Species: --  |  Crafting: --")
 	lbl("equipped", "Equipped: --")
 
-	-- Stats update at 5 s (was 2 s) — reduces safeGet traversal frequency
 	task.spawn(function()
 		while true do
 			task.wait(5)
@@ -3045,7 +2948,6 @@ task.spawn(function()
 		end
 	end)
 
-	-- Auto Rejoin on disconnect
 	game:GetService("GuiService").ErrorMessageChanged:Connect(function()
 		if rayfieldLibrary.Flags.SettingsAutoRejoin and rayfieldLibrary.Flags.SettingsAutoRejoin.CurrentValue then
 			pcall(function()
