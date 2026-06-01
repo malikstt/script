@@ -2150,8 +2150,12 @@ task.spawn(function()
 		pcall(function()
 			local sortedBoostKinds = {}
 			if boostKinds then for _, kind in ipairs(boostKinds) do table.insert(sortedBoostKinds, kind) end table.sort(sortedBoostKinds) end
+			
+			local activePotionTimers = {}
+			local lastActivePotionCheck = 0
+			
 			featureToggle(miscTab, {
-				Name = "Auto Use Potions",
+				Name = "Auto Use Potions (Smart)",
 				CurrentValue = false,
 				Flag = "MiscUsePotions",
 				Callback = function(enabled)
@@ -2164,22 +2168,105 @@ task.spawn(function()
 								if not boostServiceRemote or not dataServiceClient then return end
 								local boosts = dataServiceClient:get("boosts") or {}
 								local selectedPotions = rayfieldLibrary.Flags.MiscPotionTypes and rayfieldLibrary.Flags.MiscPotionTypes.CurrentOption or {}
-								for _, potionType in ipairs(selectedPotions) do
+								local now = tick()
+								
+								local potionsToUse = {}
+								if selectedPotions and #selectedPotions > 0 then
+									if selectedPotions[1] == "All" then
+										for _, kind in ipairs(sortedBoostKinds) do
+											table.insert(potionsToUse, kind)
+										end
+									else
+										potionsToUse = selectedPotions
+									end
+								end
+								
+								for _, potionType in ipairs(potionsToUse) do
 									local boostData = boosts[potionType]
-									if boostData and (boostData.amount or 0) > 0 then
-										pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
+									if boostData then
+										local hasAmount = (boostData.amount or 0) > 0
+										local hasActive = (boostData.active or 0) > 0
+										local timeLeft = (boostData.expiryTime or 0) - now
+										
+										if hasAmount and (hasActive == 0 or timeLeft < 30) then
+											pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
+											activePotionTimers[potionType] = now + 3600
+											task.wait(0.2)
+										end
 									end
 								end
 							end)
-							task.wait(1)
+							task.wait(5)
 						end
 					end)
 				end,
 			})
 			if #sortedBoostKinds > 0 then
-				miscTab:CreateDropdown({ Name="Potion Types", Options=sortedBoostKinds, CurrentOption={sortedBoostKinds[1]}, MultipleOptions=true, Flag="MiscPotionTypes", Callback=function() end })
+				local optionsWithAll = {"All"}
+				for _, kind in ipairs(sortedBoostKinds) do
+					table.insert(optionsWithAll, kind)
+				end
+				miscTab:CreateDropdown({ 
+					Name="Potion Types", 
+					Options=optionsWithAll, 
+					CurrentOption={"All"}, 
+					MultipleOptions=true, 
+					Flag="MiscPotionTypes", 
+					Callback=function() end 
+				})
 			else
 				miscTab:CreateLabel("Potion types not yet loaded — enable after modules load.")
+			end
+		end)
+
+		local potionDurations = {}
+
+		task.spawn(function()
+			while true do
+				task.wait(1)
+				pcall(function()
+					if not dataServiceClient then return end
+					local boosts = dataServiceClient:get("boosts") or {}
+					local now = tick()
+					
+					for potionType, boostData in pairs(boosts) do
+						if type(boostData) == "table" and (boostData.active or 0) > 0 then
+							if not potionDurations[potionType] then
+								potionDurations[potionType] = {
+									startTime = now,
+									expiryTime = now + 3600
+								}
+							end
+						else
+							potionDurations[potionType] = nil
+						end
+					end
+				end)
+			end
+		end)
+
+		local potionStatusLabel = miscTab:CreateLabel("Active Potions: None")
+
+		task.spawn(function()
+			while true do
+				task.wait(2)
+				pcall(function()
+					if not dataServiceClient then return end
+					local boosts = dataServiceClient:get("boosts") or {}
+					local activePotions = {}
+					
+					for potionType, boostData in pairs(boosts) do
+						if type(boostData) == "table" and (boostData.active or 0) > 0 then
+							table.insert(activePotions, potionType)
+						end
+					end
+					
+					if #activePotions > 0 then
+						potionStatusLabel:Set("Active Potions: " .. table.concat(activePotions, ", "))
+					else
+						potionStatusLabel:Set("Active Potions: None")
+					end
+				end)
 			end
 		end)
 
