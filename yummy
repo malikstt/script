@@ -248,9 +248,9 @@ task.spawn(function()
 				offlineEarningsRemote  = getRemoteFunction("OfflineEarningsService")
 				indexServiceRemote     = getRemoteFunction("IndexService")
 				lootServiceRemote      = getRemoteFunction("LootService")
-				craftingServiceRemote     = getRemoteFunction("CraftingService")
-				xpTransferMachineRemote   = getRemoteFunction("XpTransferService")
-				fruitExtractorRemote      = getRemoteFunction("FruitExtractorService")
+				craftingServiceRemote  = getRemoteFunction("CraftingService")
+				xpTransferMachineRemote = getRemoteFunction("XpTransferService")
+				fruitExtractorRemote   = getRemoteFunction("FruitExtractorService")
 				sourceFolder = ReplicatedStorage:WaitForChild("Source", 30)
 				if not sourceFolder then error("Source folder not found") end
 				upgradeTreeModule  = require(sourceFolder.Features.Upgrades.UpgradeTree)
@@ -1359,9 +1359,6 @@ task.spawn(function()
 			end,
 		})
 
-		-- =============================================
-		-- FRUIT EXTRACTOR SECTION
-		-- =============================================
 		farmingTab:CreateSection("Fruit Extractor")
 
 		local autoExtractEnabled = false
@@ -1402,7 +1399,10 @@ task.spawn(function()
 		end
 
 		local function doExtract()
-			if not fruitExtractorRemote then return end
+			if not fruitExtractorRemote then
+				rayfieldLibrary:Notify({ Title = "Error: Auto Extract Fruits", Content = "FruitExtractor remote not loaded yet.", Duration = 4 })
+				return
+			end
 			local targets = getTargetSlimesForExtract()
 			if #targets == 0 then return end
 			for _, entry in ipairs(targets) do
@@ -1494,10 +1494,6 @@ task.spawn(function()
 				})
 			end)
 		end)
-
-		-- =============================================
-		-- GAME TAB
-		-- =============================================
 
 		gameTab:CreateSection("Auto Farm")
 
@@ -1646,7 +1642,6 @@ task.spawn(function()
 
 		gameTab:CreateSection("Upgrades")
 
-		-- FIXED Auto Upgrade: uses UpgradeTree correctly, iterates all upgrade ids properly
 		featureToggle(gameTab, {
 			Name = "Auto Upgrade Purchasing",
 			CurrentValue = false,
@@ -1657,26 +1652,25 @@ task.spawn(function()
 					while true do
 						local flag = rayfieldLibrary.Flags.GameAutoUpgrade
 						if not flag or not flag.CurrentValue then break end
-						if not upgradeServiceRemote or not dataServiceClient then task.wait(1) continue end
-						pcall(function()
+						if not upgradeServiceRemote or not dataServiceClient then
+							task.wait(1)
+							continue
+						end
+						local upgradeOk, upgradeErr = pcall(function()
 							local upgradeMode = rayfieldLibrary.Flags.GameUpgradeMode and rayfieldLibrary.Flags.GameUpgradeMode.CurrentOption or {"All"}
 							local modeSet = {}
 							for _, m in ipairs(upgradeMode) do modeSet[m] = true end
-
 							local unlockedUpgrades = dataServiceClient:get("upgrades") or {}
 							local coins        = dataServiceClient:get("coins") or 0
 							local goop         = dataServiceClient:get("goop") or 0
 							local rollCurrency = dataServiceClient:get("rollCurrency") or 0
-
 							if not upgradeTreeModule then return end
-
-							-- UpgradeTree is a flat table of upgradeId -> upgradeInfo
-							-- It may also be an array of such tables, handle both
 							local function tryUnlock(upgradeId, upgradeInfo)
+								if type(upgradeId) ~= "string" then return end
 								if not upgradeInfo or type(upgradeInfo) ~= "table" then return end
 								if unlockedUpgrades[upgradeId] then return end
 								local cost = upgradeInfo.cost
-								if not cost then return end
+								if not cost or type(cost) ~= "table" then return end
 								local costAmount   = cost.amount or 0
 								local currencyType = cost.currency or ""
 								local modeMatches = modeSet["All"]
@@ -1696,35 +1690,29 @@ task.spawn(function()
 									elseif currencyType == "goop" then goop = goop - costAmount
 									elseif currencyType == "rollCurrency" then rollCurrency = rollCurrency - costAmount end
 									unlockedUpgrades[upgradeId] = true
-									Logger:info("AutoUpgrade", upgradeId, "Unlocked successfully")
 								end
 								task.wait(0.2)
 							end
-
-							-- Handle both array-of-trees and flat-table formats
-							if type(upgradeTreeModule) == "table" then
-								-- Check if it's array-style (numeric keys) or flat map
-								local isArray = #upgradeTreeModule > 0
-								if isArray then
-									for _, tree in ipairs(upgradeTreeModule) do
-										if type(tree) == "table" then
-											for upgradeId, upgradeInfo in pairs(tree) do
-												if type(upgradeId) == "string" then
-													tryUnlock(upgradeId, upgradeInfo)
-												end
-											end
+							local function traverseTree(node)
+								if type(node) ~= "table" then return end
+								for k, v in pairs(node) do
+									if type(k) == "string" and type(v) == "table" then
+										if v.cost then
+											tryUnlock(k, v)
+										else
+											traverseTree(v)
 										end
-									end
-								else
-									-- flat table: upgradeId -> upgradeInfo directly
-									for upgradeId, upgradeInfo in pairs(upgradeTreeModule) do
-										if type(upgradeId) == "string" then
-											tryUnlock(upgradeId, upgradeInfo)
-										end
+									elseif type(k) == "number" and type(v) == "table" then
+										traverseTree(v)
 									end
 								end
 							end
+							traverseTree(upgradeTreeModule)
 						end)
+						if not upgradeOk then
+							Logger:error("AutoUpgrade", "Loop", "Auto Upgrade error", upgradeErr)
+							rayfieldLibrary:Notify({ Title = "Error: Auto Upgrade Purchasing", Content = tostring(upgradeErr):sub(1, 100), Duration = 5 })
+						end
 						task.wait(0.5)
 					end
 				end)
@@ -1857,13 +1845,17 @@ task.spawn(function()
 			end
 
 			local function doCraftAll(amount)
-				local craftRemote = getCraftingRemote()
+				local ok, craftRemote = pcall(getCraftingRemote)
+				if not ok or not craftRemote then
+					rayfieldLibrary:Notify({ Title = "Error: Craft Now", Content = "CraftingService remote not available.", Duration = 4 })
+					return {}
+				end
 				local results = {}
 				for _, recipeId in ipairs(craftingState.selectedRecipeIds) do
 					local args = buildCraftArgsForRecipe(recipeId, amount)
 					if args then
-						local result = craftRemote:InvokeServer(table.unpack(args))
-						results[recipeId] = result ~= false
+						local craftOk, result = pcall(function() return craftRemote:InvokeServer(table.unpack(args)) end)
+						results[recipeId] = craftOk and result ~= false
 					end
 				end
 				return results
@@ -2256,7 +2248,10 @@ task.spawn(function()
 					while true do
 						local flag = rayfieldLibrary.Flags.MiscRedeemCodes
 						if not flag or not flag.CurrentValue then break end
-						if not codeServiceRemote then break end
+						if not codeServiceRemote then
+							rayfieldLibrary:Notify({ Title = "Error: Auto Redeem Codes", Content = "CodeService remote not loaded.", Duration = 4 })
+							break
+						end
 						for _, code in ipairs(codes) do
 							if not (rayfieldLibrary.Flags.MiscRedeemCodes and rayfieldLibrary.Flags.MiscRedeemCodes.CurrentValue) then break end
 							pcall(function() codeServiceRemote:InvokeServer("redeem", code) end)
@@ -2278,7 +2273,10 @@ task.spawn(function()
 					while true do
 						local flag = rayfieldLibrary.Flags.MiscClaimOffline
 						if not flag or not flag.CurrentValue then break end
-						if not offlineEarningsRemote then break end
+						if not offlineEarningsRemote then
+							rayfieldLibrary:Notify({ Title = "Error: Auto Claim Offline Earnings", Content = "OfflineEarnings remote not loaded.", Duration = 4 })
+							break
+						end
 						pcall(function() offlineEarningsRemote:InvokeServer("requestClaim") end)
 						task.wait(60)
 					end
@@ -2297,7 +2295,10 @@ task.spawn(function()
 						local flag = rayfieldLibrary.Flags.MiscClaimIndex
 						if not flag or not flag.CurrentValue then break end
 						pcall(function()
-							if not indexServiceRemote or not indexRewardsModule or not dataServiceClient then return end
+							if not indexServiceRemote or not indexRewardsModule or not dataServiceClient then
+								rayfieldLibrary:Notify({ Title = "Error: Auto Claim Index Rewards", Content = "Required modules not loaded yet.", Duration = 4 })
+								return
+							end
 							local indexData = dataServiceClient:get("index")
 							if not indexData or not indexData.categories then return end
 							for categoryKey, rewardsList in pairs(indexRewardsModule) do
@@ -2328,7 +2329,10 @@ task.spawn(function()
 			repeat task.wait(0.5) until modulesLoaded
 			pcall(function()
 				local sortedBoostKinds = {}
-				if boostKinds then for _, kind in ipairs(boostKinds) do table.insert(sortedBoostKinds, kind) end table.sort(sortedBoostKinds) end
+				if boostKinds then
+					for _, kind in ipairs(boostKinds) do table.insert(sortedBoostKinds, kind) end
+					table.sort(sortedBoostKinds)
+				end
 				featureToggle(miscTab, {
 					Name = "Auto Use Potions",
 					CurrentValue = false,
@@ -2340,7 +2344,10 @@ task.spawn(function()
 								local flag = rayfieldLibrary.Flags.MiscUsePotions
 								if not flag or not flag.CurrentValue then break end
 								pcall(function()
-									if not boostServiceRemote or not dataServiceClient then return end
+									if not boostServiceRemote or not dataServiceClient then
+										rayfieldLibrary:Notify({ Title = "Error: Auto Use Potions", Content = "BoostService remote not loaded.", Duration = 4 })
+										return
+									end
 									local boosts = dataServiceClient:get("boosts") or {}
 									local selectedPotions = rayfieldLibrary.Flags.MiscPotionTypes and rayfieldLibrary.Flags.MiscPotionTypes.CurrentOption or {}
 									for _, potionType in ipairs(selectedPotions) do
@@ -2382,7 +2389,10 @@ task.spawn(function()
 								local flag = rayfieldLibrary.Flags.MiscUseDice
 								if not flag or not flag.CurrentValue then break end
 								pcall(function()
-									if not inventoryServiceRemote or not dataServiceClient then return end
+									if not inventoryServiceRemote or not dataServiceClient then
+										rayfieldLibrary:Notify({ Title = "Error: Auto Use Dice & Items", Content = "InventoryService remote not loaded.", Duration = 4 })
+										return
+									end
 									local items = dataServiceClient:get("items") or {}
 									local selectedDiceItems = rayfieldLibrary.Flags.MiscDiceTypes and rayfieldLibrary.Flags.MiscDiceTypes.CurrentOption or {}
 									for _, diceName in ipairs(selectedDiceItems) do
