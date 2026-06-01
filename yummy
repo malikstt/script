@@ -1282,6 +1282,138 @@ task.spawn(function()
 			})
 		end)
 
+		-- =============================================
+		-- FRUIT EXTRACTOR SECTION (NEW)
+		-- =============================================
+		farmingTab:CreateSection("Fruit Extractor")
+
+		local autoExtractEnabled = false
+		local selectedExtractFruitIds = {"ANY"}
+		local selectedExtractSlimeMode = "Best"
+
+		local function getTargetSlimesForExtract()
+			if not dataServiceClient then return {} end
+			if selectedExtractSlimeMode == "Best" then
+				local key, data = getBestSlimeEntry()
+				if key and data then return {{key=key, data=data}} end
+				return {}
+			else
+				local equipped = dataServiceClient:get("equipped") or {}
+				local result = {}
+				for _, slimeKey in ipairs(equipped) do
+					if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
+						local inv = dataServiceClient:get("inventory") or {}
+						local data = inv[slimeKey]
+						if type(data) == "table" then table.insert(result, {key=slimeKey, data=data}) end
+					end
+				end
+				return result
+			end
+		end
+
+		local function resolveExtractFruitList()
+			local owned = getOwnedFruitIds()
+			if selectedExtractFruitIds[1] == "ANY" then
+				local result = {}
+				for _, f in ipairs(ALL_FRUITS) do if owned[f.id] then table.insert(result, f.id) end end
+				return result
+			else
+				local result = {}
+				for _, fid in ipairs(selectedExtractFruitIds) do if owned[fid] then table.insert(result, fid) end end
+				return result
+			end
+		end
+
+		local function doExtract()
+			if not fruitExtractorRemote then return end
+			local targets = getTargetSlimesForExtract()
+			local fruitsToExtract = resolveExtractFruitList()
+			if #targets == 0 then return end
+			for _, entry in ipairs(targets) do
+				-- If ANY or no specific filter, extract all from slime
+				-- If specific fruits selected, only extract if slime has that fruit
+				local shouldExtract = false
+				if selectedExtractFruitIds[1] == "ANY" then
+					shouldExtract = true
+				else
+					for _, fruitId in ipairs(fruitsToExtract) do
+						if slimeHasFruit(entry.data, fruitId) then
+							shouldExtract = true
+							break
+						end
+					end
+				end
+				if shouldExtract then
+					pcall(function()
+						fruitExtractorRemote:InvokeServer("requestExtractFruits", entry.key)
+					end)
+					task.wait(0.3)
+				end
+			end
+		end
+
+		featureToggle(farmingTab, {
+			Name = "Auto Extract Fruits from Slime(s)",
+			CurrentValue = false,
+			Flag = "AutoExtractToggle",
+			Callback = function(value)
+				autoExtractEnabled = value
+				if value then
+					task.spawn(function()
+						while autoExtractEnabled do
+							local flag = rayfieldLibrary.Flags.AutoExtractToggle
+							if not flag or not flag.CurrentValue then break end
+							pcall(doExtract)
+							task.wait(2)
+						end
+					end)
+				end
+			end,
+		})
+
+		farmingTab:CreateDropdown({
+			Name = "Extract From",
+			Options = {"Best", "Equipped Team"},
+			CurrentOption = {"Best"},
+			MultipleOptions = false,
+			Flag = "ExtractSlimeModeDropdown",
+			Callback = function(option)
+				selectedExtractSlimeMode = type(option) == "table" and option[1] or option
+			end,
+		})
+
+		pcall(function()
+			local extractFruitOptions = {"Any"}
+			local extractLabelToId = {}
+			local extractFruitNames = {}
+			for _, f in ipairs(FruitsModule and FruitsModule.getSortedFruits() or {}) do
+				table.insert(extractFruitNames, f.powerName)
+				extractLabelToId[f.powerName] = f.id
+			end
+			table.sort(extractFruitNames)
+			for _, name in ipairs(extractFruitNames) do table.insert(extractFruitOptions, name) end
+			farmingTab:CreateDropdown({
+				Name = "Fruits to Extract",
+				Options = extractFruitOptions,
+				CurrentOption = {"Any"},
+				MultipleOptions = true,
+				Flag = "ExtractFruitDropdown",
+				Callback = function(options)
+					local picked = type(options) == "table" and options or {options}
+					selectedExtractFruitIds = {}
+					for _, label in ipairs(picked) do
+						if label == "Any" then
+							selectedExtractFruitIds = {"ANY"}
+							return
+						else
+							table.insert(selectedExtractFruitIds, extractLabelToId[label])
+						end
+					end
+					if #selectedExtractFruitIds == 0 then selectedExtractFruitIds = {"ANY"} end
+				end,
+			})
+		end)
+
 		featureToggle(farmingTab, { Name = "Auto Transfer XP", CurrentValue = false, Flag = "FarmingTransferXP", Callback = function() end })
 		farmingTab:CreateDropdown({ Name="Transfer To", Options={"Best Slime","Whole Team"}, CurrentOption={"Best Slime"}, MultipleOptions=false, Flag="FarmingTransferTarget", Callback=function() end })
 		farmingTab:CreateDropdown({ Name="Transfer From", Options={"All Slimes","Unequipped With XP"}, CurrentOption={"Unequipped With XP"}, MultipleOptions=false, Flag="FarmingTransferSource", Callback=function() end })
@@ -2150,12 +2282,8 @@ task.spawn(function()
 		pcall(function()
 			local sortedBoostKinds = {}
 			if boostKinds then for _, kind in ipairs(boostKinds) do table.insert(sortedBoostKinds, kind) end table.sort(sortedBoostKinds) end
-			
-			local activePotionTimers = {}
-			local lastActivePotionCheck = 0
-			
 			featureToggle(miscTab, {
-				Name = "Auto Use Potions (Smart)",
+				Name = "Auto Use Potions",
 				CurrentValue = false,
 				Flag = "MiscUsePotions",
 				Callback = function(enabled)
@@ -2168,105 +2296,22 @@ task.spawn(function()
 								if not boostServiceRemote or not dataServiceClient then return end
 								local boosts = dataServiceClient:get("boosts") or {}
 								local selectedPotions = rayfieldLibrary.Flags.MiscPotionTypes and rayfieldLibrary.Flags.MiscPotionTypes.CurrentOption or {}
-								local now = tick()
-								
-								local potionsToUse = {}
-								if selectedPotions and #selectedPotions > 0 then
-									if selectedPotions[1] == "All" then
-										for _, kind in ipairs(sortedBoostKinds) do
-											table.insert(potionsToUse, kind)
-										end
-									else
-										potionsToUse = selectedPotions
-									end
-								end
-								
-								for _, potionType in ipairs(potionsToUse) do
+								for _, potionType in ipairs(selectedPotions) do
 									local boostData = boosts[potionType]
-									if boostData then
-										local hasAmount = (boostData.amount or 0) > 0
-										local hasActive = (boostData.active or 0) > 0
-										local timeLeft = (boostData.expiryTime or 0) - now
-										
-										if hasAmount and (hasActive == 0 or timeLeft < 30) then
-											pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
-											activePotionTimers[potionType] = now + 3600
-											task.wait(0.2)
-										end
+									if boostData and (boostData.amount or 0) > 0 then
+										pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
 									end
 								end
 							end)
-							task.wait(5)
+							task.wait(1)
 						end
 					end)
 				end,
 			})
 			if #sortedBoostKinds > 0 then
-				local optionsWithAll = {"All"}
-				for _, kind in ipairs(sortedBoostKinds) do
-					table.insert(optionsWithAll, kind)
-				end
-				miscTab:CreateDropdown({ 
-					Name="Potion Types", 
-					Options=optionsWithAll, 
-					CurrentOption={"All"}, 
-					MultipleOptions=true, 
-					Flag="MiscPotionTypes", 
-					Callback=function() end 
-				})
+				miscTab:CreateDropdown({ Name="Potion Types", Options=sortedBoostKinds, CurrentOption={sortedBoostKinds[1]}, MultipleOptions=true, Flag="MiscPotionTypes", Callback=function() end })
 			else
 				miscTab:CreateLabel("Potion types not yet loaded — enable after modules load.")
-			end
-		end)
-
-		local potionDurations = {}
-
-		task.spawn(function()
-			while true do
-				task.wait(1)
-				pcall(function()
-					if not dataServiceClient then return end
-					local boosts = dataServiceClient:get("boosts") or {}
-					local now = tick()
-					
-					for potionType, boostData in pairs(boosts) do
-						if type(boostData) == "table" and (boostData.active or 0) > 0 then
-							if not potionDurations[potionType] then
-								potionDurations[potionType] = {
-									startTime = now,
-									expiryTime = now + 3600
-								}
-							end
-						else
-							potionDurations[potionType] = nil
-						end
-					end
-				end)
-			end
-		end)
-
-		local potionStatusLabel = miscTab:CreateLabel("Active Potions: None")
-
-		task.spawn(function()
-			while true do
-				task.wait(2)
-				pcall(function()
-					if not dataServiceClient then return end
-					local boosts = dataServiceClient:get("boosts") or {}
-					local activePotions = {}
-					
-					for potionType, boostData in pairs(boosts) do
-						if type(boostData) == "table" and (boostData.active or 0) > 0 then
-							table.insert(activePotions, potionType)
-						end
-					end
-					
-					if #activePotions > 0 then
-						potionStatusLabel:Set("Active Potions: " .. table.concat(activePotions, ", "))
-					else
-						potionStatusLabel:Set("Active Potions: None")
-					end
-				end)
 			end
 		end)
 
@@ -2714,166 +2759,4 @@ task.spawn(function()
 
 		local function getEquippedDisplay()
 			local equipped = safeGet("equipped")
-			if type(equipped) ~= "table" then return "None" end
-			local names = {}
-			for i = 1, 7 do
-				local uid = equipped[i]
-				if uid and type(uid) == "string" then
-					local clean = uid:match("%-(.+)$") or uid:gsub("^%.","")
-					table.insert(names, clean:sub(1,1):upper()..clean:sub(2))
-				end
-			end
-			table.sort(names)
-			return #names > 0 and table.concat(names,", ") or "None"
-		end
-
-		local function getIndexCounts()
-			local categories = safeGet("index","categories")
-			if type(categories) ~= "table" then return 0,0,0,0,0 end
-			local function count(cat) local t=categories[cat] return type(t)=="table" and countKeys(t.unlocked or {}) or 0 end
-			return count("basic"),count("big"),count("shiny"),count("huge"),count("inverted")
-		end
-
-		local function getTotalInventory()
-			local inv = safeGet("inventory")
-			if type(inv) ~= "table" then return 0 end
-			local total = 0
-			for _, v in pairs(inv) do if type(v)=="number" then total=total+v end end
-			return total
-		end
-
-		local function getUniqueSpecies()
-			local inv = safeGet("inventory")
-			if type(inv) ~= "table" then return 0 end
-			local seen, count = {}, 0
-			for key in pairs(inv) do
-				if type(key)=="string" and not key:match("^%.") then
-					local base = key:match("%-(.+)$") or key
-					if not seen[base] then seen[base]=true count=count+1 end
-				end
-			end
-			return count
-		end
-
-		local sessionStart = os.clock()
-		local startRolls = safeNum("stats","rolls")
-		local startKills = safeNum("stats","kills")
-		local startCoins = safeNum("coins")
-		local startGoop  = safeNum("goop")
-		local prevRolls, prevCoins, prevGoop = startRolls, startCoins, startGoop
-		local lastUpdate = os.clock()
-		local windowRPS, windowCPS, windowGPS = nil, nil, nil
-		local lastRollMove, lastCoinMove, lastGoopMove = os.clock(), os.clock(), os.clock()
-		local STALE = 60
-
-		task.spawn(function()
-			while true do
-				task.wait(10)
-				pcall(function()
-					local now = os.clock()
-					local dt = math.max(1, now - lastUpdate)
-					lastUpdate = now
-					local rolls = safeNum("stats","rolls")
-					local coins = safeNum("coins")
-					local goop  = safeNum("goop")
-					local dr = math.max(0,rolls-prevRolls)
-					local dc = math.max(0,coins-prevCoins)
-					local dg = math.max(0,goop-prevGoop)
-					if dr>0 then windowRPS=dr/dt lastRollMove=now end
-					if dc>0 then windowCPS=dc/dt lastCoinMove=now end
-					if dg>0 then windowGPS=dg/dt lastGoopMove=now end
-					prevRolls=rolls prevCoins=coins prevGoop=goop
-				end)
-			end
-		end)
-
-		local function getRate(windowVal, lastMove, startVal, curVal)
-			local now = os.clock()
-			if (now-lastMove) > STALE then return 0 end
-			if windowVal and windowVal > 0 then return windowVal end
-			local gain = math.max(0, curVal-startVal)
-			local elapsed = math.max(1, now-sessionStart)
-			return gain > 0 and (gain/elapsed) or 0
-		end
-
-		local statLabels = {}
-		local function lbl(key, text) statLabels[key] = statsTab:CreateLabel(text) end
-		lbl("sess",     "Session: --  |  Played: --  |  Rebirths: --")
-		lbl("rolls1",   "Rolls/sec: --  |  Rolls/min: --  |  Rolls/hr: --")
-		lbl("rolls2",   "Session Rolls: --  |  Lifetime: --")
-		lbl("coins1",   "Coins/min: --  |  Coins/hr: --")
-		lbl("coins2",   "Session Coins: --  |  Total Ever: --")
-		lbl("goop1",    "Goop/min: --  |  Goop/hr: --")
-		lbl("goop2",    "Session Goop: --  |  Balance: --")
-		lbl("kills",    "Session Kills: --  |  Lifetime Kills: --")
-		lbl("best",     "Best Ever: --  |  Odds: --")
-		lbl("daily",    "Best Today Odds: --")
-		lbl("prog",     "Zone: --  |  Max Zone: --  |  Roll Currency: --")
-		lbl("idx1",     "Basic: --  |  Big: --  |  Shiny: --  |  Huge: --  |  Inverted: --")
-		lbl("inv",      "Total Slimes: --  |  Species: --  |  Crafting: --")
-		lbl("equipped", "Equipped: --")
-
-		task.spawn(function()
-			while true do
-				task.wait(2)
-				pcall(function()
-					local now = os.clock()
-					local elapsed = math.max(1, now-sessionStart)
-					local rolls        = safeNum("stats","rolls")
-					local kills        = safeNum("stats","kills")
-					local coins        = safeNum("coins")
-					local goop         = safeNum("goop")
-					local timePlayed   = safeNum("stats","timePlayed")
-					local totalCoins   = safeNum("stats","totalCoins")
-					local rebirths     = safeNum("rebirths")
-					local zone         = safeNum("zone")
-					local maxZone      = safeNum("maxZone")
-					local rollCurrency = safeNum("rollCurrency")
-					local sessionRolls = math.max(0,rolls-startRolls)
-					local sessionKills = math.max(0,kills-startKills)
-					local sessionCoins = math.max(0,coins-startCoins)
-					local sessionGoop  = math.max(0,goop-startGoop)
-					local sh = math.floor(elapsed/3600)
-					local sm = math.floor((elapsed%3600)/60)
-					local ss = math.floor(elapsed%60)
-					local rps = getRate(windowRPS,lastRollMove,startRolls,rolls)
-					local cps = getRate(windowCPS,lastCoinMove,startCoins,coins)
-					local gps = getRate(windowGPS,lastGoopMove,startGoop,goop)
-					local bestName, bestOdds = getBestRoll()
-					local dailyOdds = safeNum("stats","dailyRarestRoll","odds")
-					local dailyStr  = dailyOdds > 0 and ("1 in "..fmt(math.floor(dailyOdds))) or "N/A"
-					local basic,big,shiny,huge,inverted = getIndexCounts()
-					local crafting = countKeys(safeGet("craftingRecipes") or {})
-					statLabels.sess:Set(string.format("Session: %dh%dm%ds  |  Played: %s  |  Rebirths: %s",sh,sm,ss,fmtTime(timePlayed),fmt(rebirths)))
-					statLabels.rolls1:Set(string.format("Rolls/sec: %.2f  |  Rolls/min: %s  |  Rolls/hr: %s",rps,fmt(rps*60),fmt(rps*3600)))
-					statLabels.rolls2:Set("Session Rolls: "..fmt(sessionRolls).."  |  Lifetime: "..fmt(rolls))
-					statLabels.coins1:Set("Coins/min: "..fmt(cps*60).."  |  Coins/hr: "..fmt(cps*3600))
-					statLabels.coins2:Set("Session Coins: "..fmt(sessionCoins).."  |  Total Ever: "..fmt(totalCoins))
-					statLabels.goop1:Set("Goop/min: "..fmt(gps*60).."  |  Goop/hr: "..fmt(gps*3600))
-					statLabels.goop2:Set("Session Goop: "..fmt(sessionGoop).."  |  Balance: "..fmt(goop))
-					statLabels.kills:Set("Session Kills: "..fmt(sessionKills).."  |  Lifetime Kills: "..fmt(kills))
-					statLabels.best:Set("Best Ever: "..bestName.."  |  Odds: "..bestOdds)
-					statLabels.daily:Set("Best Today Odds: "..dailyStr)
-					statLabels.prog:Set("Zone: "..fmt(zone).."  |  Max Zone: "..fmt(maxZone).."  |  Roll Currency: "..fmt(rollCurrency))
-					statLabels.idx1:Set("Basic: "..basic.."  |  Big: "..big.."  |  Shiny: "..shiny.."  |  Huge: "..huge.."  |  Inverted: "..inverted)
-					statLabels.inv:Set("Total Slimes: "..fmt(getTotalInventory()).."  |  Species: "..getUniqueSpecies().."  |  Crafting: "..crafting)
-					statLabels.equipped:Set("Equipped: "..getEquippedDisplay())
-				end)
-			end
-		end)
-
-		game:GetService("GuiService").ErrorMessageChanged:Connect(function()
-			if rayfieldLibrary.Flags.SettingsAutoRejoin and rayfieldLibrary.Flags.SettingsAutoRejoin.CurrentValue then
-				pcall(function()
-					game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, localPlayer)
-				end)
-			end
-		end)
-
-		rayfieldLibrary:LoadConfiguration()
-		Logger:info("CactusHub", "Init", "Script initialization complete")
-	end)
-	if not ok then
-		warn("[CactusHub] Fatal error: " .. tostring(err))
-	end
-end)
+			if type(equ
