@@ -976,14 +976,13 @@ task.spawn(function()
 		end)
 
 		-- =============================================
-		-- ZONES SECTION (FIXED)
+		-- ZONES SECTION
 		-- =============================================
 		farmingTab:CreateSection("Zones")
 
 		local savedFarmPosition = nil
 		local savedFarmPositionLabel
 
-		-- Build zone dropdown with "Best Unlocked" and "Saved Position" at top
 		pcall(function()
 			local zoneOptions = { "Best Unlocked", "Saved Position" }
 			local totalZones = ZonesModule and ZonesModule.getMaxZone() or 40
@@ -1020,20 +1019,29 @@ task.spawn(function()
 							rayfieldLibrary:Notify({ Title = "Error", Content = "ZonesService remote not loaded", Duration = 4 })
 							break
 						end
-						pcall(function()
-							local targetOption = rayfieldLibrary.Flags.FarmingZoneTarget and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
 
-							-- If "Saved Position" is selected, just teleport to saved pos every tick
-							if targetOption == "Saved Position" then
-								if savedFarmPosition then
-									local char = localPlayer.Character
-									if char then char:PivotTo(CFrame.new(savedFarmPosition)) end
-								else
-									rayfieldLibrary:Notify({ Title = "No Position Saved", Content = "Save a position first using the button below.", Duration = 3 })
+						local targetOption = rayfieldLibrary.Flags.FarmingZoneTarget and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
+
+						-- SAVED POSITION: only teleport if player is not already at saved pos
+						if targetOption == "Saved Position" then
+							if savedFarmPosition then
+								local char = localPlayer.Character
+								if char then
+									local root = char:FindFirstChild("HumanoidRootPart")
+									if root then
+										local dist = (root.Position - savedFarmPosition).Magnitude
+										if dist > 5 then
+											char:PivotTo(CFrame.new(savedFarmPosition))
+										end
+									end
 								end
-								return
 							end
+							-- no zone teleport, no notification spam — just wait
+							task.wait(1)
+							continue
+						end
 
+						pcall(function()
 							local currentZone = dataServiceClient and (dataServiceClient:get("zone") or 1) or 1
 							local targetZone = nil
 							if targetOption == "Best Unlocked" then
@@ -1049,6 +1057,7 @@ task.spawn(function()
 								end
 							end
 						end)
+
 						task.wait(5)
 					end
 				end)
@@ -1078,6 +1087,19 @@ task.spawn(function()
 				rayfieldLibrary:Notify({ Title = "Position Cleared", Content = "Auto Farm Zone will use zone targeting again.", Duration = 3 })
 			end,
 		})
+
+		-- Re-apply saved position on character respawn
+		localPlayer.CharacterAdded:Connect(function(char)
+			task.wait(1)
+			local flag = rayfieldLibrary.Flags.FarmingStayInBestZone
+			local targetOption = rayfieldLibrary.Flags.FarmingZoneTarget and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
+			if flag and flag.CurrentValue and targetOption == "Saved Position" and savedFarmPosition then
+				local root = char:WaitForChild("HumanoidRootPart", 5)
+				if root then
+					char:PivotTo(CFrame.new(savedFarmPosition))
+				end
+			end
+		end)
 
 		featureToggle(farmingTab, {
 			Name = "Auto Unlock Affordable Zones",
@@ -1303,6 +1325,138 @@ task.spawn(function()
 			})
 		end)
 
+		-- =============================================
+		-- FRUIT EXTRACTOR SECTION
+		-- =============================================
+		farmingTab:CreateSection("Fruit Extractor")
+
+		local autoExtractEnabled = false
+		local selectedExtractFruitIds = {"ANY"}
+		local selectedExtractSlimeMode = "Best"
+
+		local function getTargetSlimesForExtract()
+			if not dataServiceClient then return {} end
+			if selectedExtractSlimeMode == "Best" then
+				local key, data = getBestSlimeEntry()
+				if key and data then return {{key=key, data=data}} end
+				return {}
+			else
+				local equipped = dataServiceClient:get("equipped") or {}
+				local result = {}
+				for _, slimeKey in ipairs(equipped) do
+					if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
+						local inv = dataServiceClient:get("inventory") or {}
+						local data = inv[slimeKey]
+						if type(data) == "table" then table.insert(result, {key=slimeKey, data=data}) end
+					end
+				end
+				return result
+			end
+		end
+
+		local function resolveExtractFruitList()
+			local owned = getOwnedFruitIds()
+			if selectedExtractFruitIds[1] == "ANY" then
+				local result = {}
+				for _, f in ipairs(ALL_FRUITS) do if owned[f.id] then table.insert(result, f.id) end end
+				return result
+			else
+				local result = {}
+				for _, fid in ipairs(selectedExtractFruitIds) do if owned[fid] then table.insert(result, fid) end end
+				return result
+			end
+		end
+
+		local function doExtract()
+			if not fruitExtractorRemote then return end
+			local targets = getTargetSlimesForExtract()
+			local fruitsToExtract = resolveExtractFruitList()
+			if #targets == 0 then return end
+			for _, entry in ipairs(targets) do
+				-- If ANY or no specific filter, extract all from slime
+				-- If specific fruits selected, only extract if slime has that fruit
+				local shouldExtract = false
+				if selectedExtractFruitIds[1] == "ANY" then
+					shouldExtract = true
+				else
+					for _, fruitId in ipairs(fruitsToExtract) do
+						if slimeHasFruit(entry.data, fruitId) then
+							shouldExtract = true
+							break
+						end
+					end
+				end
+				if shouldExtract then
+					pcall(function()
+						fruitExtractorRemote:InvokeServer("requestExtractFruits", entry.key)
+					end)
+					task.wait(0.3)
+				end
+			end
+		end
+
+		featureToggle(farmingTab, {
+			Name = "Auto Extract Fruits from Slime(s)",
+			CurrentValue = false,
+			Flag = "AutoExtractToggle",
+			Callback = function(value)
+				autoExtractEnabled = value
+				if value then
+					task.spawn(function()
+						while autoExtractEnabled do
+							local flag = rayfieldLibrary.Flags.AutoExtractToggle
+							if not flag or not flag.CurrentValue then break end
+							pcall(doExtract)
+							task.wait(2)
+						end
+					end)
+				end
+			end,
+		})
+
+		farmingTab:CreateDropdown({
+			Name = "Extract From",
+			Options = {"Best", "Equipped Team"},
+			CurrentOption = {"Best"},
+			MultipleOptions = false,
+			Flag = "ExtractSlimeModeDropdown",
+			Callback = function(option)
+				selectedExtractSlimeMode = type(option) == "table" and option[1] or option
+			end,
+		})
+
+		pcall(function()
+			local extractFruitOptions = {"Any"}
+			local extractLabelToId = {}
+			local extractFruitNames = {}
+			for _, f in ipairs(FruitsModule and FruitsModule.getSortedFruits() or {}) do
+				table.insert(extractFruitNames, f.powerName)
+				extractLabelToId[f.powerName] = f.id
+			end
+			table.sort(extractFruitNames)
+			for _, name in ipairs(extractFruitNames) do table.insert(extractFruitOptions, name) end
+			farmingTab:CreateDropdown({
+				Name = "Fruits to Extract",
+				Options = extractFruitOptions,
+				CurrentOption = {"Any"},
+				MultipleOptions = true,
+				Flag = "ExtractFruitDropdown",
+				Callback = function(options)
+					local picked = type(options) == "table" and options or {options}
+					selectedExtractFruitIds = {}
+					for _, label in ipairs(picked) do
+						if label == "Any" then
+							selectedExtractFruitIds = {"ANY"}
+							return
+						else
+							table.insert(selectedExtractFruitIds, extractLabelToId[label])
+						end
+					end
+					if #selectedExtractFruitIds == 0 then selectedExtractFruitIds = {"ANY"} end
+				end,
+			})
+		end)
+
 		featureToggle(farmingTab, { Name = "Auto Transfer XP", CurrentValue = false, Flag = "FarmingTransferXP", Callback = function() end })
 		farmingTab:CreateDropdown({ Name="Transfer To", Options={"Best Slime","Whole Team"}, CurrentOption={"Best Slime"}, MultipleOptions=false, Flag="FarmingTransferTarget", Callback=function() end })
 		farmingTab:CreateDropdown({ Name="Transfer From", Options={"All Slimes","Unequipped With XP"}, CurrentOption={"Unequipped With XP"}, MultipleOptions=false, Flag="FarmingTransferSource", Callback=function() end })
@@ -1433,6 +1587,41 @@ task.spawn(function()
 		local combatEnabled = false
 		local getgcChecked = false
 
+		-- =============================================
+		-- SLIME GUN (FIXED - persists across reloads, hooked into hub toggle)
+		-- =============================================
+		local slimeGunHooked = false
+		local slimeGunOriginalGetUpgradeValue = nil
+
+		local function hookSlimeGun()
+			if slimeGunHooked then return end
+			local ok, U = pcall(function()
+				return require(ReplicatedStorage.Source.Features.Upgrades.UpgradeServiceUtils)
+			end)
+			if not ok or not U then return end
+			slimeGunOriginalGetUpgradeValue = U.getUpgradeValue
+			U.getUpgradeValue = function(N, L)
+				if N == "slimeGunFireRate" then return math.huge end
+				if N == "slimeGunRange" then return 999 end
+				return slimeGunOriginalGetUpgradeValue(N, L)
+			end
+			slimeGunHooked = true
+		end
+
+		local function unhookSlimeGun()
+			if not slimeGunHooked then return end
+			local ok, U = pcall(function()
+				return require(ReplicatedStorage.Source.Features.Upgrades.UpgradeServiceUtils)
+			end)
+			if not ok or not U then return end
+			if slimeGunOriginalGetUpgradeValue then
+				U.getUpgradeValue = slimeGunOriginalGetUpgradeValue
+			end
+			slimeGunHooked = false
+		end
+
+		local slimeGunAutoFireEnabled = false
+
 		local function findGunController()
 			local char = localPlayer.Character
 			if not char then return nil end
@@ -1449,14 +1638,48 @@ task.spawn(function()
 			return nil
 		end
 
-		featureToggle(gameTab, { Name = "Auto Shoot Enemies (getgc)", CurrentValue = false, Flag = "CombatAutoShoot", Callback = function(value) combatEnabled = value end })
+		local function activateSlimeGunOnController(controller, targetId)
+			if not controller then return false end
+			local ok = pcall(function()
+				controller.prevSendAt = 0
+				local orig = controller._getTargetEnemyId
+				controller._getTargetEnemyId = function() return targetId end
+				controller.isHoldingInput = true
+				controller:onActivated()
+				controller._getTargetEnemyId = orig
+			end)
+			return ok
+		end
+
+		-- Re-hook and re-fire on character reload
+		localPlayer.CharacterAdded:Connect(function()
+			task.wait(1)
+			if slimeGunAutoFireEnabled then
+				hookSlimeGun()
+			end
+		end)
+
+		featureToggle(gameTab, {
+			Name = "Auto Shoot Enemies (getgc)",
+			CurrentValue = false,
+			Flag = "CombatAutoShoot",
+			Callback = function(value)
+				combatEnabled = value
+				slimeGunAutoFireEnabled = value
+				if value then
+					hookSlimeGun()
+				else
+					unhookSlimeGun()
+				end
+			end
+		})
 
 		gameTab:CreateDropdown({ Name = "Combat Target Priority", Options = {"Closest","Lowest HP","Highest HP","Most Coins & Goop"}, CurrentOption = {"Closest"}, MultipleOptions = false, Flag = "CombatTargetPriority", Callback = function() end })
 
 		task.spawn(function()
 			local controller = nil
 			while true do
-				task.wait(0.1)
+				task.wait(0.05)
 				if not combatEnabled then controller = nil task.wait(0.3) continue end
 				pcall(function()
 					local char = localPlayer.Character
@@ -1476,13 +1699,8 @@ task.spawn(function()
 						return
 					end
 					if not controller then controller = findGunController() if not controller then return end end
-					local ok = pcall(function()
-						local orig = controller._getTargetEnemyId
-						controller._getTargetEnemyId = function() return targetId end
-						controller:onActivated()
-						controller._getTargetEnemyId = orig
-					end)
-					if not ok then controller = nil end
+					local fired = activateSlimeGunOnController(controller, targetId)
+					if not fired then controller = nil end
 				end)
 			end
 		end)
@@ -1521,7 +1739,7 @@ task.spawn(function()
 		gameTab:CreateSection("Upgrades")
 
 		-- =============================================
-		-- AUTO UPGRADES (FIXED - uses upgradeServiceRemote)
+		-- AUTO UPGRADES (FIXED - iterates dict directly)
 		-- =============================================
 		featureToggle(gameTab, {
 			Name = "Auto Upgrade Purchasing",
@@ -1545,31 +1763,35 @@ task.spawn(function()
 							local coins        = dataServiceClient:get("coins") or 0
 							local goop         = dataServiceClient:get("goop") or 0
 							local rollCurrency = dataServiceClient:get("rollCurrency") or 0
-							for _, tree in ipairs(upgradeTreeModule) do
-								for upgradeId, upgradeInfo in pairs(tree) do
-									if upgradeInfo and upgradeInfo.cost and not unlockedUpgrades[upgradeId] then
-										local costAmount   = upgradeInfo.cost.amount or 0
-										local currencyType = upgradeInfo.cost.currency
-										local modeMatches = modeSet["All"]
-											or (modeSet["Coins"] and currencyType == "coins")
-											or (modeSet["Goop"] and currencyType == "goop")
-											or (modeSet["Rolls"] and currencyType == "rollCurrency")
-										if not modeMatches then continue end
-										local canAfford = (currencyType == "coins" and coins >= costAmount)
-											or (currencyType == "goop" and goop >= costAmount)
-											or (currencyType == "rollCurrency" and rollCurrency >= costAmount)
-										if canAfford then
-											local success, result = pcall(function()
-												return upgradeServiceRemote:InvokeServer("requestUnlock", upgradeId)
-											end)
-											if success and result then
-												if currencyType == "coins" then coins = coins - costAmount
-												elseif currencyType == "goop" then goop = goop - costAmount
-												elseif currencyType == "rollCurrency" then rollCurrency = rollCurrency - costAmount end
-												unlockedUpgrades[upgradeId] = true
-												Logger:info("Upgrades", upgradeId, "Purchased successfully")
+
+							-- upgradeTreeModule is a dict of trees, iterate it directly
+							for treeName, tree in pairs(upgradeTreeModule) do
+								if type(tree) == "table" then
+									for upgradeId, upgradeInfo in pairs(tree) do
+										if type(upgradeInfo) == "table" and upgradeInfo.cost and not unlockedUpgrades[upgradeId] then
+											local costAmount   = upgradeInfo.cost.amount or 0
+											local currencyType = upgradeInfo.cost.currency
+											local modeMatches = modeSet["All"]
+												or (modeSet["Coins"] and currencyType == "coins")
+												or (modeSet["Goop"] and currencyType == "goop")
+												or (modeSet["Rolls"] and currencyType == "rollCurrency")
+											if not modeMatches then continue end
+											local canAfford = (currencyType == "coins" and coins >= costAmount)
+												or (currencyType == "goop" and goop >= costAmount)
+												or (currencyType == "rollCurrency" and rollCurrency >= costAmount)
+											if canAfford then
+												local success, result = pcall(function()
+													return upgradeServiceRemote:InvokeServer("requestUnlock", upgradeId)
+												end)
+												if success and result then
+													if currencyType == "coins" then coins = coins - costAmount
+													elseif currencyType == "goop" then goop = goop - costAmount
+													elseif currencyType == "rollCurrency" then rollCurrency = rollCurrency - costAmount end
+													unlockedUpgrades[upgradeId] = true
+													Logger:info("Upgrades", upgradeId, "Purchased successfully")
+												end
+												task.wait(0.2)
 											end
-											task.wait(0.2)
 										end
 									end
 								end
@@ -2174,11 +2396,19 @@ task.spawn(function()
 
 		miscTab:CreateSection("Consumables")
 
+		-- =============================================
+		-- AUTO USE POTIONS - SMART UPGRADE (with "All" option and expiry check)
+		-- =============================================
 		pcall(function()
 			local sortedBoostKinds = {}
 			if boostKinds then for _, kind in ipairs(boostKinds) do table.insert(sortedBoostKinds, kind) end table.sort(sortedBoostKinds) end
+
+			-- Potion state tracking
+			local activePotionTimers = {}
+			local lastActivePotionCheck = 0
+
 			featureToggle(miscTab, {
-				Name = "Auto Use Potions",
+				Name = "Auto Use Potions (Smart)",
 				CurrentValue = false,
 				Flag = "MiscUsePotions",
 				Callback = function(enabled)
@@ -2191,22 +2421,114 @@ task.spawn(function()
 								if not boostServiceRemote or not dataServiceClient then return end
 								local boosts = dataServiceClient:get("boosts") or {}
 								local selectedPotions = rayfieldLibrary.Flags.MiscPotionTypes and rayfieldLibrary.Flags.MiscPotionTypes.CurrentOption or {}
-								for _, potionType in ipairs(selectedPotions) do
+								local now = tick()
+
+								-- Handle "All" selection
+								local potionsToUse = {}
+								if selectedPotions and #selectedPotions > 0 then
+									if selectedPotions[1] == "All" then
+										for _, kind in ipairs(sortedBoostKinds) do
+											table.insert(potionsToUse, kind)
+										end
+									else
+										potionsToUse = selectedPotions
+									end
+								end
+
+								-- Smart usage: Only use if expired or about to expire
+								for _, potionType in ipairs(potionsToUse) do
 									local boostData = boosts[potionType]
-									if boostData and (boostData.amount or 0) > 0 then
-										pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
+									if boostData then
+										local hasAmount = (boostData.amount or 0) > 0
+										local hasActive = (boostData.active or 0) > 0
+										local timeLeft = (boostData.expiryTime or 0) - now
+
+										-- If potion is not active OR about to expire in next 30 seconds, use it
+										if hasAmount and (hasActive == 0 or timeLeft < 30) then
+											pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
+											activePotionTimers[potionType] = now + 3600  -- Assume 1 hour duration
+											task.wait(0.2)
+										end
 									end
 								end
 							end)
-							task.wait(1)
+							task.wait(5)  -- Check every 5 seconds instead of 1
 						end
 					end)
 				end,
 			})
+
 			if #sortedBoostKinds > 0 then
-				miscTab:CreateDropdown({ Name="Potion Types", Options=sortedBoostKinds, CurrentOption={sortedBoostKinds[1]}, MultipleOptions=true, Flag="MiscPotionTypes", Callback=function() end })
+				local optionsWithAll = {"All"}
+				for _, kind in ipairs(sortedBoostKinds) do
+					table.insert(optionsWithAll, kind)
+				end
+				miscTab:CreateDropdown({
+					Name = "Potion Types",
+					Options = optionsWithAll,
+					CurrentOption = {"All"},
+					MultipleOptions = true,
+					Flag = "MiscPotionTypes",
+					Callback = function() end
+				})
 			else
 				miscTab:CreateLabel("Potion types not yet loaded — enable after modules load.")
+			end
+		end)
+
+		-- ===== POTION DURATION TRACKER =====
+		local potionDurations = {}
+
+		task.spawn(function()
+			while true do
+				task.wait(1)
+				pcall(function()
+					if not dataServiceClient then return end
+					local boosts = dataServiceClient:get("boosts") or {}
+					local now = tick()
+
+					-- Update active potion timers
+					for potionType, boostData in pairs(boosts) do
+						if type(boostData) == "table" and (boostData.active or 0) > 0 then
+							if not potionDurations[potionType] then
+								-- First time seeing this active, record start
+								potionDurations[potionType] = {
+									startTime = now,
+									expiryTime = now + 3600  -- Default 1 hour
+								}
+							end
+						else
+							-- Potion expired or inactive
+							potionDurations[potionType] = nil
+						end
+					end
+				end)
+			end
+		end)
+
+		-- Status label for potions
+		local potionStatusLabel = miscTab:CreateLabel("Active Potions: None")
+
+		task.spawn(function()
+			while true do
+				task.wait(2)
+				pcall(function()
+					if not dataServiceClient then return end
+					local boosts = dataServiceClient:get("boosts") or {}
+					local activePotions = {}
+
+					for potionType, boostData in pairs(boosts) do
+						if type(boostData) == "table" and (boostData.active or 0) > 0 then
+							table.insert(activePotions, potionType)
+						end
+					end
+
+					if #activePotions > 0 then
+						potionStatusLabel:Set("Active Potions: " .. table.concat(activePotions, ", "))
+					else
+						potionStatusLabel:Set("Active Potions: None")
+					end
+				end)
 			end
 		end)
 
