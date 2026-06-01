@@ -1325,138 +1325,6 @@ task.spawn(function()
 			})
 		end)
 
-		-- =============================================
-		-- FRUIT EXTRACTOR SECTION
-		-- =============================================
-		farmingTab:CreateSection("Fruit Extractor")
-
-		local autoExtractEnabled = false
-		local selectedExtractFruitIds = {"ANY"}
-		local selectedExtractSlimeMode = "Best"
-
-		local function getTargetSlimesForExtract()
-			if not dataServiceClient then return {} end
-			if selectedExtractSlimeMode == "Best" then
-				local key, data = getBestSlimeEntry()
-				if key and data then return {{key=key, data=data}} end
-				return {}
-			else
-				local equipped = dataServiceClient:get("equipped") or {}
-				local result = {}
-				for _, slimeKey in ipairs(equipped) do
-					if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
-						local inv = dataServiceClient:get("inventory") or {}
-						local data = inv[slimeKey]
-						if type(data) == "table" then table.insert(result, {key=slimeKey, data=data}) end
-					end
-				end
-				return result
-			end
-		end
-
-		local function resolveExtractFruitList()
-			local owned = getOwnedFruitIds()
-			if selectedExtractFruitIds[1] == "ANY" then
-				local result = {}
-				for _, f in ipairs(ALL_FRUITS) do if owned[f.id] then table.insert(result, f.id) end end
-				return result
-			else
-				local result = {}
-				for _, fid in ipairs(selectedExtractFruitIds) do if owned[fid] then table.insert(result, fid) end end
-				return result
-			end
-		end
-
-		local function doExtract()
-			if not fruitExtractorRemote then return end
-			local targets = getTargetSlimesForExtract()
-			local fruitsToExtract = resolveExtractFruitList()
-			if #targets == 0 then return end
-			for _, entry in ipairs(targets) do
-				-- If ANY or no specific filter, extract all from slime
-				-- If specific fruits selected, only extract if slime has that fruit
-				local shouldExtract = false
-				if selectedExtractFruitIds[1] == "ANY" then
-					shouldExtract = true
-				else
-					for _, fruitId in ipairs(fruitsToExtract) do
-						if slimeHasFruit(entry.data, fruitId) then
-							shouldExtract = true
-							break
-						end
-					end
-				end
-				if shouldExtract then
-					pcall(function()
-						fruitExtractorRemote:InvokeServer("requestExtractFruits", entry.key)
-					end)
-					task.wait(0.3)
-				end
-			end
-		end
-
-		featureToggle(farmingTab, {
-			Name = "Auto Extract Fruits from Slime(s)",
-			CurrentValue = false,
-			Flag = "AutoExtractToggle",
-			Callback = function(value)
-				autoExtractEnabled = value
-				if value then
-					task.spawn(function()
-						while autoExtractEnabled do
-							local flag = rayfieldLibrary.Flags.AutoExtractToggle
-							if not flag or not flag.CurrentValue then break end
-							pcall(doExtract)
-							task.wait(2)
-						end
-					end)
-				end
-			end,
-		})
-
-		farmingTab:CreateDropdown({
-			Name = "Extract From",
-			Options = {"Best", "Equipped Team"},
-			CurrentOption = {"Best"},
-			MultipleOptions = false,
-			Flag = "ExtractSlimeModeDropdown",
-			Callback = function(option)
-				selectedExtractSlimeMode = type(option) == "table" and option[1] or option
-			end,
-		})
-
-		pcall(function()
-			local extractFruitOptions = {"Any"}
-			local extractLabelToId = {}
-			local extractFruitNames = {}
-			for _, f in ipairs(FruitsModule and FruitsModule.getSortedFruits() or {}) do
-				table.insert(extractFruitNames, f.powerName)
-				extractLabelToId[f.powerName] = f.id
-			end
-			table.sort(extractFruitNames)
-			for _, name in ipairs(extractFruitNames) do table.insert(extractFruitOptions, name) end
-			farmingTab:CreateDropdown({
-				Name = "Fruits to Extract",
-				Options = extractFruitOptions,
-				CurrentOption = {"Any"},
-				MultipleOptions = true,
-				Flag = "ExtractFruitDropdown",
-				Callback = function(options)
-					local picked = type(options) == "table" and options or {options}
-					selectedExtractFruitIds = {}
-					for _, label in ipairs(picked) do
-						if label == "Any" then
-							selectedExtractFruitIds = {"ANY"}
-							return
-						else
-							table.insert(selectedExtractFruitIds, extractLabelToId[label])
-						end
-					end
-					if #selectedExtractFruitIds == 0 then selectedExtractFruitIds = {"ANY"} end
-				end,
-			})
-		end)
-
 		featureToggle(farmingTab, { Name = "Auto Transfer XP", CurrentValue = false, Flag = "FarmingTransferXP", Callback = function() end })
 		farmingTab:CreateDropdown({ Name="Transfer To", Options={"Best Slime","Whole Team"}, CurrentOption={"Best Slime"}, MultipleOptions=false, Flag="FarmingTransferTarget", Callback=function() end })
 		farmingTab:CreateDropdown({ Name="Transfer From", Options={"All Slimes","Unequipped With XP"}, CurrentOption={"Unequipped With XP"}, MultipleOptions=false, Flag="FarmingTransferSource", Callback=function() end })
@@ -2396,19 +2264,11 @@ task.spawn(function()
 
 		miscTab:CreateSection("Consumables")
 
-		-- =============================================
-		-- AUTO USE POTIONS - SMART UPGRADE (with "All" option and expiry check)
-		-- =============================================
 		pcall(function()
 			local sortedBoostKinds = {}
 			if boostKinds then for _, kind in ipairs(boostKinds) do table.insert(sortedBoostKinds, kind) end table.sort(sortedBoostKinds) end
-
-			-- Potion state tracking
-			local activePotionTimers = {}
-			local lastActivePotionCheck = 0
-
 			featureToggle(miscTab, {
-				Name = "Auto Use Potions (Smart)",
+				Name = "Auto Use Potions",
 				CurrentValue = false,
 				Flag = "MiscUsePotions",
 				Callback = function(enabled)
@@ -2421,114 +2281,22 @@ task.spawn(function()
 								if not boostServiceRemote or not dataServiceClient then return end
 								local boosts = dataServiceClient:get("boosts") or {}
 								local selectedPotions = rayfieldLibrary.Flags.MiscPotionTypes and rayfieldLibrary.Flags.MiscPotionTypes.CurrentOption or {}
-								local now = tick()
-
-								-- Handle "All" selection
-								local potionsToUse = {}
-								if selectedPotions and #selectedPotions > 0 then
-									if selectedPotions[1] == "All" then
-										for _, kind in ipairs(sortedBoostKinds) do
-											table.insert(potionsToUse, kind)
-										end
-									else
-										potionsToUse = selectedPotions
-									end
-								end
-
-								-- Smart usage: Only use if expired or about to expire
-								for _, potionType in ipairs(potionsToUse) do
+								for _, potionType in ipairs(selectedPotions) do
 									local boostData = boosts[potionType]
-									if boostData then
-										local hasAmount = (boostData.amount or 0) > 0
-										local hasActive = (boostData.active or 0) > 0
-										local timeLeft = (boostData.expiryTime or 0) - now
-
-										-- If potion is not active OR about to expire in next 30 seconds, use it
-										if hasAmount and (hasActive == 0 or timeLeft < 30) then
-											pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
-											activePotionTimers[potionType] = now + 3600  -- Assume 1 hour duration
-											task.wait(0.2)
-										end
+									if boostData and (boostData.amount or 0) > 0 then
+										pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
 									end
 								end
 							end)
-							task.wait(5)  -- Check every 5 seconds instead of 1
+							task.wait(1)
 						end
 					end)
 				end,
 			})
-
 			if #sortedBoostKinds > 0 then
-				local optionsWithAll = {"All"}
-				for _, kind in ipairs(sortedBoostKinds) do
-					table.insert(optionsWithAll, kind)
-				end
-				miscTab:CreateDropdown({
-					Name = "Potion Types",
-					Options = optionsWithAll,
-					CurrentOption = {"All"},
-					MultipleOptions = true,
-					Flag = "MiscPotionTypes",
-					Callback = function() end
-				})
+				miscTab:CreateDropdown({ Name="Potion Types", Options=sortedBoostKinds, CurrentOption={sortedBoostKinds[1]}, MultipleOptions=true, Flag="MiscPotionTypes", Callback=function() end })
 			else
 				miscTab:CreateLabel("Potion types not yet loaded — enable after modules load.")
-			end
-		end)
-
-		-- ===== POTION DURATION TRACKER =====
-		local potionDurations = {}
-
-		task.spawn(function()
-			while true do
-				task.wait(1)
-				pcall(function()
-					if not dataServiceClient then return end
-					local boosts = dataServiceClient:get("boosts") or {}
-					local now = tick()
-
-					-- Update active potion timers
-					for potionType, boostData in pairs(boosts) do
-						if type(boostData) == "table" and (boostData.active or 0) > 0 then
-							if not potionDurations[potionType] then
-								-- First time seeing this active, record start
-								potionDurations[potionType] = {
-									startTime = now,
-									expiryTime = now + 3600  -- Default 1 hour
-								}
-							end
-						else
-							-- Potion expired or inactive
-							potionDurations[potionType] = nil
-						end
-					end
-				end)
-			end
-		end)
-
-		-- Status label for potions
-		local potionStatusLabel = miscTab:CreateLabel("Active Potions: None")
-
-		task.spawn(function()
-			while true do
-				task.wait(2)
-				pcall(function()
-					if not dataServiceClient then return end
-					local boosts = dataServiceClient:get("boosts") or {}
-					local activePotions = {}
-
-					for potionType, boostData in pairs(boosts) do
-						if type(boostData) == "table" and (boostData.active or 0) > 0 then
-							table.insert(activePotions, potionType)
-						end
-					end
-
-					if #activePotions > 0 then
-						potionStatusLabel:Set("Active Potions: " .. table.concat(activePotions, ", "))
-					else
-						potionStatusLabel:Set("Active Potions: None")
-					end
-				end)
 			end
 		end)
 
