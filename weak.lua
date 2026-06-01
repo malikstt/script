@@ -1160,7 +1160,137 @@ task.spawn(function()
 				end)
 			end,
 		})
+-- =============================================
+-- FRUIT EXTRACTOR SECTION
+-- =============================================
+farmingTab:CreateSection("Fruit Extractor")
 
+local autoExtractEnabled = false
+local selectedExtractFruitIds = {"ANY"}
+local selectedExtractSlimeMode = "Best"
+
+local function getTargetSlimesForExtract()
+	if not dataServiceClient then return {} end
+	if selectedExtractSlimeMode == "Best" then
+		local key, data = getBestSlimeEntry()
+		if key and data then return {{key=key, data=data}} end
+		return {}
+	else
+		local equipped = dataServiceClient:get("equipped") or {}
+		local result = {}
+		for _, slimeKey in ipairs(equipped) do
+			if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
+				local inv = dataServiceClient:get("inventory") or {}
+				local data = inv[slimeKey]
+				if type(data) == "table" then table.insert(result, {key=slimeKey, data=data}) end
+			end
+		end
+		return result
+	end
+end
+
+local function resolveExtractFruitList()
+	local owned = getOwnedFruitIds()
+	if selectedExtractFruitIds[1] == "ANY" then
+		local result = {}
+		for _, f in ipairs(ALL_FRUITS) do if owned[f.id] then table.insert(result, f.id) end end
+		return result
+	else
+		local result = {}
+		for _, fid in ipairs(selectedExtractFruitIds) do if owned[fid] then table.insert(result, fid) end end
+		return result
+	end
+end
+
+local function doExtract()
+	if not fruitExtractorRemote then return end
+	local targets = getTargetSlimesForExtract()
+	local fruitsToExtract = resolveExtractFruitList()
+	if #targets == 0 then return end
+	for _, entry in ipairs(targets) do
+		-- If ANY or no specific filter, extract all from slime
+		-- If specific fruits selected, only extract if slime has that fruit
+		local shouldExtract = false
+		if selectedExtractFruitIds[1] == "ANY" then
+			shouldExtract = true
+		else
+			for _, fruitId in ipairs(fruitsToExtract) do
+				if slimeHasFruit(entry.data, fruitId) then
+					shouldExtract = true
+					break
+				end
+			end
+		end
+		if shouldExtract then
+			pcall(function()
+				fruitExtractorRemote:InvokeServer("requestExtractFruits", entry.key)
+			end)
+			task.wait(0.3)
+		end
+	end
+end
+
+featureToggle(farmingTab, {
+	Name = "Auto Extract Fruits from Slime(s)",
+	CurrentValue = false,
+	Flag = "AutoExtractToggle",
+	Callback = function(value)
+		autoExtractEnabled = value
+		if value then
+			task.spawn(function()
+				while autoExtractEnabled do
+					local flag = rayfieldLibrary.Flags.AutoExtractToggle
+					if not flag or not flag.CurrentValue then break end
+					pcall(doExtract)
+					task.wait(2)
+				end
+			end)
+		end
+	end,
+})
+
+farmingTab:CreateDropdown({
+	Name = "Extract From",
+	Options = {"Best", "Equipped Team"},
+	CurrentOption = {"Best"},
+	MultipleOptions = false,
+	Flag = "ExtractSlimeModeDropdown",
+	Callback = function(option)
+		selectedExtractSlimeMode = type(option) == "table" and option[1] or option
+	end,
+})
+
+pcall(function()
+	local extractFruitOptions = {"Any"}
+	local extractLabelToId = {}
+	local extractFruitNames = {}
+	for _, f in ipairs(FruitsModule and FruitsModule.getSortedFruits() or {}) do
+		table.insert(extractFruitNames, f.powerName)
+		extractLabelToId[f.powerName] = f.id
+	end
+	table.sort(extractFruitNames)
+	for _, name in ipairs(extractFruitNames) do table.insert(extractFruitOptions, name) end
+	farmingTab:CreateDropdown({
+		Name = "Fruits to Extract",
+		Options = extractFruitOptions,
+		CurrentOption = {"Any"},
+		MultipleOptions = true,
+		Flag = "ExtractFruitDropdown",
+		Callback = function(options)
+			local picked = type(options) == "table" and options or {options}
+			selectedExtractFruitIds = {}
+			for _, label in ipairs(picked) do
+				if label == "Any" then
+					selectedExtractFruitIds = {"ANY"}
+					return
+				else
+					table.insert(selectedExtractFruitIds, extractLabelToId[label])
+				end
+			end
+			if #selectedExtractFruitIds == 0 then selectedExtractFruitIds = {"ANY"} end
+		end,
+	})
+end)
 		farmingTab:CreateSection("Slimes & XP")
 
 		featureToggle(farmingTab, {
