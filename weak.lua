@@ -975,21 +975,35 @@ task.spawn(function()
 			end
 		end)
 
+		-- =============================================
+		-- ZONES SECTION (FIXED)
+		-- =============================================
 		farmingTab:CreateSection("Zones")
-
-		pcall(function()
-			local zoneOptions = { "Best Unlocked" }
-			local totalZones = ZonesModule and ZonesModule.getMaxZone() or 40
-			for i = 1, totalZones do
-				local zone = ZonesModule and ZonesModule.getZone(i)
-				if zone and zone.name then table.insert(zoneOptions, zone.name .. " (Zone " .. i .. ")")
-				else table.insert(zoneOptions, "Zone " .. i) end
-			end
-			farmingTab:CreateDropdown({ Name = "Zone Target", Options = zoneOptions, CurrentOption = { "Best Unlocked" }, MultipleOptions = false, Flag = "FarmingZoneTarget", Callback = function() end })
-		end)
 
 		local savedFarmPosition = nil
 		local savedFarmPositionLabel
+
+		-- Build zone dropdown with "Best Unlocked" and "Saved Position" at top
+		pcall(function()
+			local zoneOptions = { "Best Unlocked", "Saved Position" }
+			local totalZones = ZonesModule and ZonesModule.getMaxZone() or 40
+			for i = 1, totalZones do
+				local zone = ZonesModule and ZonesModule.getZone(i)
+				if zone and zone.name then
+					table.insert(zoneOptions, zone.name .. " (Zone " .. i .. ")")
+				else
+					table.insert(zoneOptions, "Zone " .. i)
+				end
+			end
+			farmingTab:CreateDropdown({
+				Name = "Zone Target",
+				Options = zoneOptions,
+				CurrentOption = { "Best Unlocked" },
+				MultipleOptions = false,
+				Flag = "FarmingZoneTarget",
+				Callback = function() end,
+			})
+		end)
 
 		featureToggle(farmingTab, {
 			Name = "Auto Farm Zone",
@@ -1007,12 +1021,19 @@ task.spawn(function()
 							break
 						end
 						pcall(function()
-							if savedFarmPosition then
-								local char = localPlayer.Character
-								if char then char:PivotTo(CFrame.new(savedFarmPosition)) end
+							local targetOption = rayfieldLibrary.Flags.FarmingZoneTarget and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
+
+							-- If "Saved Position" is selected, just teleport to saved pos every tick
+							if targetOption == "Saved Position" then
+								if savedFarmPosition then
+									local char = localPlayer.Character
+									if char then char:PivotTo(CFrame.new(savedFarmPosition)) end
+								else
+									rayfieldLibrary:Notify({ Title = "No Position Saved", Content = "Save a position first using the button below.", Duration = 3 })
+								end
 								return
 							end
-							local targetOption = rayfieldLibrary.Flags.FarmingZoneTarget and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
+
 							local currentZone = dataServiceClient and (dataServiceClient:get("zone") or 1) or 1
 							local targetZone = nil
 							if targetOption == "Best Unlocked" then
@@ -1045,7 +1066,7 @@ task.spawn(function()
 				if not root then rayfieldLibrary:Notify({ Title = "Error", Content = "HumanoidRootPart not found.", Duration = 3 }) return end
 				savedFarmPosition = root.Position
 				savedFarmPositionLabel:Set(string.format("Saved Position: %.1f, %.1f, %.1f", root.Position.X, root.Position.Y, root.Position.Z))
-				rayfieldLibrary:Notify({ Title = "Position Saved", Content = "Auto Farm will teleport to this position.", Duration = 3 })
+				rayfieldLibrary:Notify({ Title = "Position Saved", Content = "Select 'Saved Position' in Zone Target dropdown, then enable Auto Farm Zone.", Duration = 4 })
 			end,
 		})
 
@@ -1054,7 +1075,7 @@ task.spawn(function()
 			Callback = function()
 				savedFarmPosition = nil
 				savedFarmPositionLabel:Set("Saved Position: None")
-				rayfieldLibrary:Notify({ Title = "Position Cleared", Content = "Auto Farm will use zone targeting again.", Duration = 3 })
+				rayfieldLibrary:Notify({ Title = "Position Cleared", Content = "Auto Farm Zone will use zone targeting again.", Duration = 3 })
 			end,
 		})
 
@@ -1499,6 +1520,9 @@ task.spawn(function()
 
 		gameTab:CreateSection("Upgrades")
 
+		-- =============================================
+		-- AUTO UPGRADES (FIXED - uses upgradeServiceRemote)
+		-- =============================================
 		featureToggle(gameTab, {
 			Name = "Auto Upgrade Purchasing",
 			CurrentValue = false,
@@ -1509,7 +1533,10 @@ task.spawn(function()
 					while true do
 						local flag = rayfieldLibrary.Flags.GameAutoUpgrade
 						if not flag or not flag.CurrentValue then break end
-						if not upgradeServiceRemote or not dataServiceClient then task.wait(1) continue end
+						if not upgradeServiceRemote or not dataServiceClient or not upgradeTreeModule then
+							task.wait(1)
+							continue
+						end
 						pcall(function()
 							local upgradeMode = rayfieldLibrary.Flags.GameUpgradeMode and rayfieldLibrary.Flags.GameUpgradeMode.CurrentOption or {"All"}
 							local modeSet = {}
@@ -1518,7 +1545,6 @@ task.spawn(function()
 							local coins        = dataServiceClient:get("coins") or 0
 							local goop         = dataServiceClient:get("goop") or 0
 							local rollCurrency = dataServiceClient:get("rollCurrency") or 0
-							if not upgradeTreeModule then return end
 							for _, tree in ipairs(upgradeTreeModule) do
 								for upgradeId, upgradeInfo in pairs(tree) do
 									if upgradeInfo and upgradeInfo.cost and not unlockedUpgrades[upgradeId] then
@@ -1541,6 +1567,7 @@ task.spawn(function()
 												elseif currencyType == "goop" then goop = goop - costAmount
 												elseif currencyType == "rollCurrency" then rollCurrency = rollCurrency - costAmount end
 												unlockedUpgrades[upgradeId] = true
+												Logger:info("Upgrades", upgradeId, "Purchased successfully")
 											end
 											task.wait(0.2)
 										end
