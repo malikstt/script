@@ -702,7 +702,7 @@ task.spawn(function()
 		local char = localPlayer.Character
 		if char then
 			local hum = char:FindFirstChildWhichIsA("Humanoid")
-			if hum then hum.WalkSpeed = 16 hum:MoveTo(char.HumanoidRootPart.Position) end
+			if hum then hum.WalkSpeed = 40 hum:MoveTo(char.HumanoidRootPart.Position) end
 		end
 	end
 
