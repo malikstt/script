@@ -2326,6 +2326,39 @@ task.spawn(function()
 
 		miscTab:CreateSection("Consumables")
 
+		-- AUTO USE POTIONS: toggle created immediately, logic waits for modules inside callback
+		featureToggle(miscTab, {
+			Name = "Auto Use Potions",
+			CurrentValue = false,
+			Flag = "MiscUsePotions",
+			Callback = function(enabled)
+				if not enabled then return end
+				task.spawn(function()
+					repeat task.wait(0.5) until modulesLoaded
+					while true do
+						local flag = rayfieldLibrary.Flags.MiscUsePotions
+						if not flag or not flag.CurrentValue then break end
+						pcall(function()
+							if not boostServiceRemote or not dataServiceClient then
+								rayfieldLibrary:Notify({ Title = "Error: Auto Use Potions", Content = "BoostService remote not loaded.", Duration = 4 })
+								return
+							end
+							local boosts = dataServiceClient:get("boosts") or {}
+							local selectedPotions = rayfieldLibrary.Flags.MiscPotionTypes and rayfieldLibrary.Flags.MiscPotionTypes.CurrentOption or {}
+							for _, potionType in ipairs(selectedPotions) do
+								local boostData = boosts[potionType]
+								if boostData and (boostData.amount or 0) > 0 then
+									pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
+								end
+							end
+						end)
+						task.wait(1)
+					end
+				end)
+			end,
+		})
+
+		-- Potion dropdown deferred (data only, safe to defer)
 		task.spawn(function()
 			repeat task.wait(0.5) until modulesLoaded
 			pcall(function()
@@ -2334,35 +2367,6 @@ task.spawn(function()
 					for _, kind in ipairs(boostKinds) do table.insert(sortedBoostKinds, kind) end
 					table.sort(sortedBoostKinds)
 				end
-				featureToggle(miscTab, {
-					Name = "Auto Use Potions",
-					CurrentValue = false,
-					Flag = "MiscUsePotions",
-					Callback = function(enabled)
-						if not enabled then return end
-						task.spawn(function()
-							while true do
-								local flag = rayfieldLibrary.Flags.MiscUsePotions
-								if not flag or not flag.CurrentValue then break end
-								pcall(function()
-									if not boostServiceRemote or not dataServiceClient then
-										rayfieldLibrary:Notify({ Title = "Error: Auto Use Potions", Content = "BoostService remote not loaded.", Duration = 4 })
-										return
-									end
-									local boosts = dataServiceClient:get("boosts") or {}
-									local selectedPotions = rayfieldLibrary.Flags.MiscPotionTypes and rayfieldLibrary.Flags.MiscPotionTypes.CurrentOption or {}
-									for _, potionType in ipairs(selectedPotions) do
-										local boostData = boosts[potionType]
-										if boostData and (boostData.amount or 0) > 0 then
-											pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
-										end
-									end
-								end)
-								task.wait(1)
-							end
-						end)
-					end,
-				})
 				if #sortedBoostKinds > 0 then
 					miscTab:CreateDropdown({ Name="Potion Types", Options=sortedBoostKinds, CurrentOption={sortedBoostKinds[1]}, MultipleOptions=true, Flag="MiscPotionTypes", Callback=function() end })
 				else
@@ -2371,6 +2375,39 @@ task.spawn(function()
 			end)
 		end)
 
+		-- AUTO USE DICE: toggle created immediately, logic waits for modules inside callback
+		featureToggle(miscTab, {
+			Name = "Auto Use Dice & Items",
+			CurrentValue = false,
+			Flag = "MiscUseDice",
+			Callback = function(enabled)
+				if not enabled then return end
+				task.spawn(function()
+					repeat task.wait(0.5) until modulesLoaded
+					while true do
+						local flag = rayfieldLibrary.Flags.MiscUseDice
+						if not flag or not flag.CurrentValue then break end
+						pcall(function()
+							if not inventoryServiceRemote or not dataServiceClient then
+								rayfieldLibrary:Notify({ Title = "Error: Auto Use Dice & Items", Content = "InventoryService remote not loaded.", Duration = 4 })
+								return
+							end
+							local items = dataServiceClient:get("items") or {}
+							local selectedDiceItems = rayfieldLibrary.Flags.MiscDiceTypes and rayfieldLibrary.Flags.MiscDiceTypes.CurrentOption or {}
+							for _, diceName in ipairs(selectedDiceItems) do
+								local itemId = nameToIdMap and nameToIdMap[diceName]
+								if itemId and (items[itemId] or 0) > 0 then
+									pcall(function() inventoryServiceRemote:InvokeServer("requestUseItem", itemId) end)
+								end
+							end
+						end)
+						task.wait(1)
+					end
+				end)
+			end,
+		})
+
+		-- Dice dropdown deferred (data only, safe to defer)
 		task.spawn(function()
 			repeat task.wait(0.5) until modulesLoaded
 			pcall(function()
@@ -2379,35 +2416,6 @@ task.spawn(function()
 					for _, itemId in ipairs(diceItemIds) do table.insert(diceNames, idToNameMap[itemId]) end
 					table.sort(diceNames)
 				end
-				featureToggle(miscTab, {
-					Name = "Auto Use Dice & Items",
-					CurrentValue = false,
-					Flag = "MiscUseDice",
-					Callback = function(enabled)
-						if not enabled then return end
-						task.spawn(function()
-							while true do
-								local flag = rayfieldLibrary.Flags.MiscUseDice
-								if not flag or not flag.CurrentValue then break end
-								pcall(function()
-									if not inventoryServiceRemote or not dataServiceClient then
-										rayfieldLibrary:Notify({ Title = "Error: Auto Use Dice & Items", Content = "InventoryService remote not loaded.", Duration = 4 })
-										return
-									end
-									local items = dataServiceClient:get("items") or {}
-									local selectedDiceItems = rayfieldLibrary.Flags.MiscDiceTypes and rayfieldLibrary.Flags.MiscDiceTypes.CurrentOption or {}
-									for _, diceName in ipairs(selectedDiceItems) do
-										local itemId = nameToIdMap and nameToIdMap[diceName]
-										if itemId and (items[itemId] or 0) > 0 then
-											pcall(function() inventoryServiceRemote:InvokeServer("requestUseItem", itemId) end)
-										end
-									end
-								end)
-								task.wait(1)
-							end
-						end)
-					end,
-				})
 				if #diceNames > 0 then
 					miscTab:CreateDropdown({ Name="Dice & Item Types", Options=diceNames, CurrentOption={diceNames[1]}, MultipleOptions=true, Flag="MiscDiceTypes", Callback=function() end })
 				else
