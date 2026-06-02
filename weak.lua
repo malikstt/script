@@ -979,9 +979,9 @@ task.spawn(function()
 
 local savedFarmPosition = nil
 local savedFarmPositionLabel
-local zoneDropdown = nil  -- We'll store reference to update it later
 
--- Zone Target Dropdown
+-- Zone Target Dropdown (always includes Saved Position option)
+local zoneDropdown = nil
 pcall(function()
     local zoneOptions = {"Best Unlocked", "Saved Position"}
 
@@ -1023,7 +1023,7 @@ featureToggle(farmingTab, {
                     local targetOption = rayfieldLibrary.Flags.FarmingZoneTarget and 
                                        rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
 
-                    -- === SAVED POSITION PRIORITY ===
+                    -- SAVED POSITION MODE
                     if savedFarmPosition and targetOption == "Saved Position" then
                         local char = localPlayer.Character
                         if char and char:FindFirstChild("HumanoidRootPart") then
@@ -1033,7 +1033,7 @@ featureToggle(farmingTab, {
                         return
                     end
 
-                    -- Normal zone teleport logic
+                    -- Normal zone teleport
                     if not zonesServiceRemote then return end
 
                     local currentZone = dataServiceClient and (dataServiceClient:get("zone") or 1) or 1
@@ -1069,35 +1069,23 @@ featureButton(farmingTab, {
         pcall(function()
             local char = localPlayer.Character
             if not char then 
-                rayfieldLibrary:Notify({ Title = "Error", Content = "Character not found.", Duration = 3 })
+                rayfieldLibrary:Notify({ Title = "Error", Content = "Character not found.", Duration = 3 }) 
                 return 
             end
             
             local root = char:FindFirstChild("HumanoidRootPart")
             if not root then 
-                rayfieldLibrary:Notify({ Title = "Error", Content = "HumanoidRootPart not found.", Duration = 3 })
+                rayfieldLibrary:Notify({ Title = "Error", Content = "HumanoidRootPart not found.", Duration = 3 }) 
                 return 
             end
 
             savedFarmPosition = root.Position
-            
-            savedFarmPositionLabel:Set(string.format("Saved Position: %.1f, %.1f, %.1f", 
+            savedFarmPositionLabel:Set(string.format("Saved: %.1f, %.1f, %.1f", 
                 root.Position.X, root.Position.Y, root.Position.Z))
 
-            -- Update dropdown to include "Saved Position"
-            if zoneDropdown then
-                pcall(function()
-                    local currentOptions = zoneDropdown:GetOptions() or {}
-                    if not table.find(currentOptions, "Saved Position") then
-                        table.insert(currentOptions, 2, "Saved Position") -- Insert after "Best Unlocked"
-                        zoneDropdown:Refresh(currentOptions)
-                    end
-                end)
-            end
-
             rayfieldLibrary:Notify({ 
-                Title = "Position Saved", 
-                Content = "Auto Farm Zone will now use this position when 'Saved Position' is selected.", 
+                Title = "Position Saved ✓", 
+                Content = "Select 'Saved Position' in Zone Target dropdown", 
                 Duration = 4 
             })
         end)
@@ -1111,30 +1099,10 @@ featureButton(farmingTab, {
         pcall(function()
             savedFarmPosition = nil
             savedFarmPositionLabel:Set("Saved Position: None")
-
-            -- Optional: Remove from dropdown
-            if zoneDropdown then
-                pcall(function()
-                    local opts = zoneDropdown:GetOptions() or {}
-                    for i, v in ipairs(opts) do
-                        if v == "Saved Position" then
-                            table.remove(opts, i)
-                            zoneDropdown:Refresh(opts)
-                            break
-                        end
-                    end
-                end)
-            end
-
-            rayfieldLibrary:Notify({ 
-                Title = "Position Cleared", 
-                Content = "Auto Farm Zone will use normal zone targeting again.", 
-                Duration = 3 
-            })
+            rayfieldLibrary:Notify({ Title = "Position Cleared", Content = "Using normal zone targeting now.", Duration = 3 })
         end)
     end,
 })
-
 		featureToggle(farmingTab, {
 			Name = "Auto Unlock Affordable Zones",
 			CurrentValue = false,
