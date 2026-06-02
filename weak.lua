@@ -981,18 +981,14 @@ repeat task.wait() until game:IsLoaded()
 
 	pcall(function()
 		local zoneOptions = {"Best Unlocked", "Saved Position"}
-
 		local totalZones = 40
-
 		if ZonesModule then
 			pcall(function()
 				totalZones = ZonesModule.getMaxZone()
 			end)
 		end
-
 		for i = 1, totalZones do
 			local zoneName = "Zone " .. i
-
 			if ZonesModule then
 				pcall(function()
 					local zone = ZonesModule.getZone(i)
@@ -1001,10 +997,8 @@ repeat task.wait() until game:IsLoaded()
 					end
 				end)
 			end
-
 			table.insert(zoneOptions, zoneName)
 		end
-
 		farmingTab:CreateDropdown({
 			Name = "Zone Target",
 			Options = zoneOptions,
@@ -1021,77 +1015,38 @@ repeat task.wait() until game:IsLoaded()
 		Flag = "FarmingStayInBestZone",
 		Callback = function(enabled)
 			if not enabled then return end
-
 			task.spawn(function()
 				local lastTeleportTime = 0
-
 				while true do
 					local flag = rayfieldLibrary.Flags.FarmingStayInBestZone
-					if not flag or not flag.CurrentValue then
-						break
-					end
-
+					if not flag or not flag.CurrentValue then break end
 					pcall(function()
 						local targetOption = "Best Unlocked"
-
-						if rayfieldLibrary.Flags.FarmingZoneTarget
-							and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption
-						then
-							targetOption = rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1]
-								or "Best Unlocked"
+						if rayfieldLibrary.Flags.FarmingZoneTarget and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption then
+							targetOption = rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
 						end
-
 						if targetOption == "Saved Position" and savedFarmPosition then
 							local char = localPlayer.Character
 							local root = char and char:FindFirstChild("HumanoidRootPart")
-
-							if root then
-								char:PivotTo(CFrame.new(savedFarmPosition))
-							end
-
+							if root then char:PivotTo(CFrame.new(savedFarmPosition)) end
 							return
 						end
-
-						if not zonesServiceRemote then
-							return
-						end
-
-						local currentZone = dataServiceClient
-							and (dataServiceClient:get("zone") or 1)
-							or 1
-
+						if not zonesServiceRemote then return end
+						local currentZone = dataServiceClient and (dataServiceClient:get("zone") or 1) or 1
 						local targetZone
-
 						if targetOption == "Best Unlocked" then
-							targetZone = dataServiceClient
-								and (dataServiceClient:get("maxZone") or 1)
-								or 1
+							targetZone = dataServiceClient and (dataServiceClient:get("maxZone") or 1) or 1
 						else
 							targetZone = tonumber(targetOption:match("Zone (%d+)"))
 						end
-
-						if targetZone
-							and targetZone > 0
-							and currentZone ~= targetZone
-						then
+						if targetZone and targetZone > 0 and currentZone ~= targetZone then
 							if tick() - lastTeleportTime > 3 then
-								zonesServiceRemote:InvokeServer(
-									"requestTeleportZone",
-									targetZone
-								)
-
+								zonesServiceRemote:InvokeServer("requestTeleportZone", targetZone)
 								lastTeleportTime = tick()
-
-								zoneBoundaryCache = {
-									zoneId = nil,
-									min = nil,
-									max = nil,
-									center = nil
-								}
+								zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
 							end
 						end
 					end)
-
 					task.wait(5)
 				end
 			end)
@@ -1105,34 +1060,15 @@ repeat task.wait() until game:IsLoaded()
 		Callback = function()
 			local char = localPlayer.Character
 			local root = char and char:FindFirstChild("HumanoidRootPart")
-
 			if not root then
-				rayfieldLibrary:Notify({
-					Title = "Error",
-					Content = "HumanoidRootPart not found",
-					Duration = 3
-				})
+				rayfieldLibrary:Notify({ Title = "Error", Content = "HumanoidRootPart not found", Duration = 3 })
 				return
 			end
-
 			savedFarmPosition = root.Position
-
 			if savedFarmPositionLabel then
-				savedFarmPositionLabel:Set(
-					string.format(
-						"Saved: %.1f, %.1f, %.1f",
-						root.Position.X,
-						root.Position.Y,
-						root.Position.Z
-					)
-				)
+				savedFarmPositionLabel:Set(string.format("Saved: %.1f, %.1f, %.1f", root.Position.X, root.Position.Y, root.Position.Z))
 			end
-
-			rayfieldLibrary:Notify({
-				Title = "Position Saved",
-				Content = "Select Saved Position in Zone Target",
-				Duration = 4
-			})
+			rayfieldLibrary:Notify({ Title = "Position Saved", Content = "Select Saved Position in Zone Target", Duration = 4 })
 		end
 	})
 
@@ -1140,16 +1076,8 @@ repeat task.wait() until game:IsLoaded()
 		Name = "Clear Saved Position",
 		Callback = function()
 			savedFarmPosition = nil
-
-			if savedFarmPositionLabel then
-				savedFarmPositionLabel:Set("Saved Position: None")
-			end
-
-			rayfieldLibrary:Notify({
-				Title = "Position Cleared",
-				Content = "Normal zone targeting restored",
-				Duration = 3
-			})
+			if savedFarmPositionLabel then savedFarmPositionLabel:Set("Saved Position: None") end
+			rayfieldLibrary:Notify({ Title = "Position Cleared", Content = "Normal zone targeting restored", Duration = 3 })
 		end
 	})
 
@@ -1446,6 +1374,136 @@ repeat task.wait() until game:IsLoaded()
 			end)
 		end,
 	})
+
+	-- =============================================
+	-- FRUIT EXTRACTOR SECTION
+	-- =============================================
+	pcall(function()
+		farmingTab:CreateSection("Fruit Extractor")
+
+		local autoExtractEnabled = false
+		local selectedExtractFruitIds = {"ANY"}
+		local selectedExtractSlimeMode = "Best"
+
+		local function getTargetSlimesForExtract()
+			if not dataServiceClient then return {} end
+			if selectedExtractSlimeMode == "Best" then
+				local key, data = getBestSlimeEntry()
+				if key and data then return {{key=key, data=data}} end
+				return {}
+			else
+				local equipped = dataServiceClient:get("equipped") or {}
+				local result = {}
+				for _, slimeKey in ipairs(equipped) do
+					if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
+						local inv = dataServiceClient:get("inventory") or {}
+						local data = inv[slimeKey]
+						if type(data) == "table" then table.insert(result, {key=slimeKey, data=data}) end
+					end
+				end
+				return result
+			end
+		end
+
+		local function resolveExtractFruitList()
+			local ok, owned = pcall(getOwnedFruitIds)
+			if not ok or not owned then return {} end
+			if selectedExtractFruitIds[1] == "ANY" then
+				local result = {}
+				for _, f in ipairs(ALL_FRUITS or {}) do if owned[f.id] then table.insert(result, f.id) end end
+				return result
+			else
+				local result = {}
+				for _, fid in ipairs(selectedExtractFruitIds) do if owned[fid] then table.insert(result, fid) end end
+				return result
+			end
+		end
+
+		local function doExtract()
+			if not fruitExtractorRemote then return end
+			local targets = getTargetSlimesForExtract()
+			if #targets == 0 then return end
+			for _, entry in ipairs(targets) do
+				local shouldExtract = false
+				if selectedExtractFruitIds[1] == "ANY" then
+					shouldExtract = true
+				else
+					local fruitsToExtract = resolveExtractFruitList()
+					for _, fruitId in ipairs(fruitsToExtract) do
+						local ok, has = pcall(slimeHasFruit, entry.data, fruitId)
+						if ok and has then shouldExtract = true break end
+					end
+				end
+				if shouldExtract then
+					pcall(function() fruitExtractorRemote:InvokeServer("requestExtractFruits", entry.key) end)
+					task.wait(0.3)
+				end
+			end
+		end
+
+		featureToggle(farmingTab, {
+			Name = "Auto Extract Fruits from Slime(s)",
+			CurrentValue = false,
+			Flag = "AutoExtractToggle",
+			Callback = function(value)
+				autoExtractEnabled = value
+				if value then
+					task.spawn(function()
+						while autoExtractEnabled do
+							local flag = rayfieldLibrary.Flags and rayfieldLibrary.Flags.AutoExtractToggle
+							if not flag or not flag.CurrentValue then break end
+							pcall(doExtract)
+							task.wait(2)
+						end
+					end)
+				end
+			end,
+		})
+
+		farmingTab:CreateDropdown({
+			Name = "Extract From",
+			Options = {"Best", "Equipped Team"},
+			CurrentOption = {"Best"},
+			MultipleOptions = false,
+			Flag = "ExtractSlimeModeDropdown",
+			Callback = function(option)
+				selectedExtractSlimeMode = type(option) == "table" and option[1] or option
+			end,
+		})
+
+		pcall(function()
+			local extractFruitOptions = {"Any"}
+			local extractLabelToId = {}
+			local extractFruitNames = {}
+			local fruits = (FruitsModule and FruitsModule.getSortedFruits) and FruitsModule.getSortedFruits() or {}
+			for _, f in ipairs(fruits) do
+				table.insert(extractFruitNames, f.powerName)
+				extractLabelToId[f.powerName] = f.id
+			end
+			table.sort(extractFruitNames)
+			for _, name in ipairs(extractFruitNames) do table.insert(extractFruitOptions, name) end
+			farmingTab:CreateDropdown({
+				Name = "Fruits to Extract",
+				Options = extractFruitOptions,
+				CurrentOption = {"Any"},
+				MultipleOptions = true,
+				Flag = "ExtractFruitDropdown",
+				Callback = function(options)
+					local picked = type(options) == "table" and options or {options}
+					selectedExtractFruitIds = {}
+					for _, label in ipairs(picked) do
+						if label == "Any" then
+							selectedExtractFruitIds = {"ANY"}
+							return
+						else
+							table.insert(selectedExtractFruitIds, extractLabelToId[label])
+						end
+					end
+					if #selectedExtractFruitIds == 0 then selectedExtractFruitIds = {"ANY"} end
+				end,
+			})
+		end)
+	end)
 
 	gameTab:CreateSection("Auto Farm")
 
