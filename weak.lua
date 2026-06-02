@@ -1081,27 +1081,188 @@ featureButton(farmingTab, {
 
             savedFarmPosition = root.Position
             savedFarmPositionLabel:Set(string.format("Saved: %.1f, %.1f, %.1f", 
-                root.Position.X, root.Position.Y, root.Position.Z))
+farmingTab:CreateSection("Zones")
 
-            rayfieldLibrary:Notify({ 
-                Title = "Position Saved ✓", 
-                Content = "Select 'Saved Position' in Zone Target dropdown", 
-                Duration = 4 
-            })
+local savedFarmPosition = nil
+local savedFarmPositionLabel
+
+pcall(function()
+    local zoneOptions = {"Best Unlocked", "Saved Position"}
+
+    local totalZones = 40
+
+    if ZonesModule then
+        pcall(function()
+            totalZones = ZonesModule.getMaxZone()
+        end)
+    end
+
+    for i = 1, totalZones do
+        local zoneName = "Zone " .. i
+
+        if ZonesModule then
+            pcall(function()
+                local zone = ZonesModule.getZone(i)
+                if zone and zone.name then
+                    zoneName = zone.name .. " (Zone " .. i .. ")"
+                end
+            end)
+        end
+
+        table.insert(zoneOptions, zoneName)
+    end
+
+    farmingTab:CreateDropdown({
+        Name = "Zone Target",
+        Options = zoneOptions,
+        CurrentOption = {"Best Unlocked"},
+        MultipleOptions = false,
+        Flag = "FarmingZoneTarget",
+        Callback = function() end
+    })
+end)
+
+featureToggle(farmingTab,{
+    Name = "Auto Farm Zone",
+    CurrentValue = false,
+    Flag = "FarmingStayInBestZone",
+    Callback = function(enabled)
+        if not enabled then return end
+
+        task.spawn(function()
+            local lastTeleportTime = 0
+
+            while true do
+                local flag = rayfieldLibrary.Flags.FarmingStayInBestZone
+                if not flag or not flag.CurrentValue then
+                    break
+                end
+
+                pcall(function()
+
+                    local targetOption = "Best Unlocked"
+
+                    if rayfieldLibrary.Flags.FarmingZoneTarget
+                        and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption
+                    then
+                        targetOption = rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1]
+                            or "Best Unlocked"
+                    end
+
+                    if targetOption == "Saved Position" and savedFarmPosition then
+                        local char = localPlayer.Character
+                        local root = char and char:FindFirstChild("HumanoidRootPart")
+
+                        if root then
+                            char:PivotTo(CFrame.new(savedFarmPosition))
+                        end
+
+                        return
+                    end
+
+                    if not zonesServiceRemote then
+                        return
+                    end
+
+                    local currentZone = dataServiceClient
+                        and (dataServiceClient:get("zone") or 1)
+                        or 1
+
+                    local targetZone
+
+                    if targetOption == "Best Unlocked" then
+                        targetZone = dataServiceClient
+                            and (dataServiceClient:get("maxZone") or 1)
+                            or 1
+                    else
+                        targetZone = tonumber(targetOption:match("Zone (%d+)"))
+                    end
+
+                    if targetZone
+                        and targetZone > 0
+                        and currentZone ~= targetZone
+                    then
+                        if tick() - lastTeleportTime > 3 then
+                            zonesServiceRemote:InvokeServer(
+                                "requestTeleportZone",
+                                targetZone
+                            )
+
+                            lastTeleportTime = tick()
+
+                            zoneBoundaryCache = {
+                                zoneId = nil,
+                                min = nil,
+                                max = nil,
+                                center = nil
+                            }
+                        end
+                    end
+
+                end)
+
+                task.wait(5)
+            end
         end)
     end,
 })
 
--- Clear Button
-featureButton(farmingTab, {
+savedFarmPositionLabel =
+    farmingTab:CreateLabel("Saved Position: None")
+
+featureButton(farmingTab,{
+    Name = "Save Current Position",
+    Callback = function()
+
+        local char = localPlayer.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+
+        if not root then
+            rayfieldLibrary:Notify({
+                Title = "Error",
+                Content = "HumanoidRootPart not found",
+                Duration = 3
+            })
+            return
+        end
+
+        savedFarmPosition = root.Position
+
+        if savedFarmPositionLabel then
+            savedFarmPositionLabel:Set(
+                string.format(
+                    "Saved: %.1f, %.1f, %.1f",
+                    root.Position.X,
+                    root.Position.Y,
+                    root.Position.Z
+                )
+            )
+        end
+
+        rayfieldLibrary:Notify({
+            Title = "Position Saved",
+            Content = "Select Saved Position in Zone Target",
+            Duration = 4
+        })
+    end
+})
+
+featureButton(farmingTab,{
     Name = "Clear Saved Position",
     Callback = function()
-        pcall(function()
-            savedFarmPosition = nil
+
+        savedFarmPosition = nil
+
+        if savedFarmPositionLabel then
             savedFarmPositionLabel:Set("Saved Position: None")
-            rayfieldLibrary:Notify({ Title = "Position Cleared", Content = "Using normal zone targeting now.", Duration = 3 })
-        end)
-    end,
+        end
+
+        rayfieldLibrary:Notify({
+            Title = "Position Cleared",
+            Content = "Normal zone targeting restored",
+            Duration = 3
+        })
+    end
 })
 		featureToggle(farmingTab, {
 			Name = "Auto Unlock Affordable Zones",
