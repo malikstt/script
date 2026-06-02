@@ -1,3 +1,30 @@
+-- Executor detection and weak script loading for PC/Unknown executors
+local PC_EXEC = {
+    ["Volt"] = true,
+    ["Potassium"] = true,
+    ["Wave"] = true,
+    ["Seliware"] = true,
+    ["Synapse Z"] = true,
+    ["Madium"] = true,
+    ["Velocity"] = true,
+    ["SirHurt"] = true,
+    ["Solara"] = true,
+    ["Xeno"] = true,
+    -- Mac
+    ["MacSploit"] = true,
+    ["Opiumware"] = true
+}
+
+local exec = identifyexecutor and identifyexecutor() or "Unknown"
+print("Executor name:", exec)
+
+-- If executor is PC/Mac or Unknown, load weak.lua and stop
+if PC_EXEC[exec] or exec == "Unknown" then
+    pcall(function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/weak.lua"))()
+    end)
+    return  -- Exit, do not run any further code
+end
 task.spawn(function()
 local ok, err = pcall(function()
 repeat task.wait() until game:IsLoaded()
