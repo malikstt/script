@@ -1557,72 +1557,7 @@ repeat task.wait() until game:IsLoaded()
 		end
 	})
 
-	gameTab:CreateSection("Slime Gun")
-
-	local slimeGunMode = "Normal"
-	local advancedShootConnection = nil
-	local originalGetUpgradeValue = nil
-	local upgradeServiceUtils = nil
-
-	local function cleanupAdvancedMode()
-		if advancedShootConnection then
-			advancedShootConnection:Disconnect()
-			advancedShootConnection = nil
-		end
-		if upgradeServiceUtils and originalGetUpgradeValue then
-			pcall(function()
-				upgradeServiceUtils.getUpgradeValue = originalGetUpgradeValue
-			end)
-		end
-	end
-
-	local function enableAdvancedMode()
-		cleanupAdvancedMode()
-		local ok, R = pcall(function() return game:GetService("ReplicatedStorage") end)
-		if not ok then return end
-		local okU, U = pcall(function() return require(R.Source.Features.Upgrades.UpgradeServiceUtils) end)
-		if okU then
-			upgradeServiceUtils = U
-			originalGetUpgradeValue = U.getUpgradeValue
-			U.getUpgradeValue = function(N, L)
-				if N == "slimeGunFireRate" then
-					return 0
-				end
-				return originalGetUpgradeValue(N, L)
-			end
-		end
-		local okG, G = pcall(function() return require(R.Source.Features.GoopGun.GoopGunServiceClient) end)
-		if okG then
-			advancedShootConnection = RunService.Heartbeat:Connect(function()
-				local wrapper = G.wrapper
-				if wrapper then
-					wrapper.prevSendAt = 0
-					wrapper.isHoldingInput = true
-					wrapper:onActivated()
-				end
-			end)
-		end
-	end
-
-	gameTab:CreateDropdown({
-		Name = "Slime Gun Mode",
-		Options = {"Normal", "Advanced (may cause lag)"},
-		CurrentOption = {"Normal"},
-		MultipleOptions = false,
-		Flag = "SlimeGunMode",
-		Callback = function(option)
-			local mode = type(option) == "table" and option[1] or option
-			slimeGunMode = mode
-			local autoShootFlag = rayfieldLibrary.Flags.GunAutoShoot
-			if autoShootFlag and autoShootFlag.CurrentValue then
-				if slimeGunMode == "Advanced" then
-					enableAdvancedMode()
-				else
-					cleanupAdvancedMode()
-				end
-			end
-		end
-	})
+	gameTab:CreateSection("Controls")
 
 	local combatEnabled = false
 	local getgcChecked = false
@@ -1633,66 +1568,97 @@ repeat task.wait() until game:IsLoaded()
 		local tool = char:FindFirstChild("SlimeGun")
 		if not tool then return nil end
 		if not getgc then
-			if not getgcChecked then Logger:warn("Executor","Capability","getgc not available — Normal mode disabled") getgcChecked = true end
+			if not getgcChecked then Logger:warn("Executor","Capability","getgc not available — Auto Shoot disabled") getgcChecked = true end
 			return nil
 		end
-		if not getgcChecked then Logger:info("Executor","Capability","getgc available — Normal mode enabled") getgcChecked = true end
+		if not getgcChecked then Logger:info("Executor","Capability","getgc available — Auto Shoot enabled") getgcChecked = true end
 		for _, v in ipairs(getgc(true)) do
 			if type(v) == "table" and rawget(v, "tool") == tool and rawget(v, "prevSendAt") ~= nil then return v end
 		end
 		return nil
 	end
 
-	featureToggle(gameTab, {
-		Name = "Auto Shoot",
-		CurrentValue = false,
-		Flag = "GunAutoShoot",
-		Callback = function(value)
-			combatEnabled = value
-			if value then
-				if slimeGunMode == "Advanced" then
-					enableAdvancedMode()
-				else
-					cleanupAdvancedMode()
-				end
-			else
-				cleanupAdvancedMode()
-			end
-		end
+	gameTab:CreateDropdown({
+		Name = "Slime Gun Mode",
+		Options = {"Normal", "Advanced"},
+		CurrentOption = {"Normal"},
+		MultipleOptions = false,
+		Flag = "SlimeGunMode",
+		Callback = function() end,
 	})
+
+	featureToggle(gameTab, { Name = "Auto Shoot Enemies", CurrentValue = false, Flag = "CombatAutoShoot", Callback = function(value) combatEnabled = value end })
 
 	gameTab:CreateDropdown({ Name = "Combat Target Priority", Options = {"Closest","Lowest HP","Highest HP","Most Coins & Goop"}, CurrentOption = {"Closest"}, MultipleOptions = false, Flag = "CombatTargetPriority", Callback = function() end })
 
 	task.spawn(function()
 		local controller = nil
+		local advHeartbeat = nil
 		while true do
 			task.wait(0.1)
-			if not combatEnabled or slimeGunMode ~= "Normal" then controller = nil task.wait(0.3) continue end
+			if not combatEnabled then
+				controller = nil
+				if advHeartbeat then advHeartbeat:Disconnect() advHeartbeat = nil end
+				task.wait(0.3)
+				continue
+			end
 			pcall(function()
-				local char = localPlayer.Character
-				if not char then return end
-				local humanoid = char:FindFirstChildWhichIsA("Humanoid")
-				if not humanoid or humanoid.Health <= 0 then return end
-				local _, targetId = selectCombatTarget()
-				if not targetId then return end
-				local tool = char:FindFirstChild("SlimeGun")
-				if not tool then
-					local backpack = localPlayer:FindFirstChildOfClass("Backpack")
-					if backpack then
-						local gunInBag = backpack:FindFirstChild("SlimeGun")
-						if gunInBag then humanoid:EquipTool(gunInBag) end
+				local modeFlag = rayfieldLibrary.Flags.SlimeGunMode
+				local mode = modeFlag and (type(modeFlag.CurrentOption)=="table" and modeFlag.CurrentOption[1] or modeFlag.CurrentOption) or "Normal"
+				if mode == "Advanced" then
+					if advHeartbeat then return end
+					pcall(function()
+						local R = game:GetService("ReplicatedStorage")
+						local U = require(R.Source.Features.Upgrades.UpgradeServiceUtils)
+						local G = require(R.Source.Features.GoopGun.GoopGunServiceClient)
+						local O = U.getUpgradeValue
+						U.getUpgradeValue = function(N, L)
+							if N == "slimeGunFireRate" then return 0 end
+							return O(N, L)
+						end
+						advHeartbeat = game:GetService("RunService").Heartbeat:Connect(function()
+							pcall(function()
+								local flag = rayfieldLibrary.Flags.CombatAutoShoot
+								if not flag or not flag.CurrentValue then return end
+								local mf = rayfieldLibrary.Flags.SlimeGunMode
+								local m = mf and (type(mf.CurrentOption)=="table" and mf.CurrentOption[1] or mf.CurrentOption) or "Normal"
+								if m ~= "Advanced" then return end
+								local W = G.wrapper
+								if W then
+									W.prevSendAt = 0
+									W.isHoldingInput = true
+									W:onActivated()
+								end
+							end)
+						end)
+					end)
+				else
+					if advHeartbeat then advHeartbeat:Disconnect() advHeartbeat = nil end
+					local char = localPlayer.Character
+					if not char then return end
+					local humanoid = char:FindFirstChildWhichIsA("Humanoid")
+					if not humanoid or humanoid.Health <= 0 then return end
+					local _, targetId = selectCombatTarget()
+					if not targetId then return end
+					local tool = char:FindFirstChild("SlimeGun")
+					if not tool then
+						local backpack = localPlayer:FindFirstChildOfClass("Backpack")
+						if backpack then
+							local gunInBag = backpack:FindFirstChild("SlimeGun")
+							if gunInBag then humanoid:EquipTool(gunInBag) end
+						end
+						controller = nil
+						return
 					end
-					controller = nil
-					return
+					if not controller then controller = findGunController() if not controller then return end end
+					local ok = pcall(function()
+						local orig = controller._getTargetEnemyId
+						controller._getTargetEnemyId = function() return targetId end
+						controller:onActivated()
+						controller._getTargetEnemyId = orig
+					end)
+					if not ok then controller = nil end
 				end
-				if not controller then controller = findGunController() if not controller then return end end
-				local ok = pcall(function()
-					local orig = controller._getTargetEnemyId
-					controller._getTargetEnemyId = function() return targetId end
-					controller:onActivated()
-					controller._getTargetEnemyId = orig
-				end)
-				if not ok then controller = nil end
 			end)
 		end
 	end)
@@ -2688,8 +2654,6 @@ repeat task.wait() until game:IsLoaded()
 
 	featureToggle(settingsTab, { Name = "Auto Rejoin On Disconnect", CurrentValue = false, Flag = "SettingsAutoRejoin", Callback = function() end })
 
-	settingsTab:CreateParagraph({ Title = "NOTE", Content = "works based on your executor" })
-
 	featureToggle(settingsTab, {
 		Name = "Auto Send & Accept Friend Requests",
 		CurrentValue = false,
@@ -2700,32 +2664,28 @@ repeat task.wait() until game:IsLoaded()
 				while true do
 					local flag = rayfieldLibrary.Flags.AutoFriend
 					if not flag or not flag.CurrentValue then break end
-					local PlayersService = game:GetService("Players")
-					local LocalPlr = PlayersService.LocalPlayer
-					local function getFriendStatus(player)
-						local ok, status = pcall(function()
-							return LocalPlr:GetFriendStatus(player)
-						end)
-						if ok then return status end
-						return nil
-					end
-					for _, player in ipairs(PlayersService:GetPlayers()) do
-						if player ~= LocalPlr then
-							local status = getFriendStatus(player)
-							if status == Enum.FriendStatus.NotFriend or status == Enum.FriendStatus.Unknown then
-								pcall(function()
-									LocalPlr:RequestFriendship(player)
+					pcall(function()
+						local PlayersService = game:GetService("Players")
+						local lp = PlayersService.LocalPlayer
+						for _, player in ipairs(PlayersService:GetPlayers()) do
+							if player ~= lp then
+								local ok, status = pcall(function()
+									return lp:GetFriendStatus(player)
 								end)
-								task.wait(0.5)
+								if ok and (status == Enum.FriendStatus.NotFriend or status == Enum.FriendStatus.Unknown) then
+									pcall(function() lp:RequestFriendship(player) end)
+									task.wait(0.5)
+								end
 							end
 						end
-					end
+					end)
 					task.wait(600)
 				end
 			end)
 		end,
 	})
 
+	settingsTab:CreateParagraph({ Title = "Friend Requests", Content = "NOTE : works based on your executor" })
 	settingsTab:CreateSection("Advanced Optimization")
 
 	local OPT_VISUAL_TYPES = { ParticleEmitter=true,Trail=true,Beam=true,Fire=true,Smoke=true,Sparkles=true,SurfaceAppearance=true,Highlight=true,SelectionBox=true,SelectionSphere=true,Atmosphere=true }
