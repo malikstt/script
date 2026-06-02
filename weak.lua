@@ -1738,7 +1738,8 @@ repeat task.wait() until game:IsLoaded()
 									local cost = data.cost.amount or 0
 									local currency = data.cost.currency
 									local canBuy = false
-									if currency == "coins" and modeSet["All"] or modeSet["Coins"] then
+									-- FIX: correct operator precedence
+									if currency == "coins" and (modeSet["All"] or modeSet["Coins"]) then
 										canBuy = coins >= cost
 									elseif currency == "goop" and (modeSet["All"] or modeSet["Goop"]) then
 										canBuy = goop >= cost
