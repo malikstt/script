@@ -24,14 +24,27 @@ repeat task.wait() until game:IsLoaded()
 	local ReplicatedStorage = game:GetService("ReplicatedStorage")
 	local HttpService = game:GetService("HttpService")
 	local TweenService = game:GetService("TweenService")
+	local VirtualUser = game:GetService("VirtualUser")
+	local UserInputService = game:GetService("UserInputService")
 
-	pcall(function()
-		local virtualUser = game:GetService("VirtualUser")
-		localPlayer.Idled:Connect(function()
-			virtualUser:CaptureController()
-			virtualUser:ClickButton2(Vector2.new())
-		end)
-	end)
+	-- Anti AFK control
+	local antiAfkConnection = nil
+	local antiAfkEnabled = true
+
+	local function setupAntiAfk(enabled)
+		if antiAfkConnection then antiAfkConnection:Disconnect() antiAfkConnection = nil end
+		if enabled then
+			antiAfkConnection = localPlayer.Idled:Connect(function()
+				pcall(function()
+					VirtualUser:CaptureController()
+					VirtualUser:ClickButton2(Vector2.new())
+				end)
+			end)
+		end
+	end
+
+	-- Start anti-afk by default
+	setupAntiAfk(true)
 
 	Logger:info("CactusHub", "Init", "Loading Rayfield...")
 	local rayfieldLibrary
@@ -162,7 +175,7 @@ repeat task.wait() until game:IsLoaded()
 	mainTab:CreateParagraph({ Title = "Enabled By Default", Content = "[+] Anti AFK" })
 	mainTab:CreateParagraph({
 		Title = "Latest Update",
-		Content = "[+] Auto Stay in UFO Zone\n[+] Auto Collect UFO Loot\n[+] Live UFO Phase Display\n[+] Live UFO Zone Display and State\n[+] Live Next Event Countdown Timer\n[+] Live Golden UFO if found\n[+] Manual Refresh Status Button\n[+] Auto Farm Zone ( x4 faster tp )\n[+] Added beammeup / aliensarehere in Auto Redeem Codes\n[+] Added New Zones\n[+] Bug Fixes"
+		Content = "[+] Auto unlock machines\nMachines to unlock []\n[+] Auto remove fruits from slimes\n[+] Fruits to remove []\n[+] Advanced slime gun bypass cooldown\n[+] Fixed Auto Send & Accept requests\n[+] Fixed Auto Upgrade not working\n[+] Auto stack mode [ Smart ]\nNormal : just stacks whenever selected reaches 1\nSmart : start stacking once rarest dice reaches 1\n[+] Specific Position ( Auto farm zone ), Save pos, clear pos\n[+] better potion use (now only uses if u run out)\n[+] better dices use (now only uses if u run out)\n[+] Improved Optimization & whatever caused memory leaks\n[+] Bug fixes"
 	})
 
 	pcall(function()
@@ -1580,11 +1593,13 @@ repeat task.wait() until game:IsLoaded()
 
 	gameTab:CreateDropdown({
 		Name = "Slime Gun Mode",
-		Options = {"Normal", "Advanced"},
-		CurrentOption = {"Normal"},
+		Options = {"Normal (uses getgc)", "Advanced (bypass cooldown)"},
+		CurrentOption = {"Normal (uses getgc)"},
 		MultipleOptions = false,
 		Flag = "SlimeGunMode",
-		Callback = function() end,
+		Callback = function(option)
+			-- Just store the choice, the actual mode string will be parsed
+		end,
 	})
 
 	featureToggle(gameTab, { Name = "Auto Shoot Enemies", CurrentValue = false, Flag = "CombatAutoShoot", Callback = function(value) combatEnabled = value end })
@@ -1604,8 +1619,9 @@ repeat task.wait() until game:IsLoaded()
 			end
 			pcall(function()
 				local modeFlag = rayfieldLibrary.Flags.SlimeGunMode
-				local mode = modeFlag and (type(modeFlag.CurrentOption)=="table" and modeFlag.CurrentOption[1] or modeFlag.CurrentOption) or "Normal"
-				if mode == "Advanced" then
+				local mode = modeFlag and (type(modeFlag.CurrentOption)=="table" and modeFlag.CurrentOption[1] or modeFlag.CurrentOption) or "Normal (uses getgc)"
+				local isAdvanced = mode:find("Advanced") ~= nil
+				if isAdvanced then
 					if advHeartbeat then return end
 					pcall(function()
 						local R = game:GetService("ReplicatedStorage")
@@ -1621,8 +1637,8 @@ repeat task.wait() until game:IsLoaded()
 								local flag = rayfieldLibrary.Flags.CombatAutoShoot
 								if not flag or not flag.CurrentValue then return end
 								local mf = rayfieldLibrary.Flags.SlimeGunMode
-								local m = mf and (type(mf.CurrentOption)=="table" and mf.CurrentOption[1] or mf.CurrentOption) or "Normal"
-								if m ~= "Advanced" then return end
+								local m = mf and (type(mf.CurrentOption)=="table" and mf.CurrentOption[1] or mf.CurrentOption) or "Normal (uses getgc)"
+								if not m:find("Advanced") then return end
 								local W = G.wrapper
 								if W then
 									W.prevSendAt = 0
@@ -1736,7 +1752,7 @@ repeat task.wait() until game:IsLoaded()
 									local cost = data.cost.amount or 0
 									local currency = data.cost.currency
 									local canBuy = false
-									if currency == "coins" and modeSet["All"] or modeSet["Coins"] then
+									if currency == "coins" and (modeSet["All"] or modeSet["Coins"]) then
 										canBuy = coins >= cost
 									elseif currency == "goop" and (modeSet["All"] or modeSet["Goop"]) then
 										canBuy = goop >= cost
@@ -2716,6 +2732,17 @@ repeat task.wait() until game:IsLoaded()
 	settingsTab:CreateParagraph({ Title = "🍀 Want a serverhop script for luck servers?", Content = "Join the Discord! discord.gg/qMWFBWdcf" })
 	settingsTab:CreateSection("System")
 
+	-- Anti AFK toggle (enabled by default)
+	featureToggle(settingsTab, {
+		Name = "Anti AFK",
+		CurrentValue = true,
+		Flag = "SettingsAntiAfk",
+		Callback = function(value)
+			antiAfkEnabled = value
+			setupAntiAfk(value)
+		end,
+	})
+
 	featureToggle(settingsTab, {
 		Name = "Anti Kick",
 		CurrentValue = false,
@@ -2799,8 +2826,8 @@ repeat task.wait() until game:IsLoaded()
 				for _, d in ipairs(workspace:GetDescendants()) do
 					if d:IsA("BasePart") then d.CastShadow=false d.Reflectance=0 d.Material=CHEAP_MATERIAL end
 				end
-				local rs = game:GetService("RunService")
-				rs:Set3dRenderingEnabled(false) task.wait(0.1) rs:Set3dRenderingEnabled(true)
+				-- Keep 3D rendering disabled permanently
+				game:GetService("RunService"):Set3dRenderingEnabled(false)
 			end)
 			pcall(function()
 				for _, d in ipairs(game:GetDescendants()) do
@@ -2811,6 +2838,8 @@ repeat task.wait() until game:IsLoaded()
 			_G.__memoryCleaner = RunService.Heartbeat:Connect(function() gcinfo() end)
 		else
 			if _G.__memoryCleaner then _G.__memoryCleaner:Disconnect() _G.__memoryCleaner = nil end
+			-- Re-enable 3D rendering when turning off optimization
+			game:GetService("RunService"):Set3dRenderingEnabled(true)
 		end
 	end
 
@@ -2825,8 +2854,8 @@ repeat task.wait() until game:IsLoaded()
 			local lighting = game:GetService("Lighting")
 			lighting.GlobalShadows=false lighting.EnvironmentDiffuseScale=0 lighting.EnvironmentSpecularScale=0
 			for _, d in ipairs(workspace:GetDescendants()) do if d:IsA("BasePart") then d.CastShadow=false d.Reflectance=0 d.Material=CHEAP_MATERIAL end end
-			local rs = game:GetService("RunService")
-			rs:Set3dRenderingEnabled(false) task.wait(0.1) rs:Set3dRenderingEnabled(true)
+			-- Keep 3D rendering disabled permanently
+			game:GetService("RunService"):Set3dRenderingEnabled(false)
 		end,
 	})
 
