@@ -5,21 +5,18 @@ repeat task.wait() until game:IsLoaded()
 	Logger.LogHistory = {}
 
 	function Logger:log(level, system, feature, message, errorObj)
-		local ok2, _ = pcall(function()
-			local logEntry = { timestamp = os.time(), level = level, system = system, feature = feature, message = message, error = errorObj }
-			table.insert(self.LogHistory, logEntry)
-			if #self.LogHistory > 200 then table.remove(self.LogHistory, 1) end
-			local prefix = string.format("[%s] [%s]%s", level, system, feature and " (" .. feature .. ")" or "")
-			local fullMsg = prefix .. " " .. tostring(message)
-			if errorObj then fullMsg = fullMsg .. "\n  Error: " .. tostring(errorObj) end
-			if level == "ERROR" or level == "WARN" then warn(fullMsg) else print(fullMsg) end
-		end)
-		if not ok2 then pcall(warn, "[Logger] Logger itself errored") end
+		local logEntry = { timestamp = os.time(), level = level, system = system, feature = feature, message = message, error = errorObj }
+		table.insert(self.LogHistory, logEntry)
+		if #self.LogHistory > 200 then table.remove(self.LogHistory, 1) end
+		local prefix = string.format("[%s] [%s]%s", level, system, feature and " (" .. feature .. ")" or "")
+		local fullMsg = prefix .. " " .. tostring(message)
+		if errorObj then fullMsg = fullMsg .. "\n  Error: " .. tostring(errorObj) end
+		if level == "ERROR" or level == "WARN" then warn(fullMsg) else print(fullMsg) end
 	end
 
-	function Logger:info(system, feature, message) pcall(function() self:log("INFO", system, feature, message) end) end
-	function Logger:warn(system, feature, message) pcall(function() self:log("WARN", system, feature, message) end) end
-	function Logger:error(system, feature, message, err2) pcall(function() self:log("ERROR", system, feature, message, err2) end) end
+	function Logger:info(system, feature, message) self:log("INFO", system, feature, message) end
+	function Logger:warn(system, feature, message) self:log("WARN", system, feature, message) end
+	function Logger:error(system, feature, message, err) self:log("ERROR", system, feature, message, err) end
 
 	local Players = game:GetService("Players")
 	local localPlayer = Players.LocalPlayer
@@ -48,91 +45,61 @@ repeat task.wait() until game:IsLoaded()
 	end
 	Logger:info("CactusHub", "Init", "Rayfield loaded successfully")
 
-	local mainWindow
-	local mwOk, mwErr = pcall(function()
-		mainWindow = rayfieldLibrary:CreateWindow({
-			Name = "Cactus Hub • discord.gg/qMWFBWdcf",
-			Icon = 0,
-			LoadingTitle = "Loading",
-			LoadingSubtitle = "Please wait...",
-			Theme = "Default",
-			ToggleUIKeybind = "K",
-			DisableRayfieldPrompts = false,
-			DisableBuildWarnings = true,
-			ConfigurationSaving = { Enabled = true, FolderName = "CactusHub", FileName = "Config" },
-			Discord = { Enabled = true, Invite = "qMWFBWdcf", RememberJoins = true },
-			KeySystem = false,
-		})
-	end)
-	if not mwOk or not mainWindow then
-		warn("[CactusHub] Failed to create window: " .. tostring(mwErr))
-		return
-	end
-
-	local function safeCreateElement(parent, method, config, fallbackName)
-		if not parent or not method then return nil end
-		local el
-		local ok2, err2 = pcall(function()
-			el = parent[method](parent, config)
-		end)
-		if not ok2 then
-			warn("[CactusHub] Failed to create element " .. tostring(fallbackName or config and config.Name or "?") .. ": " .. tostring(err2))
-			return nil
-		end
-		return el
-	end
+	local mainWindow = rayfieldLibrary:CreateWindow({
+		Name = "Cactus Hub • discord.gg/qMWFBWdcf",
+		Icon = 0,
+		LoadingTitle = "Loading",
+		LoadingSubtitle = "Please wait...",
+		Theme = "Default",
+		ToggleUIKeybind = "K",
+		DisableRayfieldPrompts = false,
+		DisableBuildWarnings = true,
+		ConfigurationSaving = { Enabled = true, FolderName = "CactusHub", FileName = "Config" },
+		Discord = { Enabled = true, Invite = "qMWFBWdcf", RememberJoins = true },
+		KeySystem = false,
+	})
 
 	local function featureToggle(tab, config, fn)
-		if not tab then warn("[CactusHub] featureToggle: nil tab for " .. tostring(config and config.Name)) return nil end
 		local wrappedConfig = {}
 		for k, v in pairs(config) do wrappedConfig[k] = v end
 		local originalCallback = config.Callback
 		wrappedConfig.Callback = function(value)
-			local ok2, err2 = pcall(originalCallback or fn, value)
-			if not ok2 then
-				Logger:error("Feature", config.Name, "Toggle callback error", err2)
-				pcall(function() rayfieldLibrary:Notify({ Title = "Error: " .. tostring(config.Name), Content = tostring(err2):sub(1, 100), Duration = 5 }) end)
+			local ok, err = pcall(originalCallback or fn, value)
+			if not ok then
+				Logger:error("Feature", config.Name, "Toggle callback error", err)
+				rayfieldLibrary:Notify({ Title = "Error: " .. tostring(config.Name), Content = tostring(err):sub(1, 100), Duration = 5 })
 			end
 		end
-		local el
-		pcall(function() el = tab:CreateToggle(wrappedConfig) end)
-		if not el then warn("[CactusHub] Failed to create toggle: " .. tostring(config.Name)) end
-		return el
+		return tab:CreateToggle(wrappedConfig)
 	end
 
 	local function featureButton(tab, config)
-		if not tab then warn("[CactusHub] featureButton: nil tab for " .. tostring(config and config.Name)) return nil end
 		local wrappedConfig = {}
 		for k, v in pairs(config) do wrappedConfig[k] = v end
 		local originalCallback = config.Callback
 		wrappedConfig.Callback = function()
-			local ok2, err2 = pcall(originalCallback)
-			if not ok2 then
-				Logger:error("Feature", config.Name, "Button callback error", err2)
-				pcall(function() rayfieldLibrary:Notify({ Title = "Error: " .. tostring(config.Name), Content = tostring(err2):sub(1, 100), Duration = 5 }) end)
+			local ok, err = pcall(originalCallback)
+			if not ok then
+				Logger:error("Feature", config.Name, "Button callback error", err)
+				rayfieldLibrary:Notify({ Title = "Error: " .. tostring(config.Name), Content = tostring(err):sub(1, 100), Duration = 5 })
 			end
 		end
-		local el
-		pcall(function() el = tab:CreateButton(wrappedConfig) end)
-		if not el then warn("[CactusHub] Failed to create button: " .. tostring(config.Name)) end
-		return el
+		return tab:CreateButton(wrappedConfig)
 	end
 
-	local mainTab, farmingTab, gameTab, ufoTab, indexTab, miscTab, webhookTab, settingsTab, statsTab
-	pcall(function() mainTab     = mainWindow:CreateTab("Main", 74725529332053) end)
-	pcall(function() farmingTab  = mainWindow:CreateTab("Farming", 114367663524453) end)
-	pcall(function() gameTab     = mainWindow:CreateTab("Game", 77999805030576) end)
-	pcall(function() ufoTab      = mainWindow:CreateTab("Ufo Event", 129180210444370) end)
-	pcall(function() indexTab    = mainWindow:CreateTab("Index", 123662711814867) end)
-	pcall(function() miscTab     = mainWindow:CreateTab("Misc", 83590339425734) end)
-	pcall(function() webhookTab  = mainWindow:CreateTab("Webhook", 84577758013974) end)
-	pcall(function() settingsTab = mainWindow:CreateTab("Settings", 120533439477016) end)
-	pcall(function() statsTab    = mainWindow:CreateTab("Stats", 102533388850982) end)
+	local mainTab     = mainWindow:CreateTab("Main", 74725529332053)
+	local farmingTab  = mainWindow:CreateTab("Farming", 114367663524453)
+	local gameTab     = mainWindow:CreateTab("Game", 77999805030576)
+	local ufoTab      = mainWindow:CreateTab("Ufo Event", 129180210444370)
+	local indexTab    = mainWindow:CreateTab("Index", 123662711814867)
+	local miscTab     = mainWindow:CreateTab("Misc", 83590339425734)
+	local webhookTab  = mainWindow:CreateTab("Webhook", 84577758013974)
+	local settingsTab = mainWindow:CreateTab("Settings", 120533439477016)
+	local statsTab    = mainWindow:CreateTab("Stats", 102533388850982)
 
 	local fpsValue = "..."
 	local pingValue = "..."
-	local statusLabel
-	pcall(function() statusLabel = mainTab:CreateLabel("FPS: ... / PING: ...ms") end)
+	local statusLabel = mainTab:CreateLabel("FPS: ... / PING: ...ms")
 
 	pcall(function()
 		local frameCount = 0
@@ -144,7 +111,7 @@ repeat task.wait() until game:IsLoaded()
 				fpsValue = math.floor(frameCount / (now - lastTime))
 				frameCount = 0
 				lastTime = now
-				if statusLabel then pcall(function() statusLabel:Set("FPS: " .. tostring(fpsValue) .. " / PING: " .. tostring(pingValue) .. "ms") end) end
+				statusLabel:Set("FPS: " .. tostring(fpsValue) .. " / PING: " .. tostring(pingValue) .. "ms")
 			end
 		end)
 	end)
@@ -154,55 +121,49 @@ repeat task.wait() until game:IsLoaded()
 			pcall(function()
 				local ping = game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue()
 				pingValue = math.floor(ping)
-				if statusLabel then pcall(function() statusLabel:Set("FPS: " .. tostring(fpsValue) .. " / PING: " .. tostring(pingValue) .. "ms") end) end
+				statusLabel:Set("FPS: " .. tostring(fpsValue) .. " / PING: " .. tostring(pingValue) .. "ms")
 			end)
 			task.wait(1)
 		end
 	end)
 
-	pcall(function()
-		featureButton(mainTab, {
-			Name = "Copy Discord Invite",
-			Callback = function()
-				setclipboard("https://discord.gg/qMWFBWdcf")
-				rayfieldLibrary:Notify({ Title = "Copied!", Content = "Discord invite link copied to clipboard.", Duration = 3 })
-			end,
-		})
-	end)
+	featureButton(mainTab, {
+		Name = "Copy Discord Invite",
+		Callback = function()
+			setclipboard("https://discord.gg/qMWFBWdcf")
+			rayfieldLibrary:Notify({ Title = "Copied!", Content = "Discord invite link copied to clipboard.", Duration = 3 })
+		end,
+	})
 
-	pcall(function() mainTab:CreateSection("Dashboard") end)
+	mainTab:CreateSection("Dashboard")
 	local dashboardBusy = false
-	pcall(function()
-		featureToggle(mainTab, {
-			Name = "Dashboard [ SAVE GPU ]",
-			CurrentValue = false,
-			Flag = "DashboardToggle",
-			Callback = function(Value)
-				if dashboardBusy then return end
-				dashboardBusy = true
-				if Value then
-					task.spawn(function()
-						pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))() end)
-						pcall(function() rayfieldLibrary:Notify({ Title = "Dashboard", Content = "Dashboard enabled!", Duration = 3 }) end)
-						dashboardBusy = false
-					end)
-				else
-					local gui = localPlayer.PlayerGui:FindFirstChild("__MAINHUD__")
-					if gui then gui:Destroy() end
-					pcall(function() rayfieldLibrary:Notify({ Title = "Dashboard", Content = "Dashboard closed!", Duration = 3 }) end)
+	featureToggle(mainTab, {
+		Name = "Dashboard [ SAVE GPU ]",
+		CurrentValue = false,
+		Flag = "DashboardToggle",
+		Callback = function(Value)
+			if dashboardBusy then return end
+			dashboardBusy = true
+			if Value then
+				task.spawn(function()
+					pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))() end)
+					rayfieldLibrary:Notify({ Title = "Dashboard", Content = "Dashboard enabled!", Duration = 3 })
 					dashboardBusy = false
-				end
-			end,
-		})
-	end)
+				end)
+			else
+				local gui = localPlayer.PlayerGui:FindFirstChild("__MAINHUD__")
+				if gui then gui:Destroy() end
+				rayfieldLibrary:Notify({ Title = "Dashboard", Content = "Dashboard closed!", Duration = 3 })
+				dashboardBusy = false
+			end
+		end,
+	})
 
-	pcall(function() mainTab:CreateParagraph({ Title = "Enabled By Default", Content = "[+] Anti AFK" }) end)
-	pcall(function()
-		mainTab:CreateParagraph({
-			Title = "Latest Update",
-			Content = "[+] Auto unlock machines \nMachines to unlock [] \n[+] Auto remove fruits from slimes \n[+] Fruits to remove []\n[+] Advanced slime gun bypass cooldown\n[+] Fixed Auto Send & Accept requests \n[+] Fixed Auto Upgrade not working \n[+] Auto stack mode [ Smart ] \nNormal : just stacks whenever selected reaches 1\nSmart : start stacking once rarest dice reaches 1\n[+] Specific Position ( Auto farm zone ), Save pos, clear pos\n[+] better potion use (now only uses if u run out)\n[+] better dices use (now only uses if u run out) \n[+] Improved Optimization & whatever caused memory leaks \n[+] Bug fixes"
-		})
-	end)
+	mainTab:CreateParagraph({ Title = "Enabled By Default", Content = "[+] Anti AFK" })
+	mainTab:CreateParagraph({
+		Title = "Latest Update",
+		Content = "[+] Auto unlock machines \nMachines to unlock [] \n[+] Auto remove fruits from slimes \n[+] Fruits to remove []\n[+] Advanced slime gun bypass cooldown\n[+] Fixed Auto Send & Accept requests \n[+] Fixed Auto Upgrade not working \n[+] Auto stack mode [ Smart ] \nNormal : just stacks whenever selected reaches 1\nSmart : start stacking once rarest dice reaches 1\n[+] Specific Position ( Auto farm zone ), Save pos, clear pos\n[+] better potion use (now only uses if u run out)\n[+] better dices use (now only uses if u run out) \n[+] Improved Optimization & whatever caused memory leaks \n[+] Bug fixes"
+	})
 
 	pcall(function()
 		local m = require(ReplicatedStorage.Source.Features.AutoRejoin.AutoRejoinServiceClient)
@@ -250,7 +211,7 @@ repeat task.wait() until game:IsLoaded()
 
 	task.spawn(function()
 		Logger:info("CactusHub", "ModuleLoad", "Starting module initialization...")
-		local ok2, err2 = pcall(function()
+		local ok, err = pcall(function()
 			packages = ReplicatedStorage:WaitForChild("Packages", 15)
 			if not packages then error("Packages not found") end
 			local indexFolder = packages:WaitForChild("_Index", 15)
@@ -319,12 +280,12 @@ repeat task.wait() until game:IsLoaded()
 			pcall(function() RecipesModule = require(sourceFolder.Features.Crafting.Recipes) end)
 			task.spawn(function()
 				local rs = game:GetService("ReplicatedStorage")
-				local ok3, ok4
+				local ok1, ok2
 				repeat
-					ok3, upgradeServiceClient_new = pcall(function() return require(rs.Source.Features.Upgrades.UpgradeServiceClient) end)
-					ok4, dataServiceClient_new = pcall(function() return require(rs.Packages.DataService).client end)
-					if not ok3 or not ok4 then task.wait(1) end
-				until ok3 and ok4
+					ok1, upgradeServiceClient_new = pcall(function() return require(rs.Source.Features.Upgrades.UpgradeServiceClient) end)
+					ok2, dataServiceClient_new = pcall(function() return require(rs.Packages.DataService).client end)
+					if not ok1 or not ok2 then task.wait(1) end
+				until ok1 and ok2
 				pcall(function()
 					local upgradeClientInstance = {}
 					upgradeClientInstance.networker = Networker.client.new("UpgradeService", upgradeClientInstance)
@@ -334,11 +295,11 @@ repeat task.wait() until game:IsLoaded()
 			end)
 			modulesLoaded = true
 			Logger:info("CactusHub", "ModuleLoad", "All modules loaded successfully!")
-			pcall(function() rayfieldLibrary:Notify({ Title = "Cactus Hub", Content = "All modules loaded! Features are ready.", Duration = 4 }) end)
+			rayfieldLibrary:Notify({ Title = "Cactus Hub", Content = "All modules loaded! Features are ready.", Duration = 4 })
 		end)
-		if not ok2 then
-			Logger:error("CactusHub", "ModuleLoad", "Module initialization failed", err2)
-			pcall(function() rayfieldLibrary:Notify({ Title = "CactusHub — Load Warning", Content = "Some modules failed: " .. tostring(err2):sub(1, 120) .. "\nSome features may not work.", Duration = 8 }) end)
+		if not ok then
+			Logger:error("CactusHub", "ModuleLoad", "Module initialization failed", err)
+			rayfieldLibrary:Notify({ Title = "CactusHub — Load Warning", Content = "Some modules failed: " .. tostring(err):sub(1, 120) .. "\nSome features may not work.", Duration = 8 })
 		end
 	end)
 
@@ -349,7 +310,7 @@ repeat task.wait() until game:IsLoaded()
 
 	task.spawn(function()
 		repeat task.wait(0.5) until modulesLoaded
-		pcall(function() if FruitsModule then ALL_FRUITS = FruitsModule.getSortedFruits() end end)
+		if FruitsModule then ALL_FRUITS = FruitsModule.getSortedFruits() end
 	end)
 
 	local luckValueLocal = 1
@@ -357,11 +318,9 @@ repeat task.wait() until game:IsLoaded()
 
 	task.spawn(function()
 		repeat task.wait(0.5) until modulesLoaded
-		pcall(function()
-			settingsClientRef = {}
-			settingsClientRef.networker = Networker.client.new("SettingsService", settingsClientRef)
-			SettingsServiceClient.init(settingsClientRef)
-		end)
+		settingsClientRef = {}
+		settingsClientRef.networker = Networker.client.new("SettingsService", settingsClientRef)
+		SettingsServiceClient.init(settingsClientRef)
 	end)
 
 	local function setLuckEnabled(enabled)
@@ -403,15 +362,13 @@ repeat task.wait() until game:IsLoaded()
 
 	local function getUnlockedIndex(catId)
 		if not dataServiceClient then return {} end
-		local ok2, data = pcall(function() return dataServiceClient:get("index") or {} end)
-		if not ok2 then return {} end
+		local data = dataServiceClient:get("index") or {}
 		return ((data.categories or {})[catId] or {}).unlocked or {}
 	end
 
 	local function getTotalSlimes()
 		if not slimesModule then return 0 end
-		local ok2, result = pcall(function() return #slimesModule.getSortedSlimes() end)
-		return ok2 and result or 0
+		return #slimesModule.getSortedSlimes()
 	end
 
 	local function getUnlockedCount(catId)
@@ -423,39 +380,33 @@ repeat task.wait() until game:IsLoaded()
 
 	local function getMissingSlimes(catId)
 		if not slimesModule then return {} end
-		local ok2, result = pcall(function()
-			local unlocked = getUnlockedIndex(catId)
-			local missing = {}
-			for _, slime in ipairs(slimesModule.getSortedSlimes()) do
-				if not unlocked[slime.id] then table.insert(missing, slime) end
-			end
-			table.sort(missing, function(a, b) return getEffectiveOdds(a, catId) > getEffectiveOdds(b, catId) end)
-			return missing
-		end)
-		return ok2 and result or {}
+		local unlocked = getUnlockedIndex(catId)
+		local missing = {}
+		for _, slime in ipairs(slimesModule.getSortedSlimes()) do
+			if not unlocked[slime.id] then table.insert(missing, slime) end
+		end
+		table.sort(missing, function(a, b) return getEffectiveOdds(a, catId) > getEffectiveOdds(b, catId) end)
+		return missing
 	end
 
 	local function getBestSlimeUid()
 		if not dataServiceClient then return nil end
-		local ok2, result = pcall(function()
-			local stats = dataServiceClient:get("stats") or {}
-			local rarestRoll = stats.rarestRoll
-			if not rarestRoll or not rarestRoll.slimeData then return nil end
-			local slimeData = rarestRoll.slimeData
-			local mutations = slimeData.mutations or {}
-			local inventory = dataServiceClient:get("inventory") or {}
-			for uid, data in pairs(inventory) do
-				if type(data) == "table" and data.id == slimeData.id then
-					local match = true
-					for mutKey, mutValue in pairs(mutations) do
-						if data.mutations and data.mutations[mutKey] ~= mutValue then match = false break end
-					end
-					if match then return uid end
+		local stats = dataServiceClient:get("stats") or {}
+		local rarestRoll = stats.rarestRoll
+		if not rarestRoll or not rarestRoll.slimeData then return nil end
+		local slimeData = rarestRoll.slimeData
+		local mutations = slimeData.mutations or {}
+		local inventory = dataServiceClient:get("inventory") or {}
+		for uid, data in pairs(inventory) do
+			if type(data) == "table" and data.id == slimeData.id then
+				local match = true
+				for mutKey, mutValue in pairs(mutations) do
+					if data.mutations and data.mutations[mutKey] ~= mutValue then match = false break end
 				end
+				if match then return uid end
 			end
-			return nil
-		end)
-		return ok2 and result or nil
+		end
+		return nil
 	end
 
 	local zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
@@ -466,7 +417,7 @@ repeat task.wait() until game:IsLoaded()
 		if zoneBoundaryCache.zoneId == zoneIdStr and zoneBoundaryCache.min then
 			return zoneBoundaryCache
 		end
-		local ok2, result = pcall(function()
+		local ok, result = pcall(function()
 			local zonesFolder = workspace:FindFirstChild("Zones")
 			if not zonesFolder then return nil end
 			local zoneFolder = zonesFolder:FindFirstChild(zoneIdStr)
@@ -485,7 +436,7 @@ repeat task.wait() until game:IsLoaded()
 			local center = Vector3.new(pos.X, pos.Y, pos.Z)
 			return { zoneId = zoneIdStr, min = minPos, max = maxPos, center = center }
 		end)
-		if ok2 and result then
+		if ok and result then
 			zoneBoundaryCache = result
 			return zoneBoundaryCache
 		end
@@ -521,26 +472,22 @@ repeat task.wait() until game:IsLoaded()
 
 	local function setNoclip(enabled)
 		noclipEnabled = enabled
-		if noclipConn then pcall(function() noclipConn:Disconnect() end) noclipConn = nil end
+		if noclipConn then noclipConn:Disconnect() noclipConn = nil end
 		if enabled then
 			noclipConn = RunService.Stepped:Connect(function()
-				pcall(function()
-					local char = localPlayer.Character
-					if not char then return end
-					for _, part in ipairs(char:GetDescendants()) do
-						if part:IsA("BasePart") then part.CanCollide = false end
-					end
-				end)
-			end)
-		else
-			pcall(function()
 				local char = localPlayer.Character
-				if char then
-					for _, part in ipairs(char:GetDescendants()) do
-						if part:IsA("BasePart") then part.CanCollide = true end
-					end
+				if not char then return end
+				for _, part in ipairs(char:GetDescendants()) do
+					if part:IsA("BasePart") then part.CanCollide = false end
 				end
 			end)
+		else
+			local char = localPlayer.Character
+			if char then
+				for _, part in ipairs(char:GetDescendants()) do
+					if part:IsA("BasePart") then part.CanCollide = true end
+				end
+			end
 		end
 	end
 
@@ -558,8 +505,8 @@ repeat task.wait() until game:IsLoaded()
 
 	local function getMutation(enemy)
 		for _, mut in ipairs({"inverted","huge","shiny","big"}) do
-			local ok2, val = pcall(function() return enemy:GetAttribute(mut) end)
-			if ok2 and val then return mut end
+			local ok, val = pcall(function() return enemy:GetAttribute(mut) end)
+			if ok and val then return mut end
 			if enemy:FindFirstChild(mut) then return mut end
 			local m = enemy:FindFirstChild("Mutation")
 			if m and m.Value == mut then return mut end
@@ -657,14 +604,12 @@ repeat task.wait() until game:IsLoaded()
 	local autoWalkConn = nil
 
 	local function stopAutoWalk()
-		if autoWalkConn then pcall(function() autoWalkConn:Disconnect() end) autoWalkConn = nil end
-		pcall(function()
-			local char = localPlayer.Character
-			if char then
-				local hum = char:FindFirstChildWhichIsA("Humanoid")
-				if hum then hum.WalkSpeed = 40 hum:MoveTo(char.HumanoidRootPart.Position) end
-			end
-		end)
+		if autoWalkConn then autoWalkConn:Disconnect() autoWalkConn = nil end
+		local char = localPlayer.Character
+		if char then
+			local hum = char:FindFirstChildWhichIsA("Humanoid")
+			if hum then hum.WalkSpeed = 40 hum:MoveTo(char.HumanoidRootPart.Position) end
+		end
 	end
 
 	local function moveToEnemy(enemy, boundary)
@@ -676,62 +621,58 @@ repeat task.wait() until game:IsLoaded()
 		local targetCF = CFrame.new(safePos)
 
 		if enemySettings.TeleportStyle == "Instant" then
-			if tweenConn then pcall(function() tweenConn:Disconnect() end) tweenConn = nil end
+			if tweenConn then tweenConn:Disconnect() tweenConn = nil end
 			stopAutoWalk()
-			pcall(function() char:PivotTo(targetCF) end)
+			char:PivotTo(targetCF)
 		elseif enemySettings.TeleportStyle == "Smooth" then
-			if tweenConn then pcall(function() tweenConn:Disconnect() end) tweenConn = nil end
+			if tweenConn then tweenConn:Disconnect() tweenConn = nil end
 			stopAutoWalk()
 			local startCF = char:GetPivot()
 			local startTime = tick()
 			local duration = 0.25
 			tweenConn = RunService.RenderStepped:Connect(function()
-				pcall(function()
-					if not char or not char.Parent then if tweenConn then tweenConn:Disconnect() tweenConn = nil end return end
-					local alpha = math.clamp((tick() - startTime) / duration, 0, 1)
-					local newPos = startCF.Position:Lerp(safePos, alpha)
-					if boundary then
-						newPos = Vector3.new(
-							math.clamp(newPos.X, boundary.min.X, boundary.max.X),
-							newPos.Y,
-							math.clamp(newPos.Z, boundary.min.Z, boundary.max.Z)
-						)
-					end
-					local rayResult = workspace:Raycast(newPos + Vector3.new(0, 10, 0), Vector3.new(0, -20, 0))
-					if rayResult then newPos = rayResult.Position + Vector3.new(0, 3, 0) end
-					char:PivotTo(CFrame.new(newPos))
-					if alpha >= 1 then if tweenConn then tweenConn:Disconnect() tweenConn = nil end end
-				end)
+				if not char or not char.Parent then tweenConn:Disconnect() tweenConn = nil return end
+				local alpha = math.clamp((tick() - startTime) / duration, 0, 1)
+				local newPos = startCF.Position:Lerp(safePos, alpha)
+				if boundary then
+					newPos = Vector3.new(
+						math.clamp(newPos.X, boundary.min.X, boundary.max.X),
+						newPos.Y,
+						math.clamp(newPos.Z, boundary.min.Z, boundary.max.Z)
+					)
+				end
+				local rayResult = workspace:Raycast(newPos + Vector3.new(0, 10, 0), Vector3.new(0, -20, 0))
+				if rayResult then newPos = rayResult.Position + Vector3.new(0, 3, 0) end
+				char:PivotTo(CFrame.new(newPos))
+				if alpha >= 1 then tweenConn:Disconnect() tweenConn = nil end
 			end)
 		elseif enemySettings.TeleportStyle == "Walk" then
-			if tweenConn then pcall(function() tweenConn:Disconnect() end) tweenConn = nil end
+			if tweenConn then tweenConn:Disconnect() tweenConn = nil end
 			stopAutoWalk()
 			local hum = char:FindFirstChildWhichIsA("Humanoid")
 			if not hum then return end
 			hum.WalkSpeed = autoFarmWalkSpeed
 			hum:MoveTo(safePos)
 			autoWalkConn = RunService.Heartbeat:Connect(function()
-				pcall(function()
-					if not char or not char.Parent or not isAlive(enemy) then stopAutoWalk() return end
-					local rp = char:FindFirstChild("HumanoidRootPart")
-					if not rp then stopAutoWalk() return end
-					if boundary and isOutsideBoundary(rp.Position, boundary) then
-						stopAutoWalk()
-						local safeCenter = getSafePosition(CFrame.new(boundary.center), boundary)
-						char:PivotTo(CFrame.new(safeCenter))
-						return
+				if not char or not char.Parent or not isAlive(enemy) then stopAutoWalk() return end
+				local rp = char:FindFirstChild("HumanoidRootPart")
+				if not rp then stopAutoWalk() return end
+				if boundary and isOutsideBoundary(rp.Position, boundary) then
+					stopAutoWalk()
+					local safeCenter = getSafePosition(CFrame.new(boundary.center), boundary)
+					char:PivotTo(CFrame.new(safeCenter))
+					return
+				end
+				local dist = (rp.Position - safePos).Magnitude
+				if dist < 5 then
+					stopAutoWalk()
+				else
+					local newRoot = getEnemyRoot(enemy)
+					if newRoot then
+						safePos = getSafePosition(newRoot.CFrame, boundary)
+						hum:MoveTo(safePos)
 					end
-					local dist = (rp.Position - safePos).Magnitude
-					if dist < 5 then
-						stopAutoWalk()
-					else
-						local newRoot = getEnemyRoot(enemy)
-						if newRoot then
-							safePos = getSafePosition(newRoot.CFrame, boundary)
-							hum:MoveTo(safePos)
-						end
-					end
-				end)
+				end
 			end)
 		end
 	end
@@ -758,7 +699,7 @@ repeat task.wait() until game:IsLoaded()
 		if not gp then return nil, nil end
 		local folder = gp:FindFirstChild("Enemies")
 		if not folder then return nil, nil end
-		local priority = rayfieldLibrary.Flags.CombatTargetPriority and rayfieldLibrary.Flags.CombatTargetPriority.CurrentOption and rayfieldLibrary.Flags.CombatTargetPriority.CurrentOption[1] or "Closest"
+		local priority = rayfieldLibrary.Flags.CombatTargetPriority and rayfieldLibrary.Flags.CombatTargetPriority.CurrentOption[1] or "Closest"
 		local bestEnemy, bestId, bestScore = nil, nil, nil
 		for _, e in ipairs(folder:GetChildren()) do
 			if e:IsA("Model") and isAlive(e) then
@@ -838,30 +779,28 @@ repeat task.wait() until game:IsLoaded()
 		end)
 	end)
 
-	pcall(function() farmingTab:CreateSection("Rolling") end)
+	farmingTab:CreateSection("Rolling")
 
-	pcall(function()
-		featureToggle(farmingTab, {
-			Name = "Auto Fast Roll ( No Animation )",
-			CurrentValue = false,
-			Flag = "FarmingFastRoll",
-			Callback = function(enabled)
-				if not enabled then return end
-				task.spawn(function()
-					while true do
-						local flag = rayfieldLibrary.Flags.FarmingFastRoll
-						if not flag or not flag.CurrentValue then break end
-						if not rollServiceRemote then
-							pcall(function() rayfieldLibrary:Notify({ Title = "Error", Content = "RollService remote not loaded", Duration = 4 }) end)
-							break
-						end
-						pcall(function() rollServiceRemote:InvokeServer("requestRoll") end)
-						task.wait(rollSliceModule and rollSliceModule.rollTime() or 0.5)
+	featureToggle(farmingTab, {
+		Name = "Auto Fast Roll ( No Animation )",
+		CurrentValue = false,
+		Flag = "FarmingFastRoll",
+		Callback = function(enabled)
+			if not enabled then return end
+			task.spawn(function()
+				while true do
+					local flag = rayfieldLibrary.Flags.FarmingFastRoll
+					if not flag or not flag.CurrentValue then break end
+					if not rollServiceRemote then
+						rayfieldLibrary:Notify({ Title = "Error", Content = "RollService remote not loaded", Duration = 4 })
+						break
 					end
-				end)
-			end,
-		})
-	end)
+					pcall(function() rollServiceRemote:InvokeServer("requestRoll") end)
+					task.wait(rollSliceModule and rollSliceModule.rollTime() or 0.5)
+				end
+			end)
+		end,
+	})
 
 	local selectedDice = {golden=true, diamond=true, void=true, galaxy=true}
 	local stackActive = false
@@ -869,66 +808,57 @@ repeat task.wait() until game:IsLoaded()
 	local paused = {golden=false, diamond=false, void=false, galaxy=false}
 	local stackMode = "Normal"
 
-	pcall(function()
-		featureToggle(farmingTab, {
-			Name = "Auto Stack Dice",
-			CurrentValue = false,
-			Flag = "autostack",
-			Callback = function(v)
-				stackActive = v
-				if not v and networkerRoll then
-					for _, dice in ipairs(DICE) do
-						if paused[dice] then
-							pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
-							paused[dice] = false
-						end
+	featureToggle(farmingTab, {
+		Name = "Auto Stack Dice",
+		CurrentValue = false,
+		Flag = "autostack",
+		Callback = function(v)
+			stackActive = v
+			if not v and networkerRoll then
+				for _, dice in ipairs(DICE) do
+					if paused[dice] then
+						pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
+						paused[dice] = false
 					end
 				end
-			end,
-		})
-	end)
+			end
+		end,
+	})
 
-	pcall(function()
-		farmingTab:CreateDropdown({
-			Name = "Stack Mode",
-			Options = {"Normal", "Smart"},
-			CurrentOption = {"Normal"},
-			MultipleOptions = false,
-			Flag = "StackMode",
-			Callback = function(opt)
-				stackMode = type(opt) == "table" and opt[1] or opt
-			end,
-		})
-	end)
+	farmingTab:CreateDropdown({
+		Name = "Stack Mode",
+		Options = {"Normal", "Smart"},
+		CurrentOption = {"Normal"},
+		MultipleOptions = false,
+		Flag = "StackMode",
+		Callback = function(opt)
+			stackMode = type(opt) == "table" and opt[1] or opt
+		end,
+	})
 
-	pcall(function()
-		featureToggle(farmingTab, {
-			Name = "Auto Release Dice",
-			CurrentValue = false,
-			Flag = "autorelease",
-			Callback = function(v) releaseActive = v end,
-		})
-	end)
+	featureToggle(farmingTab, {
+		Name = "Auto Release Dice",
+		CurrentValue = false,
+		Flag = "autorelease",
+		Callback = function(v) releaseActive = v end,
+	})
 
-	pcall(function()
-		farmingTab:CreateDropdown({
-			Name = "Select Dice",
-			Options = {"All","Diamond","Galaxy","Golden","Void"},
-			CurrentOption = {"All"},
-			MultipleOptions = true,
-			Flag = "diceDropdown",
-			Callback = function(choices)
-				for _, dice in ipairs(DICE) do selectedDice[dice] = false end
-				for _, choice in ipairs(choices) do
-					if choice == "All" then for _, dice in ipairs(DICE) do selectedDice[dice] = true end break
-					else selectedDice[choice:lower()] = true end
-				end
-			end,
-		})
-	end)
+	farmingTab:CreateDropdown({
+		Name = "Select Dice",
+		Options = {"All","Diamond","Galaxy","Golden","Void"},
+		CurrentOption = {"All"},
+		MultipleOptions = true,
+		Flag = "diceDropdown",
+		Callback = function(choices)
+			for _, dice in ipairs(DICE) do selectedDice[dice] = false end
+			for _, choice in ipairs(choices) do
+				if choice == "All" then for _, dice in ipairs(DICE) do selectedDice[dice] = true end break
+				else selectedDice[choice:lower()] = true end
+			end
+		end,
+	})
 
-	local DiceLuckLabel
-	pcall(function() DiceLuckLabel = farmingTab:CreateLabel("Total Stacked: x0") end)
+	local DiceLuckLabel = farmingTab:CreateLabel("Total Stacked: x0")
 
 	task.spawn(function()
 		while true do
@@ -942,17 +872,17 @@ repeat task.wait() until game:IsLoaded()
 					local prog = progression[dice]
 					local rolls = prog and prog.rollsUntilNext or math.huge
 					if rolls <= 1 then
-						local ok2, mult = pcall(SpecialRollUtils.getLuckMultiplier, dice, upgrades)
-						if ok2 then totalStacked = totalStacked + (mult or 0) end
+						local ok, mult = pcall(SpecialRollUtils.getLuckMultiplier, dice, upgrades)
+						if ok then totalStacked = totalStacked + (mult or 0) end
 					end
 				end
-				if DiceLuckLabel then pcall(function() DiceLuckLabel:Set("Total Stacked: x" .. string.format("%.1f", totalStacked)) end) end
+				DiceLuckLabel:Set("Total Stacked: x" .. string.format("%.1f", totalStacked))
 				if not stackActive or not networkerRoll then return end
 				local toWatch = {}
 				for _, dice in ipairs(DICE) do
 					if selectedDice[dice] then
-						local ok2, unlocked = pcall(SpecialRollUtils.isUnlocked, dice, upgrades)
-						if ok2 and unlocked then table.insert(toWatch, dice) end
+						local ok, unlocked = pcall(SpecialRollUtils.isUnlocked, dice, upgrades)
+						if ok and unlocked then table.insert(toWatch, dice) end
 					end
 				end
 				if #toWatch == 0 then return end
@@ -974,7 +904,7 @@ repeat task.wait() until game:IsLoaded()
 							pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
 							paused[dice] = false
 						end
-						pcall(function() rayfieldLibrary:Notify({ Title = "Unleashed!", Content = "All selected dice stacked — releasing now.", Duration = 3 }) end)
+						rayfieldLibrary:Notify({ Title = "Unleashed!", Content = "All selected dice stacked — releasing now.", Duration = 3 })
 						task.wait(2)
 					end
 				elseif currentMode == "Smart" then
@@ -1035,7 +965,7 @@ repeat task.wait() until game:IsLoaded()
 								pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
 								paused[dice] = false
 							end
-							pcall(function() rayfieldLibrary:Notify({ Title = "Unleashed!", Content = "Smart stack complete — releasing now.", Duration = 3 }) end)
+							rayfieldLibrary:Notify({ Title = "Unleashed!", Content = "Smart stack complete — releasing now.", Duration = 3 })
 							task.wait(2)
 						end
 					end
@@ -1044,7 +974,7 @@ repeat task.wait() until game:IsLoaded()
 		end
 	end)
 
-	pcall(function() farmingTab:CreateSection("Zones") end)
+	farmingTab:CreateSection("Zones")
 
 	local savedFarmPosition = nil
 	local savedFarmPositionLabel
@@ -1079,173 +1009,159 @@ repeat task.wait() until game:IsLoaded()
 		})
 	end)
 
-	pcall(function()
-		featureToggle(farmingTab, {
-			Name = "Auto Farm Zone",
-			CurrentValue = false,
-			Flag = "FarmingStayInBestZone",
-			Callback = function(enabled)
-				if not enabled then return end
-				task.spawn(function()
-					local lastTeleportTime = 0
-					while true do
-						local flag = rayfieldLibrary.Flags.FarmingStayInBestZone
-						if not flag or not flag.CurrentValue then break end
-						pcall(function()
-							local targetOption = "Best Unlocked"
-							if rayfieldLibrary.Flags.FarmingZoneTarget and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption then
-								targetOption = rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
+	featureToggle(farmingTab, {
+		Name = "Auto Farm Zone",
+		CurrentValue = false,
+		Flag = "FarmingStayInBestZone",
+		Callback = function(enabled)
+			if not enabled then return end
+			task.spawn(function()
+				local lastTeleportTime = 0
+				while true do
+					local flag = rayfieldLibrary.Flags.FarmingStayInBestZone
+					if not flag or not flag.CurrentValue then break end
+					pcall(function()
+						local targetOption = "Best Unlocked"
+						if rayfieldLibrary.Flags.FarmingZoneTarget and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption then
+							targetOption = rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
+						end
+						if targetOption == "Saved Position" and savedFarmPosition then
+							local char = localPlayer.Character
+							local root = char and char:FindFirstChild("HumanoidRootPart")
+							if root then char:PivotTo(CFrame.new(savedFarmPosition)) end
+							return
+						end
+						if not zonesServiceRemote then return end
+						local currentZone = dataServiceClient and (dataServiceClient:get("zone") or 1) or 1
+						local targetZone
+						if targetOption == "Best Unlocked" then
+							targetZone = dataServiceClient and (dataServiceClient:get("maxZone") or 1) or 1
+						else
+							targetZone = tonumber(targetOption:match("Zone (%d+)"))
+						end
+						if targetZone and targetZone > 0 and currentZone ~= targetZone then
+							if tick() - lastTeleportTime > 3 then
+								zonesServiceRemote:InvokeServer("requestTeleportZone", targetZone)
+								lastTeleportTime = tick()
+								zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
 							end
-							if targetOption == "Saved Position" and savedFarmPosition then
-								local char = localPlayer.Character
-								local root = char and char:FindFirstChild("HumanoidRootPart")
-								if root then char:PivotTo(CFrame.new(savedFarmPosition)) end
-								return
-							end
-							if not zonesServiceRemote then return end
-							local currentZone = dataServiceClient and (dataServiceClient:get("zone") or 1) or 1
-							local targetZone
-							if targetOption == "Best Unlocked" then
-								targetZone = dataServiceClient and (dataServiceClient:get("maxZone") or 1) or 1
-							else
-								targetZone = tonumber(targetOption:match("Zone (%d+)"))
-							end
-							if targetZone and targetZone > 0 and currentZone ~= targetZone then
-								if tick() - lastTeleportTime > 3 then
-									zonesServiceRemote:InvokeServer("requestTeleportZone", targetZone)
-									lastTeleportTime = tick()
-									zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
-								end
-							end
-						end)
-						task.wait(5)
-					end
-				end)
-			end,
-		})
-	end)
-
-	pcall(function() savedFarmPositionLabel = farmingTab:CreateLabel("Saved Position: None") end)
-
-	pcall(function()
-		featureButton(farmingTab, {
-			Name = "Save Current Position",
-			Callback = function()
-				local char = localPlayer.Character
-				local root = char and char:FindFirstChild("HumanoidRootPart")
-				if not root then
-					pcall(function() rayfieldLibrary:Notify({ Title = "Error", Content = "HumanoidRootPart not found", Duration = 3 }) end)
-					return
+						end
+					end)
+					task.wait(5)
 				end
-				savedFarmPosition = root.Position
-				if savedFarmPositionLabel then
-					pcall(function() savedFarmPositionLabel:Set(string.format("Saved: %.1f, %.1f, %.1f", root.Position.X, root.Position.Y, root.Position.Z)) end)
+			end)
+		end,
+	})
+
+	savedFarmPositionLabel = farmingTab:CreateLabel("Saved Position: None")
+
+	featureButton(farmingTab, {
+		Name = "Save Current Position",
+		Callback = function()
+			local char = localPlayer.Character
+			local root = char and char:FindFirstChild("HumanoidRootPart")
+			if not root then
+				rayfieldLibrary:Notify({ Title = "Error", Content = "HumanoidRootPart not found", Duration = 3 })
+				return
+			end
+			savedFarmPosition = root.Position
+			if savedFarmPositionLabel then
+				savedFarmPositionLabel:Set(string.format("Saved: %.1f, %.1f, %.1f", root.Position.X, root.Position.Y, root.Position.Z))
+			end
+			rayfieldLibrary:Notify({ Title = "Position Saved", Content = "Select Saved Position in Zone Target", Duration = 4 })
+		end
+	})
+
+	featureButton(farmingTab, {
+		Name = "Clear Saved Position",
+		Callback = function()
+			savedFarmPosition = nil
+			if savedFarmPositionLabel then savedFarmPositionLabel:Set("Saved Position: None") end
+			rayfieldLibrary:Notify({ Title = "Position Cleared", Content = "Normal zone targeting restored", Duration = 3 })
+		end
+	})
+
+	featureToggle(farmingTab, {
+		Name = "Auto Unlock Affordable Zones",
+		CurrentValue = false,
+		Flag = "FarmingUnlockAffordableZones",
+		Callback = function(enabled)
+			if not enabled then return end
+			task.spawn(function()
+				while true do
+					local flag = rayfieldLibrary.Flags.FarmingUnlockAffordableZones
+					if not flag or not flag.CurrentValue then break end
+					if not zonesServiceRemote then break end
+					pcall(function() zonesServiceRemote:InvokeServer("requestPurchaseZone") end)
+					task.wait(5)
 				end
-				pcall(function() rayfieldLibrary:Notify({ Title = "Position Saved", Content = "Select Saved Position in Zone Target", Duration = 4 }) end)
-			end
-		})
-	end)
+			end)
+		end,
+	})
 
-	pcall(function()
-		featureButton(farmingTab, {
-			Name = "Clear Saved Position",
-			Callback = function()
-				savedFarmPosition = nil
-				if savedFarmPositionLabel then pcall(function() savedFarmPositionLabel:Set("Saved Position: None") end) end
-				pcall(function() rayfieldLibrary:Notify({ Title = "Position Cleared", Content = "Normal zone targeting restored", Duration = 3 }) end)
-			end
-		})
-	end)
+	farmingTab:CreateSection("Machines")
 
-	pcall(function()
-		featureToggle(farmingTab, {
-			Name = "Auto Unlock Affordable Zones",
-			CurrentValue = false,
-			Flag = "FarmingUnlockAffordableZones",
-			Callback = function(enabled)
-				if not enabled then return end
-				task.spawn(function()
-					while true do
-						local flag = rayfieldLibrary.Flags.FarmingUnlockAffordableZones
-						if not flag or not flag.CurrentValue then break end
-						if not zonesServiceRemote then break end
-						pcall(function() zonesServiceRemote:InvokeServer("requestPurchaseZone") end)
-						task.wait(5)
-					end
-				end)
-			end,
-		})
-	end)
+	farmingTab:CreateDropdown({
+		Name = "Machines to Unlock",
+		Options = {"All", "Crafting Machine", "XP Transfer Machine", "Fruit Extractor"},
+		CurrentOption = {"All"},
+		MultipleOptions = true,
+		Flag = "MachineUnlockTarget",
+		Callback = function() end,
+	})
 
-	pcall(function() farmingTab:CreateSection("Machines") end)
+	featureToggle(farmingTab, {
+		Name = "Auto Unlock Machines",
+		CurrentValue = false,
+		Flag = "FarmingAutoUnlockMachines",
+		Callback = function(enabled)
+			if not enabled then return end
+			task.spawn(function()
+				while true do
+					local flag = rayfieldLibrary.Flags.FarmingAutoUnlockMachines
+					if not flag or not flag.CurrentValue then break end
+					pcall(function()
+						local selected = rayfieldLibrary.Flags.MachineUnlockTarget and rayfieldLibrary.Flags.MachineUnlockTarget.CurrentOption or {"All"}
+						local selSet = {}
+						for _, s in ipairs(selected) do selSet[s] = true end
+						local unlockAll = selSet["All"]
+						if (unlockAll or selSet["Crafting Machine"]) and craftingServiceRemote then
+							pcall(function() craftingServiceRemote:InvokeServer("requestUnlockMachine") end)
+						end
+						if (unlockAll or selSet["XP Transfer Machine"]) and xpTransferMachineRemote then
+							pcall(function() xpTransferMachineRemote:InvokeServer("requestUnlockMachine") end)
+						end
+						if (unlockAll or selSet["Fruit Extractor"]) and fruitExtractorRemote then
+							pcall(function() fruitExtractorRemote:InvokeServer("requestUnlockMachine") end)
+						end
+					end)
+					task.wait(10)
+				end
+			end)
+		end,
+	})
 
-	pcall(function()
-		farmingTab:CreateDropdown({
-			Name = "Machines to Unlock",
-			Options = {"All", "Crafting Machine", "XP Transfer Machine", "Fruit Extractor"},
-			CurrentOption = {"All"},
-			MultipleOptions = true,
-			Flag = "MachineUnlockTarget",
-			Callback = function() end,
-		})
-	end)
+	farmingTab:CreateSection("Slimes & XP")
 
-	pcall(function()
-		featureToggle(farmingTab, {
-			Name = "Auto Unlock Machines",
-			CurrentValue = false,
-			Flag = "FarmingAutoUnlockMachines",
-			Callback = function(enabled)
-				if not enabled then return end
-				task.spawn(function()
-					while true do
-						local flag = rayfieldLibrary.Flags.FarmingAutoUnlockMachines
-						if not flag or not flag.CurrentValue then break end
-						pcall(function()
-							local selected = rayfieldLibrary.Flags.MachineUnlockTarget and rayfieldLibrary.Flags.MachineUnlockTarget.CurrentOption or {"All"}
-							local selSet = {}
-							for _, s in ipairs(selected) do selSet[s] = true end
-							local unlockAll = selSet["All"]
-							if (unlockAll or selSet["Crafting Machine"]) and craftingServiceRemote then
-								pcall(function() craftingServiceRemote:InvokeServer("requestUnlockMachine") end)
-							end
-							if (unlockAll or selSet["XP Transfer Machine"]) and xpTransferMachineRemote then
-								pcall(function() xpTransferMachineRemote:InvokeServer("requestUnlockMachine") end)
-							end
-							if (unlockAll or selSet["Fruit Extractor"]) and fruitExtractorRemote then
-								pcall(function() fruitExtractorRemote:InvokeServer("requestUnlockMachine") end)
-							end
-						end)
-						task.wait(10)
-					end
-				end)
-			end,
-		})
-	end)
-
-	pcall(function() farmingTab:CreateSection("Slimes & XP") end)
-
-	pcall(function()
-		featureToggle(farmingTab, {
-			Name = "Auto Equip Best Slimes",
-			CurrentValue = false,
-			Flag = "FarmingEquipBestSlimes",
-			Callback = function(enabled)
-				if not enabled then return end
-				task.spawn(function()
-					local waitTime = 30
-					while true do
-						local flag = rayfieldLibrary.Flags.FarmingEquipBestSlimes
-						if not flag or not flag.CurrentValue then break end
-						if not inventoryServiceRemote then break end
-						pcall(function() inventoryServiceRemote:InvokeServer("requestEquipBest") end)
-						task.wait(waitTime)
-						waitTime = math.min(waitTime * 2, 600)
-					end
-				end)
-			end,
-		})
-	end)
+	featureToggle(farmingTab, {
+		Name = "Auto Equip Best Slimes",
+		CurrentValue = false,
+		Flag = "FarmingEquipBestSlimes",
+		Callback = function(enabled)
+			if not enabled then return end
+			task.spawn(function()
+				local waitTime = 30
+				while true do
+					local flag = rayfieldLibrary.Flags.FarmingEquipBestSlimes
+					if not flag or not flag.CurrentValue then break end
+					if not inventoryServiceRemote then break end
+					pcall(function() inventoryServiceRemote:InvokeServer("requestEquipBest") end)
+					task.wait(waitTime)
+					waitTime = math.min(waitTime * 2, 600)
+				end
+			end)
+		end,
+	})
 
 	local autoFeedEnabled = false
 	local selectedFruitIds = {"ANY"}
@@ -1254,80 +1170,67 @@ repeat task.wait() until game:IsLoaded()
 
 	local function getOwnedFruitIds()
 		if not dataServiceClient or not FruitsModule then return {} end
-		local ok2, result = pcall(function()
-			local items = dataServiceClient:get("items") or {}
-			local owned = {}
-			for _, f in ipairs(ALL_FRUITS) do if (items[f.id] or 0) > 0 then owned[f.id] = true end end
-			return owned
-		end)
-		return ok2 and result or {}
+		local items = dataServiceClient:get("items") or {}
+		local owned = {}
+		for _, f in ipairs(ALL_FRUITS) do if (items[f.id] or 0) > 0 then owned[f.id] = true end end
+		return owned
 	end
 
 	local function slimeHasFruit(slimeData, fruitId)
 		if type(slimeData) ~= "table" or not FruitsModule then return false end
-		local ok2, result = pcall(function()
-			local fruitDef = FruitsModule.getFruit(fruitId)
-			if not fruitDef then return false end
-			local trees = slimeData.unlockedTrees
-			return type(trees) == "table" and trees[fruitDef.treeId] == true
-		end)
-		return ok2 and result or false
+		local fruitDef = FruitsModule.getFruit(fruitId)
+		if not fruitDef then return false end
+		local trees = slimeData.unlockedTrees
+		return type(trees) == "table" and trees[fruitDef.treeId] == true
 	end
 
 	local function getBestSlimeEntry()
 		if not dataServiceClient then return nil, nil end
-		local ok2, key, data = pcall(function()
-			local stats = dataServiceClient:get("stats") or {}
-			local rarest = stats.rarestRoll
-			if not rarest or not rarest.slimeData then return nil, nil end
-			local rarestId = rarest.slimeData.id
-			local rarestMutations = rarest.slimeData.mutations or {}
-			local equipped = dataServiceClient:get("equipped") or {}
-			local inv = dataServiceClient:get("inventory") or {}
-			for _, slimeKey in pairs(equipped) do
-				if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
-					local d = inv[slimeKey]
-					if type(d) == "table" and d.id == rarestId then
-						local match = true
-						for mutKey, mutVal in pairs(rarestMutations) do
-							if not d.mutations or d.mutations[mutKey] ~= mutVal then match = false break end
-						end
-						if match then return slimeKey, d end
+		local stats = dataServiceClient:get("stats") or {}
+		local rarest = stats.rarestRoll
+		if not rarest or not rarest.slimeData then return nil, nil end
+		local rarestId = rarest.slimeData.id
+		local rarestMutations = rarest.slimeData.mutations or {}
+		local equipped = dataServiceClient:get("equipped") or {}
+		local inv = dataServiceClient:get("inventory") or {}
+		for _, slimeKey in pairs(equipped) do
+			if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
+				local data = inv[slimeKey]
+				if type(data) == "table" and data.id == rarestId then
+					local match = true
+					for mutKey, mutVal in pairs(rarestMutations) do
+						if not data.mutations or data.mutations[mutKey] ~= mutVal then match = false break end
 					end
+					if match then return slimeKey, data end
 				end
 			end
-			for _, slimeKey in pairs(equipped) do
-				if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
-					local d = inv[slimeKey]
-					if type(d) == "table" then return slimeKey, d end
-				end
+		end
+		for _, slimeKey in pairs(equipped) do
+			if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
+				local data = inv[slimeKey]
+				if type(data) == "table" then return slimeKey, data end
 			end
-			return nil, nil
-		end)
-		if not ok2 then return nil, nil end
-		return key, data
+		end
+		return nil, nil
 	end
 
 	local function getTargetSlimes()
 		if not dataServiceClient then return {} end
 		if selectedSlimeMode == "Best" then
-			local k, d = getBestSlimeEntry()
-			if k and d then return {{key=k, data=d}} end
+			local key, data = getBestSlimeEntry()
+			if key and data then return {{key=key, data=data}} end
 			return {}
 		else
-			local ok2, result = pcall(function()
-				local equipped = dataServiceClient:get("equipped") or {}
-				local r = {}
-				for _, slimeKey in ipairs(equipped) do
-					if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
-						local inv = dataServiceClient:get("inventory") or {}
-						local d = inv[slimeKey]
-						if type(d) == "table" then table.insert(r, {key=slimeKey, data=d}) end
-					end
+			local equipped = dataServiceClient:get("equipped") or {}
+			local result = {}
+			for _, slimeKey in ipairs(equipped) do
+				if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
+					local inv = dataServiceClient:get("inventory") or {}
+					local data = inv[slimeKey]
+					if type(data) == "table" then table.insert(result, {key=slimeKey, data=data}) end
 				end
-				return r
-			end)
-			return ok2 and result or {}
+			end
+			return result
 		end
 	end
 
@@ -1358,29 +1261,25 @@ repeat task.wait() until game:IsLoaded()
 		end
 	end
 
-	pcall(function()
-		featureToggle(farmingTab, {
-			Name = "Auto Feed Fruits to Slime(s)",
-			CurrentValue = false,
-			Flag = "AutoFeedToggle",
-			Callback = function(value)
-				autoFeedEnabled = value
-				if feedConnection then pcall(function() feedConnection:Disconnect() end) feedConnection = nil end
-				if value then
-					task.spawn(function()
-						while autoFeedEnabled do
-							pcall(doFeed)
-							task.wait(1)
-						end
-					end)
-				end
-			end,
-		})
-	end)
+	featureToggle(farmingTab, {
+		Name = "Auto Feed Fruits to Slime(s)",
+		CurrentValue = false,
+		Flag = "AutoFeedToggle",
+		Callback = function(value)
+			autoFeedEnabled = value
+			if feedConnection then feedConnection:Disconnect() feedConnection = nil end
+			if value then
+				task.spawn(function()
+					while autoFeedEnabled do
+						pcall(doFeed)
+						task.wait(1)
+					end
+				end)
+			end
+		end,
+	})
 
-	pcall(function()
-		farmingTab:CreateDropdown({ Name = "Slimes to Feed", Options = {"Best","Split Across Team"}, CurrentOption = {"Best"}, MultipleOptions = false, Flag = "SlimeModeDropdown", Callback = function(option) selectedSlimeMode = type(option) == "table" and option[1] or option end })
-	end)
+	farmingTab:CreateDropdown({ Name = "Slimes to Feed", Options = {"Best","Split Across Team"}, CurrentOption = {"Best"}, MultipleOptions = false, Flag = "SlimeModeDropdown", Callback = function(option) selectedSlimeMode = type(option) == "table" and option[1] or option end })
 
 	pcall(function()
 		local fruitOptions = {"Any"}
@@ -1406,9 +1305,9 @@ repeat task.wait() until game:IsLoaded()
 		})
 	end)
 
-	pcall(function() featureToggle(farmingTab, { Name = "Auto Transfer XP", CurrentValue = false, Flag = "FarmingTransferXP", Callback = function() end }) end)
-	pcall(function() farmingTab:CreateDropdown({ Name="Transfer To", Options={"Best Slime","Whole Team"}, CurrentOption={"Best Slime"}, MultipleOptions=false, Flag="FarmingTransferTarget", Callback=function() end }) end)
-	pcall(function() farmingTab:CreateDropdown({ Name="Transfer From", Options={"All Slimes","Unequipped With XP"}, CurrentOption={"Unequipped With XP"}, MultipleOptions=false, Flag="FarmingTransferSource", Callback=function() end }) end)
+	featureToggle(farmingTab, { Name = "Auto Transfer XP", CurrentValue = false, Flag = "FarmingTransferXP", Callback = function() end })
+	farmingTab:CreateDropdown({ Name="Transfer To", Options={"Best Slime","Whole Team"}, CurrentOption={"Best Slime"}, MultipleOptions=false, Flag="FarmingTransferTarget", Callback=function() end })
+	farmingTab:CreateDropdown({ Name="Transfer From", Options={"All Slimes","Unequipped With XP"}, CurrentOption={"Unequipped With XP"}, MultipleOptions=false, Flag="FarmingTransferSource", Callback=function() end })
 
 	task.spawn(function()
 		while true do
@@ -1445,38 +1344,36 @@ repeat task.wait() until game:IsLoaded()
 		end
 	end)
 
-	pcall(function() farmingTab:CreateSection("Loot") end)
+	farmingTab:CreateSection("Loot")
 
-	pcall(function()
-		featureToggle(farmingTab, {
-			Name = "Auto Collect Loot",
-			CurrentValue = false,
-			Flag = "FarmingCollectLoot",
-			Callback = function(enabled)
-				if not enabled then return end
-				task.spawn(function()
-					while true do
-						local flag = rayfieldLibrary.Flags.FarmingCollectLoot
-						if not flag or not flag.CurrentValue then break end
-						pcall(function()
-							for _, folder in ipairs({"Loot","Debris"}) do
-								local container = workspace:FindFirstChild(folder)
-								if container then
-									for _, item in ipairs(container:GetChildren()) do
-										local id = item:GetAttribute("uniqueId") or item:GetAttribute("id") or item.Name
-										if id and lootServiceRemote then
-											pcall(function() lootServiceRemote:InvokeServer("requestCollect", id) end)
-										end
+	featureToggle(farmingTab, {
+		Name = "Auto Collect Loot",
+		CurrentValue = false,
+		Flag = "FarmingCollectLoot",
+		Callback = function(enabled)
+			if not enabled then return end
+			task.spawn(function()
+				while true do
+					local flag = rayfieldLibrary.Flags.FarmingCollectLoot
+					if not flag or not flag.CurrentValue then break end
+					pcall(function()
+						for _, folder in ipairs({"Loot","Debris"}) do
+							local container = workspace:FindFirstChild(folder)
+							if container then
+								for _, item in ipairs(container:GetChildren()) do
+									local id = item:GetAttribute("uniqueId") or item:GetAttribute("id") or item.Name
+									if id and lootServiceRemote then
+										pcall(function() lootServiceRemote:InvokeServer("requestCollect", id) end)
 									end
 								end
 							end
-						end)
-						task.wait(0.5)
-					end
-				end)
-			end,
-		})
-	end)
+						end
+					end)
+					task.wait(0.5)
+				end
+			end)
+		end,
+	})
 
 	pcall(function()
 		farmingTab:CreateSection("Fruit Extractor")
@@ -1488,29 +1385,26 @@ repeat task.wait() until game:IsLoaded()
 		local function getTargetSlimesForExtract()
 			if not dataServiceClient then return {} end
 			if selectedExtractSlimeMode == "Best" then
-				local k, d = getBestSlimeEntry()
-				if k and d then return {{key=k, data=d}} end
+				local key, data = getBestSlimeEntry()
+				if key and data then return {{key=key, data=data}} end
 				return {}
 			else
-				local ok2, result = pcall(function()
-					local equipped = dataServiceClient:get("equipped") or {}
-					local r = {}
-					for _, slimeKey in ipairs(equipped) do
-						if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
-							local inv = dataServiceClient:get("inventory") or {}
-							local d = inv[slimeKey]
-							if type(d) == "table" then table.insert(r, {key=slimeKey, data=d}) end
-						end
+				local equipped = dataServiceClient:get("equipped") or {}
+				local result = {}
+				for _, slimeKey in ipairs(equipped) do
+					if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
+						local inv = dataServiceClient:get("inventory") or {}
+						local data = inv[slimeKey]
+						if type(data) == "table" then table.insert(result, {key=slimeKey, data=data}) end
 					end
-					return r
-				end)
-				return ok2 and result or {}
+				end
+				return result
 			end
 		end
 
 		local function resolveExtractFruitList()
-			local ok2, owned = pcall(getOwnedFruitIds)
-			if not ok2 or not owned then return {} end
+			local ok, owned = pcall(getOwnedFruitIds)
+			if not ok or not owned then return {} end
 			if selectedExtractFruitIds[1] == "ANY" then
 				local result = {}
 				for _, f in ipairs(ALL_FRUITS or {}) do if owned[f.id] then table.insert(result, f.id) end end
@@ -1533,8 +1427,8 @@ repeat task.wait() until game:IsLoaded()
 				else
 					local fruitsToExtract = resolveExtractFruitList()
 					for _, fruitId in ipairs(fruitsToExtract) do
-						local ok2, has = pcall(slimeHasFruit, entry.data, fruitId)
-						if ok2 and has then shouldExtract = true break end
+						local ok, has = pcall(slimeHasFruit, entry.data, fruitId)
+						if ok and has then shouldExtract = true break end
 					end
 				end
 				if shouldExtract then
@@ -1608,70 +1502,62 @@ repeat task.wait() until game:IsLoaded()
 		end)
 	end)
 
-	pcall(function() gameTab:CreateSection("Auto Farm") end)
+	gameTab:CreateSection("Auto Farm")
 
-	pcall(function()
-		featureToggle(gameTab, {
-			Name = "Auto Farm",
-			CurrentValue = false,
-			Flag = "AutoFarm",
-			Callback = function(value)
-				enemySettings.AutoFarm = value
-				setNoclip(value)
-				if not value then
-					currentTarget = nil
-					stopAutoWalk()
-				end
-			end,
-		})
-	end)
-
-	pcall(function() gameTab:CreateSlider({ Name = "Auto Farm Walk Speed", Range = {50,160}, Increment = 1, Suffix = "", CurrentValue = 100, Flag = "AutoFarmWalkSpeed", Callback = function(val) autoFarmWalkSpeed = val end }) end)
-
-	pcall(function()
-		gameTab:CreateDropdown({
-			Name = "Movement Style",
-			Options = {"Walk [RECOMMENDED]","Instant","Smooth"},
-			CurrentOption = {"Walk [RECOMMENDED]"},
-			MultipleOptions = false,
-			Flag = "TeleportStyle",
-			Callback = function(option)
-				local val = type(option) == "table" and option[1] or option
-				if val == "Walk [RECOMMENDED]" then val = "Walk" end
-				enemySettings.TeleportStyle = val
-				if val ~= "Walk" then stopAutoWalk() end
+	featureToggle(gameTab, {
+		Name = "Auto Farm",
+		CurrentValue = false,
+		Flag = "AutoFarm",
+		Callback = function(value)
+			enemySettings.AutoFarm = value
+			setNoclip(value)
+			if not value then
+				currentTarget = nil
+				stopAutoWalk()
 			end
-		})
-	end)
+		end,
+	})
 
-	pcall(function()
-		gameTab:CreateDropdown({
-			Name = "Target Priority",
-			Options = {"Closest","Lowest HP","Most Coins & Goop","Mutations Only"},
-			CurrentOption = {"Most Coins & Goop"},
-			MultipleOptions = true,
-			Flag = "TargetPriority",
-			Callback = function(options)
-				enemySettings.TargetPriorities = {}
-				for _, opt in ipairs(options) do enemySettings.TargetPriorities[opt] = true end
-			end
-		})
-	end)
+	gameTab:CreateSlider({ Name = "Auto Farm Walk Speed", Range = {50,160}, Increment = 1, Suffix = "", CurrentValue = 100, Flag = "AutoFarmWalkSpeed", Callback = function(val) autoFarmWalkSpeed = val end })
 
-	pcall(function()
-		gameTab:CreateDropdown({
-			Name = "Mutation Filter",
-			Options = {"Any","Big","Huge","Inverted","Shiny"},
-			CurrentOption = {"Any"},
-			MultipleOptions = false,
-			Flag = "MutationFilter",
-			Callback = function(option)
-				enemySettings.MutationFilter = type(option) == "table" and option[1] or option
-			end
-		})
-	end)
+	gameTab:CreateDropdown({
+		Name = "Movement Style",
+		Options = {"Walk [RECOMMENDED]","Instant","Smooth"},
+		CurrentOption = {"Walk [RECOMMENDED]"},
+		MultipleOptions = false,
+		Flag = "TeleportStyle",
+		Callback = function(option)
+			local val = type(option) == "table" and option[1] or option
+			if val == "Walk [RECOMMENDED]" then val = "Walk" end
+			enemySettings.TeleportStyle = val
+			if val ~= "Walk" then stopAutoWalk() end
+		end
+	})
 
-	pcall(function() gameTab:CreateSection("Controls") end)
+	gameTab:CreateDropdown({
+		Name = "Target Priority",
+		Options = {"Closest","Lowest HP","Most Coins & Goop","Mutations Only"},
+		CurrentOption = {"Most Coins & Goop"},
+		MultipleOptions = true,
+		Flag = "TargetPriority",
+		Callback = function(options)
+			enemySettings.TargetPriorities = {}
+			for _, opt in ipairs(options) do enemySettings.TargetPriorities[opt] = true end
+		end
+	})
+
+	gameTab:CreateDropdown({
+		Name = "Mutation Filter",
+		Options = {"Any","Big","Huge","Inverted","Shiny"},
+		CurrentOption = {"Any"},
+		MultipleOptions = false,
+		Flag = "MutationFilter",
+		Callback = function(option)
+			enemySettings.MutationFilter = type(option) == "table" and option[1] or option
+		end
+	})
+
+	gameTab:CreateSection("Controls")
 
 	local combatEnabled = false
 	local getgcChecked = false
@@ -1692,19 +1578,18 @@ repeat task.wait() until game:IsLoaded()
 		return nil
 	end
 
-	pcall(function()
-		gameTab:CreateDropdown({
-			Name = "Slime Gun Mode",
-			Options = {"Normal (uses getgc)", "Advanced (bypass cooldown)"},
-			CurrentOption = {"Normal (uses getgc)"},
-			MultipleOptions = false,
-			Flag = "SlimeGunMode",
-			Callback = function() end,
-		})
-	end)
+	gameTab:CreateDropdown({
+		Name = "Slime Gun Mode",
+		Options = {"Normal (uses getgc)", "Advanced (bypass cooldown)"},
+		CurrentOption = {"Normal (uses getgc)"},
+		MultipleOptions = false,
+		Flag = "SlimeGunMode",
+		Callback = function() end,
+	})
 
-	pcall(function() featureToggle(gameTab, { Name = "Auto Shoot Enemies", CurrentValue = false, Flag = "CombatAutoShoot", Callback = function(value) combatEnabled = value end }) end)
-	pcall(function() gameTab:CreateDropdown({ Name = "Combat Target Priority", Options = {"Closest","Lowest HP","Highest HP","Most Coins & Goop"}, CurrentOption = {"Closest"}, MultipleOptions = false, Flag = "CombatTargetPriority", Callback = function() end }) end)
+	featureToggle(gameTab, { Name = "Auto Shoot Enemies", CurrentValue = false, Flag = "CombatAutoShoot", Callback = function(value) combatEnabled = value end })
+
+	gameTab:CreateDropdown({ Name = "Combat Target Priority", Options = {"Closest","Lowest HP","Highest HP","Most Coins & Goop"}, CurrentOption = {"Closest"}, MultipleOptions = false, Flag = "CombatTargetPriority", Callback = function() end })
 
 	task.spawn(function()
 		local controller = nil
@@ -1713,7 +1598,7 @@ repeat task.wait() until game:IsLoaded()
 			task.wait(0.1)
 			if not combatEnabled then
 				controller = nil
-				if advHeartbeat then pcall(function() advHeartbeat:Disconnect() end) advHeartbeat = nil end
+				if advHeartbeat then advHeartbeat:Disconnect() advHeartbeat = nil end
 				task.wait(0.3)
 				continue
 			end
@@ -1750,7 +1635,7 @@ repeat task.wait() until game:IsLoaded()
 						end)
 					end)
 				else
-					if advHeartbeat then pcall(function() advHeartbeat:Disconnect() end) advHeartbeat = nil end
+					if advHeartbeat then advHeartbeat:Disconnect() advHeartbeat = nil end
 					local char = localPlayer.Character
 					if not char then return end
 					local humanoid = char:FindFirstChildWhichIsA("Humanoid")
@@ -1768,130 +1653,124 @@ repeat task.wait() until game:IsLoaded()
 						return
 					end
 					if not controller then controller = findGunController() if not controller then return end end
-					local ok2 = pcall(function()
+					local ok = pcall(function()
 						local orig = controller._getTargetEnemyId
 						controller._getTargetEnemyId = function() return targetId end
 						controller:onActivated()
 						controller._getTargetEnemyId = orig
 					end)
-					if not ok2 then controller = nil end
+					if not ok then controller = nil end
 				end
 			end)
 		end
 	end)
 
-	pcall(function() gameTab:CreateSection("Progress") end)
+	gameTab:CreateSection("Progress")
 
-	pcall(function()
-		featureToggle(gameTab, {
-			Name = "Auto Rebirth",
-			CurrentValue = false,
-			Flag = "GameAutoRebirth",
-			Callback = function(enabled)
-				if not enabled then return end
-				task.spawn(function()
-					while true do
-						local flag = rayfieldLibrary.Flags.GameAutoRebirth
-						if not flag or not flag.CurrentValue then break end
-						pcall(function()
-							if not rebirthServiceRemote or not dataServiceClient then return end
-							local rebirths     = dataServiceClient:get("rebirths") or 0
-							local goop         = dataServiceClient:get("goop") or 0
-							local furthestZone = dataServiceClient:get("furthestZone") or 0
-							local requiredGoop = (2^rebirths)*500
-							local minZone      = tonumber(rayfieldLibrary.Flags.GameMinZoneRebirth and rayfieldLibrary.Flags.GameMinZoneRebirth.CurrentValue) or 0
-							if furthestZone >= minZone and goop >= requiredGoop then
-								rebirthServiceRemote:InvokeServer("requestRebirth")
-							end
-						end)
-						task.wait(10)
-					end
-				end)
-			end,
-		})
-	end)
+	featureToggle(gameTab, {
+		Name = "Auto Rebirth",
+		CurrentValue = false,
+		Flag = "GameAutoRebirth",
+		Callback = function(enabled)
+			if not enabled then return end
+			task.spawn(function()
+				while true do
+					local flag = rayfieldLibrary.Flags.GameAutoRebirth
+					if not flag or not flag.CurrentValue then break end
+					pcall(function()
+						if not rebirthServiceRemote or not dataServiceClient then return end
+						local rebirths     = dataServiceClient:get("rebirths") or 0
+						local goop         = dataServiceClient:get("goop") or 0
+						local furthestZone = dataServiceClient:get("furthestZone") or 0
+						local requiredGoop = (2^rebirths)*500
+						local minZone      = tonumber(rayfieldLibrary.Flags.GameMinZoneRebirth and rayfieldLibrary.Flags.GameMinZoneRebirth.CurrentValue) or 0
+						if furthestZone >= minZone and goop >= requiredGoop then
+							rebirthServiceRemote:InvokeServer("requestRebirth")
+						end
+					end)
+					task.wait(10)
+				end
+			end)
+		end,
+	})
 
-	pcall(function() gameTab:CreateInput({ Name="Minimum Zone To Rebirth", CurrentValue="", PlaceholderText="e.g. 10", RemoveTextAfterFocusLost=false, Flag="GameMinZoneRebirth", Callback=function() end }) end)
+	gameTab:CreateInput({ Name="Minimum Zone To Rebirth", CurrentValue="", PlaceholderText="e.g. 10", RemoveTextAfterFocusLost=false, Flag="GameMinZoneRebirth", Callback=function() end })
 
-	pcall(function() gameTab:CreateSection("Upgrades") end)
+	gameTab:CreateSection("Upgrades")
 
+	-- FIXED AUTO UPGRADE PURCHASING (using UpgradeService:unlockUpgrade)
 	local UpgradeService = nil
 	task.spawn(function()
 		repeat task.wait(1) until modulesLoaded and dataServiceClient
-		pcall(function()
-			local rs = game:GetService("ReplicatedStorage")
-			local ok2, upgradeSvc = pcall(function() return require(rs.Source.Features.Upgrades.UpgradeServiceClient) end)
-			if ok2 and upgradeSvc then
-				local dummyClient = {}
-				dummyClient.networker = Networker.client.new("UpgradeService", dummyClient)
-				upgradeSvc.init(dummyClient)
-				UpgradeService = upgradeSvc
-			end
-		end)
+		local rs = game:GetService("ReplicatedStorage")
+		local ok, upgradeSvc = pcall(function() return require(rs.Source.Features.Upgrades.UpgradeServiceClient) end)
+		if ok and upgradeSvc then
+			local dummyClient = {}
+			dummyClient.networker = Networker.client.new("UpgradeService", dummyClient)
+			upgradeSvc.init(dummyClient)
+			UpgradeService = upgradeSvc
+		end
 	end)
 
-	pcall(function()
-		featureToggle(gameTab, {
-			Name = "Auto Upgrade Purchasing",
-			CurrentValue = false,
-			Flag = "GameAutoUpgrade",
-			Callback = function(enabled)
-				if not enabled then return end
-				task.spawn(function()
-					while true do
-						local flag = rayfieldLibrary.Flags.GameAutoUpgrade
-						if not flag or not flag.CurrentValue then break end
-						if not UpgradeService or not dataServiceClient or not upgradeTreeModule then task.wait(2) continue end
-						pcall(function()
-							local upgradeMode = rayfieldLibrary.Flags.GameUpgradeMode and rayfieldLibrary.Flags.GameUpgradeMode.CurrentOption or {"All"}
-							local modeSet = {}
-							for _, m in ipairs(upgradeMode) do modeSet[m] = true end
-							local unlockedUpgrades = dataServiceClient:get("upgrades") or {}
-							local coins = dataServiceClient:get("coins") or 0
-							local goop = dataServiceClient:get("goop") or 0
-							local rollCurrency = dataServiceClient:get("rollCurrency") or 0
-							local anyPurchased = false
-							for treeName, tree in pairs(upgradeTreeModule) do
-								if type(tree) == "table" then
-									for upgradeId, data in pairs(tree) do
-										if type(data) == "table" and data.cost and not unlockedUpgrades[upgradeId] then
-											local cost = data.cost.amount or 0
-											local currency = data.cost.currency
-											local canBuy = false
-											if currency == "coins" and (modeSet["All"] or modeSet["Coins"]) then
-												canBuy = coins >= cost
-											elseif currency == "goop" and (modeSet["All"] or modeSet["Goop"]) then
-												canBuy = goop >= cost
-											elseif currency == "rollCurrency" and (modeSet["All"] or modeSet["Rolls"]) then
-												canBuy = rollCurrency >= cost
-											end
-											if canBuy then
-												local ok2, success = pcall(function() return UpgradeService:unlockUpgrade(upgradeId) end)
-												if ok2 and success then
-													anyPurchased = true
-													if currency == "coins" then coins = coins - cost
-													elseif currency == "goop" then goop = goop - cost
-													elseif currency == "rollCurrency" then rollCurrency = rollCurrency - cost end
-													unlockedUpgrades[upgradeId] = true
-												end
-												task.wait(0.1)
-											end
+	featureToggle(gameTab, {
+		Name = "Auto Upgrade Purchasing",
+		CurrentValue = false,
+		Flag = "GameAutoUpgrade",
+		Callback = function(enabled)
+			if not enabled then return end
+			task.spawn(function()
+				while true do
+					local flag = rayfieldLibrary.Flags.GameAutoUpgrade
+					if not flag or not flag.CurrentValue then break end
+					if not UpgradeService or not dataServiceClient or not upgradeTreeModule then task.wait(2) continue end
+					pcall(function()
+						local upgradeMode = rayfieldLibrary.Flags.GameUpgradeMode and rayfieldLibrary.Flags.GameUpgradeMode.CurrentOption or {"All"}
+						local modeSet = {}
+						for _, m in ipairs(upgradeMode) do modeSet[m] = true end
+						local unlockedUpgrades = dataServiceClient:get("upgrades") or {}
+						local coins = dataServiceClient:get("coins") or 0
+						local goop = dataServiceClient:get("goop") or 0
+						local rollCurrency = dataServiceClient:get("rollCurrency") or 0
+						local anyPurchased = false
+						for treeName, tree in pairs(upgradeTreeModule) do
+							for upgradeId, data in pairs(tree) do
+								if data.cost and not unlockedUpgrades[upgradeId] then
+									local cost = data.cost.amount or 0
+									local currency = data.cost.currency
+									local canBuy = false
+									-- FIX: correct operator precedence
+									if currency == "coins" and (modeSet["All"] or modeSet["Coins"]) then
+										canBuy = coins >= cost
+									elseif currency == "goop" and (modeSet["All"] or modeSet["Goop"]) then
+										canBuy = goop >= cost
+									elseif currency == "rollCurrency" and (modeSet["All"] or modeSet["Rolls"]) then
+										canBuy = rollCurrency >= cost
+									end
+									if canBuy then
+										local success = UpgradeService:unlockUpgrade(upgradeId)
+										if success then
+											anyPurchased = true
+											if currency == "coins" then coins = coins - cost
+											elseif currency == "goop" then goop = goop - cost
+											elseif currency == "rollCurrency" then rollCurrency = rollCurrency - cost end
+											unlockedUpgrades[upgradeId] = true
 										end
+										task.wait(0.1)
 									end
 								end
 							end
-							if not anyPurchased then task.wait(5) end
-						end)
-						task.wait(0.5)
-					end
-				end)
-			end,
-		})
-	end)
+						end
+						if not anyPurchased then task.wait(5) end
+					end)
+					task.wait(0.5)
+				end
+			end)
+		end,
+	})
 
-	pcall(function() gameTab:CreateDropdown({ Name = "Upgrade Mode", Options = {"All","Coins","Goop","Rolls"}, CurrentOption = {"All"}, MultipleOptions = true, Flag = "GameUpgradeMode", Callback = function() end }) end)
+	gameTab:CreateDropdown({ Name = "Upgrade Mode", Options = {"All","Coins","Goop","Rolls"}, CurrentOption = {"All"}, MultipleOptions = true, Flag = "GameUpgradeMode", Callback = function() end })
 
-	pcall(function() gameTab:CreateSection("Recipes") end)
+	gameTab:CreateSection("Recipes")
 
 	pcall(function()
 		local recipeIdsList = {}
@@ -1916,11 +1795,8 @@ repeat task.wait() until game:IsLoaded()
 		local function getModifierMutations() return MutationsModule and MutationsModule.modifierMutations or {} end
 		local function getMutationValue(mutId)
 			if not MutationsModule then return 0 end
-			local ok2, result = pcall(function()
-				local data = MutationsModule.get(mutId)
-				return data and data.value or 0
-			end)
-			return ok2 and result or 0
+			local data = MutationsModule.get(mutId)
+			return data and data.value or 0
 		end
 
 		local function parseUniqueId(uid)
@@ -1946,184 +1822,157 @@ repeat task.wait() until game:IsLoaded()
 		end
 
 		local function getEquippedSet()
-			local ok2, result = pcall(function()
-				local equipped = dataServiceClient and dataServiceClient:get("equipped") or {}
-				local set = {}
-				for _, uid in pairs(equipped) do set[uid] = true end
-				return set
-			end)
-			return ok2 and result or {}
+			local equipped = dataServiceClient and dataServiceClient:get("equipped") or {}
+			local set = {}
+			for _, uid in pairs(equipped) do set[uid] = true end
+			return set
 		end
 
 		local function getBestSlimeSet()
-			local ok2, result = pcall(function()
-				local inventory = dataServiceClient and dataServiceClient:get("inventory") or {}
-				local best, bestScore = nil, -1
-				for uid, data in pairs(inventory) do
-					if type(data) ~= "table" then
-						local s = scoreUniqueId(uid)
-						if s > bestScore then bestScore = s best = uid end
-					end
+			local inventory = dataServiceClient and dataServiceClient:get("inventory") or {}
+			local best, bestScore = nil, -1
+			for uid, data in pairs(inventory) do
+				if type(data) ~= "table" then
+					local s = scoreUniqueId(uid)
+					if s > bestScore then bestScore = s best = uid end
 				end
-				local set = {}
-				if best then set[best] = true end
-				return set
-			end)
-			return ok2 and result or {}
+			end
+			local set = {}
+			if best then set[best] = true end
+			return set
 		end
 
 		local function buildProtectedSet(categories)
 			local catSet = {}
 			for _, cat in ipairs(categories) do catSet[cat] = true end
 			local protected = {}
-			pcall(function()
-				if catSet["Equipped Slimes"] then for uid in pairs(getEquippedSet()) do protected[uid] = true end end
-				if catSet["Best Slime"]      then for uid in pairs(getBestSlimeSet()) do protected[uid] = true end end
-				if catSet["Xp Slimes"] then
-					local inv = dataServiceClient and dataServiceClient:get("inventory") or {}
-					for uid, data in pairs(inv) do if type(data) == "table" then protected[uid] = true end end
-				end
-			end)
+			if catSet["Equipped Slimes"] then for uid in pairs(getEquippedSet()) do protected[uid] = true end end
+			if catSet["Best Slime"]      then for uid in pairs(getBestSlimeSet()) do protected[uid] = true end end
+			if catSet["Xp Slimes"] then
+				local inv = dataServiceClient and dataServiceClient:get("inventory") or {}
+				for uid, data in pairs(inv) do if type(data) == "table" then protected[uid] = true end end
+			end
 			return protected
 		end
 
 		local protectedPets = buildProtectedSet(craftingState.protectCategories)
 
 		local function findBestIngredient(baseId, usedCounts)
-			local ok2, result = pcall(function()
-				local inventory = dataServiceClient and dataServiceClient:get("inventory") or {}
-				local bestUid, bestScore = nil, -1
-				for uid, data in pairs(inventory) do
-					if not protectedPets[uid] then
-						local parsedBase = parseUniqueId(uid)
-						if parsedBase == baseId then
-							local owned = type(data)=="number" and math.max(data,0) or (type(data)=="table" and 1 or 0)
-							local used  = usedCounts[uid] or 0
-							if owned - used > 0 then
-								local s = scoreUniqueId(uid)
-								if s > bestScore then bestScore = s bestUid = uid end
-							end
+			local inventory = dataServiceClient and dataServiceClient:get("inventory") or {}
+			local bestUid, bestScore = nil, -1
+			for uid, data in pairs(inventory) do
+				if not protectedPets[uid] then
+					local parsedBase = parseUniqueId(uid)
+					if parsedBase == baseId then
+						local owned = type(data)=="number" and math.max(data,0) or (type(data)=="table" and 1 or 0)
+						local used  = usedCounts[uid] or 0
+						if owned - used > 0 then
+							local s = scoreUniqueId(uid)
+							if s > bestScore then bestScore = s bestUid = uid end
 						end
 					end
 				end
-				return bestUid
-			end)
-			return ok2 and result or nil
+			end
+			return bestUid
 		end
 
 		local function buildCraftArgsForRecipe(recipeId, amount)
-			if not RecipesModule then return nil end
-			local ok2, result = pcall(function()
-				local recipe = RecipesModule.getRecipe(recipeId)
-				if not recipe then return nil end
-				local ingredientIds, usedCounts = {}, {}
-				for _, input in ipairs(recipe.inputs) do
-					local uid = findBestIngredient(input.id, usedCounts) or ("-"..input.id)
-					usedCounts[uid] = (usedCounts[uid] or 0) + 1
-					table.insert(ingredientIds, uid)
-				end
-				return {"requestCraftRecipe", recipeId, ingredientIds, tostring(amount)}
-			end)
-			return ok2 and result or nil
+			local recipe = RecipesModule and RecipesModule.getRecipe(recipeId)
+			if not recipe then return nil end
+			local ingredientIds, usedCounts = {}, {}
+			for _, input in ipairs(recipe.inputs) do
+				local uid = findBestIngredient(input.id, usedCounts) or ("-"..input.id)
+				usedCounts[uid] = (usedCounts[uid] or 0) + 1
+				table.insert(ingredientIds, uid)
+			end
+			return {"requestCraftRecipe", recipeId, ingredientIds, tostring(amount)}
 		end
 
 		local function getCraftingRemote()
-			local ok2, result = pcall(function()
-				local remotesF = ReplicatedStorage:WaitForChild("Packages",15):WaitForChild("_Index",15):WaitForChild("leifstout_networker@0.3.1",15):WaitForChild("networker",15):WaitForChild("_remotes",15)
-				return remotesF:WaitForChild("CraftingService",10):WaitForChild("RemoteFunction",10)
-			end)
-			return ok2 and result or nil
+			local remotesF = ReplicatedStorage:WaitForChild("Packages",15):WaitForChild("_Index",15):WaitForChild("leifstout_networker@0.3.1",15):WaitForChild("networker",15):WaitForChild("_remotes",15)
+			return remotesF:WaitForChild("CraftingService",10):WaitForChild("RemoteFunction",10)
 		end
 
 		local function doCraftAll(amount)
 			local craftRemote = getCraftingRemote()
-			if not craftRemote then return {} end
 			local results = {}
 			for _, recipeId in ipairs(craftingState.selectedRecipeIds) do
 				local args = buildCraftArgsForRecipe(recipeId, amount)
 				if args then
-					local ok2, result = pcall(function() return craftRemote:InvokeServer(table.unpack(args)) end)
-					results[recipeId] = ok2 and result ~= false
+					local result = craftRemote:InvokeServer(table.unpack(args))
+					results[recipeId] = result ~= false
 				end
 			end
 			return results
 		end
 
 		local function getMaxCraftsForRecipe(recipeId)
-			if not RecipesModule then return 0 end
-			local ok2, result = pcall(function()
-				local recipe = RecipesModule.getRecipe(recipeId)
-				if not recipe then return 0 end
-				local usedCounts, maxCrafts = {}, math.huge
-				for _, input in ipairs(recipe.inputs) do
-					local uid = findBestIngredient(input.id, usedCounts)
-					if not uid then return 0 end
-					usedCounts[uid] = (usedCounts[uid] or 0) + 1
-					local inv = dataServiceClient and dataServiceClient:get("inventory") or {}
-					local owned = type(inv[uid])=="number" and math.max(inv[uid],0) or (type(inv[uid])=="table" and 1 or 0)
-					local avail = owned - usedCounts[uid] + 1
-					if avail < maxCrafts then maxCrafts = avail end
-				end
-				return maxCrafts == math.huge and 0 or maxCrafts
-			end)
-			return ok2 and result or 0
+			local recipe = RecipesModule and RecipesModule.getRecipe(recipeId)
+			if not recipe then return 0 end
+			local usedCounts, maxCrafts = {}, math.huge
+			for _, input in ipairs(recipe.inputs) do
+				local uid = findBestIngredient(input.id, usedCounts)
+				if not uid then return 0 end
+				usedCounts[uid] = (usedCounts[uid] or 0) + 1
+				local inv = dataServiceClient and dataServiceClient:get("inventory") or {}
+				local owned = type(inv[uid])=="number" and math.max(inv[uid],0) or (type(inv[uid])=="table" and 1 or 0)
+				local avail = owned - usedCounts[uid] + 1
+				if avail < maxCrafts then maxCrafts = avail end
+			end
+			return maxCrafts == math.huge and 0 or maxCrafts
 		end
 
-		pcall(function() gameTab:CreateDropdown({ Name = "Select Recipes to Craft", Options = #recipeIdsList > 0 and recipeIdsList or {"None"}, CurrentOption = craftingState.selectedRecipeIds, MultipleOptions = true, Flag = "CraftingSelectedRecipes", Callback = function(options) craftingState.selectedRecipeIds = options end }) end)
-		pcall(function() gameTab:CreateSlider({ Name="Craft Amount", Range={1,99}, Increment=1, Suffix="x", CurrentValue=1, Flag="CraftingAmount", Callback=function(val) craftingState.craftAmount = val end }) end)
+		gameTab:CreateDropdown({ Name = "Select Recipes to Craft", Options = #recipeIdsList > 0 and recipeIdsList or {"None"}, CurrentOption = craftingState.selectedRecipeIds, MultipleOptions = true, Flag = "CraftingSelectedRecipes", Callback = function(options) craftingState.selectedRecipeIds = options end })
+		gameTab:CreateSlider({ Name="Craft Amount", Range={1,99}, Increment=1, Suffix="x", CurrentValue=1, Flag="CraftingAmount", Callback=function(val) craftingState.craftAmount = val end })
 
-		pcall(function()
-			featureButton(gameTab, {
-				Name = "Craft Now",
-				Callback = function()
-					local results = doCraftAll(craftingState.craftAmount)
-					local succeeded, failed = 0, 0
-					for _, ok2 in pairs(results) do if ok2 then succeeded=succeeded+1 else failed=failed+1 end end
-					pcall(function() rayfieldLibrary:Notify({ Title="Cactus Hub", Content=succeeded.." crafts succeeded"..(failed>0 and (", "..failed.." failed") or ""), Duration=3, Image=4483362458 }) end)
-				end,
-			})
-		end)
+		featureButton(gameTab, {
+			Name = "Craft Now",
+			Callback = function()
+				local results = doCraftAll(craftingState.craftAmount)
+				local succeeded, failed = 0, 0
+				for _, ok in pairs(results) do if ok then succeeded=succeeded+1 else failed=failed+1 end end
+				rayfieldLibrary:Notify({ Title="Cactus Hub", Content=succeeded.." crafts succeeded"..(failed>0 and (", "..failed.." failed") or ""), Duration=3, Image=4483362458 })
+			end,
+		})
 
-		pcall(function() gameTab:CreateSlider({ Name="Auto Craft Amount", Range={1,99}, Increment=1, Suffix="x", CurrentValue=1, Flag="CraftingAutoAmount", Callback=function(val) craftingState.autoCraftAmount = val end }) end)
+		gameTab:CreateSlider({ Name="Auto Craft Amount", Range={1,99}, Increment=1, Suffix="x", CurrentValue=1, Flag="CraftingAutoAmount", Callback=function(val) craftingState.autoCraftAmount = val end })
 
-		pcall(function()
-			featureToggle(gameTab, {
-				Name = "Enable Auto Craft",
-				CurrentValue = false,
-				Flag = "CraftingAutoToggle",
-				Callback = function(enabled)
-					craftingState.autoCraftEnabled = enabled
-					if enabled then
-						if craftingState.autoCraftThread then pcall(function() task.cancel(craftingState.autoCraftThread) end) end
-						craftingState.autoCraftThread = task.spawn(function()
-							while true do
-								local flag = rayfieldLibrary.Flags.CraftingAutoToggle
-								if not flag or not flag.CurrentValue then break end
-								pcall(function()
-									local minMax = math.huge
-									for _, recipeId in ipairs(craftingState.selectedRecipeIds) do
-										local m = getMaxCraftsForRecipe(recipeId)
-										if m < minMax then minMax = m end
-									end
-									local autoCraftMax = minMax == math.huge and 1 or math.max(1, minMax)
-									local craftAmount  = math.min(craftingState.autoCraftAmount, autoCraftMax)
-									if craftAmount > 0 then doCraftAll(craftAmount) end
-								end)
-								task.wait(5)
-							end
-							craftingState.autoCraftThread = nil
-						end)
-						pcall(function() rayfieldLibrary:Notify({ Title="Auto Craft", Content="Started", Duration=3, Image=4483362458 }) end)
-					else
-						if craftingState.autoCraftThread then pcall(function() task.cancel(craftingState.autoCraftThread) end) craftingState.autoCraftThread = nil end
-						pcall(function() rayfieldLibrary:Notify({ Title="Auto Craft", Content="Stopped.", Duration=3, Image=4483362458 }) end)
-					end
-				end,
-			})
-		end)
+		featureToggle(gameTab, {
+			Name = "Enable Auto Craft",
+			CurrentValue = false,
+			Flag = "CraftingAutoToggle",
+			Callback = function(enabled)
+				craftingState.autoCraftEnabled = enabled
+				if enabled then
+					if craftingState.autoCraftThread then task.cancel(craftingState.autoCraftThread) end
+					craftingState.autoCraftThread = task.spawn(function()
+						while true do
+							local flag = rayfieldLibrary.Flags.CraftingAutoToggle
+							if not flag or not flag.CurrentValue then break end
+							pcall(function()
+								local minMax = math.huge
+								for _, recipeId in ipairs(craftingState.selectedRecipeIds) do
+									local m = getMaxCraftsForRecipe(recipeId)
+									if m < minMax then minMax = m end
+								end
+								local autoCraftMax = minMax == math.huge and 1 or math.max(1, minMax)
+								local craftAmount  = math.min(craftingState.autoCraftAmount, autoCraftMax)
+								if craftAmount > 0 then doCraftAll(craftAmount) end
+							end)
+							task.wait(5)
+						end
+						craftingState.autoCraftThread = nil
+					end)
+					rayfieldLibrary:Notify({ Title="Auto Craft", Content="Started", Duration=3, Image=4483362458 })
+				else
+					if craftingState.autoCraftThread then task.cancel(craftingState.autoCraftThread) craftingState.autoCraftThread = nil end
+					rayfieldLibrary:Notify({ Title="Auto Craft", Content="Stopped.", Duration=3, Image=4483362458 })
+				end
+			end,
+		})
 
-		pcall(function() gameTab:CreateDropdown({ Name = "Protect Categories", Options = {"Best Slime","Equipped Slimes","Xp Slimes"}, CurrentOption = {"Best Slime","Equipped Slimes","Xp Slimes"}, MultipleOptions = true, Flag = "CraftingProtectCategories", Callback = function(options) craftingState.protectCategories = options protectedPets = buildProtectedSet(options) end }) end)
-		pcall(function() rayfieldLibrary:Notify({ Title="Cactus Hub", Content="Loaded — "..(#recipeIdsList).." unlocked recipes ready.", Duration=5, Image=4483362458 }) end)
+		gameTab:CreateDropdown({ Name = "Protect Categories", Options = {"Best Slime","Equipped Slimes","Xp Slimes"}, CurrentOption = {"Best Slime","Equipped Slimes","Xp Slimes"}, MultipleOptions = true, Flag = "CraftingProtectCategories", Callback = function(options) craftingState.protectCategories = options protectedPets = buildProtectedSet(options) end })
+		rayfieldLibrary:Notify({ Title="Cactus Hub", Content="Loaded — "..(#recipeIdsList).." unlocked recipes ready.", Duration=5, Image=4483362458 })
 	end)
 
 	local ufoClient = nil
@@ -2135,10 +1984,10 @@ repeat task.wait() until game:IsLoaded()
 
 	local function getUfoLootRemote()
 		if ufoLootRemote then return ufoLootRemote end
-		local ok2, remote = pcall(function()
+		local ok, remote = pcall(function()
 			return ReplicatedStorage:WaitForChild("Packages",10):WaitForChild("_Index",10):WaitForChild("leifstout_networker@0.3.1",10):WaitForChild("networker",10):WaitForChild("_remotes",10):WaitForChild("LootService",10):WaitForChild("RemoteFunction",10)
 		end)
-		if ok2 then ufoLootRemote = remote end
+		if ok then ufoLootRemote = remote end
 		return ufoLootRemote
 	end
 
@@ -2149,68 +1998,61 @@ repeat task.wait() until game:IsLoaded()
 	local lastUfoZoneId = nil
 	local lastUfoPhase = nil
 
-	pcall(function() ufoTab:CreateSection("Live Status") end)
-	local ufoPhaseLabel, ufoZoneIdLabel, ufoZoneNameLabel, ufoNextLabel, ufoGoldenLabel
-	pcall(function() ufoPhaseLabel    = ufoTab:CreateLabel("🛸  Phase: —") end)
-	pcall(function() ufoZoneIdLabel   = ufoTab:CreateLabel("📍  Zone ID: —") end)
-	pcall(function() ufoZoneNameLabel = ufoTab:CreateLabel("🗺️  Zone Name: —") end)
-	pcall(function() ufoNextLabel     = ufoTab:CreateLabel("⏳  Next Event: —") end)
-	pcall(function() ufoGoldenLabel   = ufoTab:CreateLabel("⭐  Golden UFO: —") end)
+	ufoTab:CreateSection("Live Status")
+	local ufoPhaseLabel    = ufoTab:CreateLabel("🛸  Phase: —")
+	local ufoZoneIdLabel   = ufoTab:CreateLabel("📍  Zone ID: —")
+	local ufoZoneNameLabel = ufoTab:CreateLabel("🗺️  Zone Name: —")
+	local ufoNextLabel     = ufoTab:CreateLabel("⏳  Next Event: —")
+	local ufoGoldenLabel   = ufoTab:CreateLabel("⭐  Golden UFO: —")
 
 	local function refreshUfoState()
-		if not ufoClient then if ufoPhaseLabel then pcall(function() ufoPhaseLabel:Set("🛸  Phase: Module not loaded") end) end return end
+		if not ufoClient then ufoPhaseLabel:Set("🛸  Phase: Module not loaded") return end
+		local ok, state = pcall(function() return ufoClient:getStateSource()() end)
+		if not ok or not state then return end
+		local zoneName = "N/A"
 		pcall(function()
-			local ok2, state = pcall(function() return ufoClient:getStateSource()() end)
-			if not ok2 or not state then return end
-			local zoneName = "N/A"
-			pcall(function()
-				local ZM = require(ReplicatedStorage.Source.Game.Items.Zones)
-				if state.zoneId and ZM.hasZone(state.zoneId) then zoneName = ZM.getZone(state.zoneId).name end
-			end)
-			local nextEvent = "N/A"
-			if state.nextEventStartTime then
-				local secs = math.max(0, math.round(state.nextEventStartTime - workspace:GetServerTimeNow()))
-				nextEvent = string.format("%02d:%02d", math.floor(secs/60), secs%60)
-			end
-			local phaseIcon = "⚪"
-			if state.phase == "hovering" then phaseIcon = "🟢"
-			elseif state.phase == "arriving" then phaseIcon = "🟡"
-			elseif state.phase == "departing" then phaseIcon = "🔴" end
-			local isGolden = false
-			pcall(function() isGolden = ufoClient.isGolden == true end)
-			if ufoPhaseLabel then pcall(function() ufoPhaseLabel:Set("🛸  Phase: " .. phaseIcon .. " " .. state.phase:upper()) end) end
-			if ufoZoneIdLabel then pcall(function() ufoZoneIdLabel:Set("📍  Zone ID: " .. (state.zoneId and tostring(state.zoneId) or "None")) end) end
-			if ufoZoneNameLabel then pcall(function() ufoZoneNameLabel:Set("🗺️  Zone Name: " .. zoneName) end) end
-			if ufoNextLabel then pcall(function() ufoNextLabel:Set("⏳  Next Event: " .. nextEvent) end) end
-			if ufoGoldenLabel then pcall(function() ufoGoldenLabel:Set("⭐  Golden UFO: " .. (isGolden and "Yes ✅" or "No ❌")) end) end
+			local ZM = require(ReplicatedStorage.Source.Game.Items.Zones)
+			if state.zoneId and ZM.hasZone(state.zoneId) then zoneName = ZM.getZone(state.zoneId).name end
 		end)
+		local nextEvent = "N/A"
+		if state.nextEventStartTime then
+			local secs = math.max(0, math.round(state.nextEventStartTime - workspace:GetServerTimeNow()))
+			nextEvent = string.format("%02d:%02d", math.floor(secs/60), secs%60)
+		end
+		local phaseIcon = "⚪"
+		if state.phase == "hovering" then phaseIcon = "🟢"
+		elseif state.phase == "arriving" then phaseIcon = "🟡"
+		elseif state.phase == "departing" then phaseIcon = "🔴" end
+		local isGolden = false
+		pcall(function() isGolden = ufoClient.isGolden == true end)
+		ufoPhaseLabel:Set("🛸  Phase: " .. phaseIcon .. " " .. state.phase:upper())
+		ufoZoneIdLabel:Set("📍  Zone ID: " .. (state.zoneId and tostring(state.zoneId) or "None"))
+		ufoZoneNameLabel:Set("🗺️  Zone Name: " .. zoneName)
+		ufoNextLabel:Set("⏳  Next Event: " .. nextEvent)
+		ufoGoldenLabel:Set("⭐  Golden UFO: " .. (isGolden and "Yes ✅" or "No ❌"))
 	end
 
-	pcall(function() ufoTab:CreateSection("Automation") end)
+	ufoTab:CreateSection("Automation")
 
-	pcall(function()
-		featureToggle(ufoTab, {
-			Name = "Auto Stay in UFO Zone",
-			CurrentValue = false,
-			Flag = "AutoUfoZone",
-			Callback = function(value)
-				autoUfoZone = value
-				if not value then lastUfoZoneId = nil lastUfoPhase = nil end
-			end,
-		})
-	end)
+	featureToggle(ufoTab, {
+		Name = "Auto Stay in UFO Zone",
+		CurrentValue = false,
+		Flag = "AutoUfoZone",
+		Callback = function(value)
+			autoUfoZone = value
+			if not value then lastUfoZoneId = nil lastUfoPhase = nil end
+		end,
+	})
 
-	pcall(function()
-		featureToggle(ufoTab, {
-			Name = "Auto Collect UFO Loot",
-			CurrentValue = false,
-			Flag = "AutoUfoLoot",
-			Callback = function(value) autoUfoLoot = value end,
-		})
-	end)
+	featureToggle(ufoTab, {
+		Name = "Auto Collect UFO Loot",
+		CurrentValue = false,
+		Flag = "AutoUfoLoot",
+		Callback = function(value) autoUfoLoot = value end,
+	})
 
-	pcall(function() ufoTab:CreateSection("Controls") end)
-	pcall(function() featureButton(ufoTab, { Name = "Refresh Status", Callback = function() refreshUfoState() end }) end)
+	ufoTab:CreateSection("Controls")
+	featureButton(ufoTab, { Name = "Refresh Status", Callback = function() refreshUfoState() end })
 
 	task.spawn(function()
 		local ufoWasActive = false
@@ -2220,8 +2062,8 @@ repeat task.wait() until game:IsLoaded()
 			pcall(function()
 				refreshUfoState()
 				if not ufoClient then return end
-				local ok2, state = pcall(function() return ufoClient:getStateSource()() end)
-				if not ok2 or not state then return end
+				local ok, state = pcall(function() return ufoClient:getStateSource()() end)
+				if not ok or not state then return end
 				local isActive = state.phase ~= "idle" and state.zoneId ~= nil
 				if autoUfoZone then
 					if isActive then
@@ -2229,7 +2071,7 @@ repeat task.wait() until game:IsLoaded()
 							ufoWasActive = true
 							local farmFlag = rayfieldLibrary.Flags.FarmingStayInBestZone
 							farmWasEnabled = farmFlag and farmFlag.CurrentValue or false
-							if farmWasEnabled then pcall(function() farmFlag:Set(false) end) end
+							if farmWasEnabled then farmFlag:Set(false) end
 						end
 						lastUfoZoneId = state.zoneId
 						lastUfoPhase = state.phase
@@ -2242,7 +2084,7 @@ repeat task.wait() until game:IsLoaded()
 							ufoWasActive = false
 							if farmWasEnabled then
 								local farmFlag = rayfieldLibrary.Flags.FarmingStayInBestZone
-								if farmFlag then pcall(function() farmFlag:Set(true) end) end
+								if farmFlag then farmFlag:Set(true) end
 								farmWasEnabled = false
 							end
 							lastUfoZoneId = nil
@@ -2273,124 +2115,122 @@ repeat task.wait() until game:IsLoaded()
 	local selectedCategoryOption = nil
 	local indexLabels = {}
 
-	pcall(function() indexTab:CreateSection("Controls") end)
+	indexTab:CreateSection("Controls")
 
-	pcall(function()
-		featureToggle(indexTab, {
-			Name = "Start Auto Complete",
-			CurrentValue = false,
-			Flag = "IndexAutoComplete",
-			Callback = function(value)
-				if value then
-					indexRunning = true
-					indexThread = task.spawn(function()
-						if not dataServiceClient then
-							pcall(function() rayfieldLibrary:Notify({ Title="Index", Content="DataService not loaded yet.", Duration=4 }) end)
-							indexRunning = false
-							return
+	featureToggle(indexTab, {
+		Name = "Start Auto Complete",
+		CurrentValue = false,
+		Flag = "IndexAutoComplete",
+		Callback = function(value)
+			if value then
+				indexRunning = true
+				indexThread = task.spawn(function()
+					if not dataServiceClient then
+						rayfieldLibrary:Notify({ Title="Index", Content="DataService not loaded yet.", Duration=4 })
+						indexRunning = false
+						return
+					end
+					setLuck(1) task.wait(0.3)
+					setLuckEnabled(true) task.wait(0.3)
+					luckPollThread = task.spawn(function()
+						while indexRunning do
+							if indexLabels.lLuck then indexLabels.lLuck:Set("🍀 Luck Override: x"..tostring(luckValueLocal)) end
+							task.wait(1)
 						end
-						setLuck(1) task.wait(0.3)
-						setLuckEnabled(true) task.wait(0.3)
-						luckPollThread = task.spawn(function()
-							while indexRunning do
-								if indexLabels.lLuck then pcall(function() indexLabels.lLuck:Set("🍀 Luck Override: x"..tostring(luckValueLocal)) end) end
-								task.wait(1)
-							end
-						end)
-						local modeFlag = rayfieldLibrary.Flags and rayfieldLibrary.Flags.IndexRollMode
-						local mode = modeFlag and (type(modeFlag.CurrentOption)=="table" and modeFlag.CurrentOption[1] or modeFlag.CurrentOption) or "🌱 Easiest First"
-						local function getSortedCategoriesByPriority()
-							local cats = {}
-							for _, catId in ipairs(CATEGORY_IDS) do
-								local missing = getMissingSlimes(catId)
-								if #missing > 0 then table.insert(cats, { id=catId, easiestEffectiveOdds=getEffectiveOdds(missing[1], catId) }) end
-							end
-							table.sort(cats, function(a, b) return a.easiestEffectiveOdds > b.easiestEffectiveOdds end)
-							return cats
-						end
-						local function runCategory(catId, modeStr, labels)
-							local failCount = 0
-							local catLabel  = catId:sub(1,1):upper()..catId:sub(2)
-							local lastTargetId = nil
-							while indexRunning do
-								local flag = rayfieldLibrary.Flags.IndexAutoComplete
-								if not flag or not flag.CurrentValue then indexRunning = false break end
-								local missing = getMissingSlimes(catId)
-								if #missing == 0 then return true end
-								local target = modeStr == "🎯 Rarest First" and missing[#missing] or missing[1]
-								local effOdds = getEffectiveOdds(target, catId)
-								if target.id ~= lastTargetId then lastTargetId = target.id setLuck(calcOptimalLuck(effOdds)) end
-								if labels then
-									pcall(function() labels.lTarget:Set("🎯 Target: "..catLabel.." "..target.name) end)
-									pcall(function() labels.lOdds:Set("🎲 Odds: "..formatOdds(effOdds)) end)
-									pcall(function() labels.lCategory:Set(string.format("📂 %s (%d left)", catLabel, #missing)) end)
-								end
-								local before = getUnlockedIndex(catId)
-								pcall(function() networkerRoll:fetch("requestRoll") end)
-								task.wait(rollSliceModule and rollSliceModule.rollTime() or 0.5)
-								local after = getUnlockedIndex(catId)
-								local gotOne = false
-								for id, v in pairs(after) do
-									if v == true and not before[id] then
-										gotOne = true failCount = 0
-										local slime = slimesModule and slimesModule.getSlime(id)
-										print("[UNLOCKED]", catLabel, slime and slime.name or id)
-									end
-								end
-								if not gotOne then
-									failCount = failCount + 1
-									if failCount % 100 == 0 then warn("[STUCK]", failCount, "rolls |", catLabel, target.name) end
-								end
-								task.wait()
-							end
-							return false
-						end
-						if selectedCategoryOption == nil or selectedCategoryOption == "🎲 All (Recommended)" then
-							while indexRunning do
-								local sorted = getSortedCategoriesByPriority()
-								if #sorted == 0 then
-									if indexLabels.lCategory then pcall(function() indexLabels.lCategory:Set("📂 ✅ All Complete!") end) end
-									if indexLabels.lTarget   then pcall(function() indexLabels.lTarget:Set("🎯 Target: —") end) end
-									if indexLabels.lOdds     then pcall(function() indexLabels.lOdds:Set("🎲 Odds: —") end) end
-									indexRunning = false break
-								end
-								local completed = runCategory(sorted[1].id, mode, indexLabels)
-								if not completed then break end
-							end
-						else
-							local catId = nil
-							for _, cId in ipairs(CATEGORY_IDS) do
-								local label = cId:sub(1,1):upper()..cId:sub(2)
-								if selectedCategoryOption:find(label) then catId = cId break end
-							end
-							if catId then
-								runCategory(catId, mode, indexLabels)
-								if indexRunning then
-									if indexLabels.lCategory then pcall(function() indexLabels.lCategory:Set("📂 ✅ Complete!") end) end
-									if indexLabels.lTarget   then pcall(function() indexLabels.lTarget:Set("🎯 Target: —") end) end
-									if indexLabels.lOdds     then pcall(function() indexLabels.lOdds:Set("🎲 Odds: —") end) end
-								end
-							end
-							indexRunning = false
-						end
-						if luckPollThread then pcall(function() task.cancel(luckPollThread) end) end
-						setLuckEnabled(false)
 					end)
-				else
-					indexRunning = false
-					if indexThread then pcall(function() task.cancel(indexThread) end) indexThread = nil end
-					if luckPollThread then pcall(function() task.cancel(luckPollThread) end) luckPollThread = nil end
+					local modeFlag = rayfieldLibrary.Flags and rayfieldLibrary.Flags.IndexRollMode
+					local mode = modeFlag and (type(modeFlag.CurrentOption)=="table" and modeFlag.CurrentOption[1] or modeFlag.CurrentOption) or "🌱 Easiest First"
+					local function getSortedCategoriesByPriority()
+						local cats = {}
+						for _, catId in ipairs(CATEGORY_IDS) do
+							local missing = getMissingSlimes(catId)
+							if #missing > 0 then table.insert(cats, { id=catId, easiestEffectiveOdds=getEffectiveOdds(missing[1], catId) }) end
+						end
+						table.sort(cats, function(a, b) return a.easiestEffectiveOdds > b.easiestEffectiveOdds end)
+						return cats
+					end
+					local function runCategory(catId, modeStr, labels)
+						local failCount = 0
+						local catLabel  = catId:sub(1,1):upper()..catId:sub(2)
+						local lastTargetId = nil
+						while indexRunning do
+							local flag = rayfieldLibrary.Flags.IndexAutoComplete
+							if not flag or not flag.CurrentValue then indexRunning = false break end
+							local missing = getMissingSlimes(catId)
+							if #missing == 0 then return true end
+							local target = modeStr == "🎯 Rarest First" and missing[#missing] or missing[1]
+							local effOdds = getEffectiveOdds(target, catId)
+							if target.id ~= lastTargetId then lastTargetId = target.id setLuck(calcOptimalLuck(effOdds)) end
+							if labels then
+								labels.lTarget:Set("🎯 Target: "..catLabel.." "..target.name)
+								labels.lOdds:Set("🎲 Odds: "..formatOdds(effOdds))
+								labels.lCategory:Set(string.format("📂 %s (%d left)", catLabel, #missing))
+							end
+							local before = getUnlockedIndex(catId)
+							pcall(function() networkerRoll:fetch("requestRoll") end)
+							task.wait(rollSliceModule and rollSliceModule.rollTime() or 0.5)
+							local after = getUnlockedIndex(catId)
+							local gotOne = false
+							for id, v in pairs(after) do
+								if v == true and not before[id] then
+									gotOne = true failCount = 0
+									local slime = slimesModule and slimesModule.getSlime(id)
+									print("[UNLOCKED]", catLabel, slime and slime.name or id)
+								end
+							end
+							if not gotOne then
+								failCount = failCount + 1
+								if failCount % 100 == 0 then warn("[STUCK]", failCount, "rolls |", catLabel, target.name) end
+							end
+							task.wait()
+						end
+						return false
+					end
+					if selectedCategoryOption == nil or selectedCategoryOption == "🎲 All (Recommended)" then
+						while indexRunning do
+							local sorted = getSortedCategoriesByPriority()
+							if #sorted == 0 then
+								if indexLabels.lCategory then indexLabels.lCategory:Set("📂 ✅ All Complete!") end
+								if indexLabels.lTarget   then indexLabels.lTarget:Set("🎯 Target: —") end
+								if indexLabels.lOdds     then indexLabels.lOdds:Set("🎲 Odds: —") end
+								indexRunning = false break
+							end
+							local completed = runCategory(sorted[1].id, mode, indexLabels)
+							if not completed then break end
+						end
+					else
+						local catId = nil
+						for _, cId in ipairs(CATEGORY_IDS) do
+							local label = cId:sub(1,1):upper()..cId:sub(2)
+							if selectedCategoryOption:find(label) then catId = cId break end
+						end
+						if catId then
+							runCategory(catId, mode, indexLabels)
+							if indexRunning then
+								if indexLabels.lCategory then indexLabels.lCategory:Set("📂 ✅ Complete!") end
+								if indexLabels.lTarget   then indexLabels.lTarget:Set("🎯 Target: —") end
+								if indexLabels.lOdds     then indexLabels.lOdds:Set("🎲 Odds: —") end
+							end
+						end
+						indexRunning = false
+					end
+					if luckPollThread then task.cancel(luckPollThread) end
 					setLuckEnabled(false)
-					if indexLabels.lTarget   then pcall(function() indexLabels.lTarget:Set("🎯 Target: —") end) end
-					if indexLabels.lOdds     then pcall(function() indexLabels.lOdds:Set("🎲 Odds: —") end) end
-					if indexLabels.lLuck     then pcall(function() indexLabels.lLuck:Set("🍀 Luck: —") end) end
-					if indexLabels.lCategory then pcall(function() indexLabels.lCategory:Set("📂 Category: —") end) end
-				end
-			end,
-		})
-	end)
+				end)
+			else
+				indexRunning = false
+				if indexThread then task.cancel(indexThread) indexThread = nil end
+				if luckPollThread then task.cancel(luckPollThread) luckPollThread = nil end
+				setLuckEnabled(false)
+				if indexLabels.lTarget   then indexLabels.lTarget:Set("🎯 Target: —") end
+				if indexLabels.lOdds     then indexLabels.lOdds:Set("🎲 Odds: —") end
+				if indexLabels.lLuck     then indexLabels.lLuck:Set("🍀 Luck: —") end
+				if indexLabels.lCategory then indexLabels.lCategory:Set("📂 Category: —") end
+			end
+		end,
+	})
 
-	pcall(function() indexTab:CreateSection("Settings") end)
+	indexTab:CreateSection("Settings")
 
 	pcall(function()
 		local categoryOptions = {"🎲 All (Recommended)"}
@@ -2408,22 +2248,20 @@ repeat task.wait() until game:IsLoaded()
 		indexTab:CreateDropdown({ Name = "Category", Options = categoryOptions, CurrentOption = {categoryOptions[1]}, MultipleOptions = false, Flag = "IndexCategory", Callback = function(option) selectedCategoryOption = type(option)=="table" and option[1] or option end })
 	end)
 
-	pcall(function() indexTab:CreateDropdown({ Name="Roll Mode", Options={"🌱 Easiest First","🎯 Rarest First"}, CurrentOption={"🌱 Easiest First"}, MultipleOptions=false, Flag="IndexRollMode", Callback=function() end }) end)
+	indexTab:CreateDropdown({ Name="Roll Mode", Options={"🌱 Easiest First","🎯 Rarest First"}, CurrentOption={"🌱 Easiest First"}, MultipleOptions=false, Flag="IndexRollMode", Callback=function() end })
 
-	pcall(function() indexTab:CreateSection("Status") end)
-	pcall(function() indexLabels.lTarget   = indexTab:CreateLabel("🎯 Target: —") end)
-	pcall(function() indexLabels.lOdds     = indexTab:CreateLabel("🎲 Odds: —") end)
-	pcall(function() indexLabels.lLuck     = indexTab:CreateLabel("🍀 Luck: —") end)
-	pcall(function() indexLabels.lCategory = indexTab:CreateLabel("📂 Category: —") end)
+	indexTab:CreateSection("Status")
+	indexLabels.lTarget   = indexTab:CreateLabel("🎯 Target: —")
+	indexLabels.lOdds     = indexTab:CreateLabel("🎲 Odds: —")
+	indexLabels.lLuck     = indexTab:CreateLabel("🍀 Luck: —")
+	indexLabels.lCategory = indexTab:CreateLabel("📂 Category: —")
 
-	pcall(function() indexTab:CreateSection("Index Progress") end)
+	indexTab:CreateSection("Index Progress")
 	local indexProgressLabels = {}
 	local totalSlimeCount = getTotalSlimes()
 	for _, catId in ipairs(CATEGORY_IDS) do
-		pcall(function()
-			local label = catId:sub(1,1):upper()..catId:sub(2)
-			indexProgressLabels[catId] = indexTab:CreateLabel(string.format("📊 %s: %d / %d", label, getUnlockedCount(catId), totalSlimeCount))
-		end)
+		local label = catId:sub(1,1):upper()..catId:sub(2)
+		indexProgressLabels[catId] = indexTab:CreateLabel(string.format("📊 %s: %d / %d", label, getUnlockedCount(catId), totalSlimeCount))
 	end
 
 	task.spawn(function()
@@ -2434,105 +2272,101 @@ repeat task.wait() until game:IsLoaded()
 				for _, catId in ipairs(CATEGORY_IDS) do
 					if indexProgressLabels[catId] then
 						local label = catId:sub(1,1):upper()..catId:sub(2)
-						pcall(function() indexProgressLabels[catId]:Set(string.format("📊 %s: %d / %d", label, getUnlockedCount(catId), totalNow)) end)
+						indexProgressLabels[catId]:Set(string.format("📊 %s: %d / %d", label, getUnlockedCount(catId), totalNow))
 					end
 				end
 			end)
 		end
 	end)
 
-	pcall(function() miscTab:CreateSection("Codes & Rewards") end)
+	miscTab:CreateSection("Codes & Rewards")
 
-	pcall(function()
-		featureToggle(miscTab, {
-			Name = "Auto Redeem Codes",
-			CurrentValue = false,
-			Flag = "MiscRedeemCodes",
-			Callback = function(enabled)
-				if not enabled then return end
-				task.spawn(function()
-					local codes = { "AAisComing","goingBananas","gullible","Sliming","test","beammeup","aliensarehere" }
-					table.sort(codes)
-					while true do
-						local flag = rayfieldLibrary.Flags.MiscRedeemCodes
-						if not flag or not flag.CurrentValue then break end
-						if not codeServiceRemote then break end
-						for _, code in ipairs(codes) do
-							if not (rayfieldLibrary.Flags.MiscRedeemCodes and rayfieldLibrary.Flags.MiscRedeemCodes.CurrentValue) then break end
-							pcall(function() codeServiceRemote:InvokeServer("redeem", code) end)
-							task.wait(0.5)
-						end
-						task.wait(300)
+	featureToggle(miscTab, {
+		Name = "Auto Redeem Codes",
+		CurrentValue = false,
+		Flag = "MiscRedeemCodes",
+		Callback = function(enabled)
+			if not enabled then return end
+			task.spawn(function()
+				local codes = { "AAisComing","goingBananas","gullible","Sliming","test","beammeup","aliensarehere" }
+				table.sort(codes)
+				while true do
+					local flag = rayfieldLibrary.Flags.MiscRedeemCodes
+					if not flag or not flag.CurrentValue then break end
+					if not codeServiceRemote then break end
+					for _, code in ipairs(codes) do
+						if not (rayfieldLibrary.Flags.MiscRedeemCodes and rayfieldLibrary.Flags.MiscRedeemCodes.CurrentValue) then break end
+						pcall(function() codeServiceRemote:InvokeServer("redeem", code) end)
+						task.wait(0.5)
 					end
-				end)
-			end,
-		})
-	end)
+					task.wait(300)
+				end
+			end)
+		end,
+	})
 
-	pcall(function()
-		featureToggle(miscTab, {
-			Name = "Auto Claim Offline Earnings",
-			CurrentValue = false,
-			Flag = "MiscClaimOffline",
-			Callback = function(enabled)
-				if not enabled then return end
-				task.spawn(function()
-					while true do
-						local flag = rayfieldLibrary.Flags.MiscClaimOffline
-						if not flag or not flag.CurrentValue then break end
-						if not offlineEarningsRemote then break end
-						pcall(function() offlineEarningsRemote:InvokeServer("requestClaim") end)
-						task.wait(60)
-					end
-				end)
-			end,
-		})
-	end)
+	featureToggle(miscTab, {
+		Name = "Auto Claim Offline Earnings",
+		CurrentValue = false,
+		Flag = "MiscClaimOffline",
+		Callback = function(enabled)
+			if not enabled then return end
+			task.spawn(function()
+				while true do
+					local flag = rayfieldLibrary.Flags.MiscClaimOffline
+					if not flag or not flag.CurrentValue then break end
+					if not offlineEarningsRemote then break end
+					pcall(function() offlineEarningsRemote:InvokeServer("requestClaim") end)
+					task.wait(60)
+				end
+			end)
+		end,
+	})
 
-	pcall(function()
-		featureToggle(miscTab, {
-			Name = "Auto Claim Index Rewards",
-			CurrentValue = false,
-			Flag = "MiscClaimIndex",
-			Callback = function(enabled)
-				if not enabled then return end
-				task.spawn(function()
-					while true do
-						local flag = rayfieldLibrary.Flags.MiscClaimIndex
-						if not flag or not flag.CurrentValue then break end
-						pcall(function()
-							if not indexServiceRemote or not indexRewardsModule or not dataServiceClient then return end
-							local indexData = dataServiceClient:get("index")
-							if not indexData or not indexData.categories then return end
-							for categoryKey, rewardsList in pairs(indexRewardsModule) do
-								local category = indexData.categories[categoryKey]
-								if category then
-									local unlocked = category.unlocked or {}
-									local unlockedCount = 0
-									for _, isUnlocked in pairs(unlocked) do if isUnlocked == true then unlockedCount = unlockedCount + 1 end end
-									local claimedRewards = category.claimedRewards or {}
-									for _, reward in ipairs(rewardsList) do
-										if unlockedCount >= reward.req and not claimedRewards[reward.key] then
-											pcall(function() indexServiceRemote:InvokeServer("requestClaimReward", categoryKey) end)
-											task.wait(0.5)
-										end
+	featureToggle(miscTab, {
+		Name = "Auto Claim Index Rewards",
+		CurrentValue = false,
+		Flag = "MiscClaimIndex",
+		Callback = function(enabled)
+			if not enabled then return end
+			task.spawn(function()
+				while true do
+					local flag = rayfieldLibrary.Flags.MiscClaimIndex
+					if not flag or not flag.CurrentValue then break end
+					pcall(function()
+						if not indexServiceRemote or not indexRewardsModule or not dataServiceClient then return end
+						local indexData = dataServiceClient:get("index")
+						if not indexData or not indexData.categories then return end
+						for categoryKey, rewardsList in pairs(indexRewardsModule) do
+							local category = indexData.categories[categoryKey]
+							if category then
+								local unlocked = category.unlocked or {}
+								local unlockedCount = 0
+								for _, isUnlocked in pairs(unlocked) do if isUnlocked == true then unlockedCount = unlockedCount + 1 end end
+								local claimedRewards = category.claimedRewards or {}
+								for _, reward in ipairs(rewardsList) do
+									if unlockedCount >= reward.req and not claimedRewards[reward.key] then
+										pcall(function() indexServiceRemote:InvokeServer("requestClaimReward", categoryKey) end)
+										task.wait(0.5)
 									end
 								end
 							end
-						end)
-						task.wait(60)
-					end
-				end)
-			end,
-		})
-	end)
+						end
+					end)
+					task.wait(60)
+				end
+			end)
+		end,
+	})
 
-	pcall(function() miscTab:CreateSection("Consumables") end)
+	miscTab:CreateSection("Consumables")
 
+	-- POTION SECTION (Modified)
 	pcall(function()
 		local sortedBoostKinds = {}
 		if boostKinds then for _, kind in ipairs(boostKinds) do table.insert(sortedBoostKinds, kind) end table.sort(sortedBoostKinds) end
-
+		
+		-- Auto Use Potions (only when needed)
 		featureToggle(miscTab, {
 			Name = "Auto Use Potions",
 			CurrentValue = false,
@@ -2554,7 +2388,7 @@ repeat task.wait() until game:IsLoaded()
 									local remaining = boostServiceUtils.getTimeRemaining(boostData, serverTime)
 									if remaining <= 0 then
 										pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
-										task.wait(0.5)
+										task.wait(0.5) -- slight delay between uses
 									end
 								end
 							end
@@ -2564,46 +2398,48 @@ repeat task.wait() until game:IsLoaded()
 				end)
 			end,
 		})
-
+		
 		if #sortedBoostKinds > 0 then
-			pcall(function() miscTab:CreateDropdown({ Name="Potion Types", Options=sortedBoostKinds, CurrentOption=sortedBoostKinds, MultipleOptions=true, Flag="MiscPotionTypes", Callback=function() end }) end)
-			pcall(function()
-				featureButton(miscTab, {
-					Name = "Use All Selected Potions",
-					Callback = function()
-						task.spawn(function()
-							pcall(function()
-								if not boostServiceRemote or not dataServiceClient then
-									pcall(function() rayfieldLibrary:Notify({ Title="Error", Content="Boost service not ready", Duration=3 }) end)
-									return
+			-- Dropdown default to all potion types
+			miscTab:CreateDropdown({ Name="Potion Types", Options=sortedBoostKinds, CurrentOption=sortedBoostKinds, MultipleOptions=true, Flag="MiscPotionTypes", Callback=function() end })
+			-- Use All Selected Potions button
+			featureButton(miscTab, {
+				Name = "Use All Selected Potions",
+				Callback = function()
+					task.spawn(function()
+						pcall(function()
+							if not boostServiceRemote or not dataServiceClient then
+								rayfieldLibrary:Notify({ Title="Error", Content="Boost service not ready", Duration=3 })
+								return
+							end
+							local selectedPotions = rayfieldLibrary.Flags.MiscPotionTypes and rayfieldLibrary.Flags.MiscPotionTypes.CurrentOption or {}
+							for _, potionType in ipairs(selectedPotions) do
+								local boosts = dataServiceClient:get("boosts") or {}
+								local amount = (boosts[potionType] or {}).amount or 0
+								for i = 1, amount do
+									pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
+									task.wait(0.2)
 								end
-								local selectedPotions = rayfieldLibrary.Flags.MiscPotionTypes and rayfieldLibrary.Flags.MiscPotionTypes.CurrentOption or {}
-								for _, potionType in ipairs(selectedPotions) do
-									local boosts = dataServiceClient:get("boosts") or {}
-									local amount = (boosts[potionType] or {}).amount or 0
-									for i = 1, amount do
-										pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
-										task.wait(0.2)
-									end
-								end
-								pcall(function() rayfieldLibrary:Notify({ Title="Potions", Content="Used all selected potions", Duration=3 }) end)
-							end)
+							end
+							rayfieldLibrary:Notify({ Title="Potions", Content="Used all selected potions", Duration=3 })
 						end)
-					end,
-				})
-			end)
+					end)
+				end,
+			})
 		else
-			pcall(function() miscTab:CreateLabel("Potion types not yet loaded — enable after modules load.") end)
+			miscTab:CreateLabel("Potion types not yet loaded — enable after modules load.")
 		end
 	end)
 
+	-- DICE SECTION (Modified)
 	pcall(function()
 		local diceNames = {}
 		if diceItemIds and idToNameMap then
 			for _, itemId in ipairs(diceItemIds) do table.insert(diceNames, idToNameMap[itemId]) end
 			table.sort(diceNames)
 		end
-
+		
+		-- Auto Use Dice & Items (only when no special dice active)
 		featureToggle(miscTab, {
 			Name = "Auto Use Dice & Items",
 			CurrentValue = false,
@@ -2616,11 +2452,12 @@ repeat task.wait() until game:IsLoaded()
 						if not flag or not flag.CurrentValue then break end
 						pcall(function()
 							if not inventoryServiceRemote or not dataServiceClient then return end
+							-- Check if any special dice is currently active
 							local queue = dataServiceClient:get("specialDiceQueue") or {}
 							local active = queue[1]
 							if active then
 								task.wait(1)
-								return
+								return -- do nothing if a dice is already active
 							end
 							local items = dataServiceClient:get("items") or {}
 							local selectedDiceItems = rayfieldLibrary.Flags.MiscDiceTypes and rayfieldLibrary.Flags.MiscDiceTypes.CurrentOption or {}
@@ -2628,7 +2465,7 @@ repeat task.wait() until game:IsLoaded()
 								local itemId = nameToIdMap and nameToIdMap[diceName]
 								if itemId and (items[itemId] or 0) > 0 then
 									pcall(function() inventoryServiceRemote:InvokeServer("requestUseItem", itemId) end)
-									task.wait(0.5)
+									task.wait(0.5) -- prevent spam
 								end
 							end
 						end)
@@ -2637,89 +2474,85 @@ repeat task.wait() until game:IsLoaded()
 				end)
 			end,
 		})
-
+		
 		if #diceNames > 0 then
-			pcall(function() miscTab:CreateDropdown({ Name="Dice & Item Types", Options=diceNames, CurrentOption=diceNames, MultipleOptions=true, Flag="MiscDiceTypes", Callback=function() end }) end)
-			pcall(function()
-				featureButton(miscTab, {
-					Name = "Use All Selected Dice",
-					Callback = function()
-						task.spawn(function()
-							pcall(function()
-								if not inventoryServiceRemote or not dataServiceClient then
-									pcall(function() rayfieldLibrary:Notify({ Title="Error", Content="Inventory service not ready", Duration=3 }) end)
-									return
-								end
-								local selectedDiceItems = rayfieldLibrary.Flags.MiscDiceTypes and rayfieldLibrary.Flags.MiscDiceTypes.CurrentOption or {}
-								for _, diceName in ipairs(selectedDiceItems) do
-									local itemId = nameToIdMap and nameToIdMap[diceName]
-									if itemId then
-										local items = dataServiceClient:get("items") or {}
-										local amount = items[itemId] or 0
-										for i = 1, amount do
-											pcall(function() inventoryServiceRemote:InvokeServer("requestUseItem", itemId) end)
-											task.wait(0.2)
-										end
+			-- Dropdown default to all dice types
+			miscTab:CreateDropdown({ Name="Dice & Item Types", Options=diceNames, CurrentOption=diceNames, MultipleOptions=true, Flag="MiscDiceTypes", Callback=function() end })
+			-- Use All Selected Dice button
+			featureButton(miscTab, {
+				Name = "Use All Selected Dice",
+				Callback = function()
+					task.spawn(function()
+						pcall(function()
+							if not inventoryServiceRemote or not dataServiceClient then
+								rayfieldLibrary:Notify({ Title="Error", Content="Inventory service not ready", Duration=3 })
+								return
+							end
+							local selectedDiceItems = rayfieldLibrary.Flags.MiscDiceTypes and rayfieldLibrary.Flags.MiscDiceTypes.CurrentOption or {}
+							for _, diceName in ipairs(selectedDiceItems) do
+								local itemId = nameToIdMap and nameToIdMap[diceName]
+								if itemId then
+									local items = dataServiceClient:get("items") or {}
+									local amount = items[itemId] or 0
+									for i = 1, amount do
+										pcall(function() inventoryServiceRemote:InvokeServer("requestUseItem", itemId) end)
+										task.wait(0.2)
 									end
 								end
-								pcall(function() rayfieldLibrary:Notify({ Title="Dice", Content="Used all selected dice/items", Duration=3 }) end)
-							end)
+							end
+							rayfieldLibrary:Notify({ Title="Dice", Content="Used all selected dice/items", Duration=3 })
 						end)
-					end,
-				})
-			end)
+					end)
+				end,
+			})
 		else
-			pcall(function() miscTab:CreateLabel("Dice types not yet loaded — enable after modules load.") end)
+			miscTab:CreateLabel("Dice types not yet loaded — enable after modules load.")
 		end
 	end)
 
-	pcall(function() webhookTab:CreateSection("Warning") end)
-	pcall(function() webhookTab:CreateParagraph({ Title = "⚠️ WARNING", Content = "WEBHOOK WILL ONLY WORK IF YOU MANUALLY ENABLE AUTO ROLL IN GAME\nPLEASE DISABLE FAST ROLL (from Farming Tab) if you have it enabled" }) end)
-	pcall(function() webhookTab:CreateSection("Configuration") end)
+	webhookTab:CreateSection("Warning")
+	webhookTab:CreateParagraph({ Title = "⚠️ WARNING", Content = "WEBHOOK WILL ONLY WORK IF YOU MANUALLY ENABLE AUTO ROLL IN GAME\nPLEASE DISABLE FAST ROLL (from Farming Tab) if you have it enabled" })
+	webhookTab:CreateSection("Configuration")
 
 	local savedWebhookUrl = ""
 	local WEBHOOK_AVATAR = "https://media.discordapp.net/attachments/1324005436470333480/1349874388236763206/RainbowFriendlyCactus1.png"
 
-	pcall(function() featureToggle(webhookTab, { Name = "Enable Webhook", CurrentValue = false, Flag = "WebhookEnabled", Callback = function() end }) end)
+	featureToggle(webhookTab, { Name = "Enable Webhook", CurrentValue = false, Flag = "WebhookEnabled", Callback = function() end })
 
-	pcall(function()
-		webhookTab:CreateInput({ Name = "Webhook URL", CurrentValue = "", PlaceholderText = "Paste your Discord webhook URL", RemoveTextAfterFocusLost = false, Flag = "WebhookURLDisplay",
-			Callback = function(url)
-				if url and url:match("^https://discord") then
-					savedWebhookUrl = url
-					local masked = string.rep("•", #url - 6) .. url:sub(-6)
-					pcall(function() rayfieldLibrary:Notify({Title = "Webhook", Content = "URL saved: " .. masked, Duration = 3}) end)
-				end
-			end,
-		})
-	end)
+	webhookTab:CreateInput({ Name = "Webhook URL", CurrentValue = "", PlaceholderText = "Paste your Discord webhook URL", RemoveTextAfterFocusLost = false, Flag = "WebhookURLDisplay",
+		Callback = function(url)
+			if url and url:match("^https://discord") then
+				savedWebhookUrl = url
+				local masked = string.rep("•", #url - 6) .. url:sub(-6)
+				rayfieldLibrary:Notify({Title = "Webhook", Content = "URL saved: " .. masked, Duration = 3})
+			end
+		end,
+	})
 
-	pcall(function() webhookTab:CreateInput({ Name = "User ID", CurrentValue = "", PlaceholderText = "Discord User ID", RemoveTextAfterFocusLost = false, Flag = "WebhookUserID", Callback = function() end }) end)
-	pcall(function() webhookTab:CreateInput({ Name = "Minimum Chance To Send", CurrentValue = "", PlaceholderText = "e.g. 1B or 1000000000", RemoveTextAfterFocusLost = false, Flag = "WebhookMinChance", Callback = function() end }) end)
+	webhookTab:CreateInput({ Name = "User ID", CurrentValue = "", PlaceholderText = "Discord User ID", RemoveTextAfterFocusLost = false, Flag = "WebhookUserID", Callback = function() end })
+	webhookTab:CreateInput({ Name = "Minimum Chance To Send", CurrentValue = "", PlaceholderText = "e.g. 1B or 1000000000", RemoveTextAfterFocusLost = false, Flag = "WebhookMinChance", Callback = function() end })
 
-	pcall(function()
-		featureButton(webhookTab, {
-			Name = "Test Webhook",
-			Callback = function()
-				if savedWebhookUrl == "" then pcall(function() rayfieldLibrary:Notify({Title="Webhook",Content="Please paste a Webhook URL first.",Duration=4}) end) return end
-				if not (rayfieldLibrary.Flags.WebhookEnabled and rayfieldLibrary.Flags.WebhookEnabled.CurrentValue) then pcall(function() rayfieldLibrary:Notify({Title="Webhook",Content="Please enable Webhook first.",Duration=4}) end) return end
-				local userId = rayfieldLibrary.Flags.WebhookUserID and rayfieldLibrary.Flags.WebhookUserID.CurrentValue or ""
-				local mention = (userId and userId ~= "") and ("<@" .. userId .. "> ") or ""
-				local success = pcall(function()
-					request({ Url = savedWebhookUrl, Method = "POST", Headers = {["Content-Type"]="application/json"},
-						Body = HttpService:JSONEncode({ content=mention, username="Cactus Hub", avatar_url=WEBHOOK_AVATAR, embeds={{title="✅ Webhook Test",description="Your webhook is working correctly!",color=0x2ecc71}} })
-					})
-				end)
-				pcall(function() rayfieldLibrary:Notify({Title="Webhook", Content=success and "Test sent successfully!" or "Failed to send test.", Duration=4}) end)
-			end,
-		})
-	end)
+	featureButton(webhookTab, {
+		Name = "Test Webhook",
+		Callback = function()
+			if savedWebhookUrl == "" then rayfieldLibrary:Notify({Title="Webhook",Content="Please paste a Webhook URL first.",Duration=4}) return end
+			if not rayfieldLibrary.Flags.WebhookEnabled.CurrentValue then rayfieldLibrary:Notify({Title="Webhook",Content="Please enable Webhook first.",Duration=4}) return end
+			local userId = rayfieldLibrary.Flags.WebhookUserID.CurrentValue
+			local mention = (userId and userId ~= "") and ("<@" .. userId .. "> ") or ""
+			local success = pcall(function()
+				request({ Url = savedWebhookUrl, Method = "POST", Headers = {["Content-Type"]="application/json"},
+					Body = HttpService:JSONEncode({ content=mention, username="Cactus Hub", avatar_url=WEBHOOK_AVATAR, embeds={{title="✅ Webhook Test",description="Your webhook is working correctly!",color=0x2ecc71}} })
+				})
+			end)
+			rayfieldLibrary:Notify({Title="Webhook", Content=success and "Test sent successfully!" or "Failed to send test.", Duration=4})
+		end,
+	})
 
-	pcall(function() webhookTab:CreateSection("Filters") end)
-	pcall(function() featureToggle(webhookTab, { Name="Send All Slimes", CurrentValue=false, Flag="WebhookSendAll", Callback=function() end }) end)
-	pcall(function() featureToggle(webhookTab, { Name="Send New Slimes Only", CurrentValue=false, Flag="WebhookSendNew", Callback=function() end }) end)
-	pcall(function() featureToggle(webhookTab, { Name="Send Mutated Slimes", CurrentValue=false, Flag="WebhookSendMutated", Callback=function() end }) end)
-	pcall(function() webhookTab:CreateDropdown({ Name="Mutations Filter", Options={"All","Shiny","Big","Huge","Inverted"}, CurrentOption={"All"}, MultipleOptions=true, Flag="WebhookMutations", Callback=function() end }) end)
+	webhookTab:CreateSection("Filters")
+	featureToggle(webhookTab, { Name="Send All Slimes", CurrentValue=false, Flag="WebhookSendAll", Callback=function() end })
+	featureToggle(webhookTab, { Name="Send New Slimes Only", CurrentValue=false, Flag="WebhookSendNew", Callback=function() end })
+	featureToggle(webhookTab, { Name="Send Mutated Slimes", CurrentValue=false, Flag="WebhookSendMutated", Callback=function() end })
+	webhookTab:CreateDropdown({ Name="Mutations Filter", Options={"All","Shiny","Big","Huge","Inverted"}, CurrentOption={"All"}, MultipleOptions=true, Flag="WebhookMutations", Callback=function() end })
 
 	local function formatNumber(num)
 		if type(num) ~= "number" then return tostring(num) end
@@ -2760,76 +2593,71 @@ repeat task.wait() until game:IsLoaded()
 	end
 
 	local function isNewSlime(slimeId, mutations)
-		local ok2, result = pcall(function()
-			local indexData = dataServiceClient and dataServiceClient:get("index") or {}
-			local categories = indexData.categories or {}
-			local category = categories[getMutationTypeString(mutations)]
-			local unlocked = category and category.unlocked or {}
-			return not unlocked[slimeId]
-		end)
-		return ok2 and result or false
+		local indexData = dataServiceClient and dataServiceClient:get("index") or {}
+		local categories = indexData.categories or {}
+		local category = categories[getMutationTypeString(mutations)]
+		local unlocked = category and category.unlocked or {}
+		return not unlocked[slimeId]
 	end
 
 	local recentWebhookNotifications = {}
 	local function sendWebhookNotification(slimeId, slimeData, mutations, webhookUrl, mentionUserId, notificationKey)
 		if recentWebhookNotifications[notificationKey] then return end
 		recentWebhookNotifications[notificationKey] = true
+		local mentionText = (mentionUserId and mentionUserId ~= "") and ("<@" .. mentionUserId .. "> ") or ""
+		local slimeName = slimeData and slimeData.name or slimeId
+		local displayName = mutations and mutationsModule and mutationsModule.getDisplayName(slimeName, mutations) or slimeName
+		local odds = slimeData and slimeData.odds or nil
+		local damage = slimeData and slimeData.damage or 0
+		local health = slimeData and slimeData.health or 0
+		local oddsMultiplier = mutations and mutationsModule and mutationsModule.getVisualOddsMultiplier(mutations) or 1
+		local statBonus = mutations and mutationsModule and mutationsModule.getStatBonus(mutations, "damage") or 1
+		local actualOdds = odds and (odds / oddsMultiplier) or nil
+		local chanceText = (actualOdds and actualOdds > 0) and string.format("1 in %s", formatNumber(math.floor(1/actualOdds+0.5))) or "N/A"
+		local totalRolls = (dataServiceClient and dataServiceClient:get("stats") or {}).rolls or 0
+		local coins = dataServiceClient and dataServiceClient:get("coins") or 0
+		local totalKills = (dataServiceClient and dataServiceClient:get("stats") or {}).kills or 0
+		local playerName = localPlayer.Name
+		local embedFields = {{name="Chance",value=chanceText,inline=true}}
+		local finalDamage = damage * statBonus
+		local finalHealth = health * statBonus
+		local statsString = ""
+		if finalDamage > 0 and finalHealth > 0 then statsString = string.format("⚔️ %s  ❤️ %s", formatNumber(finalDamage), formatNumber(finalHealth))
+		elseif finalDamage > 0 then statsString = string.format("⚔️ %s", formatNumber(finalDamage))
+		elseif finalHealth > 0 then statsString = string.format("❤️ %s", formatNumber(finalHealth)) end
+		if statsString ~= "" then table.insert(embedFields, {name="Stats",value=statsString,inline=true}) end
+		if mutations and next(mutations) then
+			local mutNames = {}
+			for mut in pairs(mutations) do table.insert(mutNames, mut:sub(1,1):upper()..mut:sub(2)) end
+			table.insert(embedFields, {name="Mutations",value=table.concat(mutNames,", "),inline=true})
+		end
+		table.insert(embedFields, {name="💰 Coins",value=formatNumber(coins),inline=true})
+		table.insert(embedFields, {name="⚔️ Kills",value=formatNumber(totalKills),inline=true})
+		local iconAssetId = (mutations and mutations.inverted) and (slimeData and slimeData.invertedIcon) or (slimeData and slimeData.image)
+		local thumbnailUrl = nil
+		if iconAssetId and iconAssetId ~= "N/A" then
+			local assetNumber = string.match(tostring(iconAssetId), "rbxassetid://(%d+)")
+			if assetNumber then
+				pcall(function()
+					local r = request({ Url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetNumber.."&size=420x420&format=Png&isCircular=false", Method = "GET" })
+					if r and r.Success then
+						local decoded = HttpService:JSONDecode(r.Body)
+						if decoded and decoded.data and decoded.data[1] then thumbnailUrl = decoded.data[1].imageUrl end
+					end
+				end)
+			end
+		end
+		local userEmbed = {
+			title = "🎲 New Slime Rolled!",
+			description = string.format("**||%s||** rolled **%s**!\n\n🎲 **Total Rolls:** %s", playerName, displayName, tostring(totalRolls)),
+			thumbnail = thumbnailUrl and {url=thumbnailUrl,width=64,height=64} or nil,
+			fields = embedFields,
+			color = mutations and (mutations.inverted and 0x9b59b6 or mutations.huge and 0xf1c40f or mutations.big and 0xe67e22 or mutations.shiny and 0xf39c12 or 0x3498db) or 0x3498db,
+		}
 		pcall(function()
-			local mentionText = (mentionUserId and mentionUserId ~= "") and ("<@" .. mentionUserId .. "> ") or ""
-			local slimeName = slimeData and slimeData.name or slimeId
-			local displayName = mutations and mutationsModule and mutationsModule.getDisplayName(slimeName, mutations) or slimeName
-			local odds = slimeData and slimeData.odds or nil
-			local damage = slimeData and slimeData.damage or 0
-			local health = slimeData and slimeData.health or 0
-			local oddsMultiplier = mutations and mutationsModule and mutationsModule.getVisualOddsMultiplier(mutations) or 1
-			local statBonus = mutations and mutationsModule and mutationsModule.getStatBonus(mutations, "damage") or 1
-			local actualOdds = odds and (odds / oddsMultiplier) or nil
-			local chanceText = (actualOdds and actualOdds > 0) and string.format("1 in %s", formatNumber(math.floor(1/actualOdds+0.5))) or "N/A"
-			local totalRolls = (dataServiceClient and dataServiceClient:get("stats") or {}).rolls or 0
-			local coins = dataServiceClient and dataServiceClient:get("coins") or 0
-			local totalKills = (dataServiceClient and dataServiceClient:get("stats") or {}).kills or 0
-			local playerName = localPlayer.Name
-			local embedFields = {{name="Chance",value=chanceText,inline=true}}
-			local finalDamage = damage * statBonus
-			local finalHealth = health * statBonus
-			local statsString = ""
-			if finalDamage > 0 and finalHealth > 0 then statsString = string.format("⚔️ %s  ❤️ %s", formatNumber(finalDamage), formatNumber(finalHealth))
-			elseif finalDamage > 0 then statsString = string.format("⚔️ %s", formatNumber(finalDamage))
-			elseif finalHealth > 0 then statsString = string.format("❤️ %s", formatNumber(finalHealth)) end
-			if statsString ~= "" then table.insert(embedFields, {name="Stats",value=statsString,inline=true}) end
-			if mutations and next(mutations) then
-				local mutNames = {}
-				for mut in pairs(mutations) do table.insert(mutNames, mut:sub(1,1):upper()..mut:sub(2)) end
-				table.insert(embedFields, {name="Mutations",value=table.concat(mutNames,", "),inline=true})
-			end
-			table.insert(embedFields, {name="💰 Coins",value=formatNumber(coins),inline=true})
-			table.insert(embedFields, {name="⚔️ Kills",value=formatNumber(totalKills),inline=true})
-			local iconAssetId = (mutations and mutations.inverted) and (slimeData and slimeData.invertedIcon) or (slimeData and slimeData.image)
-			local thumbnailUrl = nil
-			if iconAssetId and iconAssetId ~= "N/A" then
-				local assetNumber = string.match(tostring(iconAssetId), "rbxassetid://(%d+)")
-				if assetNumber then
-					pcall(function()
-						local r = request({ Url = "https://thumbnails.roblox.com/v1/assets?assetIds="..assetNumber.."&size=420x420&format=Png&isCircular=false", Method = "GET" })
-						if r and r.Success then
-							local decoded = HttpService:JSONDecode(r.Body)
-							if decoded and decoded.data and decoded.data[1] then thumbnailUrl = decoded.data[1].imageUrl end
-						end
-					end)
-				end
-			end
-			local userEmbed = {
-				title = "🎲 New Slime Rolled!",
-				description = string.format("**||%s||** rolled **%s**!\n\n🎲 **Total Rolls:** %s", playerName, displayName, tostring(totalRolls)),
-				thumbnail = thumbnailUrl and {url=thumbnailUrl,width=64,height=64} or nil,
-				fields = embedFields,
-				color = mutations and (mutations.inverted and 0x9b59b6 or mutations.huge and 0xf1c40f or mutations.big and 0xe67e22 or mutations.shiny and 0xf39c12 or 0x3498db) or 0x3498db,
-			}
-			pcall(function()
-				request({ Url=webhookUrl, Method="POST", Headers={["Content-Type"]="application/json"},
-					Body=HttpService:JSONEncode({content=mentionText,username="Cactus Hub",avatar_url=WEBHOOK_AVATAR,embeds={userEmbed}})
-				})
-			end)
+			request({ Url=webhookUrl, Method="POST", Headers={["Content-Type"]="application/json"},
+				Body=HttpService:JSONEncode({content=mentionText,username="Cactus Hub",avatar_url=WEBHOOK_AVATAR,embeds={userEmbed}})
+			})
 		end)
 	end
 
@@ -2888,74 +2716,68 @@ repeat task.wait() until game:IsLoaded()
 		end
 	end)
 
-	pcall(function() settingsTab:CreateParagraph({ Title = "🍀 Want a serverhop script for luck servers?", Content = "Join the Discord! discord.gg/qMWFBWdcf" }) end)
-	pcall(function() settingsTab:CreateSection("System") end)
+	settingsTab:CreateParagraph({ Title = "🍀 Want a serverhop script for luck servers?", Content = "Join the Discord! discord.gg/qMWFBWdcf" })
+	settingsTab:CreateSection("System")
 
-	pcall(function()
-		featureToggle(settingsTab, {
-			Name = "Anti Kick",
-			CurrentValue = false,
-			Flag = "SettingsAntiKick",
-			Callback = function(value)
-				if value then
-					pcall(function()
-						local mt = getrawmetatable(game)
-						local oldNamecall = mt.__namecall
-						setreadonly(mt, false)
-						mt.__namecall = newcclosure(function(self, ...)
-							local method = getnamecallmethod()
-							if method == "Kick" and self == localPlayer then
-								if rayfieldLibrary.Flags.SettingsAntiKick and rayfieldLibrary.Flags.SettingsAntiKick.CurrentValue then
-									warn("[CactusHub] Blocked kick attempt")
-									return
-								end
-							end
-							return oldNamecall(self, ...)
-						end)
-						setreadonly(mt, true)
-					end)
-				end
-			end,
-		})
-	end)
-
-	pcall(function() featureToggle(settingsTab, { Name = "Auto Rejoin On Disconnect", CurrentValue = false, Flag = "SettingsAutoRejoin", Callback = function() end }) end)
-
-	pcall(function()
-		featureToggle(settingsTab, {
-			Name = "Auto Send & Accept Friend Requests",
-			CurrentValue = false,
-			Flag = "AutoFriend",
-			Callback = function(value)
-				if not value then return end
-				task.spawn(function()
-					while true do
-						local flag = rayfieldLibrary.Flags.AutoFriend
-						if not flag or not flag.CurrentValue then break end
-						pcall(function()
-							local PlayersService = game:GetService("Players")
-							local lp = PlayersService.LocalPlayer
-							for _, player in ipairs(PlayersService:GetPlayers()) do
-								if player ~= lp then
-									local ok2, status = pcall(function()
-										return lp:GetFriendStatus(player)
-									end)
-									if ok2 and (status == Enum.FriendStatus.NotFriend or status == Enum.FriendStatus.Unknown) then
-										pcall(function() lp:RequestFriendship(player) end)
-										task.wait(0.5)
-									end
-								end
-							end
-						end)
-						task.wait(600)
+	featureToggle(settingsTab, {
+		Name = "Anti Kick",
+		CurrentValue = false,
+		Flag = "SettingsAntiKick",
+		Callback = function(value)
+			if value then
+				local mt = getrawmetatable(game)
+				local oldNamecall = mt.__namecall
+				setreadonly(mt, false)
+				mt.__namecall = newcclosure(function(self, ...)
+					local method = getnamecallmethod()
+					if method == "Kick" and self == localPlayer then
+						if rayfieldLibrary.Flags.SettingsAntiKick and rayfieldLibrary.Flags.SettingsAntiKick.CurrentValue then
+							warn("[CactusHub] Blocked kick attempt")
+							return
+						end
 					end
+					return oldNamecall(self, ...)
 				end)
-			end,
-		})
-	end)
+				setreadonly(mt, true)
+			end
+		end,
+	})
 
-	pcall(function() settingsTab:CreateParagraph({ Title = "Friend Requests", Content = "NOTE : works based on your executor" }) end)
-	pcall(function() settingsTab:CreateSection("Advanced Optimization") end)
+	featureToggle(settingsTab, { Name = "Auto Rejoin On Disconnect", CurrentValue = false, Flag = "SettingsAutoRejoin", Callback = function() end })
+
+	featureToggle(settingsTab, {
+		Name = "Auto Send & Accept Friend Requests",
+		CurrentValue = false,
+		Flag = "AutoFriend",
+		Callback = function(value)
+			if not value then return end
+			task.spawn(function()
+				while true do
+					local flag = rayfieldLibrary.Flags.AutoFriend
+					if not flag or not flag.CurrentValue then break end
+					pcall(function()
+						local PlayersService = game:GetService("Players")
+						local lp = PlayersService.LocalPlayer
+						for _, player in ipairs(PlayersService:GetPlayers()) do
+							if player ~= lp then
+								local ok, status = pcall(function()
+									return lp:GetFriendStatus(player)
+								end)
+								if ok and (status == Enum.FriendStatus.NotFriend or status == Enum.FriendStatus.Unknown) then
+									pcall(function() lp:RequestFriendship(player) end)
+									task.wait(0.5)
+								end
+							end
+						end
+					end)
+					task.wait(600)
+				end
+			end)
+		end,
+	})
+
+	settingsTab:CreateParagraph({ Title = "Friend Requests", Content = "NOTE : works based on your executor" })
+	settingsTab:CreateSection("Advanced Optimization")
 
 	local OPT_VISUAL_TYPES = { ParticleEmitter=true,Trail=true,Beam=true,Fire=true,Smoke=true,Sparkles=true,SurfaceAppearance=true,Highlight=true,SelectionBox=true,SelectionSphere=true,Atmosphere=true }
 	local CHEAP_MATERIAL = Enum.Material.SmoothPlastic
@@ -2964,10 +2786,10 @@ repeat task.wait() until game:IsLoaded()
 
 	local function setAllOptimizations(value)
 		updatingOptimizations = true
-		if maxFpsToggle     then pcall(function() maxFpsToggle:Set(value) end) end
-		if optGPUToggle     then pcall(function() optGPUToggle:Set(value) end) end
-		if optEffectsToggle then pcall(function() optEffectsToggle:Set(value) end) end
-		if optGCToggle      then pcall(function() optGCToggle:Set(value) end) end
+		if maxFpsToggle     then maxFpsToggle:Set(value) end
+		if optGPUToggle     then optGPUToggle:Set(value) end
+		if optEffectsToggle then optEffectsToggle:Set(value) end
+		if optGCToggle      then optGCToggle:Set(value) end
 		updatingOptimizations = false
 		if value then
 			pcall(function() setfpscap(0) end)
@@ -2981,70 +2803,60 @@ repeat task.wait() until game:IsLoaded()
 					if d:IsA("BasePart") then d.CastShadow=false d.Reflectance=0 d.Material=CHEAP_MATERIAL end
 				end
 				local rs = game:GetService("RunService")
-				rs:Set3dRenderingEnabled(false)
+				rs:Set3dRenderingEnabled(false)  -- KEEP DISABLED (no re-enable)
 			end)
 			pcall(function()
 				for _, d in ipairs(game:GetDescendants()) do
 					if OPT_VISUAL_TYPES[d.ClassName] or d:IsA("Fire") then pcall(function() d:Destroy() end) end
 				end
 			end)
-			if _G.__memoryCleaner then pcall(function() _G.__memoryCleaner:Disconnect() end) end
+			if _G.__memoryCleaner then _G.__memoryCleaner:Disconnect() end
 			_G.__memoryCleaner = RunService.Heartbeat:Connect(function() gcinfo() end)
 		else
-			if _G.__memoryCleaner then pcall(function() _G.__memoryCleaner:Disconnect() end) _G.__memoryCleaner = nil end
+			if _G.__memoryCleaner then _G.__memoryCleaner:Disconnect() _G.__memoryCleaner = nil end
 		end
 	end
 
-	pcall(function() settingsTab:CreateToggle({ Name="Optimize All", CurrentValue=false, Flag="OptimizeAll", Callback=function(Value) if updatingOptimizations then return end setAllOptimizations(Value) end }) end)
-	pcall(function() maxFpsToggle = featureToggle(settingsTab, { Name="Max FPS", CurrentValue=false, Flag="MaxFPS", Callback=function(Value) if Value then pcall(function() setfpscap(0) end) end end }) end)
+	settingsTab:CreateToggle({ Name="Optimize All", CurrentValue=false, Flag="OptimizeAll", Callback=function(Value) if updatingOptimizations then return end setAllOptimizations(Value) end })
+	maxFpsToggle = featureToggle(settingsTab, { Name="Max FPS", CurrentValue=false, Flag="MaxFPS", Callback=function(Value) if Value then pcall(function() setfpscap(0) end) end end })
 
-	pcall(function()
-		optGPUToggle = featureToggle(settingsTab, {
-			Name = "Optimize GPU (Low Graphics)", CurrentValue=false, Flag="OptimizeGPU",
-			Callback = function(Value)
-				if updatingOptimizations or not Value then return end
-				pcall(function()
-					settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-					local lighting = game:GetService("Lighting")
-					lighting.GlobalShadows=false lighting.EnvironmentDiffuseScale=0 lighting.EnvironmentSpecularScale=0
-					for _, d in ipairs(workspace:GetDescendants()) do if d:IsA("BasePart") then d.CastShadow=false d.Reflectance=0 d.Material=CHEAP_MATERIAL end end
-					local rs = game:GetService("RunService")
-					rs:Set3dRenderingEnabled(false)
-				end)
-			end,
-		})
-	end)
+	optGPUToggle = featureToggle(settingsTab, {
+		Name = "Optimize GPU (Low Graphics)", CurrentValue=false, Flag="OptimizeGPU",
+		Callback = function(Value)
+			if updatingOptimizations or not Value then return end
+			settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+			local lighting = game:GetService("Lighting")
+			lighting.GlobalShadows=false lighting.EnvironmentDiffuseScale=0 lighting.EnvironmentSpecularScale=0
+			for _, d in ipairs(workspace:GetDescendants()) do if d:IsA("BasePart") then d.CastShadow=false d.Reflectance=0 d.Material=CHEAP_MATERIAL end end
+			local rs = game:GetService("RunService")
+			rs:Set3dRenderingEnabled(false)  -- KEEP DISABLED (no re-enable)
+		end,
+	})
 
-	pcall(function()
-		optEffectsToggle = featureToggle(settingsTab, {
-			Name = "Destroy Effects", CurrentValue=false, Flag="DestroyEffects",
-			Callback = function(Value)
-				if updatingOptimizations or not Value then return end
-				pcall(function()
-					for _, d in ipairs(game:GetDescendants()) do if OPT_VISUAL_TYPES[d.ClassName] or d:IsA("Fire") then pcall(function() d:Destroy() end) end end
-				end)
-			end,
-		})
-	end)
+	optEffectsToggle = featureToggle(settingsTab, {
+		Name = "Destroy Effects", CurrentValue=false, Flag="DestroyEffects",
+		Callback = function(Value)
+			if updatingOptimizations or not Value then return end
+			for _, d in ipairs(game:GetDescendants()) do if OPT_VISUAL_TYPES[d.ClassName] or d:IsA("Fire") then pcall(function() d:Destroy() end) end end
+		end,
+	})
 
-	pcall(function()
-		optGCToggle = featureToggle(settingsTab, {
-			Name = "Lua GC (Memory Cleaner)", CurrentValue=false, Flag="LuaGC",
-			Callback = function(Value)
-				if updatingOptimizations then return end
-				if Value then
-					if _G.__memoryCleaner then pcall(function() _G.__memoryCleaner:Disconnect() end) end
-					_G.__memoryCleaner = RunService.Heartbeat:Connect(function() gcinfo() end)
-				else
-					if _G.__memoryCleaner then pcall(function() _G.__memoryCleaner:Disconnect() end) _G.__memoryCleaner = nil end
-				end
-			end,
-		})
-	end)
+	optGCToggle = featureToggle(settingsTab, {
+		Name = "Lua GC (Memory Cleaner)", CurrentValue=false, Flag="LuaGC",
+		Callback = function(Value)
+			if updatingOptimizations then return end
+			if Value then
+				if _G.__memoryCleaner then _G.__memoryCleaner:Disconnect() end
+				_G.__memoryCleaner = RunService.Heartbeat:Connect(function() gcinfo() end)
+			else
+				if _G.__memoryCleaner then _G.__memoryCleaner:Disconnect() _G.__memoryCleaner = nil end
+			end
+		end,
+	})
 
 	local function safeGet(...)
-		local ok2, data = pcall(function() return dataServiceClient._data._data end)
-		if not ok2 or type(data) ~= "table" then return 0 end
+		local ok, data = pcall(function() return dataServiceClient._data._data end)
+		if not ok or type(data) ~= "table" then return 0 end
 		local cur = data
 		for _, key in ipairs({...}) do
 			if type(cur) ~= "table" then return 0 end
@@ -3066,14 +2878,14 @@ repeat task.wait() until game:IsLoaded()
 	end
 
 	local function fmtTime(seconds)
-		seconds = math.floor(tonumber(seconds) or 0)
-		local days = math.floor(seconds/86400)
-		local hours = math.floor((seconds%86400)/3600)
-		local minutes = math.floor((seconds%3600)/60)
-		if days>0 then return days.."d "..hours.."h "..minutes.."m"
-		elseif hours>0 then return hours.."h "..minutes.."m"
-		elseif minutes>0 then return minutes.."m "..math.floor(seconds%60).."s"
-		else return math.floor(seconds%60).."s" end
+			seconds = math.floor(tonumber(seconds) or 0)
+			local days = math.floor(seconds/86400)
+			local hours = math.floor((seconds%86400)/3600)
+			local minutes = math.floor((seconds%3600)/60)
+			if days>0 then return days.."d "..hours.."h "..minutes.."m"
+			elseif hours>0 then return hours.."h "..minutes.."m"
+			elseif minutes>0 then return minutes.."m "..math.floor(seconds%60).."s"
+			else return math.floor(seconds%60).."s" end
 	end
 
 	local function countKeys(t)
@@ -3084,82 +2896,65 @@ repeat task.wait() until game:IsLoaded()
 	end
 
 	local function getBestRoll()
-		local ok2, name, odds = pcall(function()
-			local rarestData = safeGet("stats","rarestRoll","slimeData")
-			if type(rarestData) ~= "table" then return "None","N/A" end
-			local id = tostring(rarestData.id or "?")
-			local mutations = rarestData.mutations
-			local prefix = ""
-			if type(mutations) == "table" then
-				if mutations.inverted then prefix="Inverted "
-				elseif mutations.shiny and mutations.huge then prefix="Shiny Huge "
-				elseif mutations.shiny and mutations.big then prefix="Shiny Big "
-				elseif mutations.huge then prefix="Huge "
-				elseif mutations.shiny then prefix="Shiny "
-				elseif mutations.big then prefix="Big " end
-			end
-			local n = prefix..id:sub(1,1):upper()..id:sub(2)
-			local o = safeNum("stats","rarestRoll","odds")
-			return n, o > 0 and ("1 in "..fmt(math.floor(o))) or "N/A"
-		end)
-		if not ok2 then return "None","N/A" end
-		return name, odds
+		local rarestData = safeGet("stats","rarestRoll","slimeData")
+		if type(rarestData) ~= "table" then return "None","N/A" end
+		local id = tostring(rarestData.id or "?")
+		local mutations = rarestData.mutations
+		local prefix = ""
+		if type(mutations) == "table" then
+			if mutations.inverted then prefix="Inverted "
+			elseif mutations.shiny and mutations.huge then prefix="Shiny Huge "
+			elseif mutations.shiny and mutations.big then prefix="Shiny Big "
+			elseif mutations.huge then prefix="Huge "
+			elseif mutations.shiny then prefix="Shiny "
+			elseif mutations.big then prefix="Big " end
+		end
+		local name = prefix..id:sub(1,1):upper()..id:sub(2)
+		local odds = safeNum("stats","rarestRoll","odds")
+		return name, odds > 0 and ("1 in "..fmt(math.floor(odds))) or "N/A"
 	end
 
 	local function getEquippedDisplay()
-		local ok2, result = pcall(function()
-			local equipped = safeGet("equipped")
-			if type(equipped) ~= "table" then return "None" end
-			local names = {}
-			for i = 1, 7 do
-				local uid = equipped[i]
-				if uid and type(uid) == "string" then
-					local clean = uid:match("%-(.+)$") or uid:gsub("^%.","")
-					table.insert(names, clean:sub(1,1):upper()..clean:sub(2))
-				end
+		local equipped = safeGet("equipped")
+		if type(equipped) ~= "table" then return "None" end
+		local names = {}
+		for i = 1, 7 do
+			local uid = equipped[i]
+			if uid and type(uid) == "string" then
+				local clean = uid:match("%-(.+)$") or uid:gsub("^%.","")
+				table.insert(names, clean:sub(1,1):upper()..clean:sub(2))
 			end
-			table.sort(names)
-			return #names > 0 and table.concat(names,", ") or "None"
-		end)
-		return ok2 and result or "None"
+		end
+		table.sort(names)
+		return #names > 0 and table.concat(names,", ") or "None"
 	end
 
 	local function getIndexCounts()
-		local ok2, b, bi, sh, hu, inv = pcall(function()
-			local categories = safeGet("index","categories")
-			if type(categories) ~= "table" then return 0,0,0,0,0 end
-			local function count(cat) local t=categories[cat] return type(t)=="table" and countKeys(t.unlocked or {}) or 0 end
-			return count("basic"),count("big"),count("shiny"),count("huge"),count("inverted")
-		end)
-		if not ok2 then return 0,0,0,0,0 end
-		return b,bi,sh,hu,inv
+		local categories = safeGet("index","categories")
+		if type(categories) ~= "table" then return 0,0,0,0,0 end
+		local function count(cat) local t=categories[cat] return type(t)=="table" and countKeys(t.unlocked or {}) or 0 end
+		return count("basic"),count("big"),count("shiny"),count("huge"),count("inverted")
 	end
 
 	local function getTotalInventory()
-		local ok2, result = pcall(function()
-			local inv = safeGet("inventory")
-			if type(inv) ~= "table" then return 0 end
-			local total = 0
-			for _, v in pairs(inv) do if type(v)=="number" then total=total+v end end
-			return total
-		end)
-		return ok2 and result or 0
+		local inv = safeGet("inventory")
+		if type(inv) ~= "table" then return 0 end
+		local total = 0
+		for _, v in pairs(inv) do if type(v)=="number" then total=total+v end end
+		return total
 	end
 
 	local function getUniqueSpecies()
-		local ok2, result = pcall(function()
-			local inv = safeGet("inventory")
-			if type(inv) ~= "table" then return 0 end
-			local seen, count = {}, 0
-			for key in pairs(inv) do
-				if type(key)=="string" and not key:match("^%.") then
-					local base = key:match("%-(.+)$") or key
-					if not seen[base] then seen[base]=true count=count+1 end
-				end
+		local inv = safeGet("inventory")
+		if type(inv) ~= "table" then return 0 end
+		local seen, count = {}, 0
+		for key in pairs(inv) do
+			if type(key)=="string" and not key:match("^%.") then
+				local base = key:match("%-(.+)$") or key
+				if not seen[base] then seen[base]=true count=count+1 end
 			end
-			return count
-		end)
-		return ok2 and result or 0
+		end
+		return count
 	end
 
 	local sessionStart = os.clock()
@@ -3204,7 +2999,7 @@ repeat task.wait() until game:IsLoaded()
 	end
 
 	local statLabels = {}
-	local function lbl(key, text) pcall(function() statLabels[key] = statsTab:CreateLabel(text) end) end
+	local function lbl(key, text) statLabels[key] = statsTab:CreateLabel(text) end
 	lbl("sess",     "Session: --  |  Played: --  |  Rebirths: --")
 	lbl("rolls1",   "Rolls/sec: --  |  Rolls/min: --  |  Rolls/hr: --")
 	lbl("rolls2",   "Session Rolls: --  |  Lifetime: --")
@@ -3251,35 +3046,33 @@ repeat task.wait() until game:IsLoaded()
 				local dailyStr  = dailyOdds > 0 and ("1 in "..fmt(math.floor(dailyOdds))) or "N/A"
 				local basic,big,shiny,huge,inverted = getIndexCounts()
 				local crafting = countKeys(safeGet("craftingRecipes") or {})
-				if statLabels.sess     then pcall(function() statLabels.sess:Set(string.format("Session: %dh%dm%ds  |  Played: %s  |  Rebirths: %s",sh,sm,ss,fmtTime(timePlayed),fmt(rebirths))) end) end
-				if statLabels.rolls1   then pcall(function() statLabels.rolls1:Set(string.format("Rolls/sec: %.2f  |  Rolls/min: %s  |  Rolls/hr: %s",rps,fmt(rps*60),fmt(rps*3600))) end) end
-				if statLabels.rolls2   then pcall(function() statLabels.rolls2:Set("Session Rolls: "..fmt(sessionRolls).."  |  Lifetime: "..fmt(rolls)) end) end
-				if statLabels.coins1   then pcall(function() statLabels.coins1:Set("Coins/min: "..fmt(cps*60).."  |  Coins/hr: "..fmt(cps*3600)) end) end
-				if statLabels.coins2   then pcall(function() statLabels.coins2:Set("Session Coins: "..fmt(sessionCoins).."  |  Total Ever: "..fmt(totalCoins)) end) end
-				if statLabels.goop1    then pcall(function() statLabels.goop1:Set("Goop/min: "..fmt(gps*60).."  |  Goop/hr: "..fmt(gps*3600)) end) end
-				if statLabels.goop2    then pcall(function() statLabels.goop2:Set("Session Goop: "..fmt(sessionGoop).."  |  Balance: "..fmt(goop)) end) end
-				if statLabels.kills    then pcall(function() statLabels.kills:Set("Session Kills: "..fmt(sessionKills).."  |  Lifetime Kills: "..fmt(kills)) end) end
-				if statLabels.best     then pcall(function() statLabels.best:Set("Best Ever: "..bestName.."  |  Odds: "..bestOdds) end) end
-				if statLabels.daily    then pcall(function() statLabels.daily:Set("Best Today Odds: "..dailyStr) end) end
-				if statLabels.prog     then pcall(function() statLabels.prog:Set("Zone: "..fmt(zone).."  |  Max Zone: "..fmt(maxZone).."  |  Roll Currency: "..fmt(rollCurrency)) end) end
-				if statLabels.idx1     then pcall(function() statLabels.idx1:Set("Basic: "..basic.."  |  Big: "..big.."  |  Shiny: "..shiny.."  |  Huge: "..huge.."  |  Inverted: "..inverted) end) end
-				if statLabels.inv      then pcall(function() statLabels.inv:Set("Total Slimes: "..fmt(getTotalInventory()).."  |  Species: "..getUniqueSpecies().."  |  Crafting: "..crafting) end) end
-				if statLabels.equipped then pcall(function() statLabels.equipped:Set("Equipped: "..getEquippedDisplay()) end) end
+				statLabels.sess:Set(string.format("Session: %dh%dm%ds  |  Played: %s  |  Rebirths: %s",sh,sm,ss,fmtTime(timePlayed),fmt(rebirths)))
+				statLabels.rolls1:Set(string.format("Rolls/sec: %.2f  |  Rolls/min: %s  |  Rolls/hr: %s",rps,fmt(rps*60),fmt(rps*3600)))
+				statLabels.rolls2:Set("Session Rolls: "..fmt(sessionRolls).."  |  Lifetime: "..fmt(rolls))
+				statLabels.coins1:Set("Coins/min: "..fmt(cps*60).."  |  Coins/hr: "..fmt(cps*3600))
+				statLabels.coins2:Set("Session Coins: "..fmt(sessionCoins).."  |  Total Ever: "..fmt(totalCoins))
+				statLabels.goop1:Set("Goop/min: "..fmt(gps*60).."  |  Goop/hr: "..fmt(gps*3600))
+				statLabels.goop2:Set("Session Goop: "..fmt(sessionGoop).."  |  Balance: "..fmt(goop))
+				statLabels.kills:Set("Session Kills: "..fmt(sessionKills).."  |  Lifetime Kills: "..fmt(kills))
+				statLabels.best:Set("Best Ever: "..bestName.."  |  Odds: "..bestOdds)
+				statLabels.daily:Set("Best Today Odds: "..dailyStr)
+				statLabels.prog:Set("Zone: "..fmt(zone).."  |  Max Zone: "..fmt(maxZone).."  |  Roll Currency: "..fmt(rollCurrency))
+				statLabels.idx1:Set("Basic: "..basic.."  |  Big: "..big.."  |  Shiny: "..shiny.."  |  Huge: "..huge.."  |  Inverted: "..inverted)
+				statLabels.inv:Set("Total Slimes: "..fmt(getTotalInventory()).."  |  Species: "..getUniqueSpecies().."  |  Crafting: "..crafting)
+				statLabels.equipped:Set("Equipped: "..getEquippedDisplay())
 			end)
 		end
 	end)
 
-	pcall(function()
-		game:GetService("GuiService").ErrorMessageChanged:Connect(function()
-			if rayfieldLibrary.Flags.SettingsAutoRejoin and rayfieldLibrary.Flags.SettingsAutoRejoin.CurrentValue then
-				pcall(function()
-					game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, localPlayer)
-				end)
-			end
-		end)
+	game:GetService("GuiService").ErrorMessageChanged:Connect(function()
+		if rayfieldLibrary.Flags.SettingsAutoRejoin and rayfieldLibrary.Flags.SettingsAutoRejoin.CurrentValue then
+			pcall(function()
+				game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, localPlayer)
+			end)
+		end
 	end)
 
-	pcall(function() rayfieldLibrary:LoadConfiguration() end)
+	rayfieldLibrary:LoadConfiguration()
 	Logger:info("CactusHub", "Init", "Script initialization complete")
 end)
 if not ok then
