@@ -1696,6 +1696,20 @@ repeat task.wait() until game:IsLoaded()
 
 	gameTab:CreateSection("Upgrades")
 
+	-- FIXED AUTO UPGRADE PURCHASING (using UpgradeService:unlockUpgrade)
+	local UpgradeService = nil
+	task.spawn(function()
+		repeat task.wait(1) until modulesLoaded and dataServiceClient
+		local rs = game:GetService("ReplicatedStorage")
+		local ok, upgradeSvc = pcall(function() return require(rs.Source.Features.Upgrades.UpgradeServiceClient) end)
+		if ok and upgradeSvc then
+			local dummyClient = {}
+			dummyClient.networker = Networker.client.new("UpgradeService", dummyClient)
+			upgradeSvc.init(dummyClient)
+			UpgradeService = upgradeSvc
+		end
+	end)
+
 	featureToggle(gameTab, {
 		Name = "Auto Upgrade Purchasing",
 		CurrentValue = false,
@@ -1706,44 +1720,44 @@ repeat task.wait() until game:IsLoaded()
 				while true do
 					local flag = rayfieldLibrary.Flags.GameAutoUpgrade
 					if not flag or not flag.CurrentValue then break end
-					if not upgradeServiceRemote or not dataServiceClient then task.wait(1) continue end
+					if not UpgradeService or not dataServiceClient or not upgradeTreeModule then task.wait(2) continue end
 					pcall(function()
 						local upgradeMode = rayfieldLibrary.Flags.GameUpgradeMode and rayfieldLibrary.Flags.GameUpgradeMode.CurrentOption or {"All"}
 						local modeSet = {}
 						for _, m in ipairs(upgradeMode) do modeSet[m] = true end
 						local unlockedUpgrades = dataServiceClient:get("upgrades") or {}
-						local coins        = dataServiceClient:get("coins") or 0
-						local goop         = dataServiceClient:get("goop") or 0
+						local coins = dataServiceClient:get("coins") or 0
+						local goop = dataServiceClient:get("goop") or 0
 						local rollCurrency = dataServiceClient:get("rollCurrency") or 0
-						if not upgradeTreeModule then return end
-						for _, tree in ipairs(upgradeTreeModule) do
-							for upgradeId, upgradeInfo in pairs(tree) do
-								if upgradeInfo and upgradeInfo.cost and not unlockedUpgrades[upgradeId] then
-									local costAmount   = upgradeInfo.cost.amount or 0
-									local currencyType = upgradeInfo.cost.currency
-									local modeMatches = modeSet["All"]
-										or (modeSet["Coins"] and currencyType == "coins")
-										or (modeSet["Goop"] and currencyType == "goop")
-										or (modeSet["Rolls"] and currencyType == "rollCurrency")
-									if not modeMatches then continue end
-									local canAfford = (currencyType == "coins" and coins >= costAmount)
-										or (currencyType == "goop" and goop >= costAmount)
-										or (currencyType == "rollCurrency" and rollCurrency >= costAmount)
-									if canAfford then
-										local success, result = pcall(function()
-											return upgradeServiceRemote:InvokeServer("requestUnlock", upgradeId)
-										end)
-										if success and result then
-											if currencyType == "coins" then coins = coins - costAmount
-											elseif currencyType == "goop" then goop = goop - costAmount
-											elseif currencyType == "rollCurrency" then rollCurrency = rollCurrency - costAmount end
+						local anyPurchased = false
+						for treeName, tree in pairs(upgradeTreeModule) do
+							for upgradeId, data in pairs(tree) do
+								if data.cost and not unlockedUpgrades[upgradeId] then
+									local cost = data.cost.amount or 0
+									local currency = data.cost.currency
+									local canBuy = false
+									if currency == "coins" and modeSet["All"] or modeSet["Coins"] then
+										canBuy = coins >= cost
+									elseif currency == "goop" and (modeSet["All"] or modeSet["Goop"]) then
+										canBuy = goop >= cost
+									elseif currency == "rollCurrency" and (modeSet["All"] or modeSet["Rolls"]) then
+										canBuy = rollCurrency >= cost
+									end
+									if canBuy then
+										local success = UpgradeService:unlockUpgrade(upgradeId)
+										if success then
+											anyPurchased = true
+											if currency == "coins" then coins = coins - cost
+											elseif currency == "goop" then goop = goop - cost
+											elseif currency == "rollCurrency" then rollCurrency = rollCurrency - cost end
 											unlockedUpgrades[upgradeId] = true
 										end
-										task.wait(0.2)
+										task.wait(0.1)
 									end
 								end
 							end
 						end
+						if not anyPurchased then task.wait(5) end
 					end)
 					task.wait(0.5)
 				end
@@ -2385,9 +2399,9 @@ repeat task.wait() until game:IsLoaded()
 		if #sortedBoostKinds > 0 then
 			-- Dropdown default to all potion types
 			miscTab:CreateDropdown({ Name="Potion Types", Options=sortedBoostKinds, CurrentOption=sortedBoostKinds, MultipleOptions=true, Flag="MiscPotionTypes", Callback=function() end })
-			-- Use All Potions Now button
+			-- Use All Selected Potions button
 			featureButton(miscTab, {
-				Name = "Use All Potions Now",
+				Name = "Use All Selected Potions",
 				Callback = function()
 					task.spawn(function()
 						pcall(function()
@@ -2461,9 +2475,9 @@ repeat task.wait() until game:IsLoaded()
 		if #diceNames > 0 then
 			-- Dropdown default to all dice types
 			miscTab:CreateDropdown({ Name="Dice & Item Types", Options=diceNames, CurrentOption=diceNames, MultipleOptions=true, Flag="MiscDiceTypes", Callback=function() end })
-			-- Use All Dice Now button
+			-- Use All Selected Dice button
 			featureButton(miscTab, {
-				Name = "Use All Dice Now",
+				Name = "Use All Selected Dice",
 				Callback = function()
 					task.spawn(function()
 						pcall(function()
@@ -2861,14 +2875,14 @@ repeat task.wait() until game:IsLoaded()
 	end
 
 	local function fmtTime(seconds)
-		seconds = math.floor(tonumber(seconds) or 0)
-		local days = math.floor(seconds/86400)
-		local hours = math.floor((seconds%86400)/3600)
-		local minutes = math.floor((seconds%3600)/60)
-		if days>0 then return days.."d "..hours.."h "..minutes.."m"
-		elseif hours>0 then return hours.."h "..minutes.."m"
-		elseif minutes>0 then return minutes.."m "..math.floor(seconds%60).."s"
-		else return math.floor(seconds%60).."s" end
+			seconds = math.floor(tonumber(seconds) or 0)
+			local days = math.floor(seconds/86400)
+			local hours = math.floor((seconds%86400)/3600)
+			local minutes = math.floor((seconds%3600)/60)
+			if days>0 then return days.."d "..hours.."h "..minutes.."m"
+			elseif hours>0 then return hours.."h "..minutes.."m"
+			elseif minutes>0 then return minutes.."m "..math.floor(seconds%60).."s"
+			else return math.floor(seconds%60).."s" end
 	end
 
 	local function countKeys(t)
