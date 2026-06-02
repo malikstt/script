@@ -1375,9 +1375,6 @@ repeat task.wait() until game:IsLoaded()
 		end,
 	})
 
-	-- =============================================
-	-- FRUIT EXTRACTOR SECTION
-	-- =============================================
 	pcall(function()
 		farmingTab:CreateSection("Fruit Extractor")
 
@@ -1560,7 +1557,72 @@ repeat task.wait() until game:IsLoaded()
 		end
 	})
 
-	gameTab:CreateSection("Controls")
+	gameTab:CreateSection("Slime Gun")
+
+	local slimeGunMode = "Normal"
+	local advancedShootConnection = nil
+	local originalGetUpgradeValue = nil
+	local upgradeServiceUtils = nil
+
+	local function cleanupAdvancedMode()
+		if advancedShootConnection then
+			advancedShootConnection:Disconnect()
+			advancedShootConnection = nil
+		end
+		if upgradeServiceUtils and originalGetUpgradeValue then
+			pcall(function()
+				upgradeServiceUtils.getUpgradeValue = originalGetUpgradeValue
+			end)
+		end
+	end
+
+	local function enableAdvancedMode()
+		cleanupAdvancedMode()
+		local ok, R = pcall(function() return game:GetService("ReplicatedStorage") end)
+		if not ok then return end
+		local okU, U = pcall(function() return require(R.Source.Features.Upgrades.UpgradeServiceUtils) end)
+		if okU then
+			upgradeServiceUtils = U
+			originalGetUpgradeValue = U.getUpgradeValue
+			U.getUpgradeValue = function(N, L)
+				if N == "slimeGunFireRate" then
+					return 0
+				end
+				return originalGetUpgradeValue(N, L)
+			end
+		end
+		local okG, G = pcall(function() return require(R.Source.Features.GoopGun.GoopGunServiceClient) end)
+		if okG then
+			advancedShootConnection = RunService.Heartbeat:Connect(function()
+				local wrapper = G.wrapper
+				if wrapper then
+					wrapper.prevSendAt = 0
+					wrapper.isHoldingInput = true
+					wrapper:onActivated()
+				end
+			end)
+		end
+	end
+
+	gameTab:CreateDropdown({
+		Name = "Slime Gun Mode",
+		Options = {"Normal", "Advanced (may cause lag)"},
+		CurrentOption = {"Normal"},
+		MultipleOptions = false,
+		Flag = "SlimeGunMode",
+		Callback = function(option)
+			local mode = type(option) == "table" and option[1] or option
+			slimeGunMode = mode
+			local autoShootFlag = rayfieldLibrary.Flags.GunAutoShoot
+			if autoShootFlag and autoShootFlag.CurrentValue then
+				if slimeGunMode == "Advanced" then
+					enableAdvancedMode()
+				else
+					cleanupAdvancedMode()
+				end
+			end
+		end
+	})
 
 	local combatEnabled = false
 	local getgcChecked = false
@@ -1571,17 +1633,33 @@ repeat task.wait() until game:IsLoaded()
 		local tool = char:FindFirstChild("SlimeGun")
 		if not tool then return nil end
 		if not getgc then
-			if not getgcChecked then Logger:warn("Executor","Capability","getgc not available — Auto Shoot disabled") getgcChecked = true end
+			if not getgcChecked then Logger:warn("Executor","Capability","getgc not available — Normal mode disabled") getgcChecked = true end
 			return nil
 		end
-		if not getgcChecked then Logger:info("Executor","Capability","getgc available — Auto Shoot enabled") getgcChecked = true end
+		if not getgcChecked then Logger:info("Executor","Capability","getgc available — Normal mode enabled") getgcChecked = true end
 		for _, v in ipairs(getgc(true)) do
 			if type(v) == "table" and rawget(v, "tool") == tool and rawget(v, "prevSendAt") ~= nil then return v end
 		end
 		return nil
 	end
 
-	featureToggle(gameTab, { Name = "Auto Shoot Enemies (getgc)", CurrentValue = false, Flag = "CombatAutoShoot", Callback = function(value) combatEnabled = value end })
+	featureToggle(gameTab, {
+		Name = "Auto Shoot",
+		CurrentValue = false,
+		Flag = "GunAutoShoot",
+		Callback = function(value)
+			combatEnabled = value
+			if value then
+				if slimeGunMode == "Advanced" then
+					enableAdvancedMode()
+				else
+					cleanupAdvancedMode()
+				end
+			else
+				cleanupAdvancedMode()
+			end
+		end
+	})
 
 	gameTab:CreateDropdown({ Name = "Combat Target Priority", Options = {"Closest","Lowest HP","Highest HP","Most Coins & Goop"}, CurrentOption = {"Closest"}, MultipleOptions = false, Flag = "CombatTargetPriority", Callback = function() end })
 
@@ -1589,7 +1667,7 @@ repeat task.wait() until game:IsLoaded()
 		local controller = nil
 		while true do
 			task.wait(0.1)
-			if not combatEnabled then controller = nil task.wait(0.3) continue end
+			if not combatEnabled or slimeGunMode ~= "Normal" then controller = nil task.wait(0.3) continue end
 			pcall(function()
 				local char = localPlayer.Character
 				if not char then return end
@@ -2610,6 +2688,8 @@ repeat task.wait() until game:IsLoaded()
 
 	featureToggle(settingsTab, { Name = "Auto Rejoin On Disconnect", CurrentValue = false, Flag = "SettingsAutoRejoin", Callback = function() end })
 
+	settingsTab:CreateParagraph({ Title = "NOTE", Content = "works based on your executor" })
+
 	featureToggle(settingsTab, {
 		Name = "Auto Send & Accept Friend Requests",
 		CurrentValue = false,
@@ -2620,9 +2700,25 @@ repeat task.wait() until game:IsLoaded()
 				while true do
 					local flag = rayfieldLibrary.Flags.AutoFriend
 					if not flag or not flag.CurrentValue then break end
-					local players = game:GetService("Players"):GetPlayers()
-					for _, p in ipairs(players) do
-						if p ~= localPlayer then pcall(function() localPlayer:RequestFriendship(p) end) task.wait(1) end
+					local PlayersService = game:GetService("Players")
+					local LocalPlr = PlayersService.LocalPlayer
+					local function getFriendStatus(player)
+						local ok, status = pcall(function()
+							return LocalPlr:GetFriendStatus(player)
+						end)
+						if ok then return status end
+						return nil
+					end
+					for _, player in ipairs(PlayersService:GetPlayers()) do
+						if player ~= LocalPlr then
+							local status = getFriendStatus(player)
+							if status == Enum.FriendStatus.NotFriend or status == Enum.FriendStatus.Unknown then
+								pcall(function()
+									LocalPlr:RequestFriendship(player)
+								end)
+								task.wait(0.5)
+							end
+						end
 					end
 					task.wait(600)
 				end
@@ -2630,13 +2726,12 @@ repeat task.wait() until game:IsLoaded()
 		end,
 	})
 
-	settingsTab:CreateParagraph({ Title = "MAY be Patched", Content = "Auto Send & Accept Friend Requests may not work depending on current Roblox API restrictions." })
 	settingsTab:CreateSection("Advanced Optimization")
 
 	local OPT_VISUAL_TYPES = { ParticleEmitter=true,Trail=true,Beam=true,Fire=true,Smoke=true,Sparkles=true,SurfaceAppearance=true,Highlight=true,SelectionBox=true,SelectionSphere=true,Atmosphere=true }
 	local CHEAP_MATERIAL = Enum.Material.SmoothPlastic
 	local updatingOptimizations = false
-	local optGPUToggle, optEffectsToggle, optGCToggle, optIntenseToggle, maxFpsToggle
+	local optGPUToggle, optEffectsToggle, optGCToggle, maxFpsToggle
 
 	local function setAllOptimizations(value)
 		updatingOptimizations = true
@@ -2644,7 +2739,6 @@ repeat task.wait() until game:IsLoaded()
 		if optGPUToggle     then optGPUToggle:Set(value) end
 		if optEffectsToggle then optEffectsToggle:Set(value) end
 		if optGCToggle      then optGCToggle:Set(value) end
-		if optIntenseToggle then optIntenseToggle:Set(value) end
 		updatingOptimizations = false
 		if value then
 			pcall(function() setfpscap(0) end)
@@ -2667,7 +2761,6 @@ repeat task.wait() until game:IsLoaded()
 			end)
 			if _G.__memoryCleaner then _G.__memoryCleaner:Disconnect() end
 			_G.__memoryCleaner = RunService.Heartbeat:Connect(function() gcinfo() end)
-			pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/Optimization.lua"))() end)
 		else
 			if _G.__memoryCleaner then _G.__memoryCleaner:Disconnect() _G.__memoryCleaner = nil end
 		end
@@ -2707,14 +2800,6 @@ repeat task.wait() until game:IsLoaded()
 			else
 				if _G.__memoryCleaner then _G.__memoryCleaner:Disconnect() _G.__memoryCleaner = nil end
 			end
-		end,
-	})
-
-	optIntenseToggle = featureToggle(settingsTab, {
-		Name = "Intense Optimization", CurrentValue=false, Flag="IntenseOptimization",
-		Callback = function(Value)
-			if updatingOptimizations or not Value then return end
-			pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/Optimization.lua"))() end)
 		end,
 	})
 
