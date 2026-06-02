@@ -1,3 +1,4 @@
+if game.GameId ~= 92416421522960 then return end
 task.spawn(function()
 	local HttpService = game:GetService("HttpService")
 	local ReplicatedStorage = game:GetService("ReplicatedStorage")
