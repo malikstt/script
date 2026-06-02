@@ -2344,9 +2344,12 @@ repeat task.wait() until game:IsLoaded()
 
 	miscTab:CreateSection("Consumables")
 
+	-- POTION SECTION (Modified)
 	pcall(function()
 		local sortedBoostKinds = {}
 		if boostKinds then for _, kind in ipairs(boostKinds) do table.insert(sortedBoostKinds, kind) end table.sort(sortedBoostKinds) end
+		
+		-- Auto Use Potions (only when needed)
 		featureToggle(miscTab, {
 			Name = "Auto Use Potions",
 			CurrentValue = false,
@@ -2358,13 +2361,18 @@ repeat task.wait() until game:IsLoaded()
 						local flag = rayfieldLibrary.Flags.MiscUsePotions
 						if not flag or not flag.CurrentValue then break end
 						pcall(function()
-							if not boostServiceRemote or not dataServiceClient then return end
+							if not boostServiceRemote or not dataServiceClient or not boostServiceUtils then return end
 							local boosts = dataServiceClient:get("boosts") or {}
 							local selectedPotions = rayfieldLibrary.Flags.MiscPotionTypes and rayfieldLibrary.Flags.MiscPotionTypes.CurrentOption or {}
+							local serverTime = workspace:GetServerTimeNow()
 							for _, potionType in ipairs(selectedPotions) do
 								local boostData = boosts[potionType]
 								if boostData and (boostData.amount or 0) > 0 then
-									pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
+									local remaining = boostServiceUtils.getTimeRemaining(boostData, serverTime)
+									if remaining <= 0 then
+										pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
+										task.wait(0.5) -- slight delay between uses
+									end
 								end
 							end
 						end)
@@ -2373,19 +2381,48 @@ repeat task.wait() until game:IsLoaded()
 				end)
 			end,
 		})
+		
 		if #sortedBoostKinds > 0 then
-			miscTab:CreateDropdown({ Name="Potion Types", Options=sortedBoostKinds, CurrentOption={sortedBoostKinds[1]}, MultipleOptions=true, Flag="MiscPotionTypes", Callback=function() end })
+			-- Dropdown default to all potion types
+			miscTab:CreateDropdown({ Name="Potion Types", Options=sortedBoostKinds, CurrentOption=sortedBoostKinds, MultipleOptions=true, Flag="MiscPotionTypes", Callback=function() end })
+			-- Use All Potions Now button
+			featureButton(miscTab, {
+				Name = "Use All Potions Now",
+				Callback = function()
+					task.spawn(function()
+						pcall(function()
+							if not boostServiceRemote or not dataServiceClient then
+								rayfieldLibrary:Notify({ Title="Error", Content="Boost service not ready", Duration=3 })
+								return
+							end
+							local selectedPotions = rayfieldLibrary.Flags.MiscPotionTypes and rayfieldLibrary.Flags.MiscPotionTypes.CurrentOption or {}
+							for _, potionType in ipairs(selectedPotions) do
+								local boosts = dataServiceClient:get("boosts") or {}
+								local amount = (boosts[potionType] or {}).amount or 0
+								for i = 1, amount do
+									pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
+									task.wait(0.2)
+								end
+							end
+							rayfieldLibrary:Notify({ Title="Potions", Content="Used all selected potions", Duration=3 })
+						end)
+					end)
+				end,
+			})
 		else
 			miscTab:CreateLabel("Potion types not yet loaded — enable after modules load.")
 		end
 	end)
 
+	-- DICE SECTION (Modified)
 	pcall(function()
 		local diceNames = {}
 		if diceItemIds and idToNameMap then
 			for _, itemId in ipairs(diceItemIds) do table.insert(diceNames, idToNameMap[itemId]) end
 			table.sort(diceNames)
 		end
+		
+		-- Auto Use Dice & Items (only when no special dice active)
 		featureToggle(miscTab, {
 			Name = "Auto Use Dice & Items",
 			CurrentValue = false,
@@ -2398,12 +2435,20 @@ repeat task.wait() until game:IsLoaded()
 						if not flag or not flag.CurrentValue then break end
 						pcall(function()
 							if not inventoryServiceRemote or not dataServiceClient then return end
+							-- Check if any special dice is currently active
+							local queue = dataServiceClient:get("specialDiceQueue") or {}
+							local active = queue[1]
+							if active then
+								task.wait(1)
+								return -- do nothing if a dice is already active
+							end
 							local items = dataServiceClient:get("items") or {}
 							local selectedDiceItems = rayfieldLibrary.Flags.MiscDiceTypes and rayfieldLibrary.Flags.MiscDiceTypes.CurrentOption or {}
 							for _, diceName in ipairs(selectedDiceItems) do
 								local itemId = nameToIdMap and nameToIdMap[diceName]
 								if itemId and (items[itemId] or 0) > 0 then
 									pcall(function() inventoryServiceRemote:InvokeServer("requestUseItem", itemId) end)
+									task.wait(0.5) -- prevent spam
 								end
 							end
 						end)
@@ -2412,8 +2457,37 @@ repeat task.wait() until game:IsLoaded()
 				end)
 			end,
 		})
+		
 		if #diceNames > 0 then
-			miscTab:CreateDropdown({ Name="Dice & Item Types", Options=diceNames, CurrentOption={diceNames[1]}, MultipleOptions=true, Flag="MiscDiceTypes", Callback=function() end })
+			-- Dropdown default to all dice types
+			miscTab:CreateDropdown({ Name="Dice & Item Types", Options=diceNames, CurrentOption=diceNames, MultipleOptions=true, Flag="MiscDiceTypes", Callback=function() end })
+			-- Use All Dice Now button
+			featureButton(miscTab, {
+				Name = "Use All Dice Now",
+				Callback = function()
+					task.spawn(function()
+						pcall(function()
+							if not inventoryServiceRemote or not dataServiceClient then
+								rayfieldLibrary:Notify({ Title="Error", Content="Inventory service not ready", Duration=3 })
+								return
+							end
+							local selectedDiceItems = rayfieldLibrary.Flags.MiscDiceTypes and rayfieldLibrary.Flags.MiscDiceTypes.CurrentOption or {}
+							for _, diceName in ipairs(selectedDiceItems) do
+								local itemId = nameToIdMap and nameToIdMap[diceName]
+								if itemId then
+									local items = dataServiceClient:get("items") or {}
+									local amount = items[itemId] or 0
+									for i = 1, amount do
+										pcall(function() inventoryServiceRemote:InvokeServer("requestUseItem", itemId) end)
+										task.wait(0.2)
+									end
+								end
+							end
+							rayfieldLibrary:Notify({ Title="Dice", Content="Used all selected dice/items", Duration=3 })
+						end)
+					end)
+				end,
+			})
 		else
 			miscTab:CreateLabel("Dice types not yet loaded — enable after modules load.")
 		end
