@@ -46,7 +46,7 @@ repeat task.wait() until game:IsLoaded()
 	Logger:info("CactusHub", "Init", "Rayfield loaded successfully")
 
 	local mainWindow = rayfieldLibrary:CreateWindow({
-		Name = "Cactus Hub • discord.gg/qMWFBWdcf",
+		Name = "Cactus Hub â€¢ discord.gg/qMWFBWdcf",
 		Icon = 0,
 		LoadingTitle = "Loading",
 		LoadingSubtitle = "Please wait...",
@@ -299,7 +299,7 @@ repeat task.wait() until game:IsLoaded()
 		end)
 		if not ok then
 			Logger:error("CactusHub", "ModuleLoad", "Module initialization failed", err)
-			rayfieldLibrary:Notify({ Title = "CactusHub — Load Warning", Content = "Some modules failed: " .. tostring(err):sub(1, 120) .. "\nSome features may not work.", Duration = 8 })
+			rayfieldLibrary:Notify({ Title = "CactusHub â€” Load Warning", Content = "Some modules failed: " .. tostring(err):sub(1, 120) .. "\nSome features may not work.", Duration = 8 })
 		end
 	end)
 
@@ -904,7 +904,7 @@ repeat task.wait() until game:IsLoaded()
 							pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
 							paused[dice] = false
 						end
-						rayfieldLibrary:Notify({ Title = "Unleashed!", Content = "All selected dice stacked — releasing now.", Duration = 3 })
+						rayfieldLibrary:Notify({ Title = "Unleashed!", Content = "All selected dice stacked â€” releasing now.", Duration = 3 })
 						task.wait(2)
 					end
 				elseif currentMode == "Smart" then
@@ -965,7 +965,7 @@ repeat task.wait() until game:IsLoaded()
 								pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
 								paused[dice] = false
 							end
-							rayfieldLibrary:Notify({ Title = "Unleashed!", Content = "Smart stack complete — releasing now.", Duration = 3 })
+							rayfieldLibrary:Notify({ Title = "Unleashed!", Content = "Smart stack complete â€” releasing now.", Duration = 3 })
 							task.wait(2)
 						end
 					end
@@ -1512,10 +1512,10 @@ repeat task.wait() until game:IsLoaded()
 		local tool = char:FindFirstChild("SlimeGun")
 		if not tool then return nil end
 		if not getgc then
-			if not getgcChecked then Logger:warn("Executor","Capability","getgc not available — Auto Shoot disabled") getgcChecked = true end
+			if not getgcChecked then Logger:warn("Executor","Capability","getgc not available â€” Auto Shoot disabled") getgcChecked = true end
 			return nil
 		end
-		if not getgcChecked then Logger:info("Executor","Capability","getgc available — Auto Shoot enabled") getgcChecked = true end
+		if not getgcChecked then Logger:info("Executor","Capability","getgc available â€” Auto Shoot enabled") getgcChecked = true end
 		for _, v in ipairs(getgc(true)) do
 			if type(v) == "table" and rawget(v, "tool") == tool and rawget(v, "prevSendAt") ~= nil then return v end
 		end
@@ -1916,7 +1916,7 @@ repeat task.wait() until game:IsLoaded()
 		})
 
 		gameTab:CreateDropdown({ Name = "Protect Categories", Options = {"Best Slime","Equipped Slimes","Xp Slimes"}, CurrentOption = {"Best Slime","Equipped Slimes","Xp Slimes"}, MultipleOptions = true, Flag = "CraftingProtectCategories", Callback = function(options) craftingState.protectCategories = options protectedPets = buildProtectedSet(options) end })
-		rayfieldLibrary:Notify({ Title="Cactus Hub", Content="Loaded — "..(#recipeIdsList).." unlocked recipes ready.", Duration=5, Image=4483362458 })
+		rayfieldLibrary:Notify({ Title="Cactus Hub", Content="Loaded â€” "..(#recipeIdsList).." unlocked recipes ready.", Duration=5, Image=4483362458 })
 	end)
 
 	local ufoClient = nil
@@ -1943,14 +1943,14 @@ repeat task.wait() until game:IsLoaded()
 	local lastUfoPhase = nil
 
 	ufoTab:CreateSection("Live Status")
-	local ufoPhaseLabel    = ufoTab:CreateLabel("🛸  Phase: —")
-	local ufoZoneIdLabel   = ufoTab:CreateLabel("📍  Zone ID: —")
-	local ufoZoneNameLabel = ufoTab:CreateLabel("🗺️  Zone Name: —")
-	local ufoNextLabel     = ufoTab:CreateLabel("⏳  Next Event: —")
-	local ufoGoldenLabel   = ufoTab:CreateLabel("⭐  Golden UFO: —")
+	local ufoPhaseLabel    = ufoTab:CreateLabel("ðŸ›¸  Phase: â€”")
+	local ufoZoneIdLabel   = ufoTab:CreateLabel("ðŸ“  Zone ID: â€”")
+	local ufoZoneNameLabel = ufoTab:CreateLabel("ðŸ—ºï¸  Zone Name: â€”")
+	local ufoNextLabel     = ufoTab:CreateLabel("â³  Next Event: â€”")
+	local ufoGoldenLabel   = ufoTab:CreateLabel("â­  Golden UFO: â€”")
 
 	local function refreshUfoState()
-		if not ufoClient then ufoPhaseLabel:Set("🛸  Phase: Module not loaded") return end
+		if not ufoClient then ufoPhaseLabel:Set("ðŸ›¸  Phase: Module not loaded") return end
 		local ok, state = pcall(function() return ufoClient:getStateSource()() end)
 		if not ok or not state then return end
 		local zoneName = "N/A"
@@ -1963,17 +1963,17 @@ repeat task.wait() until game:IsLoaded()
 			local secs = math.max(0, math.round(state.nextEventStartTime - workspace:GetServerTimeNow()))
 			nextEvent = string.format("%02d:%02d", math.floor(secs/60), secs%60)
 		end
-		local phaseIcon = "⚪"
-		if state.phase == "hovering" then phaseIcon = "🟢"
-		elseif state.phase == "arriving" then phaseIcon = "🟡"
-		elseif state.phase == "departing" then phaseIcon = "🔴" end
+		local phaseIcon = "âšª"
+		if state.phase == "hovering" then phaseIcon = "ðŸŸ¢"
+		elseif state.phase == "arriving" then phaseIcon = "ðŸŸ¡"
+		elseif state.phase == "departing" then phaseIcon = "ðŸ”´" end
 		local isGolden = false
 		pcall(function() isGolden = ufoClient.isGolden == true end)
-		ufoPhaseLabel:Set("🛸  Phase: " .. phaseIcon .. " " .. state.phase:upper())
-		ufoZoneIdLabel:Set("📍  Zone ID: " .. (state.zoneId and tostring(state.zoneId) or "None"))
-		ufoZoneNameLabel:Set("🗺️  Zone Name: " .. zoneName)
-		ufoNextLabel:Set("⏳  Next Event: " .. nextEvent)
-		ufoGoldenLabel:Set("⭐  Golden UFO: " .. (isGolden and "Yes ✅" or "No ❌"))
+		ufoPhaseLabel:Set("ðŸ›¸  Phase: " .. phaseIcon .. " " .. state.phase:upper())
+		ufoZoneIdLabel:Set("ðŸ“  Zone ID: " .. (state.zoneId and tostring(state.zoneId) or "None"))
+		ufoZoneNameLabel:Set("ðŸ—ºï¸  Zone Name: " .. zoneName)
+		ufoNextLabel:Set("â³  Next Event: " .. nextEvent)
+		ufoGoldenLabel:Set("â­  Golden UFO: " .. (isGolden and "Yes âœ…" or "No âŒ"))
 	end
 
 	ufoTab:CreateSection("Automation")
@@ -2078,12 +2078,12 @@ repeat task.wait() until game:IsLoaded()
 					setLuckEnabled(true) task.wait(0.3)
 					luckPollThread = task.spawn(function()
 						while indexRunning do
-							if indexLabels.lLuck then indexLabels.lLuck:Set("🍀 Luck Override: x"..tostring(luckValueLocal)) end
+							if indexLabels.lLuck then indexLabels.lLuck:Set("ðŸ€ Luck Override: x"..tostring(luckValueLocal)) end
 							task.wait(1)
 						end
 					end)
 					local modeFlag = rayfieldLibrary.Flags and rayfieldLibrary.Flags.IndexRollMode
-					local mode = modeFlag and (type(modeFlag.CurrentOption)=="table" and modeFlag.CurrentOption[1] or modeFlag.CurrentOption) or "🌱 Easiest First"
+					local mode = modeFlag and (type(modeFlag.CurrentOption)=="table" and modeFlag.CurrentOption[1] or modeFlag.CurrentOption) or "ðŸŒ± Easiest First"
 					local function getSortedCategoriesByPriority()
 						local cats = {}
 						for _, catId in ipairs(CATEGORY_IDS) do
@@ -2102,13 +2102,13 @@ repeat task.wait() until game:IsLoaded()
 							if not flag or not flag.CurrentValue then indexRunning = false break end
 							local missing = getMissingSlimes(catId)
 							if #missing == 0 then return true end
-							local target = modeStr == "🎯 Rarest First" and missing[#missing] or missing[1]
+							local target = modeStr == "ðŸŽ¯ Rarest First" and missing[#missing] or missing[1]
 							local effOdds = getEffectiveOdds(target, catId)
 							if target.id ~= lastTargetId then lastTargetId = target.id setLuck(calcOptimalLuck(effOdds)) end
 							if labels then
-								labels.lTarget:Set("🎯 Target: "..catLabel.." "..target.name)
-								labels.lOdds:Set("🎲 Odds: "..formatOdds(effOdds))
-								labels.lCategory:Set(string.format("📂 %s (%d left)", catLabel, #missing))
+								labels.lTarget:Set("ðŸŽ¯ Target: "..catLabel.." "..target.name)
+								labels.lOdds:Set("ðŸŽ² Odds: "..formatOdds(effOdds))
+								labels.lCategory:Set(string.format("ðŸ“‚ %s (%d left)", catLabel, #missing))
 							end
 							local before = getUnlockedIndex(catId)
 							pcall(function() networkerRoll:fetch("requestRoll") end)
@@ -2130,14 +2130,14 @@ repeat task.wait() until game:IsLoaded()
 						end
 						return false
 					end
-					if selectedCategoryOption == nil or selectedCategoryOption == "🎲 All (Recommended)" then
+					if selectedCategoryOption == nil or selectedCategoryOption == "ðŸŽ² All (Recommended)" then
 						while indexRunning do
 							local sorted = getSortedCategoriesByPriority()
 							if #sorted == 0 then
-								if indexLabels.lCategory then indexLabels.lCategory:Set("📂 ✅ All Complete!") end
-								if indexLabels.lTarget   then indexLabels.lTarget:Set("🎯 Target: —") end
-								if indexLabels.lOdds     then indexLabels.lOdds:Set("🎲 Odds: —") end
-								indexRunning = false break end
+								if indexLabels.lCategory then indexLabels.lCategory:Set("ðŸ“‚ âœ… All Complete!") end
+								if indexLabels.lTarget   then indexLabels.lTarget:Set("ðŸŽ¯ Target: â€”") end
+								if indexLabels.lOdds     then indexLabels.lOdds:Set("ðŸŽ² Odds: â€”") end
+								indexRunning = false break
 							end
 							local completed = runCategory(sorted[1].id, mode, indexLabels)
 							if not completed then break end
@@ -2151,9 +2151,9 @@ repeat task.wait() until game:IsLoaded()
 						if catId then
 							runCategory(catId, mode, indexLabels)
 							if indexRunning then
-								if indexLabels.lCategory then indexLabels.lCategory:Set("📂 ✅ Complete!") end
-								if indexLabels.lTarget   then indexLabels.lTarget:Set("🎯 Target: —") end
-								if indexLabels.lOdds     then indexLabels.lOdds:Set("🎲 Odds: —") end
+								if indexLabels.lCategory then indexLabels.lCategory:Set("ðŸ“‚ âœ… Complete!") end
+								if indexLabels.lTarget   then indexLabels.lTarget:Set("ðŸŽ¯ Target: â€”") end
+								if indexLabels.lOdds     then indexLabels.lOdds:Set("ðŸŽ² Odds: â€”") end
 							end
 						end
 						indexRunning = false
@@ -2166,10 +2166,10 @@ repeat task.wait() until game:IsLoaded()
 				if indexThread then task.cancel(indexThread) indexThread = nil end
 				if luckPollThread then task.cancel(luckPollThread) luckPollThread = nil end
 				setLuckEnabled(false)
-				if indexLabels.lTarget   then indexLabels.lTarget:Set("🎯 Target: —") end
-				if indexLabels.lOdds     then indexLabels.lOdds:Set("🎲 Odds: —") end
-				if indexLabels.lLuck     then indexLabels.lLuck:Set("🍀 Luck: —") end
-				if indexLabels.lCategory then indexLabels.lCategory:Set("📂 Category: —") end
+				if indexLabels.lTarget   then indexLabels.lTarget:Set("ðŸŽ¯ Target: â€”") end
+				if indexLabels.lOdds     then indexLabels.lOdds:Set("ðŸŽ² Odds: â€”") end
+				if indexLabels.lLuck     then indexLabels.lLuck:Set("ðŸ€ Luck: â€”") end
+				if indexLabels.lCategory then indexLabels.lCategory:Set("ðŸ“‚ Category: â€”") end
 			end
 		end,
 	})
@@ -2177,12 +2177,12 @@ repeat task.wait() until game:IsLoaded()
 	indexTab:CreateSection("Settings")
 
 	pcall(function()
-		local categoryOptions = {"🎲 All (Recommended)"}
+		local categoryOptions = {"ðŸŽ² All (Recommended)"}
 		for _, catId in ipairs(CATEGORY_IDS) do
 			local missing = getMissingSlimes(catId)
 			local label   = catId:sub(1,1):upper()..catId:sub(2)
 			if #missing == 0 then
-				table.insert(categoryOptions, "✅ "..label.." (Complete)")
+				table.insert(categoryOptions, "âœ… "..label.." (Complete)")
 			else
 				local effOdds = getEffectiveOdds(missing[1], catId)
 				table.insert(categoryOptions, string.format("%s (%d left | %s)", label, #missing, formatOdds(effOdds)))
@@ -2192,20 +2192,20 @@ repeat task.wait() until game:IsLoaded()
 		indexTab:CreateDropdown({ Name = "Category", Options = categoryOptions, CurrentOption = {categoryOptions[1]}, MultipleOptions = false, Flag = "IndexCategory", Callback = function(option) selectedCategoryOption = type(option)=="table" and option[1] or option end })
 	end)
 
-	indexTab:CreateDropdown({ Name="Roll Mode", Options={"🌱 Easiest First","🎯 Rarest First"}, CurrentOption={"🌱 Easiest First"}, MultipleOptions=false, Flag="IndexRollMode", Callback=function() end })
+	indexTab:CreateDropdown({ Name="Roll Mode", Options={"ðŸŒ± Easiest First","ðŸŽ¯ Rarest First"}, CurrentOption={"ðŸŒ± Easiest First"}, MultipleOptions=false, Flag="IndexRollMode", Callback=function() end })
 
 	indexTab:CreateSection("Status")
-	indexLabels.lTarget   = indexTab:CreateLabel("🎯 Target: —")
-	indexLabels.lOdds     = indexTab:CreateLabel("🎲 Odds: —")
-	indexLabels.lLuck     = indexTab:CreateLabel("🍀 Luck: —")
-	indexLabels.lCategory = indexTab:CreateLabel("📂 Category: —")
+	indexLabels.lTarget   = indexTab:CreateLabel("ðŸŽ¯ Target: â€”")
+	indexLabels.lOdds     = indexTab:CreateLabel("ðŸŽ² Odds: â€”")
+	indexLabels.lLuck     = indexTab:CreateLabel("ðŸ€ Luck: â€”")
+	indexLabels.lCategory = indexTab:CreateLabel("ðŸ“‚ Category: â€”")
 
 	indexTab:CreateSection("Index Progress")
 	local indexProgressLabels = {}
 	local totalSlimeCount = getTotalSlimes()
 	for _, catId in ipairs(CATEGORY_IDS) do
 		local label = catId:sub(1,1):upper()..catId:sub(2)
-		indexProgressLabels[catId] = indexTab:CreateLabel(string.format("📊 %s: %d / %d", label, getUnlockedCount(catId), totalSlimeCount))
+		indexProgressLabels[catId] = indexTab:CreateLabel(string.format("ðŸ“Š %s: %d / %d", label, getUnlockedCount(catId), totalSlimeCount))
 	end
 
 	task.spawn(function()
@@ -2216,7 +2216,7 @@ repeat task.wait() until game:IsLoaded()
 				for _, catId in ipairs(CATEGORY_IDS) do
 					if indexProgressLabels[catId] then
 						local label = catId:sub(1,1):upper()..catId:sub(2)
-						indexProgressLabels[catId]:Set(string.format("📊 %s: %d / %d", label, getUnlockedCount(catId), totalNow))
+						indexProgressLabels[catId]:Set(string.format("ðŸ“Š %s: %d / %d", label, getUnlockedCount(catId), totalNow))
 					end
 				end
 			end)
@@ -2371,7 +2371,7 @@ repeat task.wait() until game:IsLoaded()
 				end,
 			})
 		else
-			miscTab:CreateLabel("Potion types not yet loaded — enable after modules load.")
+			miscTab:CreateLabel("Potion types not yet loaded â€” enable after modules load.")
 		end
 	end)
 
@@ -2450,12 +2450,12 @@ repeat task.wait() until game:IsLoaded()
 				end,
 			})
 		else
-			miscTab:CreateLabel("Dice types not yet loaded — enable after modules load.")
+			miscTab:CreateLabel("Dice types not yet loaded â€” enable after modules load.")
 		end
 	end)
 
 	webhookTab:CreateSection("Warning")
-	webhookTab:CreateParagraph({ Title = "⚠️ WARNING", Content = "WEBHOOK WILL ONLY WORK IF YOU MANUALLY ENABLE AUTO ROLL IN GAME\nPLEASE DISABLE FAST ROLL (from Farming Tab) if you have it enabled" })
+	webhookTab:CreateParagraph({ Title = "âš ï¸ WARNING", Content = "WEBHOOK WILL ONLY WORK IF YOU MANUALLY ENABLE AUTO ROLL IN GAME\nPLEASE DISABLE FAST ROLL (from Farming Tab) if you have it enabled" })
 	webhookTab:CreateSection("Configuration")
 
 	local savedWebhookUrl = ""
@@ -2467,7 +2467,7 @@ repeat task.wait() until game:IsLoaded()
 		Callback = function(url)
 			if url and url:match("^https://discord") then
 				savedWebhookUrl = url
-				local masked = string.rep("•", #url - 6) .. url:sub(-6)
+				local masked = string.rep("â€¢", #url - 6) .. url:sub(-6)
 				rayfieldLibrary:Notify({Title = "Webhook", Content = "URL saved: " .. masked, Duration = 3})
 			end
 		end,
@@ -2485,7 +2485,7 @@ repeat task.wait() until game:IsLoaded()
 			local mention = (userId and userId ~= "") and ("<@" .. userId .. "> ") or ""
 			local success = pcall(function()
 				request({ Url = savedWebhookUrl, Method = "POST", Headers = {["Content-Type"]="application/json"},
-					Body = HttpService:JSONEncode({ content=mention, username="Cactus Hub", avatar_url=WEBHOOK_AVATAR, embeds={{title="✅ Webhook Test",description="Your webhook is working correctly!",color=0x2ecc71}} })
+					Body = HttpService:JSONEncode({ content=mention, username="Cactus Hub", avatar_url=WEBHOOK_AVATAR, embeds={{title="âœ… Webhook Test",description="Your webhook is working correctly!",color=0x2ecc71}} })
 				})
 			end)
 			rayfieldLibrary:Notify({Title="Webhook", Content=success and "Test sent successfully!" or "Failed to send test.", Duration=4})
@@ -2566,17 +2566,17 @@ repeat task.wait() until game:IsLoaded()
 		local finalDamage = damage * statBonus
 		local finalHealth = health * statBonus
 		local statsString = ""
-		if finalDamage > 0 and finalHealth > 0 then statsString = string.format("⚔️ %s  ❤️ %s", formatNumber(finalDamage), formatNumber(finalHealth))
-		elseif finalDamage > 0 then statsString = string.format("⚔️ %s", formatNumber(finalDamage))
-		elseif finalHealth > 0 then statsString = string.format("❤️ %s", formatNumber(finalHealth)) end
+		if finalDamage > 0 and finalHealth > 0 then statsString = string.format("âš”ï¸ %s  â¤ï¸ %s", formatNumber(finalDamage), formatNumber(finalHealth))
+		elseif finalDamage > 0 then statsString = string.format("âš”ï¸ %s", formatNumber(finalDamage))
+		elseif finalHealth > 0 then statsString = string.format("â¤ï¸ %s", formatNumber(finalHealth)) end
 		if statsString ~= "" then table.insert(embedFields, {name="Stats",value=statsString,inline=true}) end
 		if mutations and next(mutations) then
 			local mutNames = {}
 			for mut in pairs(mutations) do table.insert(mutNames, mut:sub(1,1):upper()..mut:sub(2)) end
 			table.insert(embedFields, {name="Mutations",value=table.concat(mutNames,", "),inline=true})
 		end
-		table.insert(embedFields, {name="💰 Coins",value=formatNumber(coins),inline=true})
-		table.insert(embedFields, {name="⚔️ Kills",value=formatNumber(totalKills),inline=true})
+		table.insert(embedFields, {name="ðŸ’° Coins",value=formatNumber(coins),inline=true})
+		table.insert(embedFields, {name="âš”ï¸ Kills",value=formatNumber(totalKills),inline=true})
 		local iconAssetId = (mutations and mutations.inverted) and (slimeData and slimeData.invertedIcon) or (slimeData and slimeData.image)
 		local thumbnailUrl = nil
 		if iconAssetId and iconAssetId ~= "N/A" then
@@ -2592,8 +2592,8 @@ repeat task.wait() until game:IsLoaded()
 			end
 		end
 		local userEmbed = {
-			title = "🎲 New Slime Rolled!",
-			description = string.format("**||%s||** rolled **%s**!\n\n🎲 **Total Rolls:** %s", playerName, displayName, tostring(totalRolls)),
+			title = "ðŸŽ² New Slime Rolled!",
+			description = string.format("**||%s||** rolled **%s**!\n\nðŸŽ² **Total Rolls:** %s", playerName, displayName, tostring(totalRolls)),
 			thumbnail = thumbnailUrl and {url=thumbnailUrl,width=64,height=64} or nil,
 			fields = embedFields,
 			color = mutations and (mutations.inverted and 0x9b59b6 or mutations.huge and 0xf1c40f or mutations.big and 0xe67e22 or mutations.shiny and 0xf39c12 or 0x3498db) or 0x3498db,
@@ -2660,7 +2660,7 @@ repeat task.wait() until game:IsLoaded()
 		end
 	end)
 
-	settingsTab:CreateParagraph({ Title = "🍀 Want a serverhop script for luck servers?", Content = "Join the Discord! discord.gg/qMWFBWdcf" })
+	settingsTab:CreateParagraph({ Title = "ðŸ€ Want a serverhop script for luck servers?", Content = "Join the Discord! discord.gg/qMWFBWdcf" })
 	settingsTab:CreateSection("System")
 
 	featureToggle(settingsTab, {
