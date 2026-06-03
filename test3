@@ -298,7 +298,7 @@ task.spawn(function()
 	local networkerRoll, inventoryServiceClient, xpTransferServiceClient
 	local rollServiceRemote, codeServiceRemote, inventoryServiceRemote
 	local rebirthServiceRemote, zonesServiceRemote, upgradeServiceRemote
-    local craftingServiceRemote, xpTransferMachineRemote, fruitExtractorRemote
+	local craftingServiceRemote, xpTransferMachineRemote
 	local boostServiceRemote, offlineEarningsRemote, indexServiceRemote, lootServiceRemote
 	local sourceFolder
 	local upgradeTreeModule, indexRewardsModule, boostServiceUtils, specialDiceUtils
@@ -347,9 +347,6 @@ task.spawn(function()
 			offlineEarningsRemote  = getRemoteFunction("OfflineEarningsService")
 			indexServiceRemote     = getRemoteFunction("IndexService")
 			lootServiceRemote      = getRemoteFunction("LootService")
-			craftingServiceRemote     = getRemoteFunction("CraftingService")
-			xpTransferMachineRemote   = getRemoteFunction("XpTransferService")
-			fruitExtractorRemote      = getRemoteFunction("FruitExtractorService")
 			sourceFolder = ReplicatedStorage:WaitForChild("Source", 30)
 			if not sourceFolder then error("Source folder not found") end
 			upgradeTreeModule  = require(sourceFolder.Features.Upgrades.UpgradeTree)
@@ -1145,50 +1142,6 @@ task.spawn(function()
 			end)
 		end,
 	})
-
-	-- ==================== AUTO UNLOCK MACHINES (ADDED) ====================
-	farmingTab:CreateSection("Machines")
-
-	farmingTab:CreateDropdown({
-		Name = "Machines to Unlock",
-		Options = {"All", "Crafting Machine", "XP Transfer Machine", "Fruit Extractor"},
-		CurrentOption = {"All"},
-		MultipleOptions = true,
-		Flag = "MachineUnlockTarget",
-		Callback = function() end,
-	})
-
-	featureToggle(farmingTab, {
-		Name = "Auto Unlock Machines",
-		CurrentValue = false,
-		Flag = "FarmingAutoUnlockMachines",
-		Callback = function(enabled)
-			if not enabled then return end
-			task.spawn(function()
-				while true do
-					local flag = rayfieldLibrary.Flags.FarmingAutoUnlockMachines
-					if not flag or not flag.CurrentValue then break end
-					pcall(function()
-						local selected = rayfieldLibrary.Flags.MachineUnlockTarget and rayfieldLibrary.Flags.MachineUnlockTarget.CurrentOption or {"All"}
-						local selSet = {}
-						for _, s in ipairs(selected) do selSet[s] = true end
-						local unlockAll = selSet["All"]
-						if (unlockAll or selSet["Crafting Machine"]) and craftingServiceRemote then
-							pcall(function() craftingServiceRemote:InvokeServer("requestUnlockMachine") end)
-						end
-						if (unlockAll or selSet["XP Transfer Machine"]) and xpTransferMachineRemote then
-							pcall(function() xpTransferMachineRemote:InvokeServer("requestUnlockMachine") end)
-						end
-						if (unlockAll or selSet["Fruit Extractor"]) and fruitExtractorRemote then
-							pcall(function() fruitExtractorRemote:InvokeServer("requestUnlockMachine") end)
-						end
-					end)
-					task.wait(10)
-				end
-			end)
-		end,
-	})
-	-- ==================== END OF AUTO UNLOCK MACHINES ====================
 
 	farmingTab:CreateSection("Slimes & XP")
 
@@ -2247,150 +2200,145 @@ task.spawn(function()
 
 	miscTab:CreateSection("Consumables")
 
--- POTION SECTION (Modified)
-pcall(function()
-	local sortedBoostKinds = {}
-	if boostKinds then for _, kind in ipairs(boostKinds) do table.insert(sortedBoostKinds, kind) end table.sort(sortedBoostKinds) end
-	
-	-- Auto Use Potions (only when needed)
-	featureToggle(miscTab, {
-		Name = "Auto Use Potions",
-		CurrentValue = false,
-		Flag = "MiscUsePotions",
-		Callback = function(enabled)
-			if not enabled then return end
-			task.spawn(function()
-				while true do
-					local flag = rayfieldLibrary.Flags.MiscUsePotions
-					if not flag or not flag.CurrentValue then break end
-					pcall(function()
-						if not boostServiceRemote or not dataServiceClient or not boostServiceUtils then return end
-						local boosts = dataServiceClient:get("boosts") or {}
-						local selectedPotions = rayfieldLibrary.Flags.MiscPotionTypes and rayfieldLibrary.Flags.MiscPotionTypes.CurrentOption or {}
-						local serverTime = workspace:GetServerTimeNow()
-						for _, potionType in ipairs(selectedPotions) do
-							local boostData = boosts[potionType]
-							if boostData and (boostData.amount or 0) > 0 then
-								local remaining = boostServiceUtils.getTimeRemaining(boostData, serverTime)
-								if remaining <= 0 then
-									pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
-									task.wait(0.5)
+	pcall(function()
+		local sortedBoostKinds = {}
+		if boostKinds then for _, kind in ipairs(boostKinds) do table.insert(sortedBoostKinds, kind) end table.sort(sortedBoostKinds) end
+
+		featureToggle(miscTab, {
+			Name = "Auto Use Potions",
+			CurrentValue = false,
+			Flag = "MiscUsePotions",
+			Callback = function(enabled)
+				if not enabled then return end
+				task.spawn(function()
+					while true do
+						local flag = rayfieldLibrary.Flags.MiscUsePotions
+						if not flag or not flag.CurrentValue then break end
+						pcall(function()
+							if not boostServiceRemote or not dataServiceClient or not boostServiceUtils then return end
+							local boosts = dataServiceClient:get("boosts") or {}
+							local selectedPotions = rayfieldLibrary.Flags.MiscPotionTypes and rayfieldLibrary.Flags.MiscPotionTypes.CurrentOption or {}
+							local serverTime = workspace:GetServerTimeNow()
+							for _, potionType in ipairs(selectedPotions) do
+								local boostData = boosts[potionType]
+								if boostData and (boostData.amount or 0) > 0 then
+									local remaining = boostServiceUtils.getTimeRemaining(boostData, serverTime)
+									if remaining <= 0 then
+										pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
+										task.wait(0.5)
+									end
 								end
 							end
-						end
-					end)
-					task.wait(1)
-				end
-			end)
-		end,
-	})
-	
-	if #sortedBoostKinds > 0 then
-		miscTab:CreateDropdown({ Name="Potion Types", Options=sortedBoostKinds, CurrentOption=sortedBoostKinds, MultipleOptions=true, Flag="MiscPotionTypes", Callback=function() end })
-		featureButton(miscTab, {
-			Name = "Use All Selected Potions",
-			Callback = function()
-				task.spawn(function()
-					pcall(function()
-						if not boostServiceRemote or not dataServiceClient then
-							rayfieldLibrary:Notify({ Title="Error", Content="Boost service not ready", Duration=3 })
-							return
-						end
-						local selectedPotions = rayfieldLibrary.Flags.MiscPotionTypes and rayfieldLibrary.Flags.MiscPotionTypes.CurrentOption or {}
-						for _, potionType in ipairs(selectedPotions) do
-							local boosts = dataServiceClient:get("boosts") or {}
-							local amount = (boosts[potionType] or {}).amount or 0
-							for i = 1, amount do
-								pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
-								task.wait(0.2)
-							end
-						end
-						rayfieldLibrary:Notify({ Title="Potions", Content="Used all selected potions", Duration=3 })
-					end)
+						end)
+						task.wait(1)
+					end
 				end)
 			end,
 		})
-	else
-		miscTab:CreateLabel("Potion types not yet loaded — enable after modules load.")
-	end
-end)
 
--- DICE SECTION (Modified)
-pcall(function()
-	local diceNames = {}
-	if diceItemIds and idToNameMap then
-		for _, itemId in ipairs(diceItemIds) do table.insert(diceNames, idToNameMap[itemId]) end
-		table.sort(diceNames)
-	end
-	
-	-- Auto Use Dice & Items (only when no special dice active)
-	featureToggle(miscTab, {
-		Name = "Auto Use Dice & Items",
-		CurrentValue = false,
-		Flag = "MiscUseDice",
-		Callback = function(enabled)
-			if not enabled then return end
-			task.spawn(function()
-				while true do
-					local flag = rayfieldLibrary.Flags.MiscUseDice
-					if not flag or not flag.CurrentValue then break end
-					pcall(function()
-						if not inventoryServiceRemote or not dataServiceClient then return end
-						-- Check if any special dice is currently active
-						local queue = dataServiceClient:get("specialDiceQueue") or {}
-						local active = queue[1]
-						if active then
-							task.wait(1)
-							return -- do nothing if a dice is already active
-						end
-						local items = dataServiceClient:get("items") or {}
-						local selectedDiceItems = rayfieldLibrary.Flags.MiscDiceTypes and rayfieldLibrary.Flags.MiscDiceTypes.CurrentOption or {}
-						for _, diceName in ipairs(selectedDiceItems) do
-							local itemId = nameToIdMap and nameToIdMap[diceName]
-							if itemId and (items[itemId] or 0) > 0 then
-								pcall(function() inventoryServiceRemote:InvokeServer("requestUseItem", itemId) end)
-								task.wait(0.5)
+		if #sortedBoostKinds > 0 then
+			miscTab:CreateDropdown({ Name="Potion Types", Options=sortedBoostKinds, CurrentOption=sortedBoostKinds, MultipleOptions=true, Flag="MiscPotionTypes", Callback=function() end })
+			featureButton(miscTab, {
+				Name = "Use All Selected Potions",
+				Callback = function()
+					task.spawn(function()
+						pcall(function()
+							if not boostServiceRemote or not dataServiceClient then
+								rayfieldLibrary:Notify({ Title="Error", Content="Boost service not ready", Duration=3 })
+								return
 							end
-						end
-					end)
-					task.wait(1)
-				end
-			end)
-		end,
-	})
-	
-	if #diceNames > 0 then
-		miscTab:CreateDropdown({ Name="Dice & Item Types", Options=diceNames, CurrentOption=diceNames, MultipleOptions=true, Flag="MiscDiceTypes", Callback=function() end })
-		featureButton(miscTab, {
-			Name = "Use All Selected Dice",
-			Callback = function()
-				task.spawn(function()
-					pcall(function()
-						if not inventoryServiceRemote or not dataServiceClient then
-							rayfieldLibrary:Notify({ Title="Error", Content="Inventory service not ready", Duration=3 })
-							return
-						end
-						local selectedDiceItems = rayfieldLibrary.Flags.MiscDiceTypes and rayfieldLibrary.Flags.MiscDiceTypes.CurrentOption or {}
-						for _, diceName in ipairs(selectedDiceItems) do
-							local itemId = nameToIdMap and nameToIdMap[diceName]
-							if itemId then
-								local items = dataServiceClient:get("items") or {}
-								local amount = items[itemId] or 0
+							local selectedPotions = rayfieldLibrary.Flags.MiscPotionTypes and rayfieldLibrary.Flags.MiscPotionTypes.CurrentOption or {}
+							for _, potionType in ipairs(selectedPotions) do
+								local boosts = dataServiceClient:get("boosts") or {}
+								local amount = (boosts[potionType] or {}).amount or 0
 								for i = 1, amount do
-									pcall(function() inventoryServiceRemote:InvokeServer("requestUseItem", itemId) end)
+									pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
 									task.wait(0.2)
 								end
 							end
-						end
-						rayfieldLibrary:Notify({ Title="Dice", Content="Used all selected dice/items", Duration=3 })
+							rayfieldLibrary:Notify({ Title="Potions", Content="Used all selected potions", Duration=3 })
+						end)
 					end)
+				end,
+			})
+		else
+			miscTab:CreateLabel("Potion types not yet loaded — enable after modules load.")
+		end
+	end)
+
+	pcall(function()
+		local diceNames = {}
+		if diceItemIds and idToNameMap then
+			for _, itemId in ipairs(diceItemIds) do table.insert(diceNames, idToNameMap[itemId]) end
+			table.sort(diceNames)
+		end
+
+		featureToggle(miscTab, {
+			Name = "Auto Use Dice & Items",
+			CurrentValue = false,
+			Flag = "MiscUseDice",
+			Callback = function(enabled)
+				if not enabled then return end
+				task.spawn(function()
+					while true do
+						local flag = rayfieldLibrary.Flags.MiscUseDice
+						if not flag or not flag.CurrentValue then break end
+						pcall(function()
+							if not inventoryServiceRemote or not dataServiceClient then return end
+							local queue = dataServiceClient:get("specialDiceQueue") or {}
+							local active = queue[1]
+							if active then
+								task.wait(1)
+								return
+							end
+							local items = dataServiceClient:get("items") or {}
+							local selectedDiceItems = rayfieldLibrary.Flags.MiscDiceTypes and rayfieldLibrary.Flags.MiscDiceTypes.CurrentOption or {}
+							for _, diceName in ipairs(selectedDiceItems) do
+								local itemId = nameToIdMap and nameToIdMap[diceName]
+								if itemId and (items[itemId] or 0) > 0 then
+									pcall(function() inventoryServiceRemote:InvokeServer("requestUseItem", itemId) end)
+									task.wait(0.5)
+								end
+							end
+						end)
+						task.wait(1)
+					end
 				end)
 			end,
 		})
-	else
-		miscTab:CreateLabel("Dice types not yet loaded — enable after modules load.")
-	end
-end)
+
+		if #diceNames > 0 then
+			miscTab:CreateDropdown({ Name="Dice & Item Types", Options=diceNames, CurrentOption=diceNames, MultipleOptions=true, Flag="MiscDiceTypes", Callback=function() end })
+			featureButton(miscTab, {
+				Name = "Use All Selected Dice",
+				Callback = function()
+					task.spawn(function()
+						pcall(function()
+							if not inventoryServiceRemote or not dataServiceClient then
+								rayfieldLibrary:Notify({ Title="Error", Content="Inventory service not ready", Duration=3 })
+								return
+							end
+							local selectedDiceItems = rayfieldLibrary.Flags.MiscDiceTypes and rayfieldLibrary.Flags.MiscDiceTypes.CurrentOption or {}
+							for _, diceName in ipairs(selectedDiceItems) do
+								local itemId = nameToIdMap and nameToIdMap[diceName]
+								if itemId then
+									local items = dataServiceClient:get("items") or {}
+									local amount = items[itemId] or 0
+									for i = 1, amount do
+										pcall(function() inventoryServiceRemote:InvokeServer("requestUseItem", itemId) end)
+										task.wait(0.2)
+									end
+								end
+							end
+							rayfieldLibrary:Notify({ Title="Dice", Content="Used all selected dice/items", Duration=3 })
+						end)
+					end)
+				end,
+			})
+		else
+			miscTab:CreateLabel("Dice types not yet loaded — enable after modules load.")
+		end
+	end)
 
 	webhookTab:CreateSection("Warning")
 	webhookTab:CreateParagraph({ Title = "⚠️ WARNING", Content = "WEBHOOK WILL ONLY WORK IF YOU MANUALLY ENABLE AUTO ROLL IN GAME\nPLEASE DISABLE FAST ROLL (from Farming Tab) if you have it enabled" })
@@ -2711,7 +2659,7 @@ end)
 		Name = "Destroy Effects", CurrentValue=false, Flag="DestroyEffects",
 		Callback = function(Value)
 			if updatingOptimizations or not Value then return end
-			for _, d in ipairs(game:GetDescendants()) do if OPT_VISUAL_TYPES[d.ClassName] or d:IsA("Fire") then pcall(function() d:Destroy() end) end
+			for _, d in ipairs(game:GetDescendants()) do if OPT_VISUAL_TYPES[d.ClassName] or d:IsA("Fire") then pcall(function() d:Destroy() end) end end
 		end,
 	})
 
