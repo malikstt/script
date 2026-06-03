@@ -34,6 +34,17 @@ repeat task.wait() until game:IsLoaded()
 	end)
 
 	Logger:info("CactusHub", "Init", "Loading Rayfield...")
+	-- Executor function support check
+	local executorFunctions = {"getconnections", "getgc", "setclipboard", "setfpscap", "request", "getrawmetatable", "setreadonly", "newcclosure", "getnamecallmethod"}
+	for _, funcName in ipairs(executorFunctions) do
+		local supported = type(_G[funcName]) == "function"
+		if supported then
+			print("Executor supports " .. funcName)
+		else
+			print("Executor does NOT support " .. funcName .. ", some features may not work as intended")
+		end
+	end
+
 	local rayfieldLibrary
 	local rayfieldOk, rayfieldErr = pcall(function()
 		rayfieldLibrary = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
@@ -130,7 +141,7 @@ repeat task.wait() until game:IsLoaded()
 	featureButton(mainTab, {
 		Name = "Copy Discord Invite",
 		Callback = function()
-			pcall(setclipboard, "https://discord.gg/qMWFBWdcf")
+			setclipboard("https://discord.gg/qMWFBWdcf")
 			rayfieldLibrary:Notify({ Title = "Copied!", Content = "Discord invite link copied to clipboard.", Duration = 3 })
 		end,
 	})
@@ -162,7 +173,7 @@ repeat task.wait() until game:IsLoaded()
 	mainTab:CreateParagraph({ Title = "Enabled By Default", Content = "[+] Anti AFK" })
 	mainTab:CreateParagraph({
 		Title = "Latest Update",
-		Content = "[+] Auto unlock machines \nMachines to unlock \n[+] Auto remove fruits from slimes \nFruits to remove\n[+] Advanced slime gun bypass cooldown\n[+] Fixed Auto Send & Accept requests \n[+] Fixed Auto Upgrade not working \n[+] Auto stack mode [ Smart ] \nNormal : just stacks whenever selected reaches 1\nSmart : start stacking once rarest dice reaches 1\n[+] Specific Position ( Auto farm zone ), Save pos, clear pos\n[+] better potion use (now only uses if u run out)\n[+] better dices use (now only uses if u run out) \n[+] Improved Optimization & whatever caused memory leaks \n[+] Bug fixes"
+		Content = "[+] Auto unlock machines \nMachines to unlock [] \n[+] Auto remove fruits from slimes \n[+] Fruits to remove []\n[+] Advanced slime gun bypass cooldown\n[+] Fixed Auto Send & Accept requests \n[+] Fixed Auto Upgrade not working \n[+] Auto stack mode [ Smart ] \nNormal : just stacks whenever selected reaches 1\nSmart : start stacking once rarest dice reaches 1\n[+] Specific Position ( Auto farm zone ), Save pos, clear pos\n[+] better potion use (now only uses if u run out)\n[+] better dices use (now only uses if u run out) \n[+] Improved Optimization & whatever caused memory leaks \n[+] Bug fixes"
 	})
 
 	pcall(function()
@@ -877,7 +888,7 @@ repeat task.wait() until game:IsLoaded()
 					end
 				end
 				DiceLuckLabel:Set("Total Stacked: x" .. string.format("%.1f", totalStacked))
-				if not stackActive or not networkerRoll then task.wait(1) continue end
+				if not stackActive or not networkerRoll then return end
 				local toWatch = {}
 				for _, dice in ipairs(DICE) do
 					if selectedDice[dice] then
@@ -1568,10 +1579,10 @@ repeat task.wait() until game:IsLoaded()
 		local tool = char:FindFirstChild("SlimeGun")
 		if not tool then return nil end
 		if not getgc then
-			if not getgcChecked then Logger:warn("Executor","Capability","Executor does NOT support getgc, some features may not work as intended") getgcChecked = true end
+			if not getgcChecked then Logger:warn("Executor","Capability","getgc not available — Auto Shoot disabled") getgcChecked = true end
 			return nil
 		end
-		if not getgcChecked then Logger:info("Executor","Capability","Executor supports getgc") getgcChecked = true end
+		if not getgcChecked then Logger:info("Executor","Capability","getgc available — Auto Shoot enabled") getgcChecked = true end
 		for _, v in ipairs(getgc(true)) do
 			if type(v) == "table" and rawget(v, "tool") == tool and rawget(v, "prevSendAt") ~= nil then return v end
 		end
@@ -1613,6 +1624,7 @@ repeat task.wait() until game:IsLoaded()
 						local U = require(R.Source.Features.Upgrades.UpgradeServiceUtils)
 						local G = require(R.Source.Features.GoopGun.GoopGunServiceClient)
 						local O = U.getUpgradeValue
+						-- FIX #5: Wrap module patch in pcall to protect against read-only tables on strict PC executors
 						local patchOk = pcall(function()
 							U.getUpgradeValue = function(N, L)
 								if N == "slimeGunFireRate" then return 0 end
@@ -1704,6 +1716,7 @@ repeat task.wait() until game:IsLoaded()
 
 	gameTab:CreateSection("Upgrades")
 
+	-- FIX #1: UpgradeService init — wait for Networker to be non-nil before calling Networker.client.new
 	local UpgradeService = nil
 	task.spawn(function()
 		repeat task.wait(1) until modulesLoaded and dataServiceClient and Networker
@@ -1974,13 +1987,16 @@ repeat task.wait() until game:IsLoaded()
 						end
 						craftingState.autoCraftThread = nil
 					end)
+					rayfieldLibrary:Notify({ Title="Auto Craft", Content="Started", Duration=3, Image=4483362458 })
 				else
 					if craftingState.autoCraftThread then task.cancel(craftingState.autoCraftThread) craftingState.autoCraftThread = nil end
+					rayfieldLibrary:Notify({ Title="Auto Craft", Content="Stopped.", Duration=3, Image=4483362458 })
 				end
 			end,
 		})
 
 		gameTab:CreateDropdown({ Name = "Protect Categories", Options = {"Best Slime","Equipped Slimes","Xp Slimes"}, CurrentOption = {"Best Slime","Equipped Slimes","Xp Slimes"}, MultipleOptions = true, Flag = "CraftingProtectCategories", Callback = function(options) craftingState.protectCategories = options protectedPets = buildProtectedSet(options) end })
+		rayfieldLibrary:Notify({ Title="Cactus Hub", Content="Loaded — "..(#recipeIdsList).." unlocked recipes ready.", Duration=5, Image=4483362458 })
 	end)
 
 	local ufoClient = nil
@@ -2373,6 +2389,7 @@ repeat task.wait() until game:IsLoaded()
 		local sortedBoostKinds = {}
 		if boostKinds then for _, kind in ipairs(boostKinds) do table.insert(sortedBoostKinds, kind) end table.sort(sortedBoostKinds) end
 
+		-- FIX #2: boostServiceUtils.getTimeRemaining guard — check function exists before calling, fallback to always-use
 		featureToggle(miscTab, {
 			Name = "Auto Use Potions",
 			CurrentValue = false,
@@ -2392,6 +2409,7 @@ repeat task.wait() until game:IsLoaded()
 								local boostData = boosts[potionType]
 								if boostData and (boostData.amount or 0) > 0 then
 									local shouldUse = true
+									-- FIX #2: safely check if getTimeRemaining exists before calling
 									if type(boostServiceUtils.getTimeRemaining) == "function" then
 										local ok, remaining = pcall(boostServiceUtils.getTimeRemaining, boostData, serverTime)
 										if ok and type(remaining) == "number" then
@@ -2730,22 +2748,20 @@ repeat task.wait() until game:IsLoaded()
 		Flag = "SettingsAntiKick",
 		Callback = function(value)
 			if value then
-				pcall(function()
-					local mt = getrawmetatable(game)
-					local oldNamecall = mt.__namecall
-					setreadonly(mt, false)
-					mt.__namecall = newcclosure(function(self, ...)
-						local method = getnamecallmethod()
-						if method == "Kick" and self == localPlayer then
-							if rayfieldLibrary.Flags.SettingsAntiKick and rayfieldLibrary.Flags.SettingsAntiKick.CurrentValue then
-								warn("[CactusHub] Blocked kick attempt")
-								return
-							end
+				local mt = getrawmetatable(game)
+				local oldNamecall = mt.__namecall
+				setreadonly(mt, false)
+				mt.__namecall = newcclosure(function(self, ...)
+					local method = getnamecallmethod()
+					if method == "Kick" and self == localPlayer then
+						if rayfieldLibrary.Flags.SettingsAntiKick and rayfieldLibrary.Flags.SettingsAntiKick.CurrentValue then
+							warn("[CactusHub] Blocked kick attempt")
+							return
 						end
-						return oldNamecall(self, ...)
-					end)
-					setreadonly(mt, true)
+					end
+					return oldNamecall(self, ...)
 				end)
+				setreadonly(mt, true)
 			end
 		end,
 	})
@@ -2884,6 +2900,7 @@ repeat task.wait() until game:IsLoaded()
 		return tostring(math.floor(n))
 	end
 
+	-- FIX #4: fmtTime corrected indentation (single-tab body)
 	local function fmtTime(seconds)
 		seconds = math.floor(tonumber(seconds) or 0)
 		local days = math.floor(seconds/86400)
@@ -3082,6 +3099,7 @@ repeat task.wait() until game:IsLoaded()
 	rayfieldLibrary:LoadConfiguration()
 	Logger:info("CactusHub", "Init", "Script initialization complete")
 end)
+-- FIX #3: Fatal error visibility — notify via Rayfield if loaded, always warn to output
 if not ok then
 	warn("[CactusHub] FATAL ERROR: " .. tostring(err))
 	pcall(function()
