@@ -902,77 +902,91 @@ task.spawn(function()
 	})
 
 	local selectedDice = {golden=true, diamond=true, void=true, galaxy=true}
-	local stackActive = false
-	local releaseActive = false
-	local paused = {golden=false, diamond=false, void=false, galaxy=false}
+local stackActive = false
+local releaseActive = false
+local paused = {golden=false, diamond=false, void=false, galaxy=false}
+local stackMode = "Normal"
 
-	featureToggle(farmingTab, {
-		Name = "Auto Stack Dice",
-		CurrentValue = false,
-		Flag = "autostack",
-		Callback = function(v)
-			stackActive = v
-			if not v and networkerRoll then
-				for _, dice in ipairs(DICE) do
-					if paused[dice] then
-						pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
-						paused[dice] = false
-					end
+featureToggle(farmingTab, {
+	Name = "Auto Stack Dice",
+	CurrentValue = false,
+	Flag = "autostack",
+	Callback = function(v)
+		stackActive = v
+		if not v and networkerRoll then
+			for _, dice in ipairs(DICE) do
+				if paused[dice] then
+					pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
+					paused[dice] = false
 				end
 			end
-		end,
-	})
+		end
+	end,
+})
 
-	featureToggle(farmingTab, {
-		Name = "Auto Release Dice",
-		CurrentValue = false,
-		Flag = "autorelease",
-		Callback = function(v) releaseActive = v end,
-	})
+farmingTab:CreateDropdown({
+	Name = "Stack Mode",
+	Options = {"Normal", "Smart"},
+	CurrentOption = {"Normal"},
+	MultipleOptions = false,
+	Flag = "StackMode",
+	Callback = function(opt)
+		stackMode = type(opt) == "table" and opt[1] or opt
+	end,
+})
 
-	farmingTab:CreateDropdown({
-		Name = "Select Dice",
-		Options = {"All","Diamond","Galaxy","Golden","Void"},
-		CurrentOption = {"All"},
-		MultipleOptions = true,
-		Flag = "diceDropdown",
-		Callback = function(choices)
-			for _, dice in ipairs(DICE) do selectedDice[dice] = false end
-			for _, choice in ipairs(choices) do
-				if choice == "All" then for _, dice in ipairs(DICE) do selectedDice[dice] = true end break
-				else selectedDice[choice:lower()] = true end
+featureToggle(farmingTab, {
+	Name = "Auto Release Dice",
+	CurrentValue = false,
+	Flag = "autorelease",
+	Callback = function(v) releaseActive = v end,
+})
+
+farmingTab:CreateDropdown({
+	Name = "Select Dice",
+	Options = {"All","Diamond","Galaxy","Golden","Void"},
+	CurrentOption = {"All"},
+	MultipleOptions = true,
+	Flag = "diceDropdown",
+	Callback = function(choices)
+		for _, dice in ipairs(DICE) do selectedDice[dice] = false end
+		for _, choice in ipairs(choices) do
+			if choice == "All" then for _, dice in ipairs(DICE) do selectedDice[dice] = true end break
+			else selectedDice[choice:lower()] = true end
+		end
+	end,
+})
+
+local DiceLuckLabel = farmingTab:CreateLabel("Total Stacked: x0")
+
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+		pcall(function()
+			if not dataServiceClient or not SpecialRollUtils then return end
+			local upgrades = dataServiceClient:get("upgrades") or {}
+			local progression = dataServiceClient:get("specialRollProgression") or {}
+			local totalStacked = 0
+			for _, dice in ipairs(DICE) do
+				local prog = progression[dice]
+				local rolls = prog and prog.rollsUntilNext or math.huge
+				if rolls <= 1 then
+					local ok, mult = pcall(SpecialRollUtils.getLuckMultiplier, dice, upgrades)
+					if ok then totalStacked = totalStacked + (mult or 0) end
+				end
 			end
-		end,
-	})
-
-	local DiceLuckLabel = farmingTab:CreateLabel("Total Stacked: x0")
-
-	task.spawn(function()
-		while true do
-			task.wait(0.5)
-			pcall(function()
-				if not dataServiceClient or not SpecialRollUtils then return end
-				local upgrades = dataServiceClient:get("upgrades") or {}
-				local progression = dataServiceClient:get("specialRollProgression") or {}
-				local totalStacked = 0
-				for _, dice in ipairs(DICE) do
-					local prog = progression[dice]
-					local rolls = prog and prog.rollsUntilNext or math.huge
-					if rolls <= 1 then
-						local ok, mult = pcall(SpecialRollUtils.getLuckMultiplier, dice, upgrades)
-						if ok then totalStacked = totalStacked + (mult or 0) end
-					end
+			DiceLuckLabel:Set("Total Stacked: x" .. string.format("%.1f", totalStacked))
+			if not stackActive or not networkerRoll then return end
+			local toWatch = {}
+			for _, dice in ipairs(DICE) do
+				if selectedDice[dice] then
+					local ok, unlocked = pcall(SpecialRollUtils.isUnlocked, dice, upgrades)
+					if ok and unlocked then table.insert(toWatch, dice) end
 				end
-				DiceLuckLabel:Set("Total Stacked: x" .. string.format("%.1f", totalStacked))
-				if not stackActive or not networkerRoll then return end
-				local toWatch = {}
-				for _, dice in ipairs(DICE) do
-					if selectedDice[dice] then
-						local ok, unlocked = pcall(SpecialRollUtils.isUnlocked, dice, upgrades)
-						if ok and unlocked then table.insert(toWatch, dice) end
-					end
-				end
-				if #toWatch == 0 then return end
+			end
+			if #toWatch == 0 then return end
+			local currentMode = (rayfieldLibrary.Flags.StackMode and rayfieldLibrary.Flags.StackMode.CurrentOption and rayfieldLibrary.Flags.StackMode.CurrentOption[1]) or "Normal"
+			if currentMode == "Normal" then
 				local allReady = true
 				for _, dice in ipairs(toWatch) do
 					local prog = progression[dice]
@@ -992,9 +1006,72 @@ task.spawn(function()
 					rayfieldLibrary:Notify({ Title = "Unleashed!", Content = "All selected dice stacked — releasing now.", Duration = 3 })
 					task.wait(2)
 				end
-			end)
-		end
-	end)
+			elseif currentMode == "Smart" then
+				local smartOrder = {"galaxy", "void", "diamond", "golden"}
+				local readyMap = {}
+				for _, dice in ipairs(toWatch) do
+					local prog = progression[dice]
+					local rolls = prog and prog.rollsUntilNext or math.huge
+					readyMap[dice] = rolls <= 1
+				end
+				local galaxyInWatch = false
+				for _, d in ipairs(toWatch) do if d == "galaxy" then galaxyInWatch = true break end end
+				local galaxyPaused = galaxyInWatch and paused["galaxy"]
+				if galaxyInWatch and not galaxyPaused then
+					for _, dice in ipairs(toWatch) do
+						if dice ~= "galaxy" then
+							if paused[dice] then
+								pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
+								paused[dice] = false
+							end
+						end
+					end
+					if readyMap["galaxy"] and not paused["galaxy"] then
+						pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", "galaxy", true) end)
+						paused["galaxy"] = true
+					end
+				else
+					for _, dice in ipairs(smartOrder) do
+						local inWatch = false
+						for _, d in ipairs(toWatch) do if d == dice then inWatch = true break end end
+						if inWatch then
+							if not paused[dice] then
+								local prevPaused = true
+								for _, prev in ipairs(smartOrder) do
+									if prev == dice then break end
+									local prevInWatch = false
+									for _, d in ipairs(toWatch) do if d == prev then prevInWatch = true break end end
+									if prevInWatch and not paused[prev] then prevPaused = false break end
+								end
+								if prevPaused and readyMap[dice] then
+									pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, true) end)
+									paused[dice] = true
+								elseif not readyMap[dice] then
+									if paused[dice] then
+										pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
+										paused[dice] = false
+									end
+								end
+							end
+						end
+					end
+					local allPaused = true
+					for _, dice in ipairs(toWatch) do
+						if not paused[dice] then allPaused = false break end
+					end
+					if allPaused and releaseActive then
+						for _, dice in ipairs(toWatch) do
+							pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
+							paused[dice] = false
+						end
+						rayfieldLibrary:Notify({ Title = "Unleashed!", Content = "Smart stack complete — releasing now.", Duration = 3 })
+						task.wait(2)
+					end
+				end
+			end
+		end)
+	end
+end)
 
 	farmingTab:CreateSection("Zones")
 
