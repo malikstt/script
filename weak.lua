@@ -18,33 +18,6 @@ repeat task.wait() until game:IsLoaded()
 	function Logger:warn(system, feature, message) self:log("WARN", system, feature, message) end
 	function Logger:error(system, feature, message, err) self:log("ERROR", system, feature, message, err) end
 
-	local execName = "Executor"
-	pcall(function()
-		if identifyexecutor then execName = identifyexecutor() end
-	end)
-
-	local function checkCapability(fnName, fn)
-		if type(fn) == "function" or (type(fn) == "string" and type(getfenv()[fn]) == "function") then
-			print(execName .. " supports " .. fnName)
-			return true
-		else
-			print(execName .. " does NOT support " .. fnName .. ", some features may not work as intended")
-			return false
-		end
-	end
-
-	local hasGetgc = checkCapability("getgc", getgc)
-	local hasRequest = checkCapability("request", request)
-	local hasGetidentity = checkCapability("getidentity", getidentity)
-	local hasSetthreadidentity = checkCapability("setthreadidentity", setthreadidentity)
-	local hasSetreadonly = checkCapability("setreadonly", setreadonly)
-	local hasGetrawmetatable = checkCapability("getrawmetatable", getrawmetatable)
-	local hasSetfpscap = checkCapability("setfpscap", setfpscap)
-	local hasNewcclosure = checkCapability("newcclosure", newcclosure)
-	local hasGetnamecallmethod = checkCapability("getnamecallmethod", getnamecallmethod)
-	local hasGetconnections = checkCapability("getconnections", getconnections)
-	local hasSetclipboard = checkCapability("setclipboard", setclipboard)
-
 	local Players = game:GetService("Players")
 	local localPlayer = Players.LocalPlayer
 	local RunService = game:GetService("RunService")
@@ -59,6 +32,62 @@ repeat task.wait() until game:IsLoaded()
 			virtualUser:ClickButton2(Vector2.new())
 		end)
 	end)
+
+	local executorName = (identifyexecutor and identifyexecutor()) or "Unknown Executor"
+
+	if setclipboard then
+		print(executorName .. " supports setclipboard")
+	else
+		warn(executorName .. " does NOT support setclipboard, some features may not work as intended")
+	end
+
+	if request then
+		print(executorName .. " supports request")
+	else
+		warn(executorName .. " does NOT support request, some features may not work as intended")
+	end
+
+	if setfpscap then
+		print(executorName .. " supports setfpscap")
+	else
+		warn(executorName .. " does NOT support setfpscap, some features may not work as intended")
+	end
+
+	if getgc then
+		print(executorName .. " supports getgc")
+	else
+		warn(executorName .. " does NOT support getgc, some features may not work as intended")
+	end
+
+	if getconnections then
+		print(executorName .. " supports getconnections")
+	else
+		warn(executorName .. " does NOT support getconnections, some features may not work as intended")
+	end
+
+	if getrawmetatable then
+		print(executorName .. " supports getrawmetatable")
+	else
+		warn(executorName .. " does NOT support getrawmetatable, some features may not work as intended")
+	end
+
+	if setreadonly then
+		print(executorName .. " supports setreadonly")
+	else
+		warn(executorName .. " does NOT support setreadonly, some features may not work as intended")
+	end
+
+	if newcclosure then
+		print(executorName .. " supports newcclosure")
+	else
+		warn(executorName .. " does NOT support newcclosure, some features may not work as intended")
+	end
+
+	if getnamecallmethod then
+		print(executorName .. " supports getnamecallmethod")
+	else
+		warn(executorName .. " does NOT support getnamecallmethod, some features may not work as intended")
+	end
 
 	Logger:info("CactusHub", "Init", "Loading Rayfield...")
 	local rayfieldLibrary
@@ -189,7 +218,7 @@ repeat task.wait() until game:IsLoaded()
 	mainTab:CreateParagraph({ Title = "Enabled By Default", Content = "[+] Anti AFK" })
 	mainTab:CreateParagraph({
 		Title = "Latest Update",
-		Content = "[+] Auto unlock machines \nMachines to Unlock\n[+] Auto remove fruits from slimes \n[+] Fruits to remove\n[+] Advanced slime gun bypass cooldown\n[+] Fixed Auto Send & Accept requests \n[+] Fixed Auto Upgrade not working \n[+] Auto stack mode [ Smart ] \nNormal : just stacks whenever selected reaches 1\nSmart : start stacking once rarest dice reaches 1\n[+] Specific Position ( Auto farm zone ), Save pos, clear pos\n[+] better potion use (now only uses if u run out)\n[+] better dices use (now only uses if u run out) \n[+] Improved Optimization & whatever caused memory leaks \n[+] Bug fixes"
+		Content = "[+] Auto unlock machines\nMachines to unlock\n[+] Auto remove fruits from slimes\n[+] Fruits to remove\n[+] Advanced slime gun bypass cooldown\n[+] Fixed Auto Send & Accept requests\n[+] Fixed Auto Upgrade not working\n[+] Auto stack mode [ Smart ]\nNormal : just stacks whenever selected reaches 1\nSmart : start stacking once rarest dice reaches 1\n[+] Specific Position ( Auto farm zone ), Save pos, clear pos\n[+] better potion use (now only uses if u run out)\n[+] better dices use (now only uses if u run out)\n[+] Improved Optimization & whatever caused memory leaks\n[+] Bug fixes"
 	})
 
 	pcall(function()
@@ -557,9 +586,8 @@ repeat task.wait() until game:IsLoaded()
 	end
 
 	local function refreshEnemyCache()
-		local now = tick()
-		if now - lastCacheTime < 2 then return end
-		lastCacheTime = now
+		if tick() - lastCacheTime < 2 then return end
+		lastCacheTime = tick()
 		cachedEnemies = {}
 		local container = getGameplayContainer()
 		if not container then return end
@@ -775,9 +803,8 @@ repeat task.wait() until game:IsLoaded()
 			local currentZoneId = dataServiceClient and dataServiceClient:get("zone") or nil
 			local boundary = nil
 			if currentZoneId then
-				local now = tick()
-				if now - lastBoundaryRefresh > 5 then
-					lastBoundaryRefresh = now
+				if tick() - lastBoundaryRefresh > 5 then
+					lastBoundaryRefresh = tick()
 					zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
 				end
 				boundary = getZoneBoundary(currentZoneId)
@@ -1069,10 +1096,9 @@ repeat task.wait() until game:IsLoaded()
 							targetZone = tonumber(targetOption:match("Zone (%d+)"))
 						end
 						if targetZone and targetZone > 0 and currentZone ~= targetZone then
-							local now = tick()
-							if now - lastTeleportTime > 3 then
+							if tick() - lastTeleportTime > 3 then
 								zonesServiceRemote:InvokeServer("requestTeleportZone", targetZone)
-								lastTeleportTime = now
+								lastTeleportTime = tick()
 								zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
 							end
 						end
@@ -1362,7 +1388,7 @@ repeat task.wait() until game:IsLoaded()
 					for uid, data in pairs(inventory) do
 						if uid ~= target then
 							local isEquipped = teamSet[uid]
-							local hasXp = (type(data)=="table" and (data.xp or 0)>0) or (type(data)=="number" and data>0)
+							local hasXp = (type(data)==="table" and (data.xp or 0)>0) or (type(data)==="number" and data>0)
 							if (sourceOption=="Unequipped With XP" and not isEquipped and hasXp) or (sourceOption=="All Slimes" and hasXp) then
 								pcall(function() xpTransferServiceClient:fetch("requestTransferXp", uid, target) end)
 								task.wait(0.5)
@@ -1478,10 +1504,7 @@ repeat task.wait() until game:IsLoaded()
 					task.spawn(function()
 						while autoExtractEnabled do
 							local flag = rayfieldLibrary.Flags and rayfieldLibrary.Flags.AutoExtractToggle
-							if not flag or not flag.CurrentValue then
-								autoExtractEnabled = false
-								break
-							end
+							if not flag or not flag.CurrentValue then break end
 							pcall(doExtract)
 							task.wait(2)
 						end
@@ -1600,9 +1623,11 @@ repeat task.wait() until game:IsLoaded()
 		if not char then return nil end
 		local tool = char:FindFirstChild("SlimeGun")
 		if not tool then return nil end
-		if not hasGetgc then
+		if not getgc then
+			if not getgcChecked then Logger:warn("Executor","Capability","getgc not available — Auto Shoot disabled") getgcChecked = true end
 			return nil
 		end
+		if not getgcChecked then Logger:info("Executor","Capability","getgc available — Auto Shoot enabled") getgcChecked = true end
 		for _, v in ipairs(getgc(true)) do
 			if type(v) == "table" and rawget(v, "tool") == tool and rawget(v, "prevSendAt") ~= nil then return v end
 		end
@@ -1906,7 +1931,7 @@ repeat task.wait() until game:IsLoaded()
 				if not protectedPets[uid] then
 					local parsedBase = parseUniqueId(uid)
 					if parsedBase == baseId then
-						local owned = type(data)=="number" and math.max(data,0) or (type(data)=="table" and 1 or 0)
+						local owned = type(data)==="number" and math.max(data,0) or (type(data)==="table" and 1 or 0)
 						local used  = usedCounts[uid] or 0
 						if owned - used > 0 then
 							local s = scoreUniqueId(uid)
@@ -1957,7 +1982,7 @@ repeat task.wait() until game:IsLoaded()
 				if not uid then return 0 end
 				usedCounts[uid] = (usedCounts[uid] or 0) + 1
 				local inv = dataServiceClient and dataServiceClient:get("inventory") or {}
-				local owned = type(inv[uid])=="number" and math.max(inv[uid],0) or (type(inv[uid])=="table" and 1 or 0)
+				local owned = type(inv[uid])==="number" and math.max(inv[uid],0) or (type(inv[uid])==="table" and 1 or 0)
 				local avail = owned - usedCounts[uid] + 1
 				if avail < maxCrafts then maxCrafts = avail end
 			end
@@ -2005,8 +2030,10 @@ repeat task.wait() until game:IsLoaded()
 						end
 						craftingState.autoCraftThread = nil
 					end)
+					rayfieldLibrary:Notify({ Title="Auto Craft", Content="Started", Duration=3, Image=4483362458 })
 				else
 					if craftingState.autoCraftThread then task.cancel(craftingState.autoCraftThread) craftingState.autoCraftThread = nil end
+					rayfieldLibrary:Notify({ Title="Auto Craft", Content="Stopped.", Duration=3, Image=4483362458 })
 				end
 			end,
 		})
