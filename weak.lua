@@ -18,6 +18,32 @@ repeat task.wait() until game:IsLoaded()
 	function Logger:warn(system, feature, message) self:log("WARN", system, feature, message) end
 	function Logger:error(system, feature, message, err) self:log("ERROR", system, feature, message, err) end
 
+	pcall(function()
+		local executorName = "UnknownExecutor"
+		pcall(function()
+			if type(getexecutorname) == "function" then
+				executorName = tostring(getexecutorname()) or executorName
+			end
+		end)
+		local capFunctions = {
+			{ name = "setclipboard",      fn = setclipboard      },
+			{ name = "getconnections",    fn = getconnections    },
+			{ name = "getrawmetatable",   fn = getrawmetatable   },
+			{ name = "newcclosure",       fn = newcclosure       },
+			{ name = "getnamecallmethod", fn = getnamecallmethod },
+			{ name = "setfpscap",         fn = setfpscap         },
+		}
+		for _, entry in ipairs(capFunctions) do
+			pcall(function()
+				if type(entry.fn) == "function" then
+					print(executorName .. " supports " .. entry.name)
+				else
+					warn(executorName .. " does NOT support " .. entry.name .. ", some features may not work as intended")
+				end
+			end)
+		end
+	end)
+
 	local Players = game:GetService("Players")
 	local localPlayer = Players.LocalPlayer
 	local RunService = game:GetService("RunService")
@@ -34,17 +60,6 @@ repeat task.wait() until game:IsLoaded()
 	end)
 
 	Logger:info("CactusHub", "Init", "Loading Rayfield...")
-	-- Executor function support check
-	local executorFunctions = {"getconnections", "getgc", "setclipboard", "setfpscap", "request", "getrawmetatable", "setreadonly", "newcclosure", "getnamecallmethod"}
-	for _, funcName in ipairs(executorFunctions) do
-		local supported = type(_G[funcName]) == "function"
-		if supported then
-			print("Executor supports " .. funcName)
-		else
-			print("Executor does NOT support " .. funcName .. ", some features may not work as intended")
-		end
-	end
-
 	local rayfieldLibrary
 	local rayfieldOk, rayfieldErr = pcall(function()
 		rayfieldLibrary = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
