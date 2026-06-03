@@ -1447,76 +1447,82 @@ task.spawn(function()
 
 	gameTab:CreateSection("Upgrades")
 
-	featureToggle(gameTab, {
-		Name = "Auto Upgrade Purchasing",
-		CurrentValue = false,
-		Flag = "GameAutoUpgrade",
-		Callback = function(enabled)
-			if not enabled then return end
-			task.spawn(function()
-				local upgradeTree_local
-				local ok_tree, res_tree = pcall(function() return require(game:GetService("ReplicatedStorage").Source.Features.Upgrades.UpgradeTree) end)
-				if ok_tree then upgradeTree_local = res_tree end
+-- FIXED AUTO UPGRADE PURCHASING (using UpgradeService:unlockUpgrade)
+local UpgradeService = nil
+task.spawn(function()
+	repeat task.wait(1) until modulesLoaded and dataServiceClient
+	local rs = game:GetService("ReplicatedStorage")
+	local ok, upgradeSvc = pcall(function() return require(rs.Source.Features.Upgrades.UpgradeServiceClient) end)
+	if ok and upgradeSvc then
+		local dummyClient = {}
+		dummyClient.networker = Networker.client.new("UpgradeService", dummyClient)
+		upgradeSvc.init(dummyClient)
+		UpgradeService = upgradeSvc
+	end
+end)
 
-				local function getUpgradeIdsAndCosts()
-					local ids, costs = {}, {}
-					if not upgradeTree_local then return ids, costs end
-					for _, tree in ipairs(upgradeTree_local) do
-						for id, data in pairs(tree) do
-							if data and data.cost then table.insert(ids, id) costs[id] = data.cost end
-						end
-					end
-					return ids, costs
+featureToggle(gameTab, {
+	Name = "Auto Upgrade Purchasing",
+	CurrentValue = false,
+	Flag = "GameAutoUpgrade",
+	Callback = function(enabled)
+		if not enabled then return end
+		task.spawn(function()
+			while true do
+				local flag = rayfieldLibrary.Flags.GameAutoUpgrade
+				if not flag or not flag.CurrentValue then break end
+				if not UpgradeService or not dataServiceClient or not upgradeTreeModule then
+					task.wait(2)
+					continue
 				end
+				pcall(function()
+					local upgradeMode = rayfieldLibrary.Flags.GameUpgradeMode and
+										rayfieldLibrary.Flags.GameUpgradeMode.CurrentOption or {"All"}
+					local modeSet = {}
+					for _, m in ipairs(upgradeMode) do modeSet[m] = true end
 
-				local upgradeIds, upgradeCosts = getUpgradeIdsAndCosts()
+					local unlockedUpgrades = dataServiceClient:get("upgrades") or {}
+					local coins = dataServiceClient:get("coins") or 0
+					local goop = dataServiceClient:get("goop") or 0
+					local rollCurrency = dataServiceClient:get("rollCurrency") or 0
 
-				while true do
-					local flag = rayfieldLibrary.Flags.GameAutoUpgrade
-					if not flag or not flag.CurrentValue then break end
-					if not upgradeServiceClient_new or not dataServiceClient_new then task.wait(0.5) continue end
-					pcall(function()
-						local upgradeMode = rayfieldLibrary.Flags.GameUpgradeMode and rayfieldLibrary.Flags.GameUpgradeMode.CurrentOption or {"All"}
-						local modeSet = {}
-						for _, m in ipairs(upgradeMode) do modeSet[m] = true end
-						local unlockedUpgrades = dataServiceClient_new:get("upgrades") or {}
-						local coins        = dataServiceClient_new:get("coins") or 0
-						local goop         = dataServiceClient_new:get("goop") or 0
-						local rollCurrency = dataServiceClient_new:get("rollCurrency") or 0
-						for _, upgradeId in ipairs(upgradeIds) do
-							if unlockedUpgrades[upgradeId] == true then continue end
-							local costInfo = upgradeCosts[upgradeId]
-							if not costInfo then continue end
-							local costAmount   = costInfo.amount or 0
-							local currencyType = costInfo.currency
-							local modeMatches = modeSet["All"]
-								or (modeSet["Coins"] and currencyType == "coins")
-								or (modeSet["Goop"] and currencyType == "goop")
-								or (modeSet["Rolls"] and currencyType == "rollCurrency")
-							if not modeMatches then continue end
-							local canAfford = (currencyType == "coins" and coins >= costAmount)
-								or (currencyType == "goop" and goop >= costAmount)
-								or (currencyType == "rollCurrency" and rollCurrency >= costAmount)
-							if canAfford then
-								local success = upgradeServiceClient_new:unlockUpgrade(upgradeId)
-								if success then
-									if currencyType == "coins" then coins = coins - costAmount
-									elseif currencyType == "goop" then goop = goop - costAmount
-									elseif currencyType == "rollCurrency" then rollCurrency = rollCurrency - costAmount end
-									unlockedUpgrades[upgradeId] = true
+					local anyPurchased = false
+					for treeName, tree in pairs(upgradeTreeModule) do
+						for upgradeId, data in pairs(tree) do
+							if data.cost and not unlockedUpgrades[upgradeId] then
+								local cost = data.cost.amount or 0
+								local currency = data.cost.currency
+								local canBuy = false
+								if currency == "coins" and (modeSet["All"] or modeSet["Coins"]) then
+									canBuy = coins >= cost
+								elseif currency == "goop" and (modeSet["All"] or modeSet["Goop"]) then
+									canBuy = goop >= cost
+								elseif currency == "rollCurrency" and (modeSet["All"] or modeSet["Rolls"]) then
+									canBuy = rollCurrency >= cost
 								end
-								task.wait(0.2)
+								if canBuy then
+									local success = UpgradeService:unlockUpgrade(upgradeId)
+									if success then
+										anyPurchased = true
+										if currency == "coins" then coins = coins - cost
+										elseif currency == "goop" then goop = goop - cost
+										elseif currency == "rollCurrency" then rollCurrency = rollCurrency - cost end
+										unlockedUpgrades[upgradeId] = true
+									end
+									task.wait(0.1)
+								end
 							end
 						end
-					end)
-					task.wait(0.5)
-				end
-			end)
-		end,
-	})
+					end
+					if not anyPurchased then task.wait(5) end
+				end)
+				task.wait(0.5)
+			end
+		end)
+	end,
+})
 
-	gameTab:CreateDropdown({ Name = "Upgrade Mode", Options = {"All","Coins","Goop","Rolls"}, CurrentOption = {"All"}, MultipleOptions = true, Flag = "GameUpgradeMode", Callback = function() end })
-
+gameTab:CreateDropdown({ Name = "Upgrade Mode", Options = {"All","Coins","Goop","Rolls"}, CurrentOption = {"All"}, MultipleOptions = true, Flag = "GameUpgradeMode", Callback = function() end })
 	gameTab:CreateSection("Recipes")
 
 	pcall(function()
