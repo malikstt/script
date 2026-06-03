@@ -18,13 +18,17 @@ repeat task.wait() until game:IsLoaded()
 	function Logger:warn(system, feature, message) self:log("WARN", system, feature, message) end
 	function Logger:error(system, feature, message, err) self:log("ERROR", system, feature, message, err) end
 
-	local executorName = "Delta"
-	local function checkCapability(name, fn)
-		if type(fn) == "function" or (type(_G[name]) == "function") then
-			print(executorName .. " supports " .. name)
+	local execName = "Executor"
+	pcall(function()
+		if identifyexecutor then execName = identifyexecutor() end
+	end)
+
+	local function checkCapability(fnName, fn)
+		if type(fn) == "function" or (type(fn) == "string" and type(getfenv()[fn]) == "function") then
+			print(execName .. " supports " .. fnName)
 			return true
 		else
-			print(executorName .. " does NOT support " .. name .. ", some features may not work as intended")
+			print(execName .. " does NOT support " .. fnName .. ", some features may not work as intended")
 			return false
 		end
 	end
@@ -33,13 +37,13 @@ repeat task.wait() until game:IsLoaded()
 	local hasRequest = checkCapability("request", request)
 	local hasGetidentity = checkCapability("getidentity", getidentity)
 	local hasSetthreadidentity = checkCapability("setthreadidentity", setthreadidentity)
-	local hasGetconnections = checkCapability("getconnections", getconnections)
-	local hasSetclipboard = checkCapability("setclipboard", setclipboard)
-	local hasSetfpscap = checkCapability("setfpscap", setfpscap)
+	local hasSetreadonly = checkCapability("setreadonly", setreadonly)
 	local hasGetrawmetatable = checkCapability("getrawmetatable", getrawmetatable)
+	local hasSetfpscap = checkCapability("setfpscap", setfpscap)
 	local hasNewcclosure = checkCapability("newcclosure", newcclosure)
 	local hasGetnamecallmethod = checkCapability("getnamecallmethod", getnamecallmethod)
-	local hasSetreadonly = checkCapability("setreadonly", setreadonly)
+	local hasGetconnections = checkCapability("getconnections", getconnections)
+	local hasSetclipboard = checkCapability("setclipboard", setclipboard)
 
 	local Players = game:GetService("Players")
 	local localPlayer = Players.LocalPlayer
@@ -56,6 +60,7 @@ repeat task.wait() until game:IsLoaded()
 		end)
 	end)
 
+	Logger:info("CactusHub", "Init", "Loading Rayfield...")
 	local rayfieldLibrary
 	local rayfieldOk, rayfieldErr = pcall(function()
 		rayfieldLibrary = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
@@ -65,6 +70,7 @@ repeat task.wait() until game:IsLoaded()
 		warn("[CactusHub] Rayfield failed: " .. tostring(rayfieldErr))
 		return
 	end
+	Logger:info("CactusHub", "Init", "Rayfield loaded successfully")
 
 	local mainWindow = rayfieldLibrary:CreateWindow({
 		Name = "Cactus Hub • discord.gg/qMWFBWdcf",
@@ -183,13 +189,13 @@ repeat task.wait() until game:IsLoaded()
 	mainTab:CreateParagraph({ Title = "Enabled By Default", Content = "[+] Anti AFK" })
 	mainTab:CreateParagraph({
 		Title = "Latest Update",
-		Content = "[+] Auto unlock machines\nMachines to unlock\n[+] Auto remove fruits from slimes\n[+] Fruits to remove\n[+] Advanced slime gun bypass cooldown\n[+] Fixed Auto Send & Accept requests\n[+] Fixed Auto Upgrade not working\n[+] Auto stack mode [ Smart ]\nNormal : just stacks whenever selected reaches 1\nSmart : start stacking once rarest dice reaches 1\n[+] Specific Position ( Auto farm zone ), Save pos, clear pos\n[+] better potion use (now only uses if u run out)\n[+] better dices use (now only uses if u run out)\n[+] Improved Optimization & whatever caused memory leaks\n[+] Bug fixes"
+		Content = "[+] Auto unlock machines \nMachines to Unlock\n[+] Auto remove fruits from slimes \n[+] Fruits to remove\n[+] Advanced slime gun bypass cooldown\n[+] Fixed Auto Send & Accept requests \n[+] Fixed Auto Upgrade not working \n[+] Auto stack mode [ Smart ] \nNormal : just stacks whenever selected reaches 1\nSmart : start stacking once rarest dice reaches 1\n[+] Specific Position ( Auto farm zone ), Save pos, clear pos\n[+] better potion use (now only uses if u run out)\n[+] better dices use (now only uses if u run out) \n[+] Improved Optimization & whatever caused memory leaks \n[+] Bug fixes"
 	})
 
 	pcall(function()
 		local m = require(ReplicatedStorage.Source.Features.AutoRejoin.AutoRejoinServiceClient)
 		pcall(function() m:disable() end)
-		if hasGetconnections and getconnections then
+		if getconnections then
 			pcall(function()
 				local suspects = { ReplicatedStorage, localPlayer }
 				for _, obj in ipairs(suspects) do
@@ -211,6 +217,7 @@ repeat task.wait() until game:IsLoaded()
 				end
 			end)
 		end
+		print("AutoRejoin disabled")
 	end)
 
 	local packages, dataServiceClient, Networker
@@ -230,7 +237,7 @@ repeat task.wait() until game:IsLoaded()
 	local modulesLoaded = false
 
 	task.spawn(function()
-		task.wait(1)
+		Logger:info("CactusHub", "ModuleLoad", "Starting module initialization...")
 		local ok, err = pcall(function()
 			packages = ReplicatedStorage:WaitForChild("Packages", 15)
 			if not packages then error("Packages not found") end
@@ -550,8 +557,9 @@ repeat task.wait() until game:IsLoaded()
 	end
 
 	local function refreshEnemyCache()
-		if tick() - lastCacheTime < 2 then return end
-		lastCacheTime = tick()
+		local now = tick()
+		if now - lastCacheTime < 2 then return end
+		lastCacheTime = now
 		cachedEnemies = {}
 		local container = getGameplayContainer()
 		if not container then return end
@@ -767,8 +775,9 @@ repeat task.wait() until game:IsLoaded()
 			local currentZoneId = dataServiceClient and dataServiceClient:get("zone") or nil
 			local boundary = nil
 			if currentZoneId then
-				if tick() - lastBoundaryRefresh > 5 then
-					lastBoundaryRefresh = tick()
+				local now = tick()
+				if now - lastBoundaryRefresh > 5 then
+					lastBoundaryRefresh = now
 					zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
 				end
 				boundary = getZoneBoundary(currentZoneId)
@@ -1060,9 +1069,10 @@ repeat task.wait() until game:IsLoaded()
 							targetZone = tonumber(targetOption:match("Zone (%d+)"))
 						end
 						if targetZone and targetZone > 0 and currentZone ~= targetZone then
-							if tick() - lastTeleportTime > 3 then
+							local now = tick()
+							if now - lastTeleportTime > 3 then
 								zonesServiceRemote:InvokeServer("requestTeleportZone", targetZone)
-								lastTeleportTime = tick()
+								lastTeleportTime = now
 								zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
 							end
 						end
@@ -1291,8 +1301,6 @@ repeat task.wait() until game:IsLoaded()
 			if value then
 				task.spawn(function()
 					while autoFeedEnabled do
-						local flag = rayfieldLibrary.Flags.AutoFeedToggle
-						if not flag or not flag.CurrentValue then break end
 						pcall(doFeed)
 						task.wait(1)
 					end
@@ -1327,51 +1335,44 @@ repeat task.wait() until game:IsLoaded()
 		})
 	end)
 
-	featureToggle(farmingTab, {
-		Name = "Auto Transfer XP",
-		CurrentValue = false,
-		Flag = "FarmingTransferXP",
-		Callback = function(enabled)
-			if not enabled then return end
-			task.spawn(function()
-				while true do
-					local flag = rayfieldLibrary.Flags.FarmingTransferXP
-					if not flag or not flag.CurrentValue then break end
-					task.wait(30)
-					pcall(function()
-						if not dataServiceClient or not xpTransferServiceClient then return end
-						local inventory = dataServiceClient:get("inventory") or {}
-						local equipped  = dataServiceClient:get("equipped") or {}
-						local teamSet   = {}
-						for _, uid in ipairs(equipped) do teamSet[uid] = true end
-						local targetOption = rayfieldLibrary.Flags.FarmingTransferTarget and rayfieldLibrary.Flags.FarmingTransferTarget.CurrentOption and rayfieldLibrary.Flags.FarmingTransferTarget.CurrentOption[1] or "Best Slime"
-						local sourceOption = rayfieldLibrary.Flags.FarmingTransferSource and rayfieldLibrary.Flags.FarmingTransferSource.CurrentOption and rayfieldLibrary.Flags.FarmingTransferSource.CurrentOption[1] or "Unequipped With XP"
-						local targets = {}
-						if targetOption == "Best Slime" then
-							local best = getBestSlimeUid()
-							if best then targets = {best} end
-						else
-							for _, uid in ipairs(equipped) do table.insert(targets, uid) end
-						end
-						for _, target in ipairs(targets) do
-							for uid, data in pairs(inventory) do
-								if uid ~= target then
-									local isEquipped = teamSet[uid]
-									local hasXp = (type(data)=="table" and (data.xp or 0)>0) or (type(data)=="number" and data>0)
-									if (sourceOption=="Unequipped With XP" and not isEquipped and hasXp) or (sourceOption=="All Slimes" and hasXp) then
-										pcall(function() xpTransferServiceClient:fetch("requestTransferXp", uid, target) end)
-										task.wait(0.5)
-									end
-								end
+	featureToggle(farmingTab, { Name = "Auto Transfer XP", CurrentValue = false, Flag = "FarmingTransferXP", Callback = function() end })
+	farmingTab:CreateDropdown({ Name="Transfer To", Options={"Best Slime","Whole Team"}, CurrentOption={"Best Slime"}, MultipleOptions=false, Flag="FarmingTransferTarget", Callback=function() end })
+	farmingTab:CreateDropdown({ Name="Transfer From", Options={"All Slimes","Unequipped With XP"}, CurrentOption={"Unequipped With XP"}, MultipleOptions=false, Flag="FarmingTransferSource", Callback=function() end })
+
+	task.spawn(function()
+		while true do
+			task.wait(30)
+			pcall(function()
+				if not (rayfieldLibrary.Flags.FarmingTransferXP and rayfieldLibrary.Flags.FarmingTransferXP.CurrentValue) then return end
+				if not dataServiceClient or not xpTransferServiceClient then return end
+				local inventory = dataServiceClient:get("inventory") or {}
+				local equipped  = dataServiceClient:get("equipped") or {}
+				local teamSet   = {}
+				for _, uid in ipairs(equipped) do teamSet[uid] = true end
+				local targetOption = rayfieldLibrary.Flags.FarmingTransferTarget and rayfieldLibrary.Flags.FarmingTransferTarget.CurrentOption and rayfieldLibrary.Flags.FarmingTransferTarget.CurrentOption[1] or "Best Slime"
+				local sourceOption = rayfieldLibrary.Flags.FarmingTransferSource and rayfieldLibrary.Flags.FarmingTransferSource.CurrentOption and rayfieldLibrary.Flags.FarmingTransferSource.CurrentOption[1] or "Unequipped With XP"
+				local targets = {}
+				if targetOption == "Best Slime" then
+					local best = getBestSlimeUid()
+					if best then targets = {best} end
+				else
+					for _, uid in ipairs(equipped) do table.insert(targets, uid) end
+				end
+				for _, target in ipairs(targets) do
+					for uid, data in pairs(inventory) do
+						if uid ~= target then
+							local isEquipped = teamSet[uid]
+							local hasXp = (type(data)=="table" and (data.xp or 0)>0) or (type(data)=="number" and data>0)
+							if (sourceOption=="Unequipped With XP" and not isEquipped and hasXp) or (sourceOption=="All Slimes" and hasXp) then
+								pcall(function() xpTransferServiceClient:fetch("requestTransferXp", uid, target) end)
+								task.wait(0.5)
 							end
 						end
-					end)
+					end
 				end
 			end)
 		end
-	})
-	farmingTab:CreateDropdown({ Name="Transfer To", Options={"Best Slime","Whole Team"}, CurrentOption={"Best Slime"}, MultipleOptions=false, Flag="FarmingTransferTarget", Callback=function() end })
-	farmingTab:CreateDropdown({ Name="Transfer From", Options={"All Slimes","Unequipped With XP"}, CurrentOption={"Unequipped With XP"}, MultipleOptions=false, Flag="FarmingTransferSource", Callback=function() end })
+	end)
 
 	farmingTab:CreateSection("Loot")
 
@@ -1477,7 +1478,10 @@ repeat task.wait() until game:IsLoaded()
 					task.spawn(function()
 						while autoExtractEnabled do
 							local flag = rayfieldLibrary.Flags and rayfieldLibrary.Flags.AutoExtractToggle
-							if not flag or not flag.CurrentValue then break end
+							if not flag or not flag.CurrentValue then
+								autoExtractEnabled = false
+								break
+							end
 							pcall(doExtract)
 							task.wait(2)
 						end
@@ -1596,11 +1600,9 @@ repeat task.wait() until game:IsLoaded()
 		if not char then return nil end
 		local tool = char:FindFirstChild("SlimeGun")
 		if not tool then return nil end
-		if not hasGetgc or not getgc then
-			getgcChecked = true
+		if not hasGetgc then
 			return nil
 		end
-		getgcChecked = true
 		for _, v in ipairs(getgc(true)) do
 			if type(v) == "table" and rawget(v, "tool") == tool and rawget(v, "prevSendAt") ~= nil then return v end
 		end
@@ -1616,16 +1618,7 @@ repeat task.wait() until game:IsLoaded()
 		Callback = function() end,
 	})
 
-	featureToggle(gameTab, {
-		Name = "Auto Shoot Enemies",
-		CurrentValue = false,
-		Flag = "CombatAutoShoot",
-		Callback = function(value)
-			combatEnabled = value
-			if not value then
-			end
-		end
-	})
+	featureToggle(gameTab, { Name = "Auto Shoot Enemies", CurrentValue = false, Flag = "CombatAutoShoot", Callback = function(value) combatEnabled = value end })
 
 	gameTab:CreateDropdown({ Name = "Combat Target Priority", Options = {"Closest","Lowest HP","Highest HP","Most Coins & Goop"}, CurrentOption = {"Closest"}, MultipleOptions = false, Flag = "CombatTargetPriority", Callback = function() end })
 
@@ -2768,7 +2761,6 @@ repeat task.wait() until game:IsLoaded()
 		Flag = "SettingsAntiKick",
 		Callback = function(value)
 			if value then
-				if not hasGetrawmetatable or not getrawmetatable then return end
 				local mt = getrawmetatable(game)
 				local oldNamecall = mt.__namecall
 				setreadonly(mt, false)
