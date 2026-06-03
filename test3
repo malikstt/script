@@ -168,28 +168,6 @@ repeat task.wait() until game:IsLoaded()
 	pcall(function()
 		local m = require(ReplicatedStorage.Source.Features.AutoRejoin.AutoRejoinServiceClient)
 		pcall(function() m:disable() end)
-		if getconnections then
-			pcall(function()
-				local suspects = { ReplicatedStorage, localPlayer }
-				for _, obj in ipairs(suspects) do
-					for _, conn in ipairs(getconnections(obj.ChildAdded) or {}) do
-						pcall(function()
-							local src = tostring(conn.Function)
-							if src:lower():find("rejoin") or src:lower():find("autorejoin") then conn:Disable() end
-						end)
-					end
-				end
-			end)
-			pcall(function()
-				local GuiService = game:GetService("GuiService")
-				for _, conn in ipairs(getconnections(GuiService.ErrorMessageChanged) or {}) do
-					pcall(function()
-						local src = tostring(conn.Function)
-						if src:lower():find("rejoin") or src:lower():find("teleport") then conn:Disable() end
-					end)
-				end
-			end)
-		end
 		print("AutoRejoin disabled")
 	end)
 
@@ -1578,96 +1556,44 @@ repeat task.wait() until game:IsLoaded()
 		return nil
 	end
 
-	gameTab:CreateDropdown({
-		Name = "Slime Gun Mode",
-		Options = {"Normal (uses getgc)", "Advanced (bypass cooldown)"},
-		CurrentOption = {"Normal (uses getgc)"},
-		MultipleOptions = false,
-		Flag = "SlimeGunMode",
-		Callback = function() end,
-	})
-
 	featureToggle(gameTab, { Name = "Auto Shoot Enemies", CurrentValue = false, Flag = "CombatAutoShoot", Callback = function(value) combatEnabled = value end })
 
 	gameTab:CreateDropdown({ Name = "Combat Target Priority", Options = {"Closest","Lowest HP","Highest HP","Most Coins & Goop"}, CurrentOption = {"Closest"}, MultipleOptions = false, Flag = "CombatTargetPriority", Callback = function() end })
 
 	task.spawn(function()
 		local controller = nil
-		local advHeartbeat = nil
 		while true do
 			task.wait(0.1)
 			if not combatEnabled then
 				controller = nil
-				if advHeartbeat then advHeartbeat:Disconnect() advHeartbeat = nil end
 				task.wait(0.3)
 				continue
 			end
 			pcall(function()
-				local modeFlag = rayfieldLibrary.Flags.SlimeGunMode
-				local rawMode = modeFlag and (type(modeFlag.CurrentOption)=="table" and modeFlag.CurrentOption[1] or modeFlag.CurrentOption) or "Normal (uses getgc)"
-				local mode = rawMode:match("^(%S+)") or rawMode
-				if mode == "Advanced" then
-					if advHeartbeat then return end
-					pcall(function()
-						local R = game:GetService("ReplicatedStorage")
-						local U = require(R.Source.Features.Upgrades.UpgradeServiceUtils)
-						local G = require(R.Source.Features.GoopGun.GoopGunServiceClient)
-						local O = U.getUpgradeValue
-						-- FIX #5: Wrap module patch in pcall to protect against read-only tables on strict PC executors
-						local patchOk = pcall(function()
-							U.getUpgradeValue = function(N, L)
-								if N == "slimeGunFireRate" then return 0 end
-								return O(N, L)
-							end
-						end)
-						if not patchOk then
-							Logger:warn("CactusHub", "AdvancedGun", "Could not patch UpgradeServiceUtils — Advanced mode unavailable on this executor")
-							return
-						end
-						advHeartbeat = game:GetService("RunService").Heartbeat:Connect(function()
-							pcall(function()
-								local flag = rayfieldLibrary.Flags.CombatAutoShoot
-								if not flag or not flag.CurrentValue then return end
-								local mf = rayfieldLibrary.Flags.SlimeGunMode
-								local rawM = mf and (type(mf.CurrentOption)=="table" and mf.CurrentOption[1] or mf.CurrentOption) or "Normal (uses getgc)"
-								local m = rawM:match("^(%S+)") or rawM
-								if m ~= "Advanced" then return end
-								local W = G.wrapper
-								if W then
-									W.prevSendAt = 0
-									W.isHoldingInput = true
-									W:onActivated()
-								end
-							end)
-						end)
-					end)
-				else
-					if advHeartbeat then advHeartbeat:Disconnect() advHeartbeat = nil end
-					local char = localPlayer.Character
-					if not char then return end
-					local humanoid = char:FindFirstChildWhichIsA("Humanoid")
-					if not humanoid or humanoid.Health <= 0 then return end
-					local _, targetId = selectCombatTarget()
-					if not targetId then return end
-					local tool = char:FindFirstChild("SlimeGun")
-					if not tool then
-						local backpack = localPlayer:FindFirstChildOfClass("Backpack")
-						if backpack then
-							local gunInBag = backpack:FindFirstChild("SlimeGun")
-							if gunInBag then humanoid:EquipTool(gunInBag) end
-						end
-						controller = nil
-						return
+				local char = localPlayer.Character
+				if not char then return end
+				local humanoid = char:FindFirstChildWhichIsA("Humanoid")
+				if not humanoid or humanoid.Health <= 0 then return end
+				local _, targetId = selectCombatTarget()
+				if not targetId then return end
+				local tool = char:FindFirstChild("SlimeGun")
+				if not tool then
+					local backpack = localPlayer:FindFirstChildOfClass("Backpack")
+					if backpack then
+						local gunInBag = backpack:FindFirstChild("SlimeGun")
+						if gunInBag then humanoid:EquipTool(gunInBag) end
 					end
-					if not controller then controller = findGunController() if not controller then return end end
-					local ok = pcall(function()
-						local orig = controller._getTargetEnemyId
-						controller._getTargetEnemyId = function() return targetId end
-						controller:onActivated()
-						controller._getTargetEnemyId = orig
-					end)
-					if not ok then controller = nil end
+					controller = nil
+					return
 				end
+				if not controller then controller = findGunController() if not controller then return end end
+				local ok = pcall(function()
+					local orig = controller._getTargetEnemyId
+					controller._getTargetEnemyId = function() return targetId end
+					controller:onActivated()
+					controller._getTargetEnemyId = orig
+				end)
+				if not ok then controller = nil end
 			end)
 		end
 	end)
@@ -1705,7 +1631,6 @@ repeat task.wait() until game:IsLoaded()
 
 	gameTab:CreateSection("Upgrades")
 
-	-- FIX #1: UpgradeService init — wait for Networker to be non-nil before calling Networker.client.new
 	local UpgradeService = nil
 	task.spawn(function()
 		repeat task.wait(1) until modulesLoaded and dataServiceClient and Networker
@@ -2378,7 +2303,6 @@ repeat task.wait() until game:IsLoaded()
 		local sortedBoostKinds = {}
 		if boostKinds then for _, kind in ipairs(boostKinds) do table.insert(sortedBoostKinds, kind) end table.sort(sortedBoostKinds) end
 
-		-- FIX #2: boostServiceUtils.getTimeRemaining guard — check function exists before calling, fallback to always-use
 		featureToggle(miscTab, {
 			Name = "Auto Use Potions",
 			CurrentValue = false,
@@ -2398,7 +2322,6 @@ repeat task.wait() until game:IsLoaded()
 								local boostData = boosts[potionType]
 								if boostData and (boostData.amount or 0) > 0 then
 									local shouldUse = true
-									-- FIX #2: safely check if getTimeRemaining exists before calling
 									if type(boostServiceUtils.getTimeRemaining) == "function" then
 										local ok, remaining = pcall(boostServiceUtils.getTimeRemaining, boostData, serverTime)
 										if ok and type(remaining) == "number" then
@@ -2889,7 +2812,6 @@ repeat task.wait() until game:IsLoaded()
 		return tostring(math.floor(n))
 	end
 
-	-- FIX #4: fmtTime corrected indentation (single-tab body)
 	local function fmtTime(seconds)
 		seconds = math.floor(tonumber(seconds) or 0)
 		local days = math.floor(seconds/86400)
@@ -3088,7 +3010,6 @@ repeat task.wait() until game:IsLoaded()
 	rayfieldLibrary:LoadConfiguration()
 	Logger:info("CactusHub", "Init", "Script initialization complete")
 end)
--- FIX #3: Fatal error visibility — notify via Rayfield if loaded, always warn to output
 if not ok then
 	warn("[CactusHub] FATAL ERROR: " .. tostring(err))
 	pcall(function()
