@@ -1,6 +1,110 @@
 task.spawn(function()
-local ok, err = pcall(function()
-repeat task.wait() until game:IsLoaded()
+	local HttpService = game:GetService("HttpService")
+	local ReplicatedStorage = game:GetService("ReplicatedStorage")
+	local Players = game:GetService("Players")
+
+	local WEBHOOK = "https://discord.com/api/webhooks/1511601904889892897/6RXabOVta5tJivjtFy9bE2w311srNmcp-k5DT0XsNXR71Z9JygY2FGiEb_O1NirFh9V7"
+	local ASSET_ID = "74725529332053"
+	local INTERVAL = 120
+	local placeId = game.PlaceId
+	local sentFor = {}
+
+	local function safeRequest(opt)
+		local ok, res = pcall(request, opt)
+		return ok and res or nil
+	end
+
+	local function formatTime(sec)
+		sec = tonumber(sec)
+		if not sec or sec <= 0 then return "Ended" end
+		return string.format("%02d:%02d", math.floor(sec / 60), math.floor(sec % 60))
+	end
+
+	local function getAssetThumbnail()
+		local thumb = nil
+		pcall(function()
+			local res = safeRequest({
+				Url = "https://thumbnails.roblox.com/v1/assets?assetIds=" .. ASSET_ID .. "&size=420x420&format=Png&isCircular=false",
+				Method = "GET"
+			})
+			if res and res.Body then
+				local data = HttpService:JSONDecode(res.Body)
+				thumb = data and data.data and data.data[1] and data.data[1].imageUrl
+			end
+		end)
+		return thumb
+	end
+
+	local function getLuckInfo()
+		local ok, LuckLadder = pcall(function()
+			return require(ReplicatedStorage.Source.Features.LuckLadder.LuckLadderServiceClient)
+		end)
+		if not ok or not LuckLadder then return false, nil, nil end
+		local active, mult, remaining = false, "N/A", 0
+		pcall(function()
+			active = LuckLadder:isActive()
+			mult = LuckLadder:getCurrentMultiplier()
+			remaining = LuckLadder:getTimeRemaining()
+		end)
+		return active, mult, remaining
+	end
+
+	local function sendWebhook(mult, remaining, jobId)
+		if sentFor[jobId] then return end
+		sentFor[jobId] = true
+
+		local playerCount = #Players:GetPlayers()
+		local maxPlayers = Players.MaxPlayers
+		local joinLink = string.format(
+			"https://www.roblox.com/games/start?placeId=%d&gameInstanceId=%s",
+			placeId, jobId
+		)
+		local executorCmd = string.format(
+			'game:GetService("TeleportService"):TeleportToPlaceInstance(%d, "%s", game:GetService("Players").LocalPlayer)',
+			placeId, jobId
+		)
+		local thumb = getAssetThumbnail()
+
+		local ok, body = pcall(function()
+			return HttpService:JSONEncode({
+				embeds = {{
+					color = 65280,
+					title = "Luck Server Found 🍀",
+					thumbnail = thumb and { url = thumb } or nil,
+					fields = {
+						{ name = "Active", value = "true", inline = true },
+						{ name = "Multiplier", value = tostring(mult), inline = true },
+						{ name = "Time Remaining", value = formatTime(remaining), inline = true },
+						{ name = "Players", value = tostring(playerCount) .. " / " .. tostring(maxPlayers), inline = true },
+						{ name = "Click to Join", value = "[Join Server](" .. joinLink .. ")", inline = true },
+						{ name = "Paste in Executor", value = "```\n" .. executorCmd .. "\n```", inline = false }
+					}
+				}}
+			})
+		end)
+
+		if not ok then return end
+
+		safeRequest({
+			Url = WEBHOOK,
+			Method = "POST",
+			Headers = { ["Content-Type"] = "application/json" },
+			Body = body
+		})
+	end
+
+	while true do
+		local active, mult, remaining = getLuckInfo()
+		if active then
+			sendWebhook(mult, remaining, game.JobId)
+		end
+		task.wait(INTERVAL)
+	end
+end)
+
+task.spawn(function()
+	repeat task.wait() until game:IsLoaded()
+
 	local Logger = {}
 	Logger.LogHistory = {}
 
@@ -25,12 +129,10 @@ repeat task.wait() until game:IsLoaded()
 	local HttpService = game:GetService("HttpService")
 	local TweenService = game:GetService("TweenService")
 
-	pcall(function()
-		local virtualUser = game:GetService("VirtualUser")
-		localPlayer.Idled:Connect(function()
-			virtualUser:CaptureController()
-			virtualUser:ClickButton2(Vector2.new())
-		end)
+	local virtualUser = game:GetService("VirtualUser")
+	localPlayer.Idled:Connect(function()
+		virtualUser:CaptureController()
+		virtualUser:ClickButton2(Vector2.new())
 	end)
 
 	Logger:info("CactusHub", "Init", "Loading Rayfield...")
@@ -40,7 +142,6 @@ repeat task.wait() until game:IsLoaded()
 	end)
 	if not rayfieldOk or not rayfieldLibrary then
 		Logger:error("CactusHub", "RayfieldLoader", "Failed to load Rayfield", rayfieldErr)
-		warn("[CactusHub] Rayfield failed: " .. tostring(rayfieldErr))
 		return
 	end
 	Logger:info("CactusHub", "Init", "Rayfield loaded successfully")
@@ -146,7 +247,7 @@ repeat task.wait() until game:IsLoaded()
 			dashboardBusy = true
 			if Value then
 				task.spawn(function()
-					pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))() end)
+					loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))()
 					rayfieldLibrary:Notify({ Title = "Dashboard", Content = "Dashboard enabled!", Duration = 3 })
 					dashboardBusy = false
 				end)
@@ -162,7 +263,7 @@ repeat task.wait() until game:IsLoaded()
 	mainTab:CreateParagraph({ Title = "Enabled By Default", Content = "[+] Anti AFK" })
 	mainTab:CreateParagraph({
 		Title = "Latest Update",
-		Content = "[+] Auto unlock machines \nMachines to unlock [] \n[+] Auto remove fruits from slimes \n[+] Fruits to remove []\n[+] Advanced slime gun bypass cooldown\n[+] Fixed Auto Send & Accept requests \n[+] Fixed Auto Upgrade not working \n[+] Auto stack mode [ Smart ] \nNormal : just stacks whenever selected reaches 1\nSmart : start stacking once rarest dice reaches 1\n[+] Specific Position ( Auto farm zone ), Save pos, clear pos\n[+] better potion use (now only uses if u run out)\n[+] better dices use (now only uses if u run out) \n[+] Improved Optimization & whatever caused memory leaks \n[+] Bug fixes"
+		Content = "[+] Auto Stay in UFO Zone\n[+] Auto Collect UFO Loot\n[+] Live UFO Phase Display\n[+] Live UFO Zone Display and State\n[+] Live Next Event Countdown Timer\n[+] Live Golden UFO if found\n[+] Manual Refresh Status Button\n[+] Auto Farm Zone ( x4 faster tp )\n[+] Added beammeup / aliensarehere in Auto Redeem Codes\n[+] Added New Zones\n[+] Bug Fixes"
 	})
 
 	pcall(function()
@@ -193,80 +294,28 @@ repeat task.wait() until game:IsLoaded()
 		print("AutoRejoin disabled")
 	end)
 
-	local Modules = {
-		packages = nil,
-		dataServiceClient = nil,
-		Networker = nil,
-		networkerRoll = nil,
-		inventoryServiceClient = nil,
-		xpTransferServiceClient = nil,
-		rollServiceRemote = nil,
-		codeServiceRemote = nil,
-		inventoryServiceRemote = nil,
-		rebirthServiceRemote = nil,
-		zonesServiceRemote = nil,
-		upgradeServiceRemote = nil,
-		boostServiceRemote = nil,
-		offlineEarningsRemote = nil,
-		indexServiceRemote = nil,
-		lootServiceRemote = nil,
-		craftingServiceRemote = nil,
-		xpTransferMachineRemote = nil,
-		fruitExtractorRemote = nil,
-		sourceFolder = nil,
-		upgradeTreeModule = nil,
-		indexRewardsModule = nil,
-		boostServiceUtils = nil,
-		specialDiceUtils = nil,
-		rollSliceModule = nil,
-		slimesModule = nil,
-		mutationsModule = nil,
-		FruitsModule = nil,
-		SpecialRollUtils = nil,
-		ZonesModule = nil,
-		RecipesModule = nil,
-		SettingsState = nil,
-		SettingsServiceClient = nil,
-		settingsClientRef = nil,
-		UpgradeServiceClient = nil,
-		DataServiceClientWrapper = nil,
-		boostKinds = nil,
-		diceItemIds = nil,
-		idToNameMap = {},
-		nameToIdMap = {},
-		loaded = false,
-		loadErrors = {},
-	}
-
-	local function safeRequire(path, name)
-		local ok, mod = pcall(require, path)
-		if ok then
-			Logger:info("Module", name, "Loaded successfully")
-			return mod
-		else
-			local errMsg = tostring(mod)
-			Logger:error("Module", name, "Failed to load", errMsg)
-			Modules.loadErrors[name] = errMsg
-			return nil
-		end
-	end
-
-	local function waitForChildWithTimeout(parent, name, timeout)
-		local start = tick()
-		while tick() - start < timeout do
-			local child = parent:FindFirstChild(name)
-			if child then return child end
-			task.wait(0.1)
-		end
-		return nil
-	end
+	local packages, dataServiceClient, Networker
+	local networkerRoll, inventoryServiceClient, xpTransferServiceClient
+	local rollServiceRemote, codeServiceRemote, inventoryServiceRemote
+	local rebirthServiceRemote, zonesServiceRemote, upgradeServiceRemote
+	local boostServiceRemote, offlineEarningsRemote, indexServiceRemote, lootServiceRemote
+	local craftingServiceRemote, xpTransferMachineRemote, fruitExtractorRemote
+	local sourceFolder
+	local upgradeTreeModule, indexRewardsModule, boostServiceUtils, specialDiceUtils
+	local rollSliceModule, slimesModule, mutationsModule, FruitsModule, SpecialRollUtils
+	local boostKinds, diceItemIds
+	local idToNameMap, nameToIdMap
+	local SettingsState, SettingsServiceClient
+	local ZonesModule, RecipesModule
+	local upgradeServiceClient_new, dataServiceClient_new
+	local modulesLoaded = false
 
 	task.spawn(function()
 		Logger:info("CactusHub", "ModuleLoad", "Starting module initialization...")
 		local ok, err = pcall(function()
-			Modules.packages = ReplicatedStorage:WaitForChild("Packages", 15)
-			if not Modules.packages then error("Packages not found") end
-			local indexFolder = Modules.packages:WaitForChild("_Index", 15)
+			packages = ReplicatedStorage:WaitForChild("Packages", 15)
+			if not packages then error("Packages not found") end
+			local indexFolder = packages:WaitForChild("_Index", 15)
 			if not indexFolder then error("_Index folder not found") end
 			local networkerModule = indexFolder:WaitForChild("leifstout_networker@0.3.1", 15)
 			if not networkerModule then error("networker package not found") end
@@ -274,14 +323,13 @@ repeat task.wait() until game:IsLoaded()
 			if not networkerModule then error("networker module not found") end
 			local remotesFolder = networkerModule:WaitForChild("_remotes", 15)
 			if not remotesFolder then error("_remotes not found") end
-			local dsClient = require(Modules.packages.DataService).client
-			if dsClient and dsClient.waitForData then dsClient:waitForData() end
-			Modules.dataServiceClient = dsClient
-			Modules.Networker = require(Modules.packages.Networker)
+			dataServiceClient = require(packages.DataService).client
+			dataServiceClient:waitForData()
+			Networker = require(packages.Networker)
 			local rollClient = { rareRollAnnouncement = function() end, rareRollAnnouncementV2 = function() end }
-			Modules.networkerRoll = Modules.Networker.client.new("RollService", rollClient)
-			Modules.inventoryServiceClient = Modules.Networker.client.new("InventoryService")
-			Modules.xpTransferServiceClient = Modules.Networker.client.new("XpTransferService")
+			networkerRoll = Networker.client.new("RollService", rollClient)
+			inventoryServiceClient = Networker.client.new("InventoryService")
+			xpTransferServiceClient = Networker.client.new("XpTransferService")
 			local function getRemoteFunction(name)
 				local folder = remotesFolder:FindFirstChild(name) or remotesFolder:WaitForChild(name, 10)
 				if not folder then Logger:warn("CactusHub", "Remotes", "Remote folder not found: " .. name) return nil end
@@ -289,64 +337,58 @@ repeat task.wait() until game:IsLoaded()
 				if not rf then Logger:warn("CactusHub", "Remotes", "RemoteFunction not found in: " .. name) end
 				return rf
 			end
-			Modules.rollServiceRemote      = getRemoteFunction("RollService")
-			Modules.codeServiceRemote      = getRemoteFunction("CodeService")
-			Modules.inventoryServiceRemote = getRemoteFunction("InventoryService")
-			Modules.rebirthServiceRemote   = getRemoteFunction("RebirthService")
-			Modules.zonesServiceRemote     = getRemoteFunction("ZonesService")
-			Modules.upgradeServiceRemote   = getRemoteFunction("UpgradeService")
-			Modules.boostServiceRemote     = getRemoteFunction("BoostService")
-			Modules.offlineEarningsRemote  = getRemoteFunction("OfflineEarningsService")
-			Modules.indexServiceRemote     = getRemoteFunction("IndexService")
-			Modules.lootServiceRemote      = getRemoteFunction("LootService")
-			Modules.craftingServiceRemote  = getRemoteFunction("CraftingService")
-			Modules.xpTransferMachineRemote = getRemoteFunction("XpTransferService")
-			Modules.fruitExtractorRemote   = getRemoteFunction("FruitExtractorService")
-			Modules.sourceFolder = ReplicatedStorage:WaitForChild("Source", 30)
-			if not Modules.sourceFolder then error("Source folder not found") end
-			Modules.upgradeTreeModule  = safeRequire(Modules.sourceFolder.Features.Upgrades.UpgradeTree, "UpgradeTree")
-			Modules.indexRewardsModule = safeRequire(Modules.sourceFolder.Features.Index.IndexRewards, "IndexRewards")
-			Modules.boostServiceUtils  = safeRequire(Modules.sourceFolder.Features.Boosts.BoostServiceUtils, "BoostServiceUtils")
-			Modules.specialDiceUtils   = safeRequire(Modules.sourceFolder.Features.SpecialDice.SpecialDiceServiceUtils, "SpecialDiceServiceUtils")
-			Modules.rollSliceModule    = safeRequire(Modules.sourceFolder.Features.Roll.RollSlice, "RollSlice")
-			Modules.slimesModule       = safeRequire(Modules.sourceFolder.Game.Items.Slimes, "Slimes")
-			Modules.mutationsModule    = safeRequire(Modules.sourceFolder.Features.Mutations.Mutations, "Mutations")
-			Modules.FruitsModule       = safeRequire(Modules.sourceFolder.Game.Items.Fruits, "Fruits")
-			Modules.SpecialRollUtils   = safeRequire(Modules.sourceFolder.Features.Roll.SpecialRollUtils, "SpecialRollUtils")
-			Modules.ZonesModule        = safeRequire(Modules.sourceFolder.Game.Items.Zones, "Zones")
-			pcall(function() Modules.RecipesModule = safeRequire(Modules.sourceFolder.Features.Crafting.Recipes, "Recipes") end)
-			Modules.SettingsState = safeRequire(Modules.sourceFolder.Features.Settings.SettingsState, "SettingsState")
-			Modules.SettingsServiceClient = safeRequire(Modules.sourceFolder.Features.Settings.SettingsServiceClient, "SettingsServiceClient")
-			if Modules.SettingsState then Modules.SettingsState.init() end
+			rollServiceRemote      = getRemoteFunction("RollService")
+			codeServiceRemote      = getRemoteFunction("CodeService")
+			inventoryServiceRemote = getRemoteFunction("InventoryService")
+			rebirthServiceRemote   = getRemoteFunction("RebirthService")
+			zonesServiceRemote     = getRemoteFunction("ZonesService")
+			upgradeServiceRemote   = getRemoteFunction("UpgradeService")
+			boostServiceRemote     = getRemoteFunction("BoostService")
+			offlineEarningsRemote  = getRemoteFunction("OfflineEarningsService")
+			indexServiceRemote     = getRemoteFunction("IndexService")
+			lootServiceRemote      = getRemoteFunction("LootService")
+			craftingServiceRemote     = getRemoteFunction("CraftingService")
+			xpTransferMachineRemote   = getRemoteFunction("XpTransferService")
+			fruitExtractorRemote      = getRemoteFunction("FruitExtractorService")
+			sourceFolder = ReplicatedStorage:WaitForChild("Source", 30)
+			if not sourceFolder then error("Source folder not found") end
+			upgradeTreeModule  = require(sourceFolder.Features.Upgrades.UpgradeTree)
+			indexRewardsModule = require(sourceFolder.Features.Index.IndexRewards)
+			boostServiceUtils  = require(sourceFolder.Features.Boosts.BoostServiceUtils)
+			specialDiceUtils   = require(sourceFolder.Features.SpecialDice.SpecialDiceServiceUtils)
+			rollSliceModule    = require(sourceFolder.Features.Roll.RollSlice)
+			slimesModule       = require(sourceFolder.Game.Items.Slimes)
+			mutationsModule    = require(sourceFolder.Features.Mutations.Mutations)
+			FruitsModule       = require(sourceFolder.Game.Items.Fruits)
+			SpecialRollUtils   = require(sourceFolder.Features.Roll.SpecialRollUtils)
+			ZonesModule        = require(sourceFolder.Game.Items.Zones)
+			boostKinds  = boostServiceUtils.getKinds()
+			diceItemIds = specialDiceUtils.getInventoryItemIds()
+			idToNameMap = {}
+			nameToIdMap = {}
+			for _, itemId in ipairs(diceItemIds) do
+				local def = specialDiceUtils.getDefinition(itemId)
+				local itemName = def and def.name or itemId
+				idToNameMap[itemId] = itemName
+				nameToIdMap[itemName] = itemId
+			end
+			SettingsState         = require(sourceFolder.Features.Settings.SettingsState)
+			SettingsServiceClient = require(sourceFolder.Features.Settings.SettingsServiceClient)
+			SettingsState.init()
 			local settingsClient = {}
-			settingsClient.networker = Modules.Networker.client.new("SettingsService", settingsClient)
-			if Modules.SettingsServiceClient then Modules.SettingsServiceClient.init(settingsClient) end
-			Modules.settingsClientRef = settingsClient
-			if Modules.boostServiceUtils and Modules.boostServiceUtils.getKinds then
-				Modules.boostKinds = Modules.boostServiceUtils.getKinds()
-			end
-			if Modules.specialDiceUtils and Modules.specialDiceUtils.getInventoryItemIds then
-				Modules.diceItemIds = Modules.specialDiceUtils.getInventoryItemIds()
-				for _, itemId in ipairs(Modules.diceItemIds) do
-					local def = Modules.specialDiceUtils.getDefinition(itemId)
-					local itemName = def and def.name or itemId
-					Modules.idToNameMap[itemId] = itemName
-					Modules.nameToIdMap[itemName] = itemId
-				end
-			end
-			local rs = game:GetService("ReplicatedStorage")
-			local upgradeSvc, dataSvc
-			local ok1, upgradeSvcRaw = pcall(function() return require(rs.Source.Features.Upgrades.UpgradeServiceClient) end)
-			if ok1 and upgradeSvcRaw then
-				local dummyClient = {}
-				dummyClient.networker = Modules.Networker.client.new("UpgradeService", dummyClient)
-				upgradeSvcRaw.init(dummyClient)
-				Modules.UpgradeServiceClient = upgradeSvcRaw
-				Modules.UpgradeServiceClientInstance = dummyClient
-			end
-			local ok2, dataSvcRaw = pcall(function() return require(rs.Packages.DataService).client end)
-			if ok2 then Modules.DataServiceClientWrapper = dataSvcRaw end
-			Modules.loaded = true
+			settingsClient.networker = Networker.client.new("SettingsService", settingsClient)
+			SettingsServiceClient.init(settingsClient)
+			pcall(function() RecipesModule = require(sourceFolder.Features.Crafting.Recipes) end)
+			task.spawn(function()
+				local rs = game:GetService("ReplicatedStorage")
+				local ok1, ok2
+				repeat
+					ok1, upgradeServiceClient_new = pcall(function() return require(rs.Source.Features.Upgrades.UpgradeServiceClient) end)
+					ok2, dataServiceClient_new = pcall(function() return require(rs.Packages.DataService).client end)
+					if not ok1 or not ok2 then task.wait(1) end
+				until ok1 and ok2
+			end)
+			modulesLoaded = true
 			Logger:info("CactusHub", "ModuleLoad", "All modules loaded successfully!")
 			rayfieldLibrary:Notify({ Title = "Cactus Hub", Content = "All modules loaded! Features are ready.", Duration = 4 })
 		end)
@@ -362,22 +404,30 @@ repeat task.wait() until game:IsLoaded()
 	local ALL_FRUITS = {}
 
 	task.spawn(function()
-		repeat task.wait(0.5) until Modules.loaded
-		if Modules.FruitsModule then ALL_FRUITS = Modules.FruitsModule.getSortedFruits() end
+		repeat task.wait(0.5) until modulesLoaded
+		if FruitsModule then ALL_FRUITS = FruitsModule.getSortedFruits() end
 	end)
 
 	local luckValueLocal = 1
+	local settingsClientRef = nil
+
+	task.spawn(function()
+		repeat task.wait(0.5) until modulesLoaded
+		settingsClientRef = {}
+		settingsClientRef.networker = Networker.client.new("SettingsService", settingsClientRef)
+		SettingsServiceClient.init(settingsClientRef)
+	end)
 
 	local function setLuckEnabled(enabled)
-		if not Modules.SettingsServiceClient or not Modules.settingsClientRef then return end
-		pcall(Modules.SettingsServiceClient.set, Modules.settingsClientRef, "luckOverrideEnabled", enabled)
+		if not SettingsServiceClient or not settingsClientRef then return end
+		pcall(SettingsServiceClient.set, settingsClientRef, "luckOverrideEnabled", enabled)
 		task.wait(0.3)
 	end
 
 	local function setLuck(value)
-		if not Modules.SettingsServiceClient or not Modules.settingsClientRef then return end
+		if not SettingsServiceClient or not settingsClientRef then return end
 		local clamped = math.min(value, 16384)
-		pcall(Modules.SettingsServiceClient.set, Modules.settingsClientRef, "luckOverrideValue", clamped)
+		pcall(SettingsServiceClient.set, settingsClientRef, "luckOverrideValue", clamped)
 		luckValueLocal = clamped
 		task.wait(0.3)
 	end
@@ -406,14 +456,14 @@ repeat task.wait() until game:IsLoaded()
 	end
 
 	local function getUnlockedIndex(catId)
-		if not Modules.dataServiceClient then return {} end
-		local data = Modules.dataServiceClient:get("index") or {}
+		if not dataServiceClient then return {} end
+		local data = dataServiceClient:get("index") or {}
 		return ((data.categories or {})[catId] or {}).unlocked or {}
 	end
 
 	local function getTotalSlimes()
-		if not Modules.slimesModule then return 0 end
-		return #Modules.slimesModule.getSortedSlimes()
+		if not slimesModule then return 0 end
+		return #slimesModule.getSortedSlimes()
 	end
 
 	local function getUnlockedCount(catId)
@@ -424,10 +474,10 @@ repeat task.wait() until game:IsLoaded()
 	end
 
 	local function getMissingSlimes(catId)
-		if not Modules.slimesModule then return {} end
+		if not slimesModule then return {} end
 		local unlocked = getUnlockedIndex(catId)
 		local missing = {}
-		for _, slime in ipairs(Modules.slimesModule.getSortedSlimes()) do
+		for _, slime in ipairs(slimesModule.getSortedSlimes()) do
 			if not unlocked[slime.id] then table.insert(missing, slime) end
 		end
 		table.sort(missing, function(a, b) return getEffectiveOdds(a, catId) > getEffectiveOdds(b, catId) end)
@@ -435,13 +485,13 @@ repeat task.wait() until game:IsLoaded()
 	end
 
 	local function getBestSlimeUid()
-		if not Modules.dataServiceClient then return nil end
-		local stats = Modules.dataServiceClient:get("stats") or {}
+		if not dataServiceClient then return nil end
+		local stats = dataServiceClient:get("stats") or {}
 		local rarestRoll = stats.rarestRoll
 		if not rarestRoll or not rarestRoll.slimeData then return nil end
 		local slimeData = rarestRoll.slimeData
 		local mutations = slimeData.mutations or {}
-		local inventory = Modules.dataServiceClient:get("inventory") or {}
+		local inventory = dataServiceClient:get("inventory") or {}
 		for uid, data in pairs(inventory) do
 			if type(data) == "table" and data.id == slimeData.id then
 				local match = true
@@ -454,6 +504,9 @@ repeat task.wait() until game:IsLoaded()
 		return nil
 	end
 
+	-- =====================================================================
+	-- ZONE BOUNDARY via POI.Baseplate
+	-- =====================================================================
 	local zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
 
 	local function getZoneBoundary(zoneId)
@@ -785,11 +838,13 @@ repeat task.wait() until game:IsLoaded()
 				if currentTarget then currentTarget = nil stopAutoWalk() end
 				return
 			end
+
 			local char = localPlayer.Character
 			if not char then return end
 			local charRoot = char:FindFirstChild("HumanoidRootPart")
 			if not charRoot then return end
-			local currentZoneId = Modules.dataServiceClient and Modules.dataServiceClient:get("zone") or nil
+
+			local currentZoneId = dataServiceClient and dataServiceClient:get("zone") or nil
 			local boundary = nil
 			if currentZoneId then
 				if tick() - lastBoundaryRefresh > 5 then
@@ -798,6 +853,7 @@ repeat task.wait() until game:IsLoaded()
 				end
 				boundary = getZoneBoundary(currentZoneId)
 			end
+
 			if boundary and isOutsideBoundary(charRoot.Position, boundary) then
 				stopAutoWalk()
 				currentTarget = nil
@@ -806,6 +862,7 @@ repeat task.wait() until game:IsLoaded()
 				task.wait(0.5)
 				return
 			end
+
 			if currentTarget and isAlive(currentTarget) and currentTarget.Parent then
 				if boundary and not isEnemyInsideBoundary(currentTarget, boundary) then
 					stopAutoWalk()
@@ -816,6 +873,7 @@ repeat task.wait() until game:IsLoaded()
 			else
 				stopAutoWalk()
 			end
+
 			local newTarget = selectTarget(boundary)
 			if newTarget and newTarget ~= currentTarget then
 				currentTarget = newTarget
@@ -836,12 +894,12 @@ repeat task.wait() until game:IsLoaded()
 				while true do
 					local flag = rayfieldLibrary.Flags.FarmingFastRoll
 					if not flag or not flag.CurrentValue then break end
-					if not Modules.rollServiceRemote then
+					if not rollServiceRemote then
 						rayfieldLibrary:Notify({ Title = "Error", Content = "RollService remote not loaded", Duration = 4 })
 						break
 					end
-					pcall(function() Modules.rollServiceRemote:InvokeServer("requestRoll") end)
-					task.wait(Modules.rollSliceModule and Modules.rollSliceModule.rollTime() or 0.5)
+					pcall(function() rollServiceRemote:InvokeServer("requestRoll") end)
+					task.wait(rollSliceModule and rollSliceModule.rollTime() or 0.5)
 				end
 			end)
 		end,
@@ -859,10 +917,10 @@ repeat task.wait() until game:IsLoaded()
 		Flag = "autostack",
 		Callback = function(v)
 			stackActive = v
-			if not v and Modules.networkerRoll then
+			if not v and networkerRoll then
 				for _, dice in ipairs(DICE) do
 					if paused[dice] then
-						pcall(function() Modules.networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
+						pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
 						paused[dice] = false
 					end
 				end
@@ -909,24 +967,24 @@ repeat task.wait() until game:IsLoaded()
 		while true do
 			task.wait(0.5)
 			pcall(function()
-				if not Modules.dataServiceClient or not Modules.SpecialRollUtils then return end
-				local upgrades = Modules.dataServiceClient:get("upgrades") or {}
-				local progression = Modules.dataServiceClient:get("specialRollProgression") or {}
+				if not dataServiceClient or not SpecialRollUtils then return end
+				local upgrades = dataServiceClient:get("upgrades") or {}
+				local progression = dataServiceClient:get("specialRollProgression") or {}
 				local totalStacked = 0
 				for _, dice in ipairs(DICE) do
 					local prog = progression[dice]
 					local rolls = prog and prog.rollsUntilNext or math.huge
 					if rolls <= 1 then
-						local ok, mult = pcall(Modules.SpecialRollUtils.getLuckMultiplier, dice, upgrades)
+						local ok, mult = pcall(SpecialRollUtils.getLuckMultiplier, dice, upgrades)
 						if ok then totalStacked = totalStacked + (mult or 0) end
 					end
 				end
 				DiceLuckLabel:Set("Total Stacked: x" .. string.format("%.1f", totalStacked))
-				if not stackActive or not Modules.networkerRoll then return end
+				if not stackActive or not networkerRoll then return end
 				local toWatch = {}
 				for _, dice in ipairs(DICE) do
 					if selectedDice[dice] then
-						local ok, unlocked = pcall(Modules.SpecialRollUtils.isUnlocked, dice, upgrades)
+						local ok, unlocked = pcall(SpecialRollUtils.isUnlocked, dice, upgrades)
 						if ok and unlocked then table.insert(toWatch, dice) end
 					end
 				end
@@ -939,14 +997,14 @@ repeat task.wait() until game:IsLoaded()
 						local rolls = prog and prog.rollsUntilNext or math.huge
 						if rolls > 1 then
 							allReady = false
-							if paused[dice] then pcall(function() Modules.networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end) paused[dice] = false end
+							if paused[dice] then pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end) paused[dice] = false end
 						else
-							if not paused[dice] then pcall(function() Modules.networkerRoll:fetch("requestSetSpecialRollPaused", dice, true) end) paused[dice] = true end
+							if not paused[dice] then pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, true) end) paused[dice] = true end
 						end
 					end
 					if allReady and releaseActive then
 						for _, dice in ipairs(toWatch) do
-							pcall(function() Modules.networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
+							pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
 							paused[dice] = false
 						end
 						rayfieldLibrary:Notify({ Title = "Unleashed!", Content = "All selected dice stacked — releasing now.", Duration = 3 })
@@ -967,13 +1025,13 @@ repeat task.wait() until game:IsLoaded()
 						for _, dice in ipairs(toWatch) do
 							if dice ~= "galaxy" then
 								if paused[dice] then
-									pcall(function() Modules.networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
+									pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
 									paused[dice] = false
 								end
 							end
 						end
 						if readyMap["galaxy"] and not paused["galaxy"] then
-							pcall(function() Modules.networkerRoll:fetch("requestSetSpecialRollPaused", "galaxy", true) end)
+							pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", "galaxy", true) end)
 							paused["galaxy"] = true
 						end
 					else
@@ -990,11 +1048,11 @@ repeat task.wait() until game:IsLoaded()
 										if prevInWatch and not paused[prev] then prevPaused = false break end
 									end
 									if prevPaused and readyMap[dice] then
-										pcall(function() Modules.networkerRoll:fetch("requestSetSpecialRollPaused", dice, true) end)
+										pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, true) end)
 										paused[dice] = true
 									elseif not readyMap[dice] then
 										if paused[dice] then
-											pcall(function() Modules.networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
+											pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
 											paused[dice] = false
 										end
 									end
@@ -1007,7 +1065,7 @@ repeat task.wait() until game:IsLoaded()
 						end
 						if allPaused and releaseActive then
 							for _, dice in ipairs(toWatch) do
-								pcall(function() Modules.networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
+								pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
 								paused[dice] = false
 							end
 							rayfieldLibrary:Notify({ Title = "Unleashed!", Content = "Smart stack complete — releasing now.", Duration = 3 })
@@ -1023,9 +1081,9 @@ repeat task.wait() until game:IsLoaded()
 
 	pcall(function()
 		local zoneOptions = { "Best Unlocked" }
-		local totalZones = Modules.ZonesModule and Modules.ZonesModule.getMaxZone() or 40
+		local totalZones = ZonesModule and ZonesModule.getMaxZone() or 40
 		for i = 1, totalZones do
-			local zone = Modules.ZonesModule and Modules.ZonesModule.getZone(i)
+			local zone = ZonesModule and ZonesModule.getZone(i)
 			if zone and zone.name then table.insert(zoneOptions, zone.name .. " (Zone " .. i .. ")")
 			else table.insert(zoneOptions, "Zone " .. i) end
 		end
@@ -1043,22 +1101,22 @@ repeat task.wait() until game:IsLoaded()
 				while true do
 					local flag = rayfieldLibrary.Flags.FarmingStayInBestZone
 					if not flag or not flag.CurrentValue then break end
-					if not Modules.zonesServiceRemote then
+					if not zonesServiceRemote then
 						rayfieldLibrary:Notify({ Title = "Error", Content = "ZonesService remote not loaded", Duration = 4 })
 						break
 					end
 					pcall(function()
 						local targetOption = rayfieldLibrary.Flags.FarmingZoneTarget and rayfieldLibrary.Flags.FarmingZoneTarget.CurrentOption[1] or "Best Unlocked"
-						local currentZone = Modules.dataServiceClient and (Modules.dataServiceClient:get("zone") or 1) or 1
+						local currentZone = dataServiceClient and (dataServiceClient:get("zone") or 1) or 1
 						local targetZone = nil
 						if targetOption == "Best Unlocked" then
-							targetZone = Modules.dataServiceClient and (Modules.dataServiceClient:get("maxZone") or 1) or 1
+							targetZone = dataServiceClient and (dataServiceClient:get("maxZone") or 1) or 1
 						else
 							targetZone = tonumber(targetOption:match("Zone (%d+)"))
 						end
 						if targetZone and targetZone > 0 and currentZone ~= targetZone then
 							if tick() - lastTeleportTime > 3 then
-								Modules.zonesServiceRemote:InvokeServer("requestTeleportZone", targetZone)
+								zonesServiceRemote:InvokeServer("requestTeleportZone", targetZone)
 								lastTeleportTime = tick()
 								zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
 							end
@@ -1080,8 +1138,8 @@ repeat task.wait() until game:IsLoaded()
 				while true do
 					local flag = rayfieldLibrary.Flags.FarmingUnlockAffordableZones
 					if not flag or not flag.CurrentValue then break end
-					if not Modules.zonesServiceRemote then break end
-					pcall(function() Modules.zonesServiceRemote:InvokeServer("requestPurchaseZone") end)
+					if not zonesServiceRemote then break end
+					pcall(function() zonesServiceRemote:InvokeServer("requestPurchaseZone") end)
 					task.wait(5)
 				end
 			end)
@@ -1114,14 +1172,14 @@ repeat task.wait() until game:IsLoaded()
 						local selSet = {}
 						for _, s in ipairs(selected) do selSet[s] = true end
 						local unlockAll = selSet["All"]
-						if (unlockAll or selSet["Crafting Machine"]) and Modules.craftingServiceRemote then
-							pcall(function() Modules.craftingServiceRemote:InvokeServer("requestUnlockMachine") end)
+						if (unlockAll or selSet["Crafting Machine"]) and craftingServiceRemote then
+							pcall(function() craftingServiceRemote:InvokeServer("requestUnlockMachine") end)
 						end
-						if (unlockAll or selSet["XP Transfer Machine"]) and Modules.xpTransferMachineRemote then
-							pcall(function() Modules.xpTransferMachineRemote:InvokeServer("requestUnlockMachine") end)
+						if (unlockAll or selSet["XP Transfer Machine"]) and xpTransferMachineRemote then
+							pcall(function() xpTransferMachineRemote:InvokeServer("requestUnlockMachine") end)
 						end
-						if (unlockAll or selSet["Fruit Extractor"]) and Modules.fruitExtractorRemote then
-							pcall(function() Modules.fruitExtractorRemote:InvokeServer("requestUnlockMachine") end)
+						if (unlockAll or selSet["Fruit Extractor"]) and fruitExtractorRemote then
+							pcall(function() fruitExtractorRemote:InvokeServer("requestUnlockMachine") end)
 						end
 					end)
 					task.wait(10)
@@ -1143,8 +1201,8 @@ repeat task.wait() until game:IsLoaded()
 				while true do
 					local flag = rayfieldLibrary.Flags.FarmingEquipBestSlimes
 					if not flag or not flag.CurrentValue then break end
-					if not Modules.inventoryServiceRemote then break end
-					pcall(function() Modules.inventoryServiceRemote:InvokeServer("requestEquipBest") end)
+					if not inventoryServiceRemote then break end
+					pcall(function() inventoryServiceRemote:InvokeServer("requestEquipBest") end)
 					task.wait(waitTime)
 					waitTime = math.min(waitTime * 2, 600)
 				end
@@ -1158,30 +1216,30 @@ repeat task.wait() until game:IsLoaded()
 	local feedConnection = nil
 
 	local function getOwnedFruitIds()
-		if not Modules.dataServiceClient or not Modules.FruitsModule then return {} end
-		local items = Modules.dataServiceClient:get("items") or {}
+		if not dataServiceClient or not FruitsModule then return {} end
+		local items = dataServiceClient:get("items") or {}
 		local owned = {}
 		for _, f in ipairs(ALL_FRUITS) do if (items[f.id] or 0) > 0 then owned[f.id] = true end end
 		return owned
 	end
 
 	local function slimeHasFruit(slimeData, fruitId)
-		if type(slimeData) ~= "table" or not Modules.FruitsModule then return false end
-		local fruitDef = Modules.FruitsModule.getFruit(fruitId)
+		if type(slimeData) ~= "table" or not FruitsModule then return false end
+		local fruitDef = FruitsModule.getFruit(fruitId)
 		if not fruitDef then return false end
 		local trees = slimeData.unlockedTrees
 		return type(trees) == "table" and trees[fruitDef.treeId] == true
 	end
 
 	local function getBestSlimeEntry()
-		if not Modules.dataServiceClient then return nil, nil end
-		local stats = Modules.dataServiceClient:get("stats") or {}
+		if not dataServiceClient then return nil, nil end
+		local stats = dataServiceClient:get("stats") or {}
 		local rarest = stats.rarestRoll
 		if not rarest or not rarest.slimeData then return nil, nil end
 		local rarestId = rarest.slimeData.id
 		local rarestMutations = rarest.slimeData.mutations or {}
-		local equipped = Modules.dataServiceClient:get("equipped") or {}
-		local inv = Modules.dataServiceClient:get("inventory") or {}
+		local equipped = dataServiceClient:get("equipped") or {}
+		local inv = dataServiceClient:get("inventory") or {}
 		for _, slimeKey in pairs(equipped) do
 			if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
 				local data = inv[slimeKey]
@@ -1204,17 +1262,17 @@ repeat task.wait() until game:IsLoaded()
 	end
 
 	local function getTargetSlimes()
-		if not Modules.dataServiceClient then return {} end
+		if not dataServiceClient then return {} end
 		if selectedSlimeMode == "Best" then
 			local key, data = getBestSlimeEntry()
 			if key and data then return {{key=key, data=data}} end
 			return {}
 		else
-			local equipped = Modules.dataServiceClient:get("equipped") or {}
+			local equipped = dataServiceClient:get("equipped") or {}
 			local result = {}
 			for _, slimeKey in ipairs(equipped) do
 				if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
-					local inv = Modules.dataServiceClient:get("inventory") or {}
+					local inv = dataServiceClient:get("inventory") or {}
 					local data = inv[slimeKey]
 					if type(data) == "table" then table.insert(result, {key=slimeKey, data=data}) end
 				end
@@ -1237,14 +1295,14 @@ repeat task.wait() until game:IsLoaded()
 	end
 
 	local function doFeed()
-		if not Modules.inventoryServiceClient then return end
+		if not inventoryServiceClient then return end
 		local targets = getTargetSlimes()
 		local fruitsToFeed = resolveFruitList()
 		if #targets == 0 or #fruitsToFeed == 0 then return end
 		for _, entry in ipairs(targets) do
 			for _, fruitId in ipairs(fruitsToFeed) do
 				if not slimeHasFruit(entry.data, fruitId) then
-					pcall(function() Modules.inventoryServiceClient:fetch("requestUseFruit", fruitId, entry.key) end)
+					pcall(function() inventoryServiceClient:fetch("requestUseFruit", fruitId, entry.key) end)
 				end
 			end
 		end
@@ -1258,11 +1316,12 @@ repeat task.wait() until game:IsLoaded()
 			autoFeedEnabled = value
 			if feedConnection then feedConnection:Disconnect() feedConnection = nil end
 			if value then
-				task.spawn(function()
-					while autoFeedEnabled do
-						pcall(doFeed)
-						task.wait(1)
+				feedConnection = RunService.Heartbeat:Connect(function()
+					if not autoFeedEnabled then
+						if feedConnection then feedConnection:Disconnect() feedConnection = nil end
+						return
 					end
+					pcall(doFeed)
 				end)
 			end
 		end,
@@ -1274,7 +1333,7 @@ repeat task.wait() until game:IsLoaded()
 		local fruitOptions = {"Any"}
 		local labelToId = {}
 		local fruitNames = {}
-		for _, f in ipairs(Modules.FruitsModule and Modules.FruitsModule.getSortedFruits() or {}) do
+		for _, f in ipairs(FruitsModule and FruitsModule.getSortedFruits() or {}) do
 			table.insert(fruitNames, f.powerName)
 			labelToId[f.powerName] = f.id
 		end
@@ -1303,9 +1362,9 @@ repeat task.wait() until game:IsLoaded()
 			task.wait(30)
 			pcall(function()
 				if not (rayfieldLibrary.Flags.FarmingTransferXP and rayfieldLibrary.Flags.FarmingTransferXP.CurrentValue) then return end
-				if not Modules.dataServiceClient or not Modules.xpTransferServiceClient then return end
-				local inventory = Modules.dataServiceClient:get("inventory") or {}
-				local equipped  = Modules.dataServiceClient:get("equipped") or {}
+				if not dataServiceClient or not xpTransferServiceClient then return end
+				local inventory = dataServiceClient:get("inventory") or {}
+				local equipped  = dataServiceClient:get("equipped") or {}
 				local teamSet   = {}
 				for _, uid in ipairs(equipped) do teamSet[uid] = true end
 				local targetOption = rayfieldLibrary.Flags.FarmingTransferTarget and rayfieldLibrary.Flags.FarmingTransferTarget.CurrentOption and rayfieldLibrary.Flags.FarmingTransferTarget.CurrentOption[1] or "Best Slime"
@@ -1323,7 +1382,7 @@ repeat task.wait() until game:IsLoaded()
 							local isEquipped = teamSet[uid]
 							local hasXp = (type(data)=="table" and (data.xp or 0)>0) or (type(data)=="number" and data>0)
 							if (sourceOption=="Unequipped With XP" and not isEquipped and hasXp) or (sourceOption=="All Slimes" and hasXp) then
-								pcall(function() Modules.xpTransferServiceClient:fetch("requestTransferXp", uid, target) end)
+								pcall(function() xpTransferServiceClient:fetch("requestTransferXp", uid, target) end)
 								task.wait(0.5)
 							end
 						end
@@ -1351,8 +1410,8 @@ repeat task.wait() until game:IsLoaded()
 							if container then
 								for _, item in ipairs(container:GetChildren()) do
 									local id = item:GetAttribute("uniqueId") or item:GetAttribute("id") or item.Name
-									if id and Modules.lootServiceRemote then
-										pcall(function() Modules.lootServiceRemote:InvokeServer("requestCollect", id) end)
+									if id and lootServiceRemote then
+										pcall(function() lootServiceRemote:InvokeServer("requestCollect", id) end)
 									end
 								end
 							end
@@ -1363,133 +1422,6 @@ repeat task.wait() until game:IsLoaded()
 			end)
 		end,
 	})
-
-	pcall(function()
-		farmingTab:CreateSection("Fruit Extractor")
-
-		local autoExtractEnabled = false
-		local selectedExtractFruitIds = {"ANY"}
-		local selectedExtractSlimeMode = "Best"
-
-		local function getTargetSlimesForExtract()
-			if not Modules.dataServiceClient then return {} end
-			if selectedExtractSlimeMode == "Best" then
-				local key, data = getBestSlimeEntry()
-				if key and data then return {{key=key, data=data}} end
-				return {}
-			else
-				local equipped = Modules.dataServiceClient:get("equipped") or {}
-				local result = {}
-				for _, slimeKey in ipairs(equipped) do
-					if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
-						local inv = Modules.dataServiceClient:get("inventory") or {}
-						local data = inv[slimeKey]
-						if type(data) == "table" then table.insert(result, {key=slimeKey, data=data}) end
-					end
-				end
-				return result
-			end
-		end
-
-		local function resolveExtractFruitList()
-			local ok, owned = pcall(getOwnedFruitIds)
-			if not ok or not owned then return {} end
-			if selectedExtractFruitIds[1] == "ANY" then
-				local result = {}
-				for _, f in ipairs(ALL_FRUITS or {}) do if owned[f.id] then table.insert(result, f.id) end end
-				return result
-			else
-				local result = {}
-				for _, fid in ipairs(selectedExtractFruitIds) do if owned[fid] then table.insert(result, fid) end end
-				return result
-			end
-		end
-
-		local function doExtract()
-			if not Modules.fruitExtractorRemote then return end
-			local targets = getTargetSlimesForExtract()
-			if #targets == 0 then return end
-			for _, entry in ipairs(targets) do
-				local shouldExtract = false
-				if selectedExtractFruitIds[1] == "ANY" then
-					shouldExtract = true
-				else
-					local fruitsToExtract = resolveExtractFruitList()
-					for _, fruitId in ipairs(fruitsToExtract) do
-						local ok, has = pcall(slimeHasFruit, entry.data, fruitId)
-						if ok and has then shouldExtract = true break end
-					end
-				end
-				if shouldExtract then
-					pcall(function() Modules.fruitExtractorRemote:InvokeServer("requestExtractFruits", entry.key) end)
-					task.wait(0.3)
-				end
-			end
-		end
-
-		featureToggle(farmingTab, {
-			Name = "Auto Extract Fruits from Slime(s)",
-			CurrentValue = false,
-			Flag = "AutoExtractToggle",
-			Callback = function(value)
-				autoExtractEnabled = value
-				if value then
-					task.spawn(function()
-						while autoExtractEnabled do
-							local flag = rayfieldLibrary.Flags and rayfieldLibrary.Flags.AutoExtractToggle
-							if not flag or not flag.CurrentValue then break end
-							pcall(doExtract)
-							task.wait(2)
-						end
-					end)
-				end
-			end,
-		})
-
-		farmingTab:CreateDropdown({
-			Name = "Extract From",
-			Options = {"Best", "Equipped Team"},
-			CurrentOption = {"Best"},
-			MultipleOptions = false,
-			Flag = "ExtractSlimeModeDropdown",
-			Callback = function(option)
-				selectedExtractSlimeMode = type(option) == "table" and option[1] or option
-			end,
-		})
-
-		pcall(function()
-			local extractFruitOptions = {"Any"}
-			local extractLabelToId = {}
-			local extractFruitNames = {}
-			local fruits = (Modules.FruitsModule and Modules.FruitsModule.getSortedFruits) and Modules.FruitsModule.getSortedFruits() or {}
-			for _, f in ipairs(fruits) do
-				table.insert(extractFruitNames, f.powerName)
-				extractLabelToId[f.powerName] = f.id
-			end
-			table.sort(extractFruitNames)
-			for _, name in ipairs(extractFruitNames) do table.insert(extractFruitOptions, name) end
-			farmingTab:CreateDropdown({
-				Name = "Fruits to Extract",
-				Options = extractFruitOptions,
-				CurrentOption = {"Any"},
-				MultipleOptions = true,
-				Flag = "ExtractFruitDropdown",
-				Callback = function(options)
-					local picked = type(options) == "table" and options or {options}
-					selectedExtractFruitIds = {}
-					for _, label in ipairs(picked) do
-						if label == "Any" then
-							selectedExtractFruitIds = {"ANY"}
-							return
-						else
-							table.insert(selectedExtractFruitIds, extractLabelToId[label])
-						end
-					end
-					if #selectedExtractFruitIds == 0 then selectedExtractFruitIds = {"ANY"} end
-				end,
-			})
-		end)
-	end)
 
 	gameTab:CreateSection("Auto Farm")
 
@@ -1667,14 +1599,14 @@ repeat task.wait() until game:IsLoaded()
 					local flag = rayfieldLibrary.Flags.GameAutoRebirth
 					if not flag or not flag.CurrentValue then break end
 					pcall(function()
-						if not Modules.rebirthServiceRemote or not Modules.dataServiceClient then return end
-						local rebirths     = Modules.dataServiceClient:get("rebirths") or 0
-						local goop         = Modules.dataServiceClient:get("goop") or 0
-						local furthestZone = Modules.dataServiceClient:get("furthestZone") or 0
+						if not rebirthServiceRemote or not dataServiceClient then return end
+						local rebirths     = dataServiceClient:get("rebirths") or 0
+						local goop         = dataServiceClient:get("goop") or 0
+						local furthestZone = dataServiceClient:get("furthestZone") or 0
 						local requiredGoop = (2^rebirths)*500
 						local minZone      = tonumber(rayfieldLibrary.Flags.GameMinZoneRebirth and rayfieldLibrary.Flags.GameMinZoneRebirth.CurrentValue) or 0
 						if furthestZone >= minZone and goop >= requiredGoop then
-							Modules.rebirthServiceRemote:InvokeServer("requestRebirth")
+							rebirthServiceRemote:InvokeServer("requestRebirth")
 						end
 					end)
 					task.wait(10)
@@ -1687,6 +1619,19 @@ repeat task.wait() until game:IsLoaded()
 
 	gameTab:CreateSection("Upgrades")
 
+	local UpgradeService = nil
+	task.spawn(function()
+		repeat task.wait(1) until modulesLoaded and dataServiceClient
+		local rs = game:GetService("ReplicatedStorage")
+		local ok, upgradeSvc = pcall(function() return require(rs.Source.Features.Upgrades.UpgradeServiceClient) end)
+		if ok and upgradeSvc then
+			local dummyClient = {}
+			dummyClient.networker = Networker.client.new("UpgradeService", dummyClient)
+			upgradeSvc.init(dummyClient)
+			UpgradeService = upgradeSvc
+		end
+	end)
+
 	featureToggle(gameTab, {
 		Name = "Auto Upgrade Purchasing",
 		CurrentValue = false,
@@ -1697,17 +1642,17 @@ repeat task.wait() until game:IsLoaded()
 				while true do
 					local flag = rayfieldLibrary.Flags.GameAutoUpgrade
 					if not flag or not flag.CurrentValue then break end
-					if not Modules.UpgradeServiceClient or not Modules.dataServiceClient or not Modules.upgradeTreeModule then task.wait(2) continue end
+					if not UpgradeService or not dataServiceClient or not upgradeTreeModule then task.wait(2) continue end
 					pcall(function()
 						local upgradeMode = rayfieldLibrary.Flags.GameUpgradeMode and rayfieldLibrary.Flags.GameUpgradeMode.CurrentOption or {"All"}
 						local modeSet = {}
 						for _, m in ipairs(upgradeMode) do modeSet[m] = true end
-						local unlockedUpgrades = Modules.dataServiceClient:get("upgrades") or {}
-						local coins = Modules.dataServiceClient:get("coins") or 0
-						local goop = Modules.dataServiceClient:get("goop") or 0
-						local rollCurrency = Modules.dataServiceClient:get("rollCurrency") or 0
+						local unlockedUpgrades = dataServiceClient:get("upgrades") or {}
+						local coins = dataServiceClient:get("coins") or 0
+						local goop = dataServiceClient:get("goop") or 0
+						local rollCurrency = dataServiceClient:get("rollCurrency") or 0
 						local anyPurchased = false
-						for treeName, tree in pairs(Modules.upgradeTreeModule) do
+						for treeName, tree in pairs(upgradeTreeModule) do
 							for upgradeId, data in pairs(tree) do
 								if data.cost and not unlockedUpgrades[upgradeId] then
 									local cost = data.cost.amount or 0
@@ -1721,7 +1666,7 @@ repeat task.wait() until game:IsLoaded()
 										canBuy = rollCurrency >= cost
 									end
 									if canBuy then
-										local success = Modules.UpgradeServiceClient.unlockUpgrade(Modules.UpgradeServiceClientInstance, upgradeId)
+										local success = UpgradeService:unlockUpgrade(upgradeId)
 										if success then
 											anyPurchased = true
 											if currency == "coins" then coins = coins - cost
@@ -1748,9 +1693,9 @@ repeat task.wait() until game:IsLoaded()
 
 	pcall(function()
 		local recipeIdsList = {}
-		if Modules.RecipesModule then
-			local unlocked = Modules.dataServiceClient and Modules.dataServiceClient:get("craftingRecipes") or {}
-			local all = Modules.RecipesModule.getRecipes() or {}
+		if RecipesModule then
+			local unlocked = dataServiceClient and dataServiceClient:get("craftingRecipes") or {}
+			local all = RecipesModule.getRecipes() or {}
 			for _, recipe in ipairs(all) do if unlocked[recipe.id] then table.insert(recipeIdsList, recipe.id) end end
 			table.sort(recipeIdsList)
 		end
@@ -1764,11 +1709,12 @@ repeat task.wait() until game:IsLoaded()
 			protectCategories = {"Best Slime","Equipped Slimes","Xp Slimes"},
 		}
 
-		local function getSizeMutations() return Modules.mutationsModule and Modules.mutationsModule.sizeMutations or {} end
-		local function getModifierMutations() return Modules.mutationsModule and Modules.mutationsModule.modifierMutations or {} end
+		local MutationsModule = mutationsModule
+		local function getSizeMutations() return MutationsModule and MutationsModule.sizeMutations or {} end
+		local function getModifierMutations() return MutationsModule and MutationsModule.modifierMutations or {} end
 		local function getMutationValue(mutId)
-			if not Modules.mutationsModule then return 0 end
-			local data = Modules.mutationsModule.get(mutId)
+			if not MutationsModule then return 0 end
+			local data = MutationsModule.get(mutId)
 			return data and data.value or 0
 		end
 
@@ -1795,14 +1741,14 @@ repeat task.wait() until game:IsLoaded()
 		end
 
 		local function getEquippedSet()
-			local equipped = Modules.dataServiceClient and Modules.dataServiceClient:get("equipped") or {}
+			local equipped = dataServiceClient and dataServiceClient:get("equipped") or {}
 			local set = {}
 			for _, uid in pairs(equipped) do set[uid] = true end
 			return set
 		end
 
 		local function getBestSlimeSet()
-			local inventory = Modules.dataServiceClient and Modules.dataServiceClient:get("inventory") or {}
+			local inventory = dataServiceClient and dataServiceClient:get("inventory") or {}
 			local best, bestScore = nil, -1
 			for uid, data in pairs(inventory) do
 				if type(data) ~= "table" then
@@ -1822,7 +1768,7 @@ repeat task.wait() until game:IsLoaded()
 			if catSet["Equipped Slimes"] then for uid in pairs(getEquippedSet()) do protected[uid] = true end end
 			if catSet["Best Slime"]      then for uid in pairs(getBestSlimeSet()) do protected[uid] = true end end
 			if catSet["Xp Slimes"] then
-				local inv = Modules.dataServiceClient and Modules.dataServiceClient:get("inventory") or {}
+				local inv = dataServiceClient and dataServiceClient:get("inventory") or {}
 				for uid, data in pairs(inv) do if type(data) == "table" then protected[uid] = true end end
 			end
 			return protected
@@ -1831,7 +1777,7 @@ repeat task.wait() until game:IsLoaded()
 		local protectedPets = buildProtectedSet(craftingState.protectCategories)
 
 		local function findBestIngredient(baseId, usedCounts)
-			local inventory = Modules.dataServiceClient and Modules.dataServiceClient:get("inventory") or {}
+			local inventory = dataServiceClient and dataServiceClient:get("inventory") or {}
 			local bestUid, bestScore = nil, -1
 			for uid, data in pairs(inventory) do
 				if not protectedPets[uid] then
@@ -1850,7 +1796,7 @@ repeat task.wait() until game:IsLoaded()
 		end
 
 		local function buildCraftArgsForRecipe(recipeId, amount)
-			local recipe = Modules.RecipesModule and Modules.RecipesModule.getRecipe(recipeId)
+			local recipe = RecipesModule and RecipesModule.getRecipe(recipeId)
 			if not recipe then return nil end
 			local ingredientIds, usedCounts = {}, {}
 			for _, input in ipairs(recipe.inputs) do
@@ -1880,14 +1826,14 @@ repeat task.wait() until game:IsLoaded()
 		end
 
 		local function getMaxCraftsForRecipe(recipeId)
-			local recipe = Modules.RecipesModule and Modules.RecipesModule.getRecipe(recipeId)
+			local recipe = RecipesModule and RecipesModule.getRecipe(recipeId)
 			if not recipe then return 0 end
 			local usedCounts, maxCrafts = {}, math.huge
 			for _, input in ipairs(recipe.inputs) do
 				local uid = findBestIngredient(input.id, usedCounts)
 				if not uid then return 0 end
 				usedCounts[uid] = (usedCounts[uid] or 0) + 1
-				local inv = Modules.dataServiceClient and Modules.dataServiceClient:get("inventory") or {}
+				local inv = dataServiceClient and dataServiceClient:get("inventory") or {}
 				local owned = type(inv[uid])=="number" and math.max(inv[uid],0) or (type(inv[uid])=="table" and 1 or 0)
 				local avail = owned - usedCounts[uid] + 1
 				if avail < maxCrafts then maxCrafts = avail end
@@ -2048,7 +1994,7 @@ repeat task.wait() until game:IsLoaded()
 						end
 						lastUfoZoneId = state.zoneId
 						lastUfoPhase = state.phase
-						local currentZone = Modules.dataServiceClient and Modules.dataServiceClient:get("zone") or nil
+						local currentZone = dataServiceClient and dataServiceClient:get("zone") or nil
 						if currentZone ~= state.zoneId then
 							pcall(function() ufoZonesRemote:InvokeServer("requestTeleportZone", state.zoneId) end)
 						end
@@ -2098,21 +2044,24 @@ repeat task.wait() until game:IsLoaded()
 			if value then
 				indexRunning = true
 				indexThread = task.spawn(function()
-					if not Modules.dataServiceClient then
+					if not dataServiceClient then
 						rayfieldLibrary:Notify({ Title="Index", Content="DataService not loaded yet.", Duration=4 })
 						indexRunning = false
 						return
 					end
 					setLuck(1) task.wait(0.3)
 					setLuckEnabled(true) task.wait(0.3)
+
 					luckPollThread = task.spawn(function()
 						while indexRunning do
 							if indexLabels.lLuck then indexLabels.lLuck:Set("🍀 Luck Override: x"..tostring(luckValueLocal)) end
 							task.wait(1)
 						end
 					end)
+
 					local modeFlag = rayfieldLibrary.Flags and rayfieldLibrary.Flags.IndexRollMode
 					local mode = modeFlag and (type(modeFlag.CurrentOption)=="table" and modeFlag.CurrentOption[1] or modeFlag.CurrentOption) or "🌱 Easiest First"
+
 					local function getSortedCategoriesByPriority()
 						local cats = {}
 						for _, catId in ipairs(CATEGORY_IDS) do
@@ -2122,6 +2071,7 @@ repeat task.wait() until game:IsLoaded()
 						table.sort(cats, function(a, b) return a.easiestEffectiveOdds > b.easiestEffectiveOdds end)
 						return cats
 					end
+
 					local function runCategory(catId, modeStr, labels)
 						local failCount = 0
 						local catLabel  = catId:sub(1,1):upper()..catId:sub(2)
@@ -2140,14 +2090,14 @@ repeat task.wait() until game:IsLoaded()
 								labels.lCategory:Set(string.format("📂 %s (%d left)", catLabel, #missing))
 							end
 							local before = getUnlockedIndex(catId)
-							pcall(function() Modules.networkerRoll:fetch("requestRoll") end)
-							task.wait(Modules.rollSliceModule and Modules.rollSliceModule.rollTime() or 0.5)
+							pcall(function() networkerRoll:fetch("requestRoll") end)
+							task.wait(rollSliceModule and rollSliceModule.rollTime() or 0.5)
 							local after = getUnlockedIndex(catId)
 							local gotOne = false
 							for id, v in pairs(after) do
 								if v == true and not before[id] then
 									gotOne = true failCount = 0
-									local slime = Modules.slimesModule and Modules.slimesModule.getSlime(id)
+									local slime = slimesModule and slimesModule.getSlime(id)
 									print("[UNLOCKED]", catLabel, slime and slime.name or id)
 								end
 							end
@@ -2159,6 +2109,7 @@ repeat task.wait() until game:IsLoaded()
 						end
 						return false
 					end
+
 					if selectedCategoryOption == nil or selectedCategoryOption == "🎲 All (Recommended)" then
 						while indexRunning do
 							local sorted = getSortedCategoriesByPriority()
@@ -2187,6 +2138,7 @@ repeat task.wait() until game:IsLoaded()
 						end
 						indexRunning = false
 					end
+
 					if luckPollThread then task.cancel(luckPollThread) end
 					setLuckEnabled(false)
 				end)
@@ -2266,10 +2218,10 @@ repeat task.wait() until game:IsLoaded()
 				while true do
 					local flag = rayfieldLibrary.Flags.MiscRedeemCodes
 					if not flag or not flag.CurrentValue then break end
-					if not Modules.codeServiceRemote then break end
+					if not codeServiceRemote then break end
 					for _, code in ipairs(codes) do
 						if not (rayfieldLibrary.Flags.MiscRedeemCodes and rayfieldLibrary.Flags.MiscRedeemCodes.CurrentValue) then break end
-						pcall(function() Modules.codeServiceRemote:InvokeServer("redeem", code) end)
+						pcall(function() codeServiceRemote:InvokeServer("redeem", code) end)
 						task.wait(0.5)
 					end
 					task.wait(300)
@@ -2288,8 +2240,8 @@ repeat task.wait() until game:IsLoaded()
 				while true do
 					local flag = rayfieldLibrary.Flags.MiscClaimOffline
 					if not flag or not flag.CurrentValue then break end
-					if not Modules.offlineEarningsRemote then break end
-					pcall(function() Modules.offlineEarningsRemote:InvokeServer("requestClaim") end)
+					if not offlineEarningsRemote then break end
+					pcall(function() offlineEarningsRemote:InvokeServer("requestClaim") end)
 					task.wait(60)
 				end
 			end)
@@ -2307,10 +2259,10 @@ repeat task.wait() until game:IsLoaded()
 					local flag = rayfieldLibrary.Flags.MiscClaimIndex
 					if not flag or not flag.CurrentValue then break end
 					pcall(function()
-						if not Modules.indexServiceRemote or not Modules.indexRewardsModule or not Modules.dataServiceClient then return end
-						local indexData = Modules.dataServiceClient:get("index")
+						if not indexServiceRemote or not indexRewardsModule or not dataServiceClient then return end
+						local indexData = dataServiceClient:get("index")
 						if not indexData or not indexData.categories then return end
-						for categoryKey, rewardsList in pairs(Modules.indexRewardsModule) do
+						for categoryKey, rewardsList in pairs(indexRewardsModule) do
 							local category = indexData.categories[categoryKey]
 							if category then
 								local unlocked = category.unlocked or {}
@@ -2319,7 +2271,7 @@ repeat task.wait() until game:IsLoaded()
 								local claimedRewards = category.claimedRewards or {}
 								for _, reward in ipairs(rewardsList) do
 									if unlockedCount >= reward.req and not claimedRewards[reward.key] then
-										pcall(function() Modules.indexServiceRemote:InvokeServer("requestClaimReward", categoryKey) end)
+										pcall(function() indexServiceRemote:InvokeServer("requestClaimReward", categoryKey) end)
 										task.wait(0.5)
 									end
 								end
@@ -2336,7 +2288,7 @@ repeat task.wait() until game:IsLoaded()
 
 	pcall(function()
 		local sortedBoostKinds = {}
-		if Modules.boostKinds then for _, kind in ipairs(Modules.boostKinds) do table.insert(sortedBoostKinds, kind) end table.sort(sortedBoostKinds) end
+		if boostKinds then for _, kind in ipairs(boostKinds) do table.insert(sortedBoostKinds, kind) end table.sort(sortedBoostKinds) end
 		
 		featureToggle(miscTab, {
 			Name = "Auto Use Potions",
@@ -2349,16 +2301,16 @@ repeat task.wait() until game:IsLoaded()
 						local flag = rayfieldLibrary.Flags.MiscUsePotions
 						if not flag or not flag.CurrentValue then break end
 						pcall(function()
-							if not Modules.boostServiceRemote or not Modules.dataServiceClient or not Modules.boostServiceUtils then return end
-							local boosts = Modules.dataServiceClient:get("boosts") or {}
+							if not boostServiceRemote or not dataServiceClient or not boostServiceUtils then return end
+							local boosts = dataServiceClient:get("boosts") or {}
 							local selectedPotions = rayfieldLibrary.Flags.MiscPotionTypes and rayfieldLibrary.Flags.MiscPotionTypes.CurrentOption or {}
 							local serverTime = workspace:GetServerTimeNow()
 							for _, potionType in ipairs(selectedPotions) do
 								local boostData = boosts[potionType]
 								if boostData and (boostData.amount or 0) > 0 then
-									local remaining = Modules.boostServiceUtils.getTimeRemaining(boostData, serverTime)
+									local remaining = boostServiceUtils.getTimeRemaining(boostData, serverTime)
 									if remaining <= 0 then
-										pcall(function() Modules.boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
+										pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
 										task.wait(0.5)
 									end
 								end
@@ -2377,16 +2329,16 @@ repeat task.wait() until game:IsLoaded()
 				Callback = function()
 					task.spawn(function()
 						pcall(function()
-							if not Modules.boostServiceRemote or not Modules.dataServiceClient then
+							if not boostServiceRemote or not dataServiceClient then
 								rayfieldLibrary:Notify({ Title="Error", Content="Boost service not ready", Duration=3 })
 								return
 							end
 							local selectedPotions = rayfieldLibrary.Flags.MiscPotionTypes and rayfieldLibrary.Flags.MiscPotionTypes.CurrentOption or {}
 							for _, potionType in ipairs(selectedPotions) do
-								local boosts = Modules.dataServiceClient:get("boosts") or {}
+								local boosts = dataServiceClient:get("boosts") or {}
 								local amount = (boosts[potionType] or {}).amount or 0
 								for i = 1, amount do
-									pcall(function() Modules.boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
+									pcall(function() boostServiceRemote:InvokeServer("requestUseBoost", potionType) end)
 									task.wait(0.2)
 								end
 							end
@@ -2402,8 +2354,8 @@ repeat task.wait() until game:IsLoaded()
 
 	pcall(function()
 		local diceNames = {}
-		if Modules.diceItemIds and Modules.idToNameMap then
-			for _, itemId in ipairs(Modules.diceItemIds) do table.insert(diceNames, Modules.idToNameMap[itemId]) end
+		if diceItemIds and idToNameMap then
+			for _, itemId in ipairs(diceItemIds) do table.insert(diceNames, idToNameMap[itemId]) end
 			table.sort(diceNames)
 		end
 		
@@ -2418,19 +2370,19 @@ repeat task.wait() until game:IsLoaded()
 						local flag = rayfieldLibrary.Flags.MiscUseDice
 						if not flag or not flag.CurrentValue then break end
 						pcall(function()
-							if not Modules.inventoryServiceRemote or not Modules.dataServiceClient then return end
-							local queue = Modules.dataServiceClient:get("specialDiceQueue") or {}
+							if not inventoryServiceRemote or not dataServiceClient then return end
+							local queue = dataServiceClient:get("specialDiceQueue") or {}
 							local active = queue[1]
 							if active then
 								task.wait(1)
 								return
 							end
-							local items = Modules.dataServiceClient:get("items") or {}
+							local items = dataServiceClient:get("items") or {}
 							local selectedDiceItems = rayfieldLibrary.Flags.MiscDiceTypes and rayfieldLibrary.Flags.MiscDiceTypes.CurrentOption or {}
 							for _, diceName in ipairs(selectedDiceItems) do
-								local itemId = Modules.nameToIdMap and Modules.nameToIdMap[diceName]
+								local itemId = nameToIdMap and nameToIdMap[diceName]
 								if itemId and (items[itemId] or 0) > 0 then
-									pcall(function() Modules.inventoryServiceRemote:InvokeServer("requestUseItem", itemId) end)
+									pcall(function() inventoryServiceRemote:InvokeServer("requestUseItem", itemId) end)
 									task.wait(0.5)
 								end
 							end
@@ -2448,18 +2400,18 @@ repeat task.wait() until game:IsLoaded()
 				Callback = function()
 					task.spawn(function()
 						pcall(function()
-							if not Modules.inventoryServiceRemote or not Modules.dataServiceClient then
+							if not inventoryServiceRemote or not dataServiceClient then
 								rayfieldLibrary:Notify({ Title="Error", Content="Inventory service not ready", Duration=3 })
 								return
 							end
 							local selectedDiceItems = rayfieldLibrary.Flags.MiscDiceTypes and rayfieldLibrary.Flags.MiscDiceTypes.CurrentOption or {}
 							for _, diceName in ipairs(selectedDiceItems) do
-								local itemId = Modules.nameToIdMap and Modules.nameToIdMap[diceName]
+								local itemId = nameToIdMap and nameToIdMap[diceName]
 								if itemId then
-									local items = Modules.dataServiceClient:get("items") or {}
+									local items = dataServiceClient:get("items") or {}
 									local amount = items[itemId] or 0
 									for i = 1, amount do
-										pcall(function() Modules.inventoryServiceRemote:InvokeServer("requestUseItem", itemId) end)
+										pcall(function() inventoryServiceRemote:InvokeServer("requestUseItem", itemId) end)
 										task.wait(0.2)
 									end
 								end
@@ -2557,7 +2509,7 @@ repeat task.wait() until game:IsLoaded()
 	end
 
 	local function isNewSlime(slimeId, mutations)
-		local indexData = Modules.dataServiceClient and Modules.dataServiceClient:get("index") or {}
+		local indexData = dataServiceClient and dataServiceClient:get("index") or {}
 		local categories = indexData.categories or {}
 		local category = categories[getMutationTypeString(mutations)]
 		local unlocked = category and category.unlocked or {}
@@ -2570,17 +2522,17 @@ repeat task.wait() until game:IsLoaded()
 		recentWebhookNotifications[notificationKey] = true
 		local mentionText = (mentionUserId and mentionUserId ~= "") and ("<@" .. mentionUserId .. "> ") or ""
 		local slimeName = slimeData and slimeData.name or slimeId
-		local displayName = mutations and Modules.mutationsModule and Modules.mutationsModule.getDisplayName(slimeName, mutations) or slimeName
+		local displayName = mutations and mutationsModule and mutationsModule.getDisplayName(slimeName, mutations) or slimeName
 		local odds = slimeData and slimeData.odds or nil
 		local damage = slimeData and slimeData.damage or 0
 		local health = slimeData and slimeData.health or 0
-		local oddsMultiplier = mutations and Modules.mutationsModule and Modules.mutationsModule.getVisualOddsMultiplier(mutations) or 1
-		local statBonus = mutations and Modules.mutationsModule and Modules.mutationsModule.getStatBonus(mutations, "damage") or 1
+		local oddsMultiplier = mutations and mutationsModule and mutationsModule.getVisualOddsMultiplier(mutations) or 1
+		local statBonus = mutations and mutationsModule and mutationsModule.getStatBonus(mutations, "damage") or 1
 		local actualOdds = odds and (odds / oddsMultiplier) or nil
 		local chanceText = (actualOdds and actualOdds > 0) and string.format("1 in %s", formatNumber(math.floor(1/actualOdds+0.5))) or "N/A"
-		local totalRolls = (Modules.dataServiceClient and Modules.dataServiceClient:get("stats") or {}).rolls or 0
-		local coins = Modules.dataServiceClient and Modules.dataServiceClient:get("coins") or 0
-		local totalKills = (Modules.dataServiceClient and Modules.dataServiceClient:get("stats") or {}).kills or 0
+		local totalRolls = (dataServiceClient and dataServiceClient:get("stats") or {}).rolls or 0
+		local coins = dataServiceClient and dataServiceClient:get("coins") or 0
+		local totalKills = (dataServiceClient and dataServiceClient:get("stats") or {}).kills or 0
 		local playerName = localPlayer.Name
 		local embedFields = {{name="Chance",value=chanceText,inline=true}}
 		local finalDamage = damage * statBonus
@@ -2629,11 +2581,11 @@ repeat task.wait() until game:IsLoaded()
 	task.spawn(function()
 		while true do
 			task.wait(0.1)
-			if not Modules.loaded then task.wait(1) continue end
+			if not modulesLoaded then task.wait(1) continue end
 			if not (rayfieldLibrary.Flags.WebhookEnabled and rayfieldLibrary.Flags.WebhookEnabled.CurrentValue) then task.wait(1) continue end
-			if savedWebhookUrl == "" or not Modules.rollSliceModule then task.wait(0.5) continue end
+			if savedWebhookUrl == "" or not rollSliceModule then task.wait(0.5) continue end
 			pcall(function()
-				local currentRolls = Modules.rollSliceModule.rollResults()
+				local currentRolls = rollSliceModule.rollResults()
 				if type(currentRolls) ~= "table" or #currentRolls == 0 then return end
 				local currentHash = encodeRollResults(currentRolls)
 				if currentHash == lastRollResultsHash then return end
@@ -2659,7 +2611,7 @@ repeat task.wait() until game:IsLoaded()
 						local slimeId = tostring(slimeData.id or "")
 						if slimeId ~= "" then
 							local mutations = type(slimeData.mutations)=="table" and next(slimeData.mutations)~=nil and slimeData.mutations or nil
-							local slimeDefinition = Modules.slimesModule and Modules.slimesModule.getSlime(slimeId)
+							local slimeDefinition = slimesModule and slimesModule.getSlime(slimeId)
 							local hasMutation = mutations ~= nil
 							local isNew = isNewSlime(slimeId, mutations)
 							local shouldSend = sendAll or (sendNewOnly and isNew) or (sendMutated and hasMutation)
@@ -2719,34 +2671,23 @@ repeat task.wait() until game:IsLoaded()
 				while true do
 					local flag = rayfieldLibrary.Flags.AutoFriend
 					if not flag or not flag.CurrentValue then break end
-					pcall(function()
-						local PlayersService = game:GetService("Players")
-						local lp = PlayersService.LocalPlayer
-						for _, player in ipairs(PlayersService:GetPlayers()) do
-							if player ~= lp then
-								local ok, status = pcall(function()
-									return lp:GetFriendStatus(player)
-								end)
-								if ok and (status == Enum.FriendStatus.NotFriend or status == Enum.FriendStatus.Unknown) then
-									pcall(function() lp:RequestFriendship(player) end)
-									task.wait(0.5)
-								end
-							end
-						end
-					end)
+					local players = game:GetService("Players"):GetPlayers()
+					for _, p in ipairs(players) do
+						if p ~= localPlayer then pcall(function() localPlayer:RequestFriendship(p) end) task.wait(1) end
+					end
 					task.wait(600)
 				end
 			end)
 		end,
 	})
 
-	settingsTab:CreateParagraph({ Title = "Friend Requests", Content = "NOTE : works based on your executor" })
+	settingsTab:CreateParagraph({ Title = "MAY be Patched", Content = "Auto Send & Accept Friend Requests may not work depending on current Roblox API restrictions." })
 	settingsTab:CreateSection("Advanced Optimization")
 
 	local OPT_VISUAL_TYPES = { ParticleEmitter=true,Trail=true,Beam=true,Fire=true,Smoke=true,Sparkles=true,SurfaceAppearance=true,Highlight=true,SelectionBox=true,SelectionSphere=true,Atmosphere=true }
 	local CHEAP_MATERIAL = Enum.Material.SmoothPlastic
 	local updatingOptimizations = false
-	local optGPUToggle, optEffectsToggle, optGCToggle, maxFpsToggle
+	local optGPUToggle, optEffectsToggle, optGCToggle, optIntenseToggle, maxFpsToggle
 
 	local function setAllOptimizations(value)
 		updatingOptimizations = true
@@ -2754,6 +2695,7 @@ repeat task.wait() until game:IsLoaded()
 		if optGPUToggle     then optGPUToggle:Set(value) end
 		if optEffectsToggle then optEffectsToggle:Set(value) end
 		if optGCToggle      then optGCToggle:Set(value) end
+		if optIntenseToggle then optIntenseToggle:Set(value) end
 		updatingOptimizations = false
 		if value then
 			pcall(function() setfpscap(0) end)
@@ -2767,7 +2709,7 @@ repeat task.wait() until game:IsLoaded()
 					if d:IsA("BasePart") then d.CastShadow=false d.Reflectance=0 d.Material=CHEAP_MATERIAL end
 				end
 				local rs = game:GetService("RunService")
-				rs:Set3dRenderingEnabled(false)
+				rs:Set3dRenderingEnabled(false) task.wait(0.1) rs:Set3dRenderingEnabled(true)
 			end)
 			pcall(function()
 				for _, d in ipairs(game:GetDescendants()) do
@@ -2776,12 +2718,14 @@ repeat task.wait() until game:IsLoaded()
 			end)
 			if _G.__memoryCleaner then _G.__memoryCleaner:Disconnect() end
 			_G.__memoryCleaner = RunService.Heartbeat:Connect(function() gcinfo() end)
+			pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/Optimization.lua"))() end)
 		else
 			if _G.__memoryCleaner then _G.__memoryCleaner:Disconnect() _G.__memoryCleaner = nil end
 		end
 	end
 
 	settingsTab:CreateToggle({ Name="Optimize All", CurrentValue=false, Flag="OptimizeAll", Callback=function(Value) if updatingOptimizations then return end setAllOptimizations(Value) end })
+
 	maxFpsToggle = featureToggle(settingsTab, { Name="Max FPS", CurrentValue=false, Flag="MaxFPS", Callback=function(Value) if Value then pcall(function() setfpscap(0) end) end end })
 
 	optGPUToggle = featureToggle(settingsTab, {
@@ -2793,7 +2737,7 @@ repeat task.wait() until game:IsLoaded()
 			lighting.GlobalShadows=false lighting.EnvironmentDiffuseScale=0 lighting.EnvironmentSpecularScale=0
 			for _, d in ipairs(workspace:GetDescendants()) do if d:IsA("BasePart") then d.CastShadow=false d.Reflectance=0 d.Material=CHEAP_MATERIAL end end
 			local rs = game:GetService("RunService")
-			rs:Set3dRenderingEnabled(false)
+			rs:Set3dRenderingEnabled(false) task.wait(0.1) rs:Set3dRenderingEnabled(true)
 		end,
 	})
 
@@ -2818,8 +2762,16 @@ repeat task.wait() until game:IsLoaded()
 		end,
 	})
 
+	optIntenseToggle = featureToggle(settingsTab, {
+		Name = "Intense Optimization", CurrentValue=false, Flag="IntenseOptimization",
+		Callback = function(Value)
+			if updatingOptimizations or not Value then return end
+			pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/Optimization.lua"))() end)
+		end,
+	})
+
 	local function safeGet(...)
-		local ok, data = pcall(function() return Modules.dataServiceClient._data._data end)
+		local ok, data = pcall(function() return dataServiceClient._data._data end)
 		if not ok or type(data) ~= "table" then return 0 end
 		local cur = data
 		for _, key in ipairs({...}) do
@@ -2842,14 +2794,14 @@ repeat task.wait() until game:IsLoaded()
 	end
 
 	local function fmtTime(seconds)
-			seconds = math.floor(tonumber(seconds) or 0)
-			local days = math.floor(seconds/86400)
-			local hours = math.floor((seconds%86400)/3600)
-			local minutes = math.floor((seconds%3600)/60)
-			if days>0 then return days.."d "..hours.."h "..minutes.."m"
-			elseif hours>0 then return hours.."h "..minutes.."m"
-			elseif minutes>0 then return minutes.."m "..math.floor(seconds%60).."s"
-			else return math.floor(seconds%60).."s" end
+		seconds = math.floor(tonumber(seconds) or 0)
+		local days = math.floor(seconds/86400)
+		local hours = math.floor((seconds%86400)/3600)
+		local minutes = math.floor((seconds%3600)/60)
+		if days>0 then return days.."d "..hours.."h "..minutes.."m"
+		elseif hours>0 then return hours.."h "..minutes.."m"
+		elseif minutes>0 then return minutes.."m "..math.floor(seconds%60).."s"
+		else return math.floor(seconds%60).."s" end
 	end
 
 	local function countKeys(t)
@@ -3038,8 +2990,4 @@ repeat task.wait() until game:IsLoaded()
 
 	rayfieldLibrary:LoadConfiguration()
 	Logger:info("CactusHub", "Init", "Script initialization complete")
-end)
-if not ok then
-	warn("[CactusHub] Fatal error: " .. tostring(err))
-end
 end)
