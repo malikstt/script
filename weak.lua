@@ -1,5 +1,6 @@
 task.spawn(function()
-	repeat task.wait() until game:IsLoaded()
+local ok, err = pcall(function()
+repeat task.wait() until game:IsLoaded()
 
 	local Logger = {}
 	Logger.LogHistory = {}
@@ -25,251 +26,71 @@ task.spawn(function()
 	local HttpService = game:GetService("HttpService")
 	local TweenService = game:GetService("TweenService")
 
-	local virtualUser = game:GetService("VirtualUser")
-	localPlayer.Idled:Connect(function()
-		virtualUser:CaptureController()
-		virtualUser:ClickButton2(Vector2.new())
+	pcall(function()
+		local virtualUser = game:GetService("VirtualUser")
+		localPlayer.Idled:Connect(function()
+			virtualUser:CaptureController()
+			virtualUser:ClickButton2(Vector2.new())
+		end)
 	end)
 
 	Logger:info("CactusHub", "Init", "Loading WindUI...")
 	local WindUI
 	local windOk, windErr = pcall(function()
-		WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+		WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
 	end)
 	if not windOk or not WindUI then
 		Logger:error("CactusHub", "WindUILoader", "Failed to load WindUI", windErr)
+		warn("[CactusHub] WindUI failed: " .. tostring(windErr))
 		return
 	end
 	Logger:info("CactusHub", "Init", "WindUI loaded successfully")
 
-	-- Flags compatibility layer
-	local Flags = {}
-	local function getFlag(name)
-		return Flags[name]
-	end
-	local function getFlagValue(name)
-		local f = Flags[name]
-		if not f then return nil end
-		return f.CurrentValue
-	end
-
-	-- Notification wrapper
-	local function notify(opts)
-		WindUI:Notify({
-			Title = opts.Title or "",
-			Content = opts.Content or "",
-			Duration = opts.Duration or 3,
-			Icon = opts.Icon or nil,
-		})
-	end
-
 	local mainWindow = WindUI:CreateWindow({
 		Title = "Cactus Hub • discord.gg/qMWFBWdcf",
-		Icon = "cactus",
+		Icon = "solar:folder-2-bold-duotone",
 		Folder = "CactusHub",
-		Theme = "Dark",
-		ToggleKey = Enum.KeyCode.K,
+		NewElements = true,
+		HideSearchBar = false,
 	})
 
-	local ConfigManager = mainWindow.ConfigManager
-	local mainConfig = ConfigManager:CreateConfig("Config")
-
 	local function featureToggle(tab, config, fn)
-		local cb = config.Callback or fn
-		local element = tab:Toggle({
-			Title = config.Name,
-			Desc = config.Description or nil,
-			Value = config.CurrentValue or false,
-			Flag = config.Flag or nil,
-			Callback = function(value)
-				local ok, err = pcall(cb, value)
-				if not ok then
-					Logger:error("Feature", config.Name, "Toggle callback error", err)
-					notify({ Title = "Error: " .. tostring(config.Name), Content = tostring(err):sub(1, 100), Duration = 5 })
-				end
-			end,
-		})
-		if config.Flag then
-			Flags[config.Flag] = {
-				CurrentValue = config.CurrentValue or false,
-				Set = function(self, v)
-					self.CurrentValue = v
-					element:Set(v)
-				end,
-			}
-			-- patch element set to keep flag in sync
-			local origSet = element.Set
-			element.Set = function(self, v)
-				Flags[config.Flag].CurrentValue = v
-				origSet(self, v)
+		local originalCallback = config.Callback or fn
+		config.Callback = function(value)
+			local ok, err = pcall(originalCallback, value)
+			if not ok then
+				Logger:error("Feature", config.Name, "Toggle callback error", err)
+				WindUI:Notify({ Title = "Error: " .. tostring(config.Name), Content = tostring(err):sub(1, 100), Duration = 5 })
 			end
 		end
-		return element
+		return tab:Toggle(config)
 	end
 
 	local function featureButton(tab, config)
-		local cb = config.Callback
-		local element = tab:Button({
-			Title = config.Name,
-			Desc = config.Description or nil,
-			Callback = function()
-				local ok, err = pcall(cb)
-				if not ok then
-					Logger:error("Feature", config.Name, "Button callback error", err)
-					notify({ Title = "Error: " .. tostring(config.Name), Content = tostring(err):sub(1, 100), Duration = 5 })
-				end
-			end,
-		})
-		return element
-	end
-
-	local function createDropdown(tab, config)
-		local isMulti = config.MultipleOptions or false
-		local defaultVal
-		if isMulti then
-			defaultVal = config.CurrentOption or {}
-		else
-			defaultVal = config.CurrentOption and config.CurrentOption[1] or nil
+		local originalCallback = config.Callback
+		config.Callback = function()
+			local ok, err = pcall(originalCallback)
+			if not ok then
+				Logger:error("Feature", config.Name, "Button callback error", err)
+				WindUI:Notify({ Title = "Error: " .. tostring(config.Name), Content = tostring(err):sub(1, 100), Duration = 5 })
+			end
 		end
-		local cb = config.Callback or function() end
-		local element = tab:Dropdown({
-			Title = config.Name,
-			Desc = config.Description or nil,
-			Values = config.Options or {},
-			Value = defaultVal,
-			Multi = isMulti,
-			AllowNone = false,
-			Flag = config.Flag or nil,
-			Callback = function(option)
-				if isMulti then
-					local result = {}
-					if type(option) == "table" then
-						for k, v in pairs(option) do
-							if v then table.insert(result, k) end
-						end
-					end
-					if config.Flag then
-						if Flags[config.Flag] then
-							Flags[config.Flag].CurrentOption = result
-						end
-					end
-					cb(result)
-				else
-					local val = type(option) == "table" and next(option) or option
-					if config.Flag then
-						if Flags[config.Flag] then
-							Flags[config.Flag].CurrentOption = {val}
-						end
-					end
-					cb(val)
-				end
-			end,
-		})
-		if config.Flag then
-			Flags[config.Flag] = {
-				CurrentOption = config.CurrentOption or {},
-				element = element,
-			}
-		end
-		return element
+		return tab:Button(config)
 	end
 
-	local function createSlider(tab, config)
-		local cb = config.Callback or function() end
-		local element = tab:Slider({
-			Title = config.Name,
-			Desc = config.Description or nil,
-			Step = config.Increment or 1,
-			Value = {
-				Min = config.Range and config.Range[1] or 0,
-				Max = config.Range and config.Range[2] or 100,
-				Default = config.CurrentValue or (config.Range and config.Range[1] or 0),
-			},
-			Flag = config.Flag or nil,
-			Callback = function(value)
-				if config.Flag then
-					if Flags[config.Flag] then
-						Flags[config.Flag].CurrentValue = value
-					end
-				end
-				cb(value)
-			end,
-		})
-		if config.Flag then
-			Flags[config.Flag] = {
-				CurrentValue = config.CurrentValue or (config.Range and config.Range[1] or 0),
-				element = element,
-			}
-		end
-		return element
-	end
-
-	local function createInput(tab, config)
-		local cb = config.Callback or function() end
-		local element = tab:Input({
-			Title = config.Name,
-			Desc = config.Description or nil,
-			Value = config.CurrentValue or "",
-			Placeholder = config.PlaceholderText or "",
-			Callback = function(input)
-				if config.Flag then
-					if Flags[config.Flag] then
-						Flags[config.Flag].CurrentValue = input
-					end
-				end
-				cb(input)
-			end,
-		})
-		if config.Flag then
-			Flags[config.Flag] = {
-				CurrentValue = config.CurrentValue or "",
-				element = element,
-			}
-		end
-		return element
-	end
-
-	local function createLabel(tab, text)
-		local element = tab:Paragraph({
-			Title = text,
-			Desc = "",
-		})
-		-- Wrap with Set method to mimic Rayfield label
-		local wrapper = {
-			_element = element,
-			_text = text,
-			Set = function(self, newText)
-				self._text = newText
-				self._element:SetTitle(newText)
-			end,
-		}
-		return wrapper
-	end
-
-	local function createSection(tab, name)
-		return tab:Section({ Title = name })
-	end
-
-	local function createParagraph(tab, config)
-		return tab:Paragraph({
-			Title = config.Title or "",
-			Desc = config.Content or "",
-		})
-	end
-
-	local mainTab     = mainWindow:Tab({ Title = "Main",      Icon = "home" })
-	local farmingTab  = mainWindow:Tab({ Title = "Farming",   Icon = "shovel" })
-	local gameTab     = mainWindow:Tab({ Title = "Game",      Icon = "gamepad-2" })
-	local ufoTab      = mainWindow:Tab({ Title = "Ufo Event", Icon = "star" })
-	local indexTab    = mainWindow:Tab({ Title = "Index",     Icon = "book-open" })
-	local miscTab     = mainWindow:Tab({ Title = "Misc",      Icon = "package" })
-	local webhookTab  = mainWindow:Tab({ Title = "Webhook",   Icon = "webhook" })
-	local settingsTab = mainWindow:Tab({ Title = "Settings",  Icon = "settings" })
-	local statsTab    = mainWindow:Tab({ Title = "Stats",     Icon = "bar-chart-2" })
+	local mainTab     = mainWindow:Tab({ Title = "Main",      Icon = "solar:home-2-bold" })
+	local farmingTab  = mainWindow:Tab({ Title = "Farming",   Icon = "solar:folder-with-files-bold" })
+	local gameTab     = mainWindow:Tab({ Title = "Game",      Icon = "solar:check-square-bold" })
+	local ufoTab      = mainWindow:Tab({ Title = "Ufo Event", Icon = "solar:star-bold" })
+	local indexTab    = mainWindow:Tab({ Title = "Index",     Icon = "solar:file-text-bold" })
+	local miscTab     = mainWindow:Tab({ Title = "Misc",      Icon = "solar:hamburger-menu-bold" })
+	local webhookTab  = mainWindow:Tab({ Title = "Webhook",   Icon = "solar:info-square-bold" })
+	local settingsTab = mainWindow:Tab({ Title = "Settings",  Icon = "solar:settings-bold" })
+	local statsTab    = mainWindow:Tab({ Title = "Stats",     Icon = "solar:chart-bold" })
 
 	local fpsValue = "..."
 	local pingValue = "..."
-	local statusLabel = createLabel(mainTab, "FPS: ... / PING: ...ms")
+	local fpsLabel = mainTab:Section({ Title = "FPS: ... / PING: ...ms" })
 
 	pcall(function()
 		local frameCount = 0
@@ -281,7 +102,7 @@ task.spawn(function()
 				fpsValue = math.floor(frameCount / (now - lastTime))
 				frameCount = 0
 				lastTime = now
-				statusLabel:Set("FPS: " .. tostring(fpsValue) .. " / PING: " .. tostring(pingValue) .. "ms")
+				fpsLabel.Title = "FPS: " .. tostring(fpsValue) .. " / PING: " .. tostring(pingValue) .. "ms"
 			end
 		end)
 	end)
@@ -291,49 +112,45 @@ task.spawn(function()
 			pcall(function()
 				local ping = game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue()
 				pingValue = math.floor(ping)
-				statusLabel:Set("FPS: " .. tostring(fpsValue) .. " / PING: " .. tostring(pingValue) .. "ms")
 			end)
 			task.wait(1)
 		end
 	end)
 
 	featureButton(mainTab, {
-		Name = "Copy Discord Invite",
+		Title = "Copy Discord Invite",
 		Callback = function()
 			setclipboard("https://discord.gg/qMWFBWdcf")
-			notify({ Title = "Copied!", Content = "Discord invite link copied to clipboard.", Duration = 3 })
+			WindUI:Notify({ Title = "Copied!", Content = "Discord invite link copied to clipboard.", Duration = 3 })
 		end,
 	})
 
-	createSection(mainTab, "Dashboard")
+	local DashboardSection = mainTab:Section({ Title = "Dashboard" })
 	local dashboardBusy = false
-	featureToggle(mainTab, {
-		Name = "Dashboard [ SAVE GPU ]",
-		CurrentValue = false,
+	featureToggle(DashboardSection, {
+		Title = "Dashboard [ SAVE GPU ]",
+		Value = false,
 		Flag = "DashboardToggle",
 		Callback = function(Value)
 			if dashboardBusy then return end
 			dashboardBusy = true
 			if Value then
 				task.spawn(function()
-					loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))()
-					notify({ Title = "Dashboard", Content = "Dashboard enabled!", Duration = 3 })
+					pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/no"))() end)
+					WindUI:Notify({ Title = "Dashboard", Content = "Dashboard enabled!", Duration = 3 })
 					dashboardBusy = false
 				end)
 			else
 				local gui = localPlayer.PlayerGui:FindFirstChild("__MAINHUD__")
 				if gui then gui:Destroy() end
-				notify({ Title = "Dashboard", Content = "Dashboard closed!", Duration = 3 })
+				WindUI:Notify({ Title = "Dashboard", Content = "Dashboard closed!", Duration = 3 })
 				dashboardBusy = false
 			end
 		end,
 	})
 
-	createParagraph(mainTab, { Title = "Enabled By Default", Content = "[+] Anti AFK" })
-	createParagraph(mainTab, {
-		Title = "Latest Update",
-		Content = "[+] Auto Stay in UFO Zone\n[+] Auto Collect UFO Loot\n[+] Live UFO Phase Display\n[+] Live UFO Zone Display and State\n[+] Live Next Event Countdown Timer\n[+] Live Golden UFO if found\n[+] Manual Refresh Status Button\n[+] Auto Farm Zone ( x4 faster tp )\n[+] Added beammeup / aliensarehere in Auto Redeem Codes\n[+] Added New Zones\n[+] Bug Fixes"
-	})
+	mainTab:Section({ Title = "Enabled By Default — [+] Anti AFK" })
+	mainTab:Section({ Title = "Latest Update — [+] Auto unlock machines | [+] Auto remove fruits from slimes | [+] Advanced slime gun bypass cooldown | [+] Fixed Auto Send & Accept requests | [+] Fixed Auto Upgrade | [+] Auto stack mode [Smart] | [+] Specific Position | [+] Better potion/dice use | [+] Improved optimization | [+] Bug fixes" })
 
 	pcall(function()
 		local m = require(ReplicatedStorage.Source.Features.AutoRejoin.AutoRejoinServiceClient)
@@ -456,14 +273,20 @@ task.spawn(function()
 					ok2, dataServiceClient_new = pcall(function() return require(rs.Packages.DataService).client end)
 					if not ok1 or not ok2 then task.wait(1) end
 				until ok1 and ok2
+				pcall(function()
+					local upgradeClientInstance = {}
+					upgradeClientInstance.networker = Networker.client.new("UpgradeService", upgradeClientInstance)
+					upgradeServiceClient_new.init(upgradeClientInstance)
+					upgradeServiceClient_new = upgradeClientInstance
+				end)
 			end)
 			modulesLoaded = true
 			Logger:info("CactusHub", "ModuleLoad", "All modules loaded successfully!")
-			notify({ Title = "Cactus Hub", Content = "All modules loaded! Features are ready.", Duration = 4 })
+			WindUI:Notify({ Title = "Cactus Hub", Content = "All modules loaded! Features are ready.", Duration = 4 })
 		end)
 		if not ok then
 			Logger:error("CactusHub", "ModuleLoad", "Module initialization failed", err)
-			notify({ Title = "CactusHub — Load Warning", Content = "Some modules failed: " .. tostring(err):sub(1, 120) .. "\nSome features may not work.", Duration = 8 })
+			WindUI:Notify({ Title = "CactusHub — Load Warning", Content = "Some modules failed: " .. tostring(err):sub(1, 120) .. "\nSome features may not work.", Duration = 8 })
 		end
 	end)
 
@@ -573,9 +396,6 @@ task.spawn(function()
 		return nil
 	end
 
-	-- =====================================================================
-	-- ZONE BOUNDARY via POI.Baseplate
-	-- =====================================================================
 	local zoneBoundaryCache = { zoneId = nil, min = nil, max = nil, center = nil }
 
 	local function getZoneBoundary(zoneId)
@@ -866,8 +686,7 @@ task.spawn(function()
 		if not gp then return nil, nil end
 		local folder = gp:FindFirstChild("Enemies")
 		if not folder then return nil, nil end
-		local priorityFlag = Flags.CombatTargetPriority
-		local priority = priorityFlag and priorityFlag.CurrentOption and priorityFlag.CurrentOption[1] or "Closest"
+		local priority = WindUI.Flags and WindUI.Flags.CombatTargetPriority and WindUI.Flags.CombatTargetPriority.Value or "Closest"
 		local bestEnemy, bestId, bestScore = nil, nil, nil
 		for _, e in ipairs(folder:GetChildren()) do
 			if e:IsA("Model") and isAlive(e) then
@@ -908,12 +727,10 @@ task.spawn(function()
 				if currentTarget then currentTarget = nil stopAutoWalk() end
 				return
 			end
-
 			local char = localPlayer.Character
 			if not char then return end
 			local charRoot = char:FindFirstChild("HumanoidRootPart")
 			if not charRoot then return end
-
 			local currentZoneId = dataServiceClient and dataServiceClient:get("zone") or nil
 			local boundary = nil
 			if currentZoneId then
@@ -923,7 +740,6 @@ task.spawn(function()
 				end
 				boundary = getZoneBoundary(currentZoneId)
 			end
-
 			if boundary and isOutsideBoundary(charRoot.Position, boundary) then
 				stopAutoWalk()
 				currentTarget = nil
@@ -932,7 +748,6 @@ task.spawn(function()
 				task.wait(0.5)
 				return
 			end
-
 			if currentTarget and isAlive(currentTarget) and currentTarget.Parent then
 				if boundary and not isEnemyInsideBoundary(currentTarget, boundary) then
 					stopAutoWalk()
@@ -943,7 +758,6 @@ task.spawn(function()
 			else
 				stopAutoWalk()
 			end
-
 			local newTarget = selectTarget(boundary)
 			if newTarget and newTarget ~= currentTarget then
 				currentTarget = newTarget
@@ -952,20 +766,21 @@ task.spawn(function()
 		end)
 	end)
 
-	createSection(farmingTab, "Rolling")
+	-- FARMING TAB
+	local RollingSection = farmingTab:Section({ Title = "Rolling" })
 
-	featureToggle(farmingTab, {
-		Name = "Auto Fast Roll ( No Animation )",
-		CurrentValue = false,
+	featureToggle(RollingSection, {
+		Title = "Auto Fast Roll ( No Animation )",
+		Value = false,
 		Flag = "FarmingFastRoll",
 		Callback = function(enabled)
 			if not enabled then return end
 			task.spawn(function()
 				while true do
-					local flag = Flags.FarmingFastRoll
-					if not flag or not flag.CurrentValue then break end
+					local flag = WindUI.Flags and WindUI.Flags.FarmingFastRoll
+					if not flag or not flag.Value then break end
 					if not rollServiceRemote then
-						notify({ Title = "Error", Content = "RollService remote not loaded", Duration = 4 })
+						WindUI:Notify({ Title = "Error", Content = "RollService remote not loaded", Duration = 4 })
 						break
 					end
 					pcall(function() rollServiceRemote:InvokeServer("requestRoll") end)
@@ -981,9 +796,9 @@ task.spawn(function()
 	local paused = {golden=false, diamond=false, void=false, galaxy=false}
 	local stackMode = "Normal"
 
-	featureToggle(farmingTab, {
-		Name = "Auto Stack Dice",
-		CurrentValue = false,
+	featureToggle(RollingSection, {
+		Title = "Auto Stack Dice",
+		Value = false,
 		Flag = "autostack",
 		Callback = function(v)
 			stackActive = v
@@ -998,40 +813,39 @@ task.spawn(function()
 		end,
 	})
 
-	createDropdown(farmingTab, {
-		Name = "Stack Mode",
-		Options = {"Normal", "Smart"},
-		CurrentOption = {"Normal"},
-		MultipleOptions = false,
+	RollingSection:Dropdown({
+		Title = "Stack Mode",
+		Values = {"Normal", "Smart"},
+		Value = "Normal",
 		Flag = "StackMode",
-		Callback = function(opt)
-			stackMode = type(opt) == "table" and opt[1] or opt
-		end,
+		Callback = function(opt) stackMode = opt or "Normal" end,
 	})
 
-	featureToggle(farmingTab, {
-		Name = "Auto Release Dice",
-		CurrentValue = false,
+	featureToggle(RollingSection, {
+		Title = "Auto Release Dice",
+		Value = false,
 		Flag = "autorelease",
 		Callback = function(v) releaseActive = v end,
 	})
 
-	createDropdown(farmingTab, {
-		Name = "Select Dice",
-		Options = {"All","Diamond","Galaxy","Golden","Void"},
-		CurrentOption = {"All"},
-		MultipleOptions = true,
+	RollingSection:Dropdown({
+		Title = "Select Dice",
+		Values = {"All","Diamond","Galaxy","Golden","Void"},
+		Value = "All",
+		Multi = true,
 		Flag = "diceDropdown",
 		Callback = function(choices)
 			for _, dice in ipairs(DICE) do selectedDice[dice] = false end
-			for _, choice in ipairs(choices) do
-				if choice == "All" then for _, dice in ipairs(DICE) do selectedDice[dice] = true end break
-				else selectedDice[choice:lower()] = true end
+			if type(choices) == "table" then
+				for _, choice in ipairs(choices) do
+					if choice == "All" then for _, dice in ipairs(DICE) do selectedDice[dice] = true end break
+					else selectedDice[choice:lower()] = true end
+				end
 			end
 		end,
 	})
 
-	local DiceLuckLabel = createLabel(farmingTab, "Total Stacked: x0")
+	local DiceLuckSection = RollingSection:Section({ Title = "Total Stacked: x0" })
 
 	task.spawn(function()
 		while true do
@@ -1049,7 +863,7 @@ task.spawn(function()
 						if ok then totalStacked = totalStacked + (mult or 0) end
 					end
 				end
-				DiceLuckLabel:Set("Total Stacked: x" .. string.format("%.1f", totalStacked))
+				DiceLuckSection.Title = "Total Stacked: x" .. string.format("%.1f", totalStacked)
 				if not stackActive or not networkerRoll then return end
 				local toWatch = {}
 				for _, dice in ipairs(DICE) do
@@ -1059,8 +873,7 @@ task.spawn(function()
 					end
 				end
 				if #toWatch == 0 then return end
-				local stackModeFlag = Flags.StackMode
-				local currentMode = stackModeFlag and stackModeFlag.CurrentOption and stackModeFlag.CurrentOption[1] or "Normal"
+				local currentMode = (WindUI.Flags and WindUI.Flags.StackMode and WindUI.Flags.StackMode.Value) or "Normal"
 				if currentMode == "Normal" then
 					local allReady = true
 					for _, dice in ipairs(toWatch) do
@@ -1078,7 +891,7 @@ task.spawn(function()
 							pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
 							paused[dice] = false
 						end
-						notify({ Title = "Unleashed!", Content = "All selected dice stacked — releasing now.", Duration = 3 })
+						WindUI:Notify({ Title = "Unleashed!", Content = "All selected dice stacked — releasing now.", Duration = 3 })
 						task.wait(2)
 					end
 				elseif currentMode == "Smart" then
@@ -1139,7 +952,7 @@ task.spawn(function()
 								pcall(function() networkerRoll:fetch("requestSetSpecialRollPaused", dice, false) end)
 								paused[dice] = false
 							end
-							notify({ Title = "Unleashed!", Content = "Smart stack complete — releasing now.", Duration = 3 })
+							WindUI:Notify({ Title = "Unleashed!", Content = "Smart stack complete — releasing now.", Duration = 3 })
 							task.wait(2)
 						end
 					end
@@ -1148,7 +961,7 @@ task.spawn(function()
 		end
 	end)
 
-	createSection(farmingTab, "Zones")
+	local ZonesSection = farmingTab:Section({ Title = "Zones" })
 
 	pcall(function()
 		local zoneOptions = { "Best Unlocked" }
@@ -1158,27 +971,26 @@ task.spawn(function()
 			if zone and zone.name then table.insert(zoneOptions, zone.name .. " (Zone " .. i .. ")")
 			else table.insert(zoneOptions, "Zone " .. i) end
 		end
-		createDropdown(farmingTab, { Name = "Zone Target", Options = zoneOptions, CurrentOption = { "Best Unlocked" }, MultipleOptions = false, Flag = "FarmingZoneTarget", Callback = function() end })
+		ZonesSection:Dropdown({ Title = "Zone Target", Values = zoneOptions, Value = "Best Unlocked", Flag = "FarmingZoneTarget", Callback = function() end })
 	end)
 
-	featureToggle(farmingTab, {
-		Name = "Auto Farm Zone",
-		CurrentValue = false,
+	featureToggle(ZonesSection, {
+		Title = "Auto Farm Zone",
+		Value = false,
 		Flag = "FarmingStayInBestZone",
 		Callback = function(enabled)
 			if not enabled then return end
 			task.spawn(function()
 				local lastTeleportTime = 0
 				while true do
-					local flag = Flags.FarmingStayInBestZone
-					if not flag or not flag.CurrentValue then break end
+					local flag = WindUI.Flags and WindUI.Flags.FarmingStayInBestZone
+					if not flag or not flag.Value then break end
 					if not zonesServiceRemote then
-						notify({ Title = "Error", Content = "ZonesService remote not loaded", Duration = 4 })
+						WindUI:Notify({ Title = "Error", Content = "ZonesService remote not loaded", Duration = 4 })
 						break
 					end
 					pcall(function()
-						local zoneTargetFlag = Flags.FarmingZoneTarget
-						local targetOption = zoneTargetFlag and zoneTargetFlag.CurrentOption and zoneTargetFlag.CurrentOption[1] or "Best Unlocked"
+						local targetOption = WindUI.Flags.FarmingZoneTarget and WindUI.Flags.FarmingZoneTarget.Value or "Best Unlocked"
 						local currentZone = dataServiceClient and (dataServiceClient:get("zone") or 1) or 1
 						local targetZone = nil
 						if targetOption == "Best Unlocked" then
@@ -1200,16 +1012,16 @@ task.spawn(function()
 		end,
 	})
 
-	featureToggle(farmingTab, {
-		Name = "Auto Unlock Affordable Zones",
-		CurrentValue = false,
+	featureToggle(ZonesSection, {
+		Title = "Auto Unlock Affordable Zones",
+		Value = false,
 		Flag = "FarmingUnlockAffordableZones",
 		Callback = function(enabled)
 			if not enabled then return end
 			task.spawn(function()
 				while true do
-					local flag = Flags.FarmingUnlockAffordableZones
-					if not flag or not flag.CurrentValue then break end
+					local flag = WindUI.Flags and WindUI.Flags.FarmingUnlockAffordableZones
+					if not flag or not flag.Value then break end
 					if not zonesServiceRemote then break end
 					pcall(function() zonesServiceRemote:InvokeServer("requestPurchaseZone") end)
 					task.wait(5)
@@ -1218,32 +1030,33 @@ task.spawn(function()
 		end,
 	})
 
-	createSection(farmingTab, "Machines")
+	local MachinesSection = farmingTab:Section({ Title = "Machines" })
 
-	createDropdown(farmingTab, {
-		Name = "Machines to Unlock",
-		Options = {"All", "Crafting Machine", "XP Transfer Machine", "Fruit Extractor"},
-		CurrentOption = {"All"},
-		MultipleOptions = true,
+	MachinesSection:Dropdown({
+		Title = "Machines to Unlock",
+		Values = {"All", "Crafting Machine", "XP Transfer Machine", "Fruit Extractor"},
+		Value = "All",
+		Multi = true,
 		Flag = "MachineUnlockTarget",
 		Callback = function() end,
 	})
 
-	featureToggle(farmingTab, {
-		Name = "Auto Unlock Machines",
-		CurrentValue = false,
+	featureToggle(MachinesSection, {
+		Title = "Auto Unlock Machines",
+		Value = false,
 		Flag = "FarmingAutoUnlockMachines",
 		Callback = function(enabled)
 			if not enabled then return end
 			task.spawn(function()
 				while true do
-					local flag = Flags.FarmingAutoUnlockMachines
-					if not flag or not flag.CurrentValue then break end
+					local flag = WindUI.Flags and WindUI.Flags.FarmingAutoUnlockMachines
+					if not flag or not flag.Value then break end
 					pcall(function()
-						local machineFlag = Flags.MachineUnlockTarget
-						local selected = machineFlag and machineFlag.CurrentOption or {"All"}
+						local selected = WindUI.Flags.MachineUnlockTarget and WindUI.Flags.MachineUnlockTarget.Value or {"All"}
 						local selSet = {}
-						for _, s in ipairs(selected) do selSet[s] = true end
+						if type(selected) == "table" then
+							for _, s in ipairs(selected) do selSet[s] = true end
+						else selSet[selected] = true end
 						local unlockAll = selSet["All"]
 						if (unlockAll or selSet["Crafting Machine"]) and craftingServiceRemote then
 							pcall(function() craftingServiceRemote:InvokeServer("requestUnlockMachine") end)
@@ -1261,19 +1074,19 @@ task.spawn(function()
 		end,
 	})
 
-	createSection(farmingTab, "Slimes & XP")
+	local SlimesXPSection = farmingTab:Section({ Title = "Slimes & XP" })
 
-	featureToggle(farmingTab, {
-		Name = "Auto Equip Best Slimes",
-		CurrentValue = false,
+	featureToggle(SlimesXPSection, {
+		Title = "Auto Equip Best Slimes",
+		Value = false,
 		Flag = "FarmingEquipBestSlimes",
 		Callback = function(enabled)
 			if not enabled then return end
 			task.spawn(function()
 				local waitTime = 30
 				while true do
-					local flag = Flags.FarmingEquipBestSlimes
-					if not flag or not flag.CurrentValue then break end
+					local flag = WindUI.Flags and WindUI.Flags.FarmingEquipBestSlimes
+					if not flag or not flag.Value then break end
 					if not inventoryServiceRemote then break end
 					pcall(function() inventoryServiceRemote:InvokeServer("requestEquipBest") end)
 					task.wait(waitTime)
@@ -1381,26 +1194,25 @@ task.spawn(function()
 		end
 	end
 
-	featureToggle(farmingTab, {
-		Name = "Auto Feed Fruits to Slime(s)",
-		CurrentValue = false,
+	featureToggle(SlimesXPSection, {
+		Title = "Auto Feed Fruits to Slime(s)",
+		Value = false,
 		Flag = "AutoFeedToggle",
 		Callback = function(value)
 			autoFeedEnabled = value
 			if feedConnection then feedConnection:Disconnect() feedConnection = nil end
 			if value then
-				feedConnection = RunService.Heartbeat:Connect(function()
-					if not autoFeedEnabled then
-						if feedConnection then feedConnection:Disconnect() feedConnection = nil end
-						return
+				task.spawn(function()
+					while autoFeedEnabled do
+						pcall(doFeed)
+						task.wait(1)
 					end
-					pcall(doFeed)
 				end)
 			end
 		end,
 	})
 
-	createDropdown(farmingTab, { Name = "Slimes to Feed", Options = {"Best","Split Across Team"}, CurrentOption = {"Best"}, MultipleOptions = false, Flag = "SlimeModeDropdown", Callback = function(option) selectedSlimeMode = type(option) == "table" and option[1] or option end })
+	SlimesXPSection:Dropdown({ Title = "Slimes to Feed", Values = {"Best","Split Across Team"}, Value = "Best", Flag = "SlimeModeDropdown", Callback = function(option) selectedSlimeMode = option or "Best" end })
 
 	pcall(function()
 		local fruitOptions = {"Any"}
@@ -1412,8 +1224,8 @@ task.spawn(function()
 		end
 		table.sort(fruitNames)
 		for _, name in ipairs(fruitNames) do table.insert(fruitOptions, name) end
-		createDropdown(farmingTab, {
-			Name = "Fruits to Feed", Options = fruitOptions, CurrentOption = {"Any"}, MultipleOptions = true, Flag = "FruitDropdown",
+		SlimesXPSection:Dropdown({
+			Title = "Fruits to Feed", Values = fruitOptions, Value = "Any", Multi = true, Flag = "FruitDropdown",
 			Callback = function(options)
 				local picked = type(options) == "table" and options or {options}
 				selectedFruitIds = {}
@@ -1426,25 +1238,22 @@ task.spawn(function()
 		})
 	end)
 
-	featureToggle(farmingTab, { Name = "Auto Transfer XP", CurrentValue = false, Flag = "FarmingTransferXP", Callback = function() end })
-	createDropdown(farmingTab, { Name="Transfer To", Options={"Best Slime","Whole Team"}, CurrentOption={"Best Slime"}, MultipleOptions=false, Flag="FarmingTransferTarget", Callback=function() end })
-	createDropdown(farmingTab, { Name="Transfer From", Options={"All Slimes","Unequipped With XP"}, CurrentOption={"Unequipped With XP"}, MultipleOptions=false, Flag="FarmingTransferSource", Callback=function() end })
+	featureToggle(SlimesXPSection, { Title = "Auto Transfer XP", Value = false, Flag = "FarmingTransferXP", Callback = function() end })
+	SlimesXPSection:Dropdown({ Title = "Transfer To", Values = {"Best Slime","Whole Team"}, Value = "Best Slime", Flag = "FarmingTransferTarget", Callback = function() end })
+	SlimesXPSection:Dropdown({ Title = "Transfer From", Values = {"All Slimes","Unequipped With XP"}, Value = "Unequipped With XP", Flag = "FarmingTransferSource", Callback = function() end })
 
 	task.spawn(function()
 		while true do
 			task.wait(30)
 			pcall(function()
-				local xpFlag = Flags.FarmingTransferXP
-				if not (xpFlag and xpFlag.CurrentValue) then return end
+				if not (WindUI.Flags and WindUI.Flags.FarmingTransferXP and WindUI.Flags.FarmingTransferXP.Value) then return end
 				if not dataServiceClient or not xpTransferServiceClient then return end
 				local inventory = dataServiceClient:get("inventory") or {}
 				local equipped  = dataServiceClient:get("equipped") or {}
 				local teamSet   = {}
 				for _, uid in ipairs(equipped) do teamSet[uid] = true end
-				local targetFlag = Flags.FarmingTransferTarget
-				local sourceFlag = Flags.FarmingTransferSource
-				local targetOption = targetFlag and targetFlag.CurrentOption and targetFlag.CurrentOption[1] or "Best Slime"
-				local sourceOption = sourceFlag and sourceFlag.CurrentOption and sourceFlag.CurrentOption[1] or "Unequipped With XP"
+				local targetOption = WindUI.Flags.FarmingTransferTarget and WindUI.Flags.FarmingTransferTarget.Value or "Best Slime"
+				local sourceOption = WindUI.Flags.FarmingTransferSource and WindUI.Flags.FarmingTransferSource.Value or "Unequipped With XP"
 				local targets = {}
 				if targetOption == "Best Slime" then
 					local best = getBestSlimeUid()
@@ -1468,18 +1277,18 @@ task.spawn(function()
 		end
 	end)
 
-	createSection(farmingTab, "Loot")
+	local LootSection = farmingTab:Section({ Title = "Loot" })
 
-	featureToggle(farmingTab, {
-		Name = "Auto Collect Loot",
-		CurrentValue = false,
+	featureToggle(LootSection, {
+		Title = "Auto Collect Loot",
+		Value = false,
 		Flag = "FarmingCollectLoot",
 		Callback = function(enabled)
 			if not enabled then return end
 			task.spawn(function()
 				while true do
-					local flag = Flags.FarmingCollectLoot
-					if not flag or not flag.CurrentValue then break end
+					local flag = WindUI.Flags and WindUI.Flags.FarmingCollectLoot
+					if not flag or not flag.Value then break end
 					pcall(function()
 						for _, folder in ipairs({"Loot","Debris"}) do
 							local container = workspace:FindFirstChild(folder)
@@ -1499,11 +1308,132 @@ task.spawn(function()
 		end,
 	})
 
-	createSection(gameTab, "Auto Farm")
+	pcall(function()
+		local FruitExtractSection = farmingTab:Section({ Title = "Fruit Extractor" })
 
-	featureToggle(gameTab, {
-		Name = "Auto Farm",
-		CurrentValue = false,
+		local autoExtractEnabled = false
+		local selectedExtractFruitIds = {"ANY"}
+		local selectedExtractSlimeMode = "Best"
+
+		local function getTargetSlimesForExtract()
+			if not dataServiceClient then return {} end
+			if selectedExtractSlimeMode == "Best" then
+				local key, data = getBestSlimeEntry()
+				if key and data then return {{key=key, data=data}} end
+				return {}
+			else
+				local equipped = dataServiceClient:get("equipped") or {}
+				local result = {}
+				for _, slimeKey in ipairs(equipped) do
+					if type(slimeKey) == "string" and slimeKey:sub(1,1) == "." then
+						local inv = dataServiceClient:get("inventory") or {}
+						local data = inv[slimeKey]
+						if type(data) == "table" then table.insert(result, {key=slimeKey, data=data}) end
+					end
+				end
+				return result
+			end
+		end
+
+		local function resolveExtractFruitList()
+			local ok, owned = pcall(getOwnedFruitIds)
+			if not ok or not owned then return {} end
+			if selectedExtractFruitIds[1] == "ANY" then
+				local result = {}
+				for _, f in ipairs(ALL_FRUITS or {}) do if owned[f.id] then table.insert(result, f.id) end end
+				return result
+			else
+				local result = {}
+				for _, fid in ipairs(selectedExtractFruitIds) do if owned[fid] then table.insert(result, fid) end end
+				return result
+			end
+		end
+
+		local function doExtract()
+			if not fruitExtractorRemote then return end
+			local targets = getTargetSlimesForExtract()
+			if #targets == 0 then return end
+			for _, entry in ipairs(targets) do
+				local shouldExtract = false
+				if selectedExtractFruitIds[1] == "ANY" then
+					shouldExtract = true
+				else
+					local fruitsToExtract = resolveExtractFruitList()
+					for _, fruitId in ipairs(fruitsToExtract) do
+						local ok, has = pcall(slimeHasFruit, entry.data, fruitId)
+						if ok and has then shouldExtract = true break end
+					end
+				end
+				if shouldExtract then
+					pcall(function() fruitExtractorRemote:InvokeServer("requestExtractFruits", entry.key) end)
+					task.wait(0.3)
+				end
+			end
+		end
+
+		featureToggle(FruitExtractSection, {
+			Title = "Auto Extract Fruits from Slime(s)",
+			Value = false,
+			Flag = "AutoExtractToggle",
+			Callback = function(value)
+				autoExtractEnabled = value
+				if value then
+					task.spawn(function()
+						while autoExtractEnabled do
+							local flag = WindUI.Flags and WindUI.Flags.AutoExtractToggle
+							if not flag or not flag.Value then break end
+							pcall(doExtract)
+							task.wait(2)
+						end
+					end)
+				end
+			end,
+		})
+
+		FruitExtractSection:Dropdown({
+			Title = "Extract From",
+			Values = {"Best", "Equipped Team"},
+			Value = "Best",
+			Flag = "ExtractSlimeModeDropdown",
+			Callback = function(option) selectedExtractSlimeMode = option or "Best" end,
+		})
+
+		pcall(function()
+			local extractFruitOptions = {"Any"}
+			local extractLabelToId = {}
+			local extractFruitNames = {}
+			local fruits = (FruitsModule and FruitsModule.getSortedFruits) and FruitsModule.getSortedFruits() or {}
+			for _, f in ipairs(fruits) do
+				table.insert(extractFruitNames, f.powerName)
+				extractLabelToId[f.powerName] = f.id
+			end
+			table.sort(extractFruitNames)
+			for _, name in ipairs(extractFruitNames) do table.insert(extractFruitOptions, name) end
+			FruitExtractSection:Dropdown({
+				Title = "Fruits to Extract",
+				Values = extractFruitOptions,
+				Value = "Any",
+				Multi = true,
+				Flag = "ExtractFruitDropdown",
+				Callback = function(options)
+					local picked = type(options) == "table" and options or {options}
+					selectedExtractFruitIds = {}
+					for _, label in ipairs(picked) do
+						if label == "Any" then selectedExtractFruitIds = {"ANY"} return
+						else table.insert(selectedExtractFruitIds, extractLabelToId[label]) end
+					end
+					if #selectedExtractFruitIds == 0 then selectedExtractFruitIds = {"ANY"} end
+				end,
+			})
+		end)
+	end)
+
+	-- GAME TAB
+	local AutoFarmSection = gameTab:Section({ Title = "Auto Farm" })
+
+	featureToggle(AutoFarmSection, {
+		Title = "Auto Farm",
+		Value = false,
 		Flag = "AutoFarm",
 		Callback = function(value)
 			enemySettings.AutoFarm = value
@@ -1515,46 +1445,50 @@ task.spawn(function()
 		end,
 	})
 
-	createSlider(gameTab, { Name = "Auto Farm Walk Speed", Range = {50,160}, Increment = 1, Suffix = "", CurrentValue = 100, Flag = "AutoFarmWalkSpeed", Callback = function(val) autoFarmWalkSpeed = val end })
+	AutoFarmSection:Slider({
+		Title = "Auto Farm Walk Speed",
+		Value = { Min = 50, Max = 160, Default = 100 },
+		Step = 1,
+		Flag = "AutoFarmWalkSpeed",
+		Callback = function(val) autoFarmWalkSpeed = val end,
+	})
 
-	createDropdown(gameTab, {
-		Name = "Movement Style",
-		Options = {"Walk [RECOMMENDED]","Instant","Smooth"},
-		CurrentOption = {"Walk [RECOMMENDED]"},
-		MultipleOptions = false,
+	AutoFarmSection:Dropdown({
+		Title = "Movement Style",
+		Values = {"Walk [RECOMMENDED]","Instant","Smooth"},
+		Value = "Walk [RECOMMENDED]",
 		Flag = "TeleportStyle",
 		Callback = function(option)
-			local val = type(option) == "table" and option[1] or option
+			local val = option or "Walk [RECOMMENDED]"
 			if val == "Walk [RECOMMENDED]" then val = "Walk" end
 			enemySettings.TeleportStyle = val
 			if val ~= "Walk" then stopAutoWalk() end
 		end
 	})
 
-	createDropdown(gameTab, {
-		Name = "Target Priority",
-		Options = {"Closest","Lowest HP","Most Coins & Goop","Mutations Only"},
-		CurrentOption = {"Most Coins & Goop"},
-		MultipleOptions = true,
+	AutoFarmSection:Dropdown({
+		Title = "Target Priority",
+		Values = {"Closest","Lowest HP","Most Coins & Goop","Mutations Only"},
+		Value = "Most Coins & Goop",
+		Multi = true,
 		Flag = "TargetPriority",
 		Callback = function(options)
 			enemySettings.TargetPriorities = {}
-			for _, opt in ipairs(options) do enemySettings.TargetPriorities[opt] = true end
+			if type(options) == "table" then
+				for _, opt in ipairs(options) do enemySettings.TargetPriorities[opt] = true end
+			end
 		end
 	})
 
-	createDropdown(gameTab, {
-		Name = "Mutation Filter",
-		Options = {"Any","Big","Huge","Inverted","Shiny"},
-		CurrentOption = {"Any"},
-		MultipleOptions = false,
+	AutoFarmSection:Dropdown({
+		Title = "Mutation Filter",
+		Values = {"Any","Big","Huge","Inverted","Shiny"},
+		Value = "Any",
 		Flag = "MutationFilter",
-		Callback = function(option)
-			enemySettings.MutationFilter = type(option) == "table" and option[1] or option
-		end
+		Callback = function(option) enemySettings.MutationFilter = option or "Any" end
 	})
 
-	createSection(gameTab, "Controls")
+	local ControlsSection = gameTab:Section({ Title = "Controls" })
 
 	local combatEnabled = false
 	local getgcChecked = false
@@ -1575,18 +1509,17 @@ task.spawn(function()
 		return nil
 	end
 
-	createDropdown(gameTab, {
-		Name = "Slime Gun Mode",
-		Options = {"Normal (uses getgc)", "Advanced (bypass cooldown)"},
-		CurrentOption = {"Normal (uses getgc)"},
-		MultipleOptions = false,
+	ControlsSection:Dropdown({
+		Title = "Slime Gun Mode",
+		Values = {"Normal (uses getgc)", "Advanced (bypass cooldown)"},
+		Value = "Normal (uses getgc)",
 		Flag = "SlimeGunMode",
 		Callback = function() end,
 	})
 
-	featureToggle(gameTab, { Name = "Auto Shoot Enemies", CurrentValue = false, Flag = "CombatAutoShoot", Callback = function(value) combatEnabled = value end })
+	featureToggle(ControlsSection, { Title = "Auto Shoot Enemies", Value = false, Flag = "CombatAutoShoot", Callback = function(value) combatEnabled = value end })
 
-	createDropdown(gameTab, { Name = "Combat Target Priority", Options = {"Closest","Lowest HP","Highest HP","Most Coins & Goop"}, CurrentOption = {"Closest"}, MultipleOptions = false, Flag = "CombatTargetPriority", Callback = function() end })
+	ControlsSection:Dropdown({ Title = "Combat Target Priority", Values = {"Closest","Lowest HP","Highest HP","Most Coins & Goop"}, Value = "Closest", Flag = "CombatTargetPriority", Callback = function() end })
 
 	task.spawn(function()
 		local controller = nil
@@ -1600,8 +1533,8 @@ task.spawn(function()
 				continue
 			end
 			pcall(function()
-				local modeFlag = Flags.SlimeGunMode
-				local rawMode = modeFlag and (type(modeFlag.CurrentOption)=="table" and modeFlag.CurrentOption[1] or modeFlag.CurrentOption) or "Normal (uses getgc)"
+				local modeFlag = WindUI.Flags and WindUI.Flags.SlimeGunMode
+				local rawMode = modeFlag and modeFlag.Value or "Normal (uses getgc)"
 				local mode = rawMode:match("^(%S+)") or rawMode
 				if mode == "Advanced" then
 					if advHeartbeat then return end
@@ -1616,10 +1549,10 @@ task.spawn(function()
 						end
 						advHeartbeat = game:GetService("RunService").Heartbeat:Connect(function()
 							pcall(function()
-								local flag = Flags.CombatAutoShoot
-								if not flag or not flag.CurrentValue then return end
-								local mf = Flags.SlimeGunMode
-								local rawM = mf and (type(mf.CurrentOption)=="table" and mf.CurrentOption[1] or mf.CurrentOption) or "Normal (uses getgc)"
+								local flag = WindUI.Flags and WindUI.Flags.CombatAutoShoot
+								if not flag or not flag.Value then return end
+								local mf = WindUI.Flags and WindUI.Flags.SlimeGunMode
+								local rawM = mf and mf.Value or "Normal (uses getgc)"
 								local m = rawM:match("^(%S+)") or rawM
 								if m ~= "Advanced" then return end
 								local W = G.wrapper
@@ -1662,26 +1595,25 @@ task.spawn(function()
 		end
 	end)
 
-	createSection(gameTab, "Progress")
+	local ProgressSection = gameTab:Section({ Title = "Progress" })
 
-	featureToggle(gameTab, {
-		Name = "Auto Rebirth",
-		CurrentValue = false,
+	featureToggle(ProgressSection, {
+		Title = "Auto Rebirth",
+		Value = false,
 		Flag = "GameAutoRebirth",
 		Callback = function(enabled)
 			if not enabled then return end
 			task.spawn(function()
 				while true do
-					local flag = Flags.GameAutoRebirth
-					if not flag or not flag.CurrentValue then break end
+					local flag = WindUI.Flags and WindUI.Flags.GameAutoRebirth
+					if not flag or not flag.Value then break end
 					pcall(function()
 						if not rebirthServiceRemote or not dataServiceClient then return end
 						local rebirths     = dataServiceClient:get("rebirths") or 0
 						local goop         = dataServiceClient:get("goop") or 0
 						local furthestZone = dataServiceClient:get("furthestZone") or 0
 						local requiredGoop = (2^rebirths)*500
-						local minZoneFlag  = Flags.GameMinZoneRebirth
-						local minZone      = tonumber(minZoneFlag and minZoneFlag.CurrentValue) or 0
+						local minZone      = tonumber(WindUI.Flags.GameMinZoneRebirth and WindUI.Flags.GameMinZoneRebirth.Value) or 0
 						if furthestZone >= minZone and goop >= requiredGoop then
 							rebirthServiceRemote:InvokeServer("requestRebirth")
 						end
@@ -1692,9 +1624,9 @@ task.spawn(function()
 		end,
 	})
 
-	createInput(gameTab, { Name="Minimum Zone To Rebirth", CurrentValue="", PlaceholderText="e.g. 10", RemoveTextAfterFocusLost=false, Flag="GameMinZoneRebirth", Callback=function() end })
+	ProgressSection:Input({ Title = "Minimum Zone To Rebirth", Placeholder = "e.g. 10", Flag = "GameMinZoneRebirth", Callback = function() end })
 
-	createSection(gameTab, "Upgrades")
+	local UpgradesSection = gameTab:Section({ Title = "Upgrades" })
 
 	local UpgradeService = nil
 	task.spawn(function()
@@ -1709,22 +1641,23 @@ task.spawn(function()
 		end
 	end)
 
-	featureToggle(gameTab, {
-		Name = "Auto Upgrade Purchasing",
-		CurrentValue = false,
+	featureToggle(UpgradesSection, {
+		Title = "Auto Upgrade Purchasing",
+		Value = false,
 		Flag = "GameAutoUpgrade",
 		Callback = function(enabled)
 			if not enabled then return end
 			task.spawn(function()
 				while true do
-					local flag = Flags.GameAutoUpgrade
-					if not flag or not flag.CurrentValue then break end
+					local flag = WindUI.Flags and WindUI.Flags.GameAutoUpgrade
+					if not flag or not flag.Value then break end
 					if not UpgradeService or not dataServiceClient or not upgradeTreeModule then task.wait(2) continue end
 					pcall(function()
-						local upgradeModeFlag = Flags.GameUpgradeMode
-						local upgradeMode = upgradeModeFlag and upgradeModeFlag.CurrentOption or {"All"}
+						local upgradeMode = WindUI.Flags.GameUpgradeMode and WindUI.Flags.GameUpgradeMode.Value or {"All"}
 						local modeSet = {}
-						for _, m in ipairs(upgradeMode) do modeSet[m] = true end
+						if type(upgradeMode) == "table" then
+							for _, m in ipairs(upgradeMode) do modeSet[m] = true end
+						else modeSet[upgradeMode] = true end
 						local unlockedUpgrades = dataServiceClient:get("upgrades") or {}
 						local coins = dataServiceClient:get("coins") or 0
 						local goop = dataServiceClient:get("goop") or 0
@@ -1765,9 +1698,9 @@ task.spawn(function()
 		end,
 	})
 
-	createDropdown(gameTab, { Name = "Upgrade Mode", Options = {"All","Coins","Goop","Rolls"}, CurrentOption = {"All"}, MultipleOptions = true, Flag = "GameUpgradeMode", Callback = function() end })
+	UpgradesSection:Dropdown({ Title = "Upgrade Mode", Values = {"All","Coins","Goop","Rolls"}, Value = "All", Multi = true, Flag = "GameUpgradeMode", Callback = function() end })
 
-	createSection(gameTab, "Recipes")
+	local RecipesSection = gameTab:Section({ Title = "Recipes" })
 
 	pcall(function()
 		local recipeIdsList = {}
@@ -1919,24 +1852,24 @@ task.spawn(function()
 			return maxCrafts == math.huge and 0 or maxCrafts
 		end
 
-		createDropdown(gameTab, { Name = "Select Recipes to Craft", Options = #recipeIdsList > 0 and recipeIdsList or {"None"}, CurrentOption = craftingState.selectedRecipeIds, MultipleOptions = true, Flag = "CraftingSelectedRecipes", Callback = function(options) craftingState.selectedRecipeIds = options end })
-		createSlider(gameTab, { Name="Craft Amount", Range={1,99}, Increment=1, Suffix="x", CurrentValue=1, Flag="CraftingAmount", Callback=function(val) craftingState.craftAmount = val end })
+		RecipesSection:Dropdown({ Title = "Select Recipes to Craft", Values = #recipeIdsList > 0 and recipeIdsList or {"None"}, Value = craftingState.selectedRecipeIds[1], Multi = true, Flag = "CraftingSelectedRecipes", Callback = function(options) craftingState.selectedRecipeIds = type(options)=="table" and options or {options} end })
+		RecipesSection:Slider({ Title = "Craft Amount", Value = {Min=1, Max=99, Default=1}, Step = 1, Flag = "CraftingAmount", Callback = function(val) craftingState.craftAmount = val end })
 
-		featureButton(gameTab, {
-			Name = "Craft Now",
+		featureButton(RecipesSection, {
+			Title = "Craft Now",
 			Callback = function()
 				local results = doCraftAll(craftingState.craftAmount)
 				local succeeded, failed = 0, 0
 				for _, ok in pairs(results) do if ok then succeeded=succeeded+1 else failed=failed+1 end end
-				notify({ Title="Cactus Hub", Content=succeeded.." crafts succeeded"..(failed>0 and (", "..failed.." failed") or ""), Duration=3 })
+				WindUI:Notify({ Title = "Cactus Hub", Content = succeeded.." crafts succeeded"..(failed>0 and (", "..failed.." failed") or ""), Duration = 3 })
 			end,
 		})
 
-		createSlider(gameTab, { Name="Auto Craft Amount", Range={1,99}, Increment=1, Suffix="x", CurrentValue=1, Flag="CraftingAutoAmount", Callback=function(val) craftingState.autoCraftAmount = val end })
+		RecipesSection:Slider({ Title = "Auto Craft Amount", Value = {Min=1, Max=99, Default=1}, Step = 1, Flag = "CraftingAutoAmount", Callback = function(val) craftingState.autoCraftAmount = val end })
 
-		featureToggle(gameTab, {
-			Name = "Enable Auto Craft",
-			CurrentValue = false,
+		featureToggle(RecipesSection, {
+			Title = "Enable Auto Craft",
+			Value = false,
 			Flag = "CraftingAutoToggle",
 			Callback = function(enabled)
 				craftingState.autoCraftEnabled = enabled
@@ -1944,8 +1877,8 @@ task.spawn(function()
 					if craftingState.autoCraftThread then task.cancel(craftingState.autoCraftThread) end
 					craftingState.autoCraftThread = task.spawn(function()
 						while true do
-							local flag = Flags.CraftingAutoToggle
-							if not flag or not flag.CurrentValue then break end
+							local flag = WindUI.Flags and WindUI.Flags.CraftingAutoToggle
+							if not flag or not flag.Value then break end
 							pcall(function()
 								local minMax = math.huge
 								for _, recipeId in ipairs(craftingState.selectedRecipeIds) do
@@ -1960,18 +1893,19 @@ task.spawn(function()
 						end
 						craftingState.autoCraftThread = nil
 					end)
-					notify({ Title="Auto Craft", Content="Started", Duration=3 })
+					WindUI:Notify({ Title = "Auto Craft", Content = "Started", Duration = 3 })
 				else
 					if craftingState.autoCraftThread then task.cancel(craftingState.autoCraftThread) craftingState.autoCraftThread = nil end
-					notify({ Title="Auto Craft", Content="Stopped.", Duration=3 })
+					WindUI:Notify({ Title = "Auto Craft", Content = "Stopped.", Duration = 3 })
 				end
 			end,
 		})
 
-		createDropdown(gameTab, { Name = "Protect Categories", Options = {"Best Slime","Equipped Slimes","Xp Slimes"}, CurrentOption = {"Best Slime","Equipped Slimes","Xp Slimes"}, MultipleOptions = true, Flag = "CraftingProtectCategories", Callback = function(options) craftingState.protectCategories = options protectedPets = buildProtectedSet(options) end })
-		notify({ Title="Cactus Hub", Content="Loaded — "..(#recipeIdsList).." unlocked recipes ready.", Duration=5 })
+		RecipesSection:Dropdown({ Title = "Protect Categories", Values = {"Best Slime","Equipped Slimes","Xp Slimes"}, Value = "Best Slime", Multi = true, Flag = "CraftingProtectCategories", Callback = function(options) craftingState.protectCategories = type(options)=="table" and options or {options} protectedPets = buildProtectedSet(craftingState.protectCategories) end })
+		WindUI:Notify({ Title = "Cactus Hub", Content = "Loaded — "..(#recipeIdsList).." unlocked recipes ready.", Duration = 5 })
 	end)
 
+	-- UFO TAB
 	local ufoClient = nil
 	local ufoZonesRemote = nil
 	pcall(function()
@@ -1995,15 +1929,15 @@ task.spawn(function()
 	local lastUfoZoneId = nil
 	local lastUfoPhase = nil
 
-	createSection(ufoTab, "Live Status")
-	local ufoPhaseLabel    = createLabel(ufoTab, "🛸  Phase: —")
-	local ufoZoneIdLabel   = createLabel(ufoTab, "📍  Zone ID: —")
-	local ufoZoneNameLabel = createLabel(ufoTab, "🗺️  Zone Name: —")
-	local ufoNextLabel     = createLabel(ufoTab, "⏳  Next Event: —")
-	local ufoGoldenLabel   = createLabel(ufoTab, "⭐  Golden UFO: —")
+	local UfoStatusSection = ufoTab:Section({ Title = "Live Status" })
+	local ufoPhaseLabel    = UfoStatusSection:Section({ Title = "🛸  Phase: —" })
+	local ufoZoneIdLabel   = UfoStatusSection:Section({ Title = "📍  Zone ID: —" })
+	local ufoZoneNameLabel = UfoStatusSection:Section({ Title = "🗺️  Zone Name: —" })
+	local ufoNextLabel     = UfoStatusSection:Section({ Title = "⏳  Next Event: —" })
+	local ufoGoldenLabel   = UfoStatusSection:Section({ Title = "⭐  Golden UFO: —" })
 
 	local function refreshUfoState()
-		if not ufoClient then ufoPhaseLabel:Set("🛸  Phase: Module not loaded") return end
+		if not ufoClient then ufoPhaseLabel.Title = "🛸  Phase: Module not loaded" return end
 		local ok, state = pcall(function() return ufoClient:getStateSource()() end)
 		if not ok or not state then return end
 		local zoneName = "N/A"
@@ -2022,18 +1956,18 @@ task.spawn(function()
 		elseif state.phase == "departing" then phaseIcon = "🔴" end
 		local isGolden = false
 		pcall(function() isGolden = ufoClient.isGolden == true end)
-		ufoPhaseLabel:Set("🛸  Phase: " .. phaseIcon .. " " .. state.phase:upper())
-		ufoZoneIdLabel:Set("📍  Zone ID: " .. (state.zoneId and tostring(state.zoneId) or "None"))
-		ufoZoneNameLabel:Set("🗺️  Zone Name: " .. zoneName)
-		ufoNextLabel:Set("⏳  Next Event: " .. nextEvent)
-		ufoGoldenLabel:Set("⭐  Golden UFO: " .. (isGolden and "Yes ✅" or "No ❌"))
+		ufoPhaseLabel.Title = "🛸  Phase: " .. phaseIcon .. " " .. state.phase:upper()
+		ufoZoneIdLabel.Title = "📍  Zone ID: " .. (state.zoneId and tostring(state.zoneId) or "None")
+		ufoZoneNameLabel.Title = "🗺️  Zone Name: " .. zoneName
+		ufoNextLabel.Title = "⏳  Next Event: " .. nextEvent
+		ufoGoldenLabel.Title = "⭐  Golden UFO: " .. (isGolden and "Yes ✅" or "No ❌")
 	end
 
-	createSection(ufoTab, "Automation")
+	local UfoAutoSection = ufoTab:Section({ Title = "Automation" })
 
-	featureToggle(ufoTab, {
-		Name = "Auto Stay in UFO Zone",
-		CurrentValue = false,
+	featureToggle(UfoAutoSection, {
+		Title = "Auto Stay in UFO Zone",
+		Value = false,
 		Flag = "AutoUfoZone",
 		Callback = function(value)
 			autoUfoZone = value
@@ -2041,15 +1975,15 @@ task.spawn(function()
 		end,
 	})
 
-	featureToggle(ufoTab, {
-		Name = "Auto Collect UFO Loot",
-		CurrentValue = false,
+	featureToggle(UfoAutoSection, {
+		Title = "Auto Collect UFO Loot",
+		Value = false,
 		Flag = "AutoUfoLoot",
 		Callback = function(value) autoUfoLoot = value end,
 	})
 
-	createSection(ufoTab, "Controls")
-	featureButton(ufoTab, { Name = "Refresh Status", Callback = function() refreshUfoState() end })
+	local UfoControlsSection = ufoTab:Section({ Title = "Controls" })
+	featureButton(UfoControlsSection, { Title = "Refresh Status", Callback = function() refreshUfoState() end })
 
 	task.spawn(function()
 		local ufoWasActive = false
@@ -2066,9 +2000,9 @@ task.spawn(function()
 					if isActive then
 						if not ufoWasActive then
 							ufoWasActive = true
-							local farmFlag = Flags.FarmingStayInBestZone
-							farmWasEnabled = farmFlag and farmFlag.CurrentValue or false
-							if farmWasEnabled then farmFlag:Set(false) end
+							local farmFlag = WindUI.Flags and WindUI.Flags.FarmingStayInBestZone
+							farmWasEnabled = farmFlag and farmFlag.Value or false
+							if farmWasEnabled and farmFlag then farmFlag.Value = false end
 						end
 						lastUfoZoneId = state.zoneId
 						lastUfoPhase = state.phase
@@ -2080,8 +2014,8 @@ task.spawn(function()
 						if ufoWasActive then
 							ufoWasActive = false
 							if farmWasEnabled then
-								local farmFlag = Flags.FarmingStayInBestZone
-								if farmFlag then farmFlag:Set(true) end
+								local farmFlag = WindUI.Flags and WindUI.Flags.FarmingStayInBestZone
+								if farmFlag then farmFlag.Value = true end
 								farmWasEnabled = false
 							end
 							lastUfoZoneId = nil
@@ -2107,39 +2041,37 @@ task.spawn(function()
 		end
 	end)
 
+	-- INDEX TAB
 	local indexRunning = false
 	local indexThread, luckPollThread = nil, nil
 	local selectedCategoryOption = nil
 	local indexLabels = {}
 
-	createSection(indexTab, "Controls")
+	local IndexControlsSection = indexTab:Section({ Title = "Controls" })
 
-	featureToggle(indexTab, {
-		Name = "Start Auto Complete",
-		CurrentValue = false,
+	featureToggle(IndexControlsSection, {
+		Title = "Start Auto Complete",
+		Value = false,
 		Flag = "IndexAutoComplete",
 		Callback = function(value)
 			if value then
 				indexRunning = true
 				indexThread = task.spawn(function()
 					if not dataServiceClient then
-						notify({ Title="Index", Content="DataService not loaded yet.", Duration=4 })
+						WindUI:Notify({ Title = "Index", Content = "DataService not loaded yet.", Duration = 4 })
 						indexRunning = false
 						return
 					end
 					setLuck(1) task.wait(0.3)
 					setLuckEnabled(true) task.wait(0.3)
-
 					luckPollThread = task.spawn(function()
 						while indexRunning do
-							if indexLabels.lLuck then indexLabels.lLuck:Set("🍀 Luck Override: x"..tostring(luckValueLocal)) end
+							if indexLabels.lLuck then indexLabels.lLuck.Title = "🍀 Luck Override: x"..tostring(luckValueLocal) end
 							task.wait(1)
 						end
 					end)
-
-					local modeFlag = Flags.IndexRollMode
-					local mode = modeFlag and modeFlag.CurrentOption and modeFlag.CurrentOption[1] or "🌱 Easiest First"
-
+					local modeFlag = WindUI.Flags and WindUI.Flags.IndexRollMode
+					local mode = modeFlag and modeFlag.Value or "🌱 Easiest First"
 					local function getSortedCategoriesByPriority()
 						local cats = {}
 						for _, catId in ipairs(CATEGORY_IDS) do
@@ -2149,23 +2081,22 @@ task.spawn(function()
 						table.sort(cats, function(a, b) return a.easiestEffectiveOdds > b.easiestEffectiveOdds end)
 						return cats
 					end
-
 					local function runCategory(catId, modeStr, labels)
 						local failCount = 0
 						local catLabel  = catId:sub(1,1):upper()..catId:sub(2)
 						local lastTargetId = nil
 						while indexRunning do
-							local flag = Flags.IndexAutoComplete
-							if not flag or not flag.CurrentValue then indexRunning = false break end
+							local flag = WindUI.Flags and WindUI.Flags.IndexAutoComplete
+							if not flag or not flag.Value then indexRunning = false break end
 							local missing = getMissingSlimes(catId)
 							if #missing == 0 then return true end
 							local target = modeStr == "🎯 Rarest First" and missing[#missing] or missing[1]
 							local effOdds = getEffectiveOdds(target, catId)
 							if target.id ~= lastTargetId then lastTargetId = target.id setLuck(calcOptimalLuck(effOdds)) end
 							if labels then
-								labels.lTarget:Set("🎯 Target: "..catLabel.." "..target.name)
-								labels.lOdds:Set("🎲 Odds: "..formatOdds(effOdds))
-								labels.lCategory:Set(string.format("📂 %s (%d left)", catLabel, #missing))
+								if labels.lTarget then labels.lTarget.Title = "🎯 Target: "..catLabel.." "..target.name end
+								if labels.lOdds then labels.lOdds.Title = "🎲 Odds: "..formatOdds(effOdds) end
+								if labels.lCategory then labels.lCategory.Title = string.format("📂 %s (%d left)", catLabel, #missing) end
 							end
 							local before = getUnlockedIndex(catId)
 							pcall(function() networkerRoll:fetch("requestRoll") end)
@@ -2187,14 +2118,13 @@ task.spawn(function()
 						end
 						return false
 					end
-
 					if selectedCategoryOption == nil or selectedCategoryOption == "🎲 All (Recommended)" then
 						while indexRunning do
 							local sorted = getSortedCategoriesByPriority()
 							if #sorted == 0 then
-								if indexLabels.lCategory then indexLabels.lCategory:Set("📂 ✅ All Complete!") end
-								if indexLabels.lTarget   then indexLabels.lTarget:Set("🎯 Target: —") end
-								if indexLabels.lOdds     then indexLabels.lOdds:Set("🎲 Odds: —") end
+								if indexLabels.lCategory then indexLabels.lCategory.Title = "📂 ✅ All Complete!" end
+								if indexLabels.lTarget   then indexLabels.lTarget.Title = "🎯 Target: —" end
+								if indexLabels.lOdds     then indexLabels.lOdds.Title = "🎲 Odds: —" end
 								indexRunning = false break
 							end
 							local completed = runCategory(sorted[1].id, mode, indexLabels)
@@ -2209,14 +2139,13 @@ task.spawn(function()
 						if catId then
 							runCategory(catId, mode, indexLabels)
 							if indexRunning then
-								if indexLabels.lCategory then indexLabels.lCategory:Set("📂 ✅ Complete!") end
-								if indexLabels.lTarget   then indexLabels.lTarget:Set("🎯 Target: —") end
-								if indexLabels.lOdds     then indexLabels.lOdds:Set("🎲 Odds: —") end
+								if indexLabels.lCategory then indexLabels.lCategory.Title = "📂 ✅ Complete!" end
+								if indexLabels.lTarget   then indexLabels.lTarget.Title = "🎯 Target: —" end
+								if indexLabels.lOdds     then indexLabels.lOdds.Title = "🎲 Odds: —" end
 							end
 						end
 						indexRunning = false
 					end
-
 					if luckPollThread then task.cancel(luckPollThread) end
 					setLuckEnabled(false)
 				end)
@@ -2225,15 +2154,15 @@ task.spawn(function()
 				if indexThread then task.cancel(indexThread) indexThread = nil end
 				if luckPollThread then task.cancel(luckPollThread) luckPollThread = nil end
 				setLuckEnabled(false)
-				if indexLabels.lTarget   then indexLabels.lTarget:Set("🎯 Target: —") end
-				if indexLabels.lOdds     then indexLabels.lOdds:Set("🎲 Odds: —") end
-				if indexLabels.lLuck     then indexLabels.lLuck:Set("🍀 Luck: —") end
-				if indexLabels.lCategory then indexLabels.lCategory:Set("📂 Category: —") end
+				if indexLabels.lTarget   then indexLabels.lTarget.Title = "🎯 Target: —" end
+				if indexLabels.lOdds     then indexLabels.lOdds.Title = "🎲 Odds: —" end
+				if indexLabels.lLuck     then indexLabels.lLuck.Title = "🍀 Luck: —" end
+				if indexLabels.lCategory then indexLabels.lCategory.Title = "📂 Category: —" end
 			end
 		end,
 	})
 
-	createSection(indexTab, "Settings")
+	local IndexSettingsSection = indexTab:Section({ Title = "Settings" })
 
 	pcall(function()
 		local categoryOptions = {"🎲 All (Recommended)"}
@@ -2248,23 +2177,23 @@ task.spawn(function()
 			end
 		end
 		selectedCategoryOption = categoryOptions[1]
-		createDropdown(indexTab, { Name = "Category", Options = categoryOptions, CurrentOption = {categoryOptions[1]}, MultipleOptions = false, Flag = "IndexCategory", Callback = function(option) selectedCategoryOption = type(option)=="table" and option[1] or option end })
+		IndexSettingsSection:Dropdown({ Title = "Category", Values = categoryOptions, Value = categoryOptions[1], Flag = "IndexCategory", Callback = function(option) selectedCategoryOption = type(option)=="table" and option[1] or option end })
 	end)
 
-	createDropdown(indexTab, { Name="Roll Mode", Options={"🌱 Easiest First","🎯 Rarest First"}, CurrentOption={"🌱 Easiest First"}, MultipleOptions=false, Flag="IndexRollMode", Callback=function() end })
+	IndexSettingsSection:Dropdown({ Title = "Roll Mode", Values = {"🌱 Easiest First","🎯 Rarest First"}, Value = "🌱 Easiest First", Flag = "IndexRollMode", Callback = function() end })
 
-	createSection(indexTab, "Status")
-	indexLabels.lTarget   = createLabel(indexTab, "🎯 Target: —")
-	indexLabels.lOdds     = createLabel(indexTab, "🎲 Odds: —")
-	indexLabels.lLuck     = createLabel(indexTab, "🍀 Luck: —")
-	indexLabels.lCategory = createLabel(indexTab, "📂 Category: —")
+	local IndexStatusSection = indexTab:Section({ Title = "Status" })
+	indexLabels.lTarget   = IndexStatusSection:Section({ Title = "🎯 Target: —" })
+	indexLabels.lOdds     = IndexStatusSection:Section({ Title = "🎲 Odds: —" })
+	indexLabels.lLuck     = IndexStatusSection:Section({ Title = "🍀 Luck: —" })
+	indexLabels.lCategory = IndexStatusSection:Section({ Title = "📂 Category: —" })
 
-	createSection(indexTab, "Index Progress")
+	local IndexProgressSection = indexTab:Section({ Title = "Index Progress" })
 	local indexProgressLabels = {}
 	local totalSlimeCount = getTotalSlimes()
 	for _, catId in ipairs(CATEGORY_IDS) do
 		local label = catId:sub(1,1):upper()..catId:sub(2)
-		indexProgressLabels[catId] = createLabel(indexTab, string.format("📊 %s: %d / %d", label, getUnlockedCount(catId), totalSlimeCount))
+		indexProgressLabels[catId] = IndexProgressSection:Section({ Title = string.format("📊 %s: %d / %d", label, getUnlockedCount(catId), totalSlimeCount) })
 	end
 
 	task.spawn(function()
@@ -2275,18 +2204,19 @@ task.spawn(function()
 				for _, catId in ipairs(CATEGORY_IDS) do
 					if indexProgressLabels[catId] then
 						local label = catId:sub(1,1):upper()..catId:sub(2)
-						indexProgressLabels[catId]:Set(string.format("📊 %s: %d / %d", label, getUnlockedCount(catId), totalNow))
+						indexProgressLabels[catId].Title = string.format("📊 %s: %d / %d", label, getUnlockedCount(catId), totalNow)
 					end
 				end
 			end)
 		end
 	end)
 
-	createSection(miscTab, "Codes & Rewards")
+	-- MISC TAB
+	local CodesSection = miscTab:Section({ Title = "Codes & Rewards" })
 
-	featureToggle(miscTab, {
-		Name = "Auto Redeem Codes",
-		CurrentValue = false,
+	featureToggle(CodesSection, {
+		Title = "Auto Redeem Codes",
+		Value = false,
 		Flag = "MiscRedeemCodes",
 		Callback = function(enabled)
 			if not enabled then return end
@@ -2294,11 +2224,11 @@ task.spawn(function()
 				local codes = { "AAisComing","goingBananas","gullible","Sliming","test","beammeup","aliensarehere" }
 				table.sort(codes)
 				while true do
-					local flag = Flags.MiscRedeemCodes
-					if not flag or not flag.CurrentValue then break end
+					local flag = WindUI.Flags and WindUI.Flags.MiscRedeemCodes
+					if not flag or not flag.Value then break end
 					if not codeServiceRemote then break end
 					for _, code in ipairs(codes) do
-						if not (Flags.MiscRedeemCodes and Flags.MiscRedeemCodes.CurrentValue) then break end
+						if not (WindUI.Flags.MiscRedeemCodes and WindUI.Flags.MiscRedeemCodes.Value) then break end
 						pcall(function() codeServiceRemote:InvokeServer("redeem", code) end)
 						task.wait(0.5)
 					end
@@ -2308,16 +2238,16 @@ task.spawn(function()
 		end,
 	})
 
-	featureToggle(miscTab, {
-		Name = "Auto Claim Offline Earnings",
-		CurrentValue = false,
+	featureToggle(CodesSection, {
+		Title = "Auto Claim Offline Earnings",
+		Value = false,
 		Flag = "MiscClaimOffline",
 		Callback = function(enabled)
 			if not enabled then return end
 			task.spawn(function()
 				while true do
-					local flag = Flags.MiscClaimOffline
-					if not flag or not flag.CurrentValue then break end
+					local flag = WindUI.Flags and WindUI.Flags.MiscClaimOffline
+					if not flag or not flag.Value then break end
 					if not offlineEarningsRemote then break end
 					pcall(function() offlineEarningsRemote:InvokeServer("requestClaim") end)
 					task.wait(60)
@@ -2326,16 +2256,16 @@ task.spawn(function()
 		end,
 	})
 
-	featureToggle(miscTab, {
-		Name = "Auto Claim Index Rewards",
-		CurrentValue = false,
+	featureToggle(CodesSection, {
+		Title = "Auto Claim Index Rewards",
+		Value = false,
 		Flag = "MiscClaimIndex",
 		Callback = function(enabled)
 			if not enabled then return end
 			task.spawn(function()
 				while true do
-					local flag = Flags.MiscClaimIndex
-					if not flag or not flag.CurrentValue then break end
+					local flag = WindUI.Flags and WindUI.Flags.MiscClaimIndex
+					if not flag or not flag.Value then break end
 					pcall(function()
 						if not indexServiceRemote or not indexRewardsModule or not dataServiceClient then return end
 						local indexData = dataServiceClient:get("index")
@@ -2362,29 +2292,29 @@ task.spawn(function()
 		end,
 	})
 
-	createSection(miscTab, "Consumables")
+	local ConsumablesSection = miscTab:Section({ Title = "Consumables" })
 
 	pcall(function()
 		local sortedBoostKinds = {}
 		if boostKinds then for _, kind in ipairs(boostKinds) do table.insert(sortedBoostKinds, kind) end table.sort(sortedBoostKinds) end
-		
-		featureToggle(miscTab, {
-			Name = "Auto Use Potions",
-			CurrentValue = false,
+
+		featureToggle(ConsumablesSection, {
+			Title = "Auto Use Potions",
+			Value = false,
 			Flag = "MiscUsePotions",
 			Callback = function(enabled)
 				if not enabled then return end
 				task.spawn(function()
 					while true do
-						local flag = Flags.MiscUsePotions
-						if not flag or not flag.CurrentValue then break end
+						local flag = WindUI.Flags and WindUI.Flags.MiscUsePotions
+						if not flag or not flag.Value then break end
 						pcall(function()
 							if not boostServiceRemote or not dataServiceClient or not boostServiceUtils then return end
 							local boosts = dataServiceClient:get("boosts") or {}
-							local potionFlag = Flags.MiscPotionTypes
-							local selectedPotions = potionFlag and potionFlag.CurrentOption or {}
+							local selectedPotions = WindUI.Flags.MiscPotionTypes and WindUI.Flags.MiscPotionTypes.Value or {}
 							local serverTime = workspace:GetServerTimeNow()
-							for _, potionType in ipairs(selectedPotions) do
+							local potionList = type(selectedPotions) == "table" and selectedPotions or {selectedPotions}
+							for _, potionType in ipairs(potionList) do
 								local boostData = boosts[potionType]
 								if boostData and (boostData.amount or 0) > 0 then
 									local remaining = boostServiceUtils.getTimeRemaining(boostData, serverTime)
@@ -2400,21 +2330,21 @@ task.spawn(function()
 				end)
 			end,
 		})
-		
+
 		if #sortedBoostKinds > 0 then
-			createDropdown(miscTab, { Name="Potion Types", Options=sortedBoostKinds, CurrentOption=sortedBoostKinds, MultipleOptions=true, Flag="MiscPotionTypes", Callback=function() end })
-			featureButton(miscTab, {
-				Name = "Use All Selected Potions",
+			ConsumablesSection:Dropdown({ Title = "Potion Types", Values = sortedBoostKinds, Value = sortedBoostKinds[1], Multi = true, Flag = "MiscPotionTypes", Callback = function() end })
+			featureButton(ConsumablesSection, {
+				Title = "Use All Selected Potions",
 				Callback = function()
 					task.spawn(function()
 						pcall(function()
 							if not boostServiceRemote or not dataServiceClient then
-								notify({ Title="Error", Content="Boost service not ready", Duration=3 })
+								WindUI:Notify({ Title = "Error", Content = "Boost service not ready", Duration = 3 })
 								return
 							end
-							local potionFlag = Flags.MiscPotionTypes
-							local selectedPotions = potionFlag and potionFlag.CurrentOption or {}
-							for _, potionType in ipairs(selectedPotions) do
+							local selectedPotions = WindUI.Flags.MiscPotionTypes and WindUI.Flags.MiscPotionTypes.Value or {}
+							local potionList = type(selectedPotions) == "table" and selectedPotions or {selectedPotions}
+							for _, potionType in ipairs(potionList) do
 								local boosts = dataServiceClient:get("boosts") or {}
 								local amount = (boosts[potionType] or {}).amount or 0
 								for i = 1, amount do
@@ -2422,13 +2352,13 @@ task.spawn(function()
 									task.wait(0.2)
 								end
 							end
-							notify({ Title="Potions", Content="Used all selected potions", Duration=3 })
+							WindUI:Notify({ Title = "Potions", Content = "Used all selected potions", Duration = 3 })
 						end)
 					end)
 				end,
 			})
 		else
-			createLabel(miscTab, "Potion types not yet loaded — enable after modules load.")
+			ConsumablesSection:Section({ Title = "Potion types not yet loaded — enable after modules load." })
 		end
 	end)
 
@@ -2438,29 +2368,26 @@ task.spawn(function()
 			for _, itemId in ipairs(diceItemIds) do table.insert(diceNames, idToNameMap[itemId]) end
 			table.sort(diceNames)
 		end
-		
-		featureToggle(miscTab, {
-			Name = "Auto Use Dice & Items",
-			CurrentValue = false,
+
+		featureToggle(ConsumablesSection, {
+			Title = "Auto Use Dice & Items",
+			Value = false,
 			Flag = "MiscUseDice",
 			Callback = function(enabled)
 				if not enabled then return end
 				task.spawn(function()
 					while true do
-						local flag = Flags.MiscUseDice
-						if not flag or not flag.CurrentValue then break end
+						local flag = WindUI.Flags and WindUI.Flags.MiscUseDice
+						if not flag or not flag.Value then break end
 						pcall(function()
 							if not inventoryServiceRemote or not dataServiceClient then return end
 							local queue = dataServiceClient:get("specialDiceQueue") or {}
 							local active = queue[1]
-							if active then
-								task.wait(1)
-								return
-							end
+							if active then task.wait(1) return end
 							local items = dataServiceClient:get("items") or {}
-							local diceFlag = Flags.MiscDiceTypes
-							local selectedDiceItems = diceFlag and diceFlag.CurrentOption or {}
-							for _, diceName in ipairs(selectedDiceItems) do
+							local selectedDiceItems = WindUI.Flags.MiscDiceTypes and WindUI.Flags.MiscDiceTypes.Value or {}
+							local diceList = type(selectedDiceItems) == "table" and selectedDiceItems or {selectedDiceItems}
+							for _, diceName in ipairs(diceList) do
 								local itemId = nameToIdMap and nameToIdMap[diceName]
 								if itemId and (items[itemId] or 0) > 0 then
 									pcall(function() inventoryServiceRemote:InvokeServer("requestUseItem", itemId) end)
@@ -2473,21 +2400,21 @@ task.spawn(function()
 				end)
 			end,
 		})
-		
+
 		if #diceNames > 0 then
-			createDropdown(miscTab, { Name="Dice & Item Types", Options=diceNames, CurrentOption=diceNames, MultipleOptions=true, Flag="MiscDiceTypes", Callback=function() end })
-			featureButton(miscTab, {
-				Name = "Use All Selected Dice",
+			ConsumablesSection:Dropdown({ Title = "Dice & Item Types", Values = diceNames, Value = diceNames[1], Multi = true, Flag = "MiscDiceTypes", Callback = function() end })
+			featureButton(ConsumablesSection, {
+				Title = "Use All Selected Dice",
 				Callback = function()
 					task.spawn(function()
 						pcall(function()
 							if not inventoryServiceRemote or not dataServiceClient then
-								notify({ Title="Error", Content="Inventory service not ready", Duration=3 })
+								WindUI:Notify({ Title = "Error", Content = "Inventory service not ready", Duration = 3 })
 								return
 							end
-							local diceFlag = Flags.MiscDiceTypes
-							local selectedDiceItems = diceFlag and diceFlag.CurrentOption or {}
-							for _, diceName in ipairs(selectedDiceItems) do
+							local selectedDiceItems = WindUI.Flags.MiscDiceTypes and WindUI.Flags.MiscDiceTypes.Value or {}
+							local diceList = type(selectedDiceItems) == "table" and selectedDiceItems or {selectedDiceItems}
+							for _, diceName in ipairs(diceList) do
 								local itemId = nameToIdMap and nameToIdMap[diceName]
 								if itemId then
 									local items = dataServiceClient:get("items") or {}
@@ -2498,61 +2425,60 @@ task.spawn(function()
 									end
 								end
 							end
-							notify({ Title="Dice", Content="Used all selected dice/items", Duration=3 })
+							WindUI:Notify({ Title = "Dice", Content = "Used all selected dice/items", Duration = 3 })
 						end)
 					end)
 				end,
 			})
 		else
-			createLabel(miscTab, "Dice types not yet loaded — enable after modules load.")
+			ConsumablesSection:Section({ Title = "Dice types not yet loaded — enable after modules load." })
 		end
 	end)
 
-	createSection(webhookTab, "Warning")
-	createParagraph(webhookTab, { Title = "⚠️ WARNING", Content = "WEBHOOK WILL ONLY WORK IF YOU MANUALLY ENABLE AUTO ROLL IN GAME\nPLEASE DISABLE FAST ROLL (from Farming Tab) if you have it enabled" })
-	createSection(webhookTab, "Configuration")
+	-- WEBHOOK TAB
+	webhookTab:Section({ Title = "⚠️ WARNING — WEBHOOK WILL ONLY WORK IF YOU MANUALLY ENABLE AUTO ROLL IN GAME. DISABLE FAST ROLL (from Farming Tab) if you have it enabled." })
+	local WebhookConfigSection = webhookTab:Section({ Title = "Configuration" })
 
 	local savedWebhookUrl = ""
 	local WEBHOOK_AVATAR = "https://media.discordapp.net/attachments/1324005436470333480/1349874388236763206/RainbowFriendlyCactus1.png"
 
-	featureToggle(webhookTab, { Name = "Enable Webhook", CurrentValue = false, Flag = "WebhookEnabled", Callback = function() end })
+	featureToggle(WebhookConfigSection, { Title = "Enable Webhook", Value = false, Flag = "WebhookEnabled", Callback = function() end })
 
-	createInput(webhookTab, { Name = "Webhook URL", CurrentValue = "", PlaceholderText = "Paste your Discord webhook URL", RemoveTextAfterFocusLost = false, Flag = "WebhookURLDisplay",
+	WebhookConfigSection:Input({
+		Title = "Webhook URL", Placeholder = "Paste your Discord webhook URL", Flag = "WebhookURLDisplay",
 		Callback = function(url)
 			if url and url:match("^https://discord") then
 				savedWebhookUrl = url
 				local masked = string.rep("•", #url - 6) .. url:sub(-6)
-				notify({Title = "Webhook", Content = "URL saved: " .. masked, Duration = 3})
+				WindUI:Notify({ Title = "Webhook", Content = "URL saved: " .. masked, Duration = 3 })
 			end
 		end,
 	})
 
-	createInput(webhookTab, { Name = "User ID", CurrentValue = "", PlaceholderText = "Discord User ID", RemoveTextAfterFocusLost = false, Flag = "WebhookUserID", Callback = function() end })
-	createInput(webhookTab, { Name = "Minimum Chance To Send", CurrentValue = "", PlaceholderText = "e.g. 1B or 1000000000", RemoveTextAfterFocusLost = false, Flag = "WebhookMinChance", Callback = function() end })
+	WebhookConfigSection:Input({ Title = "User ID", Placeholder = "Discord User ID", Flag = "WebhookUserID", Callback = function() end })
+	WebhookConfigSection:Input({ Title = "Minimum Chance To Send", Placeholder = "e.g. 1B or 1000000000", Flag = "WebhookMinChance", Callback = function() end })
 
-	featureButton(webhookTab, {
-		Name = "Test Webhook",
+	featureButton(WebhookConfigSection, {
+		Title = "Test Webhook",
 		Callback = function()
-			if savedWebhookUrl == "" then notify({Title="Webhook",Content="Please paste a Webhook URL first.",Duration=4}) return end
-			local webhookEnabledFlag = Flags.WebhookEnabled
-			if not (webhookEnabledFlag and webhookEnabledFlag.CurrentValue) then notify({Title="Webhook",Content="Please enable Webhook first.",Duration=4}) return end
-			local userIdFlag = Flags.WebhookUserID
-			local userId = userIdFlag and userIdFlag.CurrentValue or ""
+			if savedWebhookUrl == "" then WindUI:Notify({Title="Webhook",Content="Please paste a Webhook URL first.",Duration=4}) return end
+			if not (WindUI.Flags.WebhookEnabled and WindUI.Flags.WebhookEnabled.Value) then WindUI:Notify({Title="Webhook",Content="Please enable Webhook first.",Duration=4}) return end
+			local userId = WindUI.Flags.WebhookUserID and WindUI.Flags.WebhookUserID.Value or ""
 			local mention = (userId and userId ~= "") and ("<@" .. userId .. "> ") or ""
 			local success = pcall(function()
 				request({ Url = savedWebhookUrl, Method = "POST", Headers = {["Content-Type"]="application/json"},
 					Body = HttpService:JSONEncode({ content=mention, username="Cactus Hub", avatar_url=WEBHOOK_AVATAR, embeds={{title="✅ Webhook Test",description="Your webhook is working correctly!",color=0x2ecc71}} })
 				})
 			end)
-			notify({Title="Webhook", Content=success and "Test sent successfully!" or "Failed to send test.", Duration=4})
+			WindUI:Notify({Title="Webhook", Content=success and "Test sent successfully!" or "Failed to send test.", Duration=4})
 		end,
 	})
 
-	createSection(webhookTab, "Filters")
-	featureToggle(webhookTab, { Name="Send All Slimes", CurrentValue=false, Flag="WebhookSendAll", Callback=function() end })
-	featureToggle(webhookTab, { Name="Send New Slimes Only", CurrentValue=false, Flag="WebhookSendNew", Callback=function() end })
-	featureToggle(webhookTab, { Name="Send Mutated Slimes", CurrentValue=false, Flag="WebhookSendMutated", Callback=function() end })
-	createDropdown(webhookTab, { Name="Mutations Filter", Options={"All","Shiny","Big","Huge","Inverted"}, CurrentOption={"All"}, MultipleOptions=true, Flag="WebhookMutations", Callback=function() end })
+	local WebhookFiltersSection = webhookTab:Section({ Title = "Filters" })
+	featureToggle(WebhookFiltersSection, { Title = "Send All Slimes", Value = false, Flag = "WebhookSendAll", Callback = function() end })
+	featureToggle(WebhookFiltersSection, { Title = "Send New Slimes Only", Value = false, Flag = "WebhookSendNew", Callback = function() end })
+	featureToggle(WebhookFiltersSection, { Title = "Send Mutated Slimes", Value = false, Flag = "WebhookSendMutated", Callback = function() end })
+	WebhookFiltersSection:Dropdown({ Title = "Mutations Filter", Values = {"All","Shiny","Big","Huge","Inverted"}, Value = "All", Multi = true, Flag = "WebhookMutations", Callback = function() end })
 
 	local function formatNumber(num)
 		if type(num) ~= "number" then return tostring(num) end
@@ -2666,8 +2592,7 @@ task.spawn(function()
 		while true do
 			task.wait(0.1)
 			if not modulesLoaded then task.wait(1) continue end
-			local webhookEnabledFlag = Flags.WebhookEnabled
-			if not (webhookEnabledFlag and webhookEnabledFlag.CurrentValue) then task.wait(1) continue end
+			if not (WindUI.Flags and WindUI.Flags.WebhookEnabled and WindUI.Flags.WebhookEnabled.Value) then task.wait(1) continue end
 			if savedWebhookUrl == "" or not rollSliceModule then task.wait(0.5) continue end
 			pcall(function()
 				local currentRolls = rollSliceModule.rollResults()
@@ -2675,14 +2600,10 @@ task.spawn(function()
 				local currentHash = encodeRollResults(currentRolls)
 				if currentHash == lastRollResultsHash then return end
 				lastRollResultsHash = currentHash
-				local sendAllFlag     = Flags.WebhookSendAll
-				local sendNewOnlyFlag = Flags.WebhookSendNew
-				local sendMutatedFlag = Flags.WebhookSendMutated
-				local minChanceFlag   = Flags.WebhookMinChance
-				local sendAll     = sendAllFlag and sendAllFlag.CurrentValue
-				local sendNewOnly = sendNewOnlyFlag and sendNewOnlyFlag.CurrentValue
-				local sendMutated = sendMutatedFlag and sendMutatedFlag.CurrentValue
-				local minChanceStr = minChanceFlag and minChanceFlag.CurrentValue or ""
+				local sendAll     = WindUI.Flags.WebhookSendAll and WindUI.Flags.WebhookSendAll.Value
+				local sendNewOnly = WindUI.Flags.WebhookSendNew and WindUI.Flags.WebhookSendNew.Value
+				local sendMutated = WindUI.Flags.WebhookSendMutated and WindUI.Flags.WebhookSendMutated.Value
+				local minChanceStr = WindUI.Flags.WebhookMinChance and WindUI.Flags.WebhookMinChance.Value or ""
 				local minChanceNum = nil
 				if minChanceStr and minChanceStr ~= "" then
 					local num, suffix = minChanceStr:upper():gsub(",",""):match("^(%d+%.?%d*)([KMBTQ]?)$")
@@ -2710,8 +2631,7 @@ task.spawn(function()
 								if chanceValue > minChanceNum then shouldSend = false end
 							end
 							if shouldSend then
-								local userIdFlag = Flags.WebhookUserID
-								local userId = userIdFlag and userIdFlag.CurrentValue or ""
+								local userId = WindUI.Flags.WebhookUserID and WindUI.Flags.WebhookUserID.Value or ""
 								local notificationKey = currentHash .. "_" .. slimeId
 								task.spawn(sendWebhookNotification, slimeId, slimeDefinition, mutations, savedWebhookUrl, userId, notificationKey)
 							end
@@ -2722,12 +2642,13 @@ task.spawn(function()
 		end
 	end)
 
-	createParagraph(settingsTab, { Title = "🍀 Want a serverhop script for luck servers?", Content = "Join the Discord! discord.gg/qMWFBWdcf" })
-	createSection(settingsTab, "System")
+	-- SETTINGS TAB
+	settingsTab:Section({ Title = "🍀 Want a serverhop script for luck servers? Join the Discord! discord.gg/qMWFBWdcf" })
+	local SystemSection = settingsTab:Section({ Title = "System" })
 
-	featureToggle(settingsTab, {
-		Name = "Anti Kick",
-		CurrentValue = false,
+	featureToggle(SystemSection, {
+		Title = "Anti Kick",
+		Value = false,
 		Flag = "SettingsAntiKick",
 		Callback = function(value)
 			if value then
@@ -2737,8 +2658,7 @@ task.spawn(function()
 				mt.__namecall = newcclosure(function(self, ...)
 					local method = getnamecallmethod()
 					if method == "Kick" and self == localPlayer then
-						local antiKickFlag = Flags.SettingsAntiKick
-						if antiKickFlag and antiKickFlag.CurrentValue then
+						if WindUI.Flags.SettingsAntiKick and WindUI.Flags.SettingsAntiKick.Value then
 							warn("[CactusHub] Blocked kick attempt")
 							return
 						end
@@ -2750,43 +2670,54 @@ task.spawn(function()
 		end,
 	})
 
-	featureToggle(settingsTab, { Name = "Auto Rejoin On Disconnect", CurrentValue = false, Flag = "SettingsAutoRejoin", Callback = function() end })
+	featureToggle(SystemSection, { Title = "Auto Rejoin On Disconnect", Value = false, Flag = "SettingsAutoRejoin", Callback = function() end })
 
-	featureToggle(settingsTab, {
-		Name = "Auto Send & Accept Friend Requests",
-		CurrentValue = false,
+	featureToggle(SystemSection, {
+		Title = "Auto Send & Accept Friend Requests",
+		Value = false,
 		Flag = "AutoFriend",
 		Callback = function(value)
 			if not value then return end
 			task.spawn(function()
 				while true do
-					local flag = Flags.AutoFriend
-					if not flag or not flag.CurrentValue then break end
-					local players = game:GetService("Players"):GetPlayers()
-					for _, p in ipairs(players) do
-						if p ~= localPlayer then pcall(function() localPlayer:RequestFriendship(p) end) task.wait(1) end
-					end
+					local flag = WindUI.Flags and WindUI.Flags.AutoFriend
+					if not flag or not flag.Value then break end
+					pcall(function()
+						local PlayersService = game:GetService("Players")
+						local lp = PlayersService.LocalPlayer
+						for _, player in ipairs(PlayersService:GetPlayers()) do
+							if player ~= lp then
+								local ok, status = pcall(function()
+									return lp:GetFriendStatus(player)
+								end)
+								if ok and (status == Enum.FriendStatus.NotFriend or status == Enum.FriendStatus.Unknown) then
+									pcall(function() lp:RequestFriendship(player) end)
+									task.wait(0.5)
+								end
+							end
+						end
+					end)
 					task.wait(600)
 				end
 			end)
 		end,
 	})
 
-	createParagraph(settingsTab, { Title = "MAY be Patched", Content = "Auto Send & Accept Friend Requests may not work depending on current Roblox API restrictions." })
-	createSection(settingsTab, "Advanced Optimization")
+	SystemSection:Section({ Title = "Friend Requests — NOTE: works based on your executor" })
+
+	local OptSection = settingsTab:Section({ Title = "Advanced Optimization" })
 
 	local OPT_VISUAL_TYPES = { ParticleEmitter=true,Trail=true,Beam=true,Fire=true,Smoke=true,Sparkles=true,SurfaceAppearance=true,Highlight=true,SelectionBox=true,SelectionSphere=true,Atmosphere=true }
 	local CHEAP_MATERIAL = Enum.Material.SmoothPlastic
 	local updatingOptimizations = false
-	local optGPUToggle, optEffectsToggle, optGCToggle, optIntenseToggle, maxFpsToggle
+	local optGPUToggle, optEffectsToggle, optGCToggle, maxFpsToggle
 
 	local function setAllOptimizations(value)
 		updatingOptimizations = true
-		if maxFpsToggle     then maxFpsToggle:Set(value) end
-		if optGPUToggle     then optGPUToggle:Set(value) end
-		if optEffectsToggle then optEffectsToggle:Set(value) end
-		if optGCToggle      then optGCToggle:Set(value) end
-		if optIntenseToggle then optIntenseToggle:Set(value) end
+		if maxFpsToggle     then maxFpsToggle.Value = value end
+		if optGPUToggle     then optGPUToggle.Value = value end
+		if optEffectsToggle then optEffectsToggle.Value = value end
+		if optGCToggle      then optGCToggle.Value = value end
 		updatingOptimizations = false
 		if value then
 			pcall(function() setfpscap(0) end)
@@ -2800,7 +2731,7 @@ task.spawn(function()
 					if d:IsA("BasePart") then d.CastShadow=false d.Reflectance=0 d.Material=CHEAP_MATERIAL end
 				end
 				local rs = game:GetService("RunService")
-				rs:Set3dRenderingEnabled(false) task.wait(0.1) rs:Set3dRenderingEnabled(true)
+				rs:Set3dRenderingEnabled(false)
 			end)
 			pcall(function()
 				for _, d in ipairs(game:GetDescendants()) do
@@ -2809,18 +2740,16 @@ task.spawn(function()
 			end)
 			if _G.__memoryCleaner then _G.__memoryCleaner:Disconnect() end
 			_G.__memoryCleaner = RunService.Heartbeat:Connect(function() gcinfo() end)
-			pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/Optimization.lua"))() end)
 		else
 			if _G.__memoryCleaner then _G.__memoryCleaner:Disconnect() _G.__memoryCleaner = nil end
 		end
 	end
 
-	featureToggle(settingsTab, { Name="Optimize All", CurrentValue=false, Flag="OptimizeAll", Callback=function(Value) if updatingOptimizations then return end setAllOptimizations(Value) end })
+	OptSection:Toggle({ Title = "Optimize All", Value = false, Flag = "OptimizeAll", Callback = function(Value) if updatingOptimizations then return end setAllOptimizations(Value) end })
+	maxFpsToggle = featureToggle(OptSection, { Title = "Max FPS", Value = false, Flag = "MaxFPS", Callback = function(Value) if Value then pcall(function() setfpscap(0) end) end end })
 
-	maxFpsToggle = featureToggle(settingsTab, { Name="Max FPS", CurrentValue=false, Flag="MaxFPS", Callback=function(Value) if Value then pcall(function() setfpscap(0) end) end end })
-
-	optGPUToggle = featureToggle(settingsTab, {
-		Name = "Optimize GPU (Low Graphics)", CurrentValue=false, Flag="OptimizeGPU",
+	optGPUToggle = featureToggle(OptSection, {
+		Title = "Optimize GPU (Low Graphics)", Value = false, Flag = "OptimizeGPU",
 		Callback = function(Value)
 			if updatingOptimizations or not Value then return end
 			settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
@@ -2828,20 +2757,20 @@ task.spawn(function()
 			lighting.GlobalShadows=false lighting.EnvironmentDiffuseScale=0 lighting.EnvironmentSpecularScale=0
 			for _, d in ipairs(workspace:GetDescendants()) do if d:IsA("BasePart") then d.CastShadow=false d.Reflectance=0 d.Material=CHEAP_MATERIAL end end
 			local rs = game:GetService("RunService")
-			rs:Set3dRenderingEnabled(false) task.wait(0.1) rs:Set3dRenderingEnabled(true)
+			rs:Set3dRenderingEnabled(false)
 		end,
 	})
 
-	optEffectsToggle = featureToggle(settingsTab, {
-		Name = "Destroy Effects", CurrentValue=false, Flag="DestroyEffects",
+	optEffectsToggle = featureToggle(OptSection, {
+		Title = "Destroy Effects", Value = false, Flag = "DestroyEffects",
 		Callback = function(Value)
 			if updatingOptimizations or not Value then return end
 			for _, d in ipairs(game:GetDescendants()) do if OPT_VISUAL_TYPES[d.ClassName] or d:IsA("Fire") then pcall(function() d:Destroy() end) end end
 		end,
 	})
 
-	optGCToggle = featureToggle(settingsTab, {
-		Name = "Lua GC (Memory Cleaner)", CurrentValue=false, Flag="LuaGC",
+	optGCToggle = featureToggle(OptSection, {
+		Title = "Lua GC (Memory Cleaner)", Value = false, Flag = "LuaGC",
 		Callback = function(Value)
 			if updatingOptimizations then return end
 			if Value then
@@ -2850,14 +2779,6 @@ task.spawn(function()
 			else
 				if _G.__memoryCleaner then _G.__memoryCleaner:Disconnect() _G.__memoryCleaner = nil end
 			end
-		end,
-	})
-
-	optIntenseToggle = featureToggle(settingsTab, {
-		Name = "Intense Optimization", CurrentValue=false, Flag="IntenseOptimization",
-		Callback = function(Value)
-			if updatingOptimizations or not Value then return end
-			pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/malikstt/script/main/Optimization.lua"))() end)
 		end,
 	})
 
@@ -3005,8 +2926,11 @@ task.spawn(function()
 		return gain > 0 and (gain/elapsed) or 0
 	end
 
+	-- STATS TAB — WindUI has no label :Set(), so we use Section titles instead
 	local statLabels = {}
-	local function lbl(key, text) statLabels[key] = createLabel(statsTab, text) end
+	local function lbl(key, title)
+		statLabels[key] = statsTab:Section({ Title = title })
+	end
 	lbl("sess",     "Session: --  |  Played: --  |  Rebirths: --")
 	lbl("rolls1",   "Rolls/sec: --  |  Rolls/min: --  |  Rolls/hr: --")
 	lbl("rolls2",   "Session Rolls: --  |  Lifetime: --")
@@ -3053,34 +2977,36 @@ task.spawn(function()
 				local dailyStr  = dailyOdds > 0 and ("1 in "..fmt(math.floor(dailyOdds))) or "N/A"
 				local basic,big,shiny,huge,inverted = getIndexCounts()
 				local crafting = countKeys(safeGet("craftingRecipes") or {})
-				statLabels.sess:Set(string.format("Session: %dh%dm%ds  |  Played: %s  |  Rebirths: %s",sh,sm,ss,fmtTime(timePlayed),fmt(rebirths)))
-				statLabels.rolls1:Set(string.format("Rolls/sec: %.2f  |  Rolls/min: %s  |  Rolls/hr: %s",rps,fmt(rps*60),fmt(rps*3600)))
-				statLabels.rolls2:Set("Session Rolls: "..fmt(sessionRolls).."  |  Lifetime: "..fmt(rolls))
-				statLabels.coins1:Set("Coins/min: "..fmt(cps*60).."  |  Coins/hr: "..fmt(cps*3600))
-				statLabels.coins2:Set("Session Coins: "..fmt(sessionCoins).."  |  Total Ever: "..fmt(totalCoins))
-				statLabels.goop1:Set("Goop/min: "..fmt(gps*60).."  |  Goop/hr: "..fmt(gps*3600))
-				statLabels.goop2:Set("Session Goop: "..fmt(sessionGoop).."  |  Balance: "..fmt(goop))
-				statLabels.kills:Set("Session Kills: "..fmt(sessionKills).."  |  Lifetime Kills: "..fmt(kills))
-				statLabels.best:Set("Best Ever: "..bestName.."  |  Odds: "..bestOdds)
-				statLabels.daily:Set("Best Today Odds: "..dailyStr)
-				statLabels.prog:Set("Zone: "..fmt(zone).."  |  Max Zone: "..fmt(maxZone).."  |  Roll Currency: "..fmt(rollCurrency))
-				statLabels.idx1:Set("Basic: "..basic.."  |  Big: "..big.."  |  Shiny: "..shiny.."  |  Huge: "..huge.."  |  Inverted: "..inverted)
-				statLabels.inv:Set("Total Slimes: "..fmt(getTotalInventory()).."  |  Species: "..getUniqueSpecies().."  |  Crafting: "..crafting)
-				statLabels.equipped:Set("Equipped: "..getEquippedDisplay())
+				statLabels.sess.Title = string.format("Session: %dh%dm%ds  |  Played: %s  |  Rebirths: %s",sh,sm,ss,fmtTime(timePlayed),fmt(rebirths))
+				statLabels.rolls1.Title = string.format("Rolls/sec: %.2f  |  Rolls/min: %s  |  Rolls/hr: %s",rps,fmt(rps*60),fmt(rps*3600))
+				statLabels.rolls2.Title = "Session Rolls: "..fmt(sessionRolls).."  |  Lifetime: "..fmt(rolls)
+				statLabels.coins1.Title = "Coins/min: "..fmt(cps*60).."  |  Coins/hr: "..fmt(cps*3600)
+				statLabels.coins2.Title = "Session Coins: "..fmt(sessionCoins).."  |  Total Ever: "..fmt(totalCoins)
+				statLabels.goop1.Title = "Goop/min: "..fmt(gps*60).."  |  Goop/hr: "..fmt(gps*3600)
+				statLabels.goop2.Title = "Session Goop: "..fmt(sessionGoop).."  |  Balance: "..fmt(goop)
+				statLabels.kills.Title = "Session Kills: "..fmt(sessionKills).."  |  Lifetime Kills: "..fmt(kills)
+				statLabels.best.Title = "Best Ever: "..bestName.."  |  Odds: "..bestOdds
+				statLabels.daily.Title = "Best Today Odds: "..dailyStr
+				statLabels.prog.Title = "Zone: "..fmt(zone).."  |  Max Zone: "..fmt(maxZone).."  |  Roll Currency: "..fmt(rollCurrency)
+				statLabels.idx1.Title = "Basic: "..basic.."  |  Big: "..big.."  |  Shiny: "..shiny.."  |  Huge: "..huge.."  |  Inverted: "..inverted
+				statLabels.inv.Title = "Total Slimes: "..fmt(getTotalInventory()).."  |  Species: "..getUniqueSpecies().."  |  Crafting: "..crafting
+				statLabels.equipped.Title = "Equipped: "..getEquippedDisplay()
 			end)
 		end
 	end)
 
 	game:GetService("GuiService").ErrorMessageChanged:Connect(function()
-		local autoRejoinFlag = Flags.SettingsAutoRejoin
-		if autoRejoinFlag and autoRejoinFlag.CurrentValue then
+		if WindUI.Flags and WindUI.Flags.SettingsAutoRejoin and WindUI.Flags.SettingsAutoRejoin.Value then
 			pcall(function()
 				game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, localPlayer)
 			end)
 		end
 	end)
 
-	mainConfig:Save()
-	mainConfig:Load()
 	Logger:info("CactusHub", "Init", "Script initialization complete")
+	WindUI:Notify({ Title = "Cactus Hub", Content = "Loaded successfully!", Duration = 3 })
+end)
+if not ok then
+	warn("[CactusHub] Fatal error: " .. tostring(err))
+end
 end)
