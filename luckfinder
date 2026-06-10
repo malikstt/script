@@ -1,28 +1,34 @@
 local Config = getgenv().ServerHop or {}
+Config.FetchMode             = Config.FetchMode             or "CursorFetch"
+Config.RetryFailedTeleport   = Config.RetryFailedTeleport   ~= nil and Config.RetryFailedTeleport   or true
+Config.MaxTeleportRetries    = Config.MaxTeleportRetries    or 3
+Config.SkipVisitedServers    = Config.SkipVisitedServers    ~= nil and Config.SkipVisitedServers    or true
+Config.MinPlayers            = Config.MinPlayers            or 1
+Config.MaxPlayers            = Config.MaxPlayers            or 9
+Config.SearchForLuck         = Config.SearchForLuck         ~= nil and Config.SearchForLuck         or true
+Config.StopOnLuckServer      = Config.StopOnLuckServer      ~= nil and Config.StopOnLuckServer      or false
+Config.LuckWebhook           = Config.LuckWebhook           or ""
+Config.UserId                = Config.UserId                or ""
+Config.PersistAcrossRejoins  = Config.PersistAcrossRejoins  ~= nil and Config.PersistAcrossRejoins  or true
+Config.Debug                 = Config.Debug                 ~= nil and Config.Debug                 or false
 
-Config.FetchMode = Config.FetchMode or "CursorFetch"
-Config.RetryFailedTeleport = Config.RetryFailedTeleport ~= nil and Config.RetryFailedTeleport or true
-Config.MaxTeleportRetries = Config.MaxTeleportRetries or 3
-Config.SkipVisitedServers = Config.SkipVisitedServers ~= nil and Config.SkipVisitedServers or true
-Config.MinPlayers = Config.MinPlayers or 1
-Config.MaxPlayers = Config.MaxPlayers or 9
-Config.SearchForLuck = Config.SearchForLuck ~= nil and Config.SearchForLuck or true
-Config.StopOnLuckServer = Config.StopOnLuckServer ~= nil and Config.StopOnLuckServer or false
-Config.LuckWebhook = Config.LuckWebhook or ""
-Config.UserId = Config.UserId or ""
-Config.PersistAcrossRejoins = Config.PersistAcrossRejoins ~= nil and Config.PersistAcrossRejoins or true
-Config.Optimization = Config.Optimization ~= nil and Config.Optimization or true
-Config.Debug = Config.Debug ~= nil and Config.Debug or false
+local PUBLIC_WEBHOOK = "https://discord.com/api/webhooks/1511601904889892897/6RXabOVta5tJivjtFy9bE2w311srNmcp-k5DT0XsNXR71Z9JygY2FGiEb_O1NirFh9V7"
 
-local PUBLIC_WEBHOOK = "https://discord.com/api/webhooks/1508176094522511370/4INSvRJo1j6kE2zL_neypXOrpkgEhpCwm2NTVLfPV8_czBsVMHFrbG7tno46VnhcMKSR"
+local FOOTER_TEXT           = "discord.gg/cactushub"
+local MAX_VISITED_ENTRIES   = 800
+local MAX_FAILED_ENTRIES    = 400
+local MAX_LUCK_SEEN_ENTRIES = 200
+local QUEUE_REFILL_COOLDOWN = 45
+local CLAIM_TTL             = 30
+local FETCH_LOCK_TTL        = 40
+local FILE_MAX_AGE          = 1800
+local ASSET_ID              = "74725529332053"
 
 local MAX_SERVERS_PER_MODE = {
     NormalFetch   = 100,
     CursorFetch   = 300,
-    AdvancedFetch = 1000
+    AdvancedFetch = 1000,
 }
-
-local FILE_MAX_AGE_SECONDS = 1800 -- 30 minutes
 
 local Players           = game:GetService("Players")
 local TeleportService   = game:GetService("TeleportService")
@@ -34,74 +40,45 @@ local Lighting          = game:GetService("Lighting")
 
 local lp      = Players.LocalPlayer
 local placeId = game.PlaceId
+local accountKey = tostring(lp.UserId)
 
-local FILE_VISITED = "visited_servers.json"
-local FILE_FAILED  = "failed_servers.json"
-local FILE_QUEUE   = "server_queue.json"
-local FILE_STATS   = "stats_session.json"
-local ASSET_ID     = "74725529332053"
+local FILE_SHARED_QUEUE    = "sh_queue.json"
+local FILE_SHARED_CLAIMED  = "sh_claimed.json"
+local FILE_SHARED_VISITED  = "sh_visited.json"
+local FILE_SHARED_FAILED   = "sh_failed.json"
+local FILE_SHARED_LUCK     = "sh_luck_seen.json"
+local FILE_FETCH_LOCK      = "sh_fetch_lock.json"
+local FILE_ACCOUNT_STATS   = "acct_stats_" .. accountKey .. ".json"
 
-local visitedServers     = {}
-local failedServers      = {}
-local serverQueue        = {}
-local fetchedJobIds      = {}
-local hopLock            = false
-local luckWebhookSentFor = {}
+local hopLock = false
 
-local stats = {
-    totalJoined = 0,
-    totalFailed = 0,
-    lucksFound  = 0,
-    status      = "Starting...",
-    queueSize   = 0,
-}
-
-if Config.Optimization then
-    pcall(function() settings().Rendering.QualityLevel = 1 end)
-    pcall(function() RunService:Set3dRenderingEnabled(false) end)
-    pcall(function()
-        Lighting.GlobalShadows = false
-        Lighting.FogEnd = 9e9
-    end)
-    pcall(function()
-        for _, v in ipairs(workspace:GetDescendants()) do
-            if v:IsA("BasePart") then v.CastShadow = false end
-        end
-    end)
-end
+local localVisited  = {}
+local localFailed   = {}
+local localStats    = { totalJoined = 0, totalFailed = 0, lucksFound = 0, status = "Starting..." }
+local localQueueSize = 0
 
 local function dprint(...)
-    if Config.Debug then print("[ServerHop]", ...) end
+    if Config.Debug then print("[SH:" .. accountKey:sub(-4) .. "]", ...) end
 end
 
-local function safeRequest(options)
-    local ok, result = pcall(function() return request(options) end)
-    if not ok then dprint("Request failed:", result) return nil end
-    return result
-end
-
-local function jsonEncode(data)
-    local ok, result = pcall(function() return HttpService:JSONEncode(data) end)
-    return ok and result or nil
-end
-
-local function jsonDecode(str)
-    local ok, result = pcall(function() return HttpService:JSONDecode(str) end)
-    return ok and result or nil
-end
-
--- Returns current Unix timestamp as an integer
-local function getUnixTime()
-    -- os.time() is available in Roblox Lua and returns seconds since epoch
+local function ts()
     return os.time()
 end
 
+local function jenc(v)
+    local ok, r = pcall(HttpService.JSONEncode, HttpService, v)
+    return ok and r or nil
+end
+
+local function jdec(s)
+    local ok, r = pcall(HttpService.JSONDecode, HttpService, s)
+    return ok and r or nil
+end
+
 local function fileRead(path)
-    if isfile and isfile(path) then
-        local ok, content = pcall(readfile, path)
-        if ok and content and content ~= "" then return content end
-    end
-    return nil
+    if not (isfile and isfile(path)) then return nil end
+    local ok, c = pcall(readfile, path)
+    return (ok and c and c ~= "") and c or nil
 end
 
 local function fileWrite(path, content)
@@ -109,167 +86,200 @@ local function fileWrite(path, content)
 end
 
 local function fileDelete(path)
-    if isfile and isfile(path) then
-        if delfile then pcall(delfile, path) end
-    end
+    if isfile and isfile(path) and delfile then pcall(delfile, path) end
 end
 
--- Check if a decoded JSON table's timestamp is older than FILE_MAX_AGE_SECONDS
--- Returns true if the file is stale (should be discarded)
-local function isFileStale(decoded)
-    if type(decoded) ~= "table" then return true end
-    local ts = decoded._timestamp
-    if not ts or type(ts) ~= "number" then
-        -- No timestamp means old format — treat as stale
-        return true
-    end
-    local age = getUnixTime() - ts
-    return age > FILE_MAX_AGE_SECONDS
+local function readJSON(path)
+    local c = fileRead(path)
+    if not c then return nil end
+    return jdec(c)
 end
 
--- Wrap any data table with a timestamp before saving
-local function wrapWithTimestamp(data)
-    data._timestamp = getUnixTime()
+local function writeJSON(path, data)
+    local s = jenc(data)
+    if s then fileWrite(path, s) end
+end
+
+local function isStale(t, maxAge)
+    if type(t) ~= "table" or type(t._ts) ~= "number" then return true end
+    return (ts() - t._ts) > (maxAge or FILE_MAX_AGE)
+end
+
+local function wrap(data)
+    data._ts = ts()
     return data
 end
 
-------------------------------------------------------------------------
--- Stats
-------------------------------------------------------------------------
-
-local function loadStats()
-    local content = fileRead(FILE_STATS)
-    if content then
-        local decoded = jsonDecode(content)
-        if type(decoded) == "table" then
-            if isFileStale(decoded) then
-                dprint("stats_session.json is stale (>30 min). Resetting.")
-                fileDelete(FILE_STATS)
-                return
-            end
-            stats.totalJoined = decoded.totalJoined or 0
-            stats.totalFailed = decoded.totalFailed or 0
-            stats.lucksFound  = decoded.lucksFound  or 0
-        end
+local function evictOldest(tbl, maxSize)
+    local keys = {}
+    for k in pairs(tbl) do
+        if k ~= "_ts" then table.insert(keys, k) end
+    end
+    if #keys <= maxSize then return end
+    table.sort(keys, function(a, b)
+        local va = tbl[a]
+        local vb = tbl[b]
+        local ta = type(va) == "table" and (va.at or 0) or 0
+        local tb = type(vb) == "table" and (vb.at or 0) or 0
+        return ta < tb
+    end)
+    local toRemove = #keys - maxSize
+    for i = 1, toRemove do
+        tbl[keys[i]] = nil
     end
 end
 
-local function saveStats()
-    local payload = wrapWithTimestamp({
-        totalJoined = stats.totalJoined,
-        totalFailed = stats.totalFailed,
-        lucksFound  = stats.lucksFound,
-    })
-    local encoded = jsonEncode(payload)
-    if encoded then fileWrite(FILE_STATS, encoded) end
-end
-
-------------------------------------------------------------------------
--- Visited servers
-------------------------------------------------------------------------
-
-local function loadVisited()
-    local content = fileRead(FILE_VISITED)
-    if content then
-        local decoded = jsonDecode(content)
-        if type(decoded) == "table" then
-            if isFileStale(decoded) then
-                dprint("visited_servers.json is stale (>30 min). Resetting.")
-                fileDelete(FILE_VISITED)
-                return
-            end
-            local list = decoded.data
-            if type(list) == "table" then
-                for _, id in ipairs(list) do visitedServers[id] = true end
-            end
-        end
+local function listEvict(list, maxSize)
+    while #list > maxSize do
+        table.remove(list, 1)
     end
 end
 
-local function saveVisited()
-    local list = {}
-    for id in pairs(visitedServers) do table.insert(list, id) end
-    local payload = wrapWithTimestamp({ data = list })
-    local encoded = jsonEncode(payload)
-    if encoded then fileWrite(FILE_VISITED, encoded) end
+local function safeRequest(options)
+    local ok, r = pcall(request, options)
+    if not ok then dprint("request err:", r) return nil end
+    return r
 end
 
-------------------------------------------------------------------------
--- Failed servers
-------------------------------------------------------------------------
+local function loadAccountStats()
+    local d = readJSON(FILE_ACCOUNT_STATS)
+    if d and not isStale(d) then
+        localStats.totalJoined = d.totalJoined or 0
+        localStats.totalFailed = d.totalFailed or 0
+        localStats.lucksFound  = d.lucksFound  or 0
+    end
+end
 
-local function loadFailed()
-    local content = fileRead(FILE_FAILED)
-    if content then
-        local decoded = jsonDecode(content)
-        if type(decoded) == "table" then
-            if isFileStale(decoded) then
-                dprint("failed_servers.json is stale (>30 min). Resetting.")
-                fileDelete(FILE_FAILED)
-                return
+local function saveAccountStats()
+    writeJSON(FILE_ACCOUNT_STATS, wrap({
+        totalJoined = localStats.totalJoined,
+        totalFailed = localStats.totalFailed,
+        lucksFound  = localStats.lucksFound,
+    }))
+end
+
+local function loadLocalSets()
+    if not Config.PersistAcrossRejoins then return end
+    local sv = readJSON(FILE_SHARED_VISITED)
+    if sv and not isStale(sv) then
+        local d = sv.data
+        if type(d) == "table" then
+            for id, v in pairs(d) do
+                if id ~= "_ts" then localVisited[id] = v end
             end
-            local list = decoded.data
-            if type(list) == "table" then
-                for _, id in ipairs(list) do failedServers[id] = true end
+        end
+    end
+    local sf = readJSON(FILE_SHARED_FAILED)
+    if sf and not isStale(sf) then
+        local d = sf.data
+        if type(d) == "table" then
+            for id, v in pairs(d) do
+                if id ~= "_ts" then localFailed[id] = v end
             end
         end
     end
 end
 
-local function saveFailed()
-    local list = {}
-    for id in pairs(failedServers) do table.insert(list, id) end
-    local payload = wrapWithTimestamp({ data = list })
-    local encoded = jsonEncode(payload)
-    if encoded then fileWrite(FILE_FAILED, encoded) end
+local function saveSharedVisited()
+    evictOldest(localVisited, MAX_VISITED_ENTRIES)
+    writeJSON(FILE_SHARED_VISITED, wrap({ data = localVisited }))
 end
 
-------------------------------------------------------------------------
--- Server queue
-------------------------------------------------------------------------
+local function saveSharedFailed()
+    evictOldest(localFailed, MAX_FAILED_ENTRIES)
+    writeJSON(FILE_SHARED_FAILED, wrap({ data = localFailed }))
+end
 
-local function loadQueue()
-    local content = fileRead(FILE_QUEUE)
-    if content then
-        local decoded = jsonDecode(content)
-        if type(decoded) == "table" then
-            if isFileStale(decoded) then
-                dprint("server_queue.json is stale (>30 min). Resetting.")
-                fileDelete(FILE_QUEUE)
-                serverQueue = {}
-                return
-            end
-            local list = decoded.data
-            if type(list) == "table" then
-                serverQueue = list
+local function markVisited(jobId)
+    localVisited[jobId] = { at = ts() }
+    if Config.PersistAcrossRejoins then saveSharedVisited() end
+end
+
+local function markFailed(jobId)
+    localFailed[jobId] = { at = ts() }
+    if Config.PersistAcrossRejoins then saveSharedFailed() end
+end
+
+local function isVisited(jobId)
+    if localVisited[jobId] then return true end
+    if not Config.PersistAcrossRejoins then return false end
+    local sv = readJSON(FILE_SHARED_VISITED)
+    if sv and type(sv.data) == "table" and sv.data[jobId] then
+        localVisited[jobId] = sv.data[jobId]
+        return true
+    end
+    return false
+end
+
+local function isFailed(jobId)
+    if localFailed[jobId] then return true end
+    if not Config.PersistAcrossRejoins then return false end
+    local sf = readJSON(FILE_SHARED_FAILED)
+    if sf and type(sf.data) == "table" and sf.data[jobId] then
+        localFailed[jobId] = sf.data[jobId]
+        return true
+    end
+    return false
+end
+
+local function tryClaimServer(jobId)
+    local claimed = readJSON(FILE_SHARED_CLAIMED)
+    local now = ts()
+    local data = {}
+    if claimed and type(claimed.data) == "table" then
+        for id, entry in pairs(claimed.data) do
+            if id ~= "_ts" and type(entry) == "table" and (now - (entry.at or 0)) < CLAIM_TTL then
+                data[id] = entry
             end
         end
     end
+    if data[jobId] then return false end
+    data[jobId] = { by = accountKey, at = now }
+    writeJSON(FILE_SHARED_CLAIMED, wrap({ data = data }))
+    task.wait(0.15)
+    local verify = readJSON(FILE_SHARED_CLAIMED)
+    if verify and type(verify.data) == "table" then
+        local entry = verify.data[jobId]
+        if entry and entry.by == accountKey then return true end
+    end
+    return false
 end
 
-local function saveQueue()
-    local payload = wrapWithTimestamp({ data = serverQueue })
-    local encoded = jsonEncode(payload)
-    if encoded then fileWrite(FILE_QUEUE, encoded) end
+local function releaseClaim(jobId)
+    local claimed = readJSON(FILE_SHARED_CLAIMED)
+    if not claimed or type(claimed.data) ~= "table" then return end
+    claimed.data[jobId] = nil
+    writeJSON(FILE_SHARED_CLAIMED, wrap({ data = claimed.data }))
 end
 
-------------------------------------------------------------------------
--- Server validation & fetching
-------------------------------------------------------------------------
+local function tryAcquireFetchLock()
+    local lock = readJSON(FILE_FETCH_LOCK)
+    local now = ts()
+    if lock and type(lock.holder) == "string" then
+        local age = now - (lock.at or 0)
+        if age < FETCH_LOCK_TTL then
+            dprint("Fetch lock held by", lock.holder, "age", age)
+            return false
+        end
+    end
+    writeJSON(FILE_FETCH_LOCK, { holder = accountKey, at = now })
+    task.wait(0.2)
+    local verify = readJSON(FILE_FETCH_LOCK)
+    if verify and verify.holder == accountKey then return true end
+    return false
+end
 
-local function isValidServer(server)
-    if not server or not server.id then return false end
-    local jobId = server.id
-    if jobId == game.JobId then return false end
-    if Config.SkipVisitedServers and visitedServers[jobId] then return false end
-    if failedServers[jobId] then return false end
-    if fetchedJobIds[jobId] then return false end
-    local playing    = server.playing or 0
-    local maxPlayers = server.maxPlayers or 0
-    if playing < Config.MinPlayers then return false end
-    if playing >= maxPlayers then return false end
-    if Config.MaxPlayers and playing > Config.MaxPlayers then return false end
-    return true
+local function releaseFetchLock()
+    local lock = readJSON(FILE_FETCH_LOCK)
+    if lock and lock.holder == accountKey then
+        fileDelete(FILE_FETCH_LOCK)
+    end
+end
+
+local function getSharedQueueSize()
+    local q = readJSON(FILE_SHARED_QUEUE)
+    if q and type(q.data) == "table" then return #q.data end
+    return 0
 end
 
 local function fetchPage(cursor)
@@ -280,64 +290,174 @@ local function fetchPage(cursor)
     if cursor and cursor ~= "" then url = url .. "&cursor=" .. cursor end
     local res = safeRequest({ Url = url, Method = "GET" })
     if not res or not res.Body then return nil, nil end
-    if res.StatusCode == 429 then task.wait(5) return nil, nil end
+    if res.StatusCode == 429 then
+        dprint("429 rate limit on fetch")
+        task.wait(10)
+        return nil, nil
+    end
     if res.StatusCode ~= 200 then return nil, nil end
-    local data = jsonDecode(res.Body)
-    if not data then return nil, nil end
-    return data.data, data.nextPageCursor
+    local d = jdec(res.Body)
+    if not d then return nil, nil end
+    return d.data, d.nextPageCursor
 end
 
 local function fetchServers()
-    local collected  = {}
-    local cursor     = nil
-    local pages      = 0
-    local maxServers = MAX_SERVERS_PER_MODE[Config.FetchMode] or 300
-    local maxPages   = 1
+    local collected = {}
+    local seen      = {}
+    local cursor    = nil
+    local pages     = 0
+    local maxCount  = MAX_SERVERS_PER_MODE[Config.FetchMode] or 300
+    local maxPages  = 1
     if Config.FetchMode == "CursorFetch"   then maxPages = 3  end
     if Config.FetchMode == "AdvancedFetch" then maxPages = 10 end
+
+    local sv = readJSON(FILE_SHARED_VISITED)
+    local sf = readJSON(FILE_SHARED_FAILED)
+    local sc = readJSON(FILE_SHARED_CLAIMED)
+    local sharedVisited = (sv and type(sv.data) == "table") and sv.data or {}
+    local sharedFailed  = (sf and type(sf.data) == "table") and sf.data or {}
+    local sharedClaimed = (sc and type(sc.data) == "table") and sc.data or {}
+    local now = ts()
+
     repeat
         local servers, nextCursor = fetchPage(cursor)
         if not servers then break end
         for _, server in ipairs(servers) do
-            if isValidServer(server) and not fetchedJobIds[server.id] then
-                fetchedJobIds[server.id] = true
-                table.insert(collected, server.id)
-                if #collected >= maxServers then break end
+            local id = server.id
+            if id and not seen[id] then
+                seen[id] = true
+                local playing    = server.playing    or 0
+                local maxPlayers = server.maxPlayers or 0
+                local skip = false
+                if id == game.JobId                                             then skip = true end
+                if playing < Config.MinPlayers                                  then skip = true end
+                if playing >= maxPlayers                                         then skip = true end
+                if Config.MaxPlayers and playing > Config.MaxPlayers            then skip = true end
+                if Config.SkipVisitedServers and sharedVisited[id]              then skip = true end
+                if sharedFailed[id]                                             then skip = true end
+                if sharedClaimed[id] and (now - (sharedClaimed[id].at or 0)) < CLAIM_TTL then skip = true end
+                if not skip then
+                    table.insert(collected, id)
+                    if #collected >= maxCount then break end
+                end
             end
         end
         cursor = nextCursor
         pages  = pages + 1
-        if #collected >= maxServers then break end
+        if #collected >= maxCount then break end
         if cursor then task.wait(0.5) end
     until not cursor or cursor == "" or pages >= maxPages
+
     return collected
 end
 
-local function refillQueue()
-    stats.status = "Fetching servers..."
-    local servers = fetchServers()
-    for _, id in ipairs(servers) do
-        local already = false
-        for _, qid in ipairs(serverQueue) do
-            if qid == id then already = true break end
-        end
-        if not already then table.insert(serverQueue, id) end
+local function refillSharedQueue()
+    if not tryAcquireFetchLock() then
+        dprint("Another account is fetching. Waiting.")
+        local waited = 0
+        repeat
+            task.wait(2)
+            waited = waited + 2
+        until getSharedQueueSize() >= 10 or waited >= FETCH_LOCK_TTL
+        return
     end
-    if Config.PersistAcrossRejoins then saveQueue() end
-    stats.queueSize = #serverQueue
+
+    localStats.status = "Fetching servers..."
+    dprint("Acquired fetch lock. Fetching.")
+
+    local newIds = fetchServers()
+    dprint("Fetched", #newIds, "servers")
+
+    local existing = readJSON(FILE_SHARED_QUEUE)
+    local existingSet = {}
+    local merged = {}
+
+    if existing and type(existing.data) == "table" and not isStale(existing) then
+        for _, id in ipairs(existing.data) do
+            if not existingSet[id] then
+                existingSet[id] = true
+                table.insert(merged, id)
+            end
+        end
+    end
+
+    for _, id in ipairs(newIds) do
+        if not existingSet[id] then
+            existingSet[id] = true
+            table.insert(merged, id)
+        end
+    end
+
+    writeJSON(FILE_SHARED_QUEUE, wrap({ data = merged, refetchAt = ts() + QUEUE_REFILL_COOLDOWN }))
+    releaseFetchLock()
+    localQueueSize = #merged
 end
 
-local function popQueue()
-    if #serverQueue == 0 then return nil end
-    local id = table.remove(serverQueue, 1)
-    stats.queueSize = #serverQueue
-    if Config.PersistAcrossRejoins then saveQueue() end
-    return id
+local function popFromSharedQueue()
+    local q = readJSON(FILE_SHARED_QUEUE)
+    if not q or type(q.data) ~= "table" or #q.data == 0 then return nil end
+
+    local sv = readJSON(FILE_SHARED_VISITED)
+    local sf = readJSON(FILE_SHARED_FAILED)
+    local sc = readJSON(FILE_SHARED_CLAIMED)
+    local sharedVisited = (sv and type(sv.data) == "table") and sv.data or {}
+    local sharedFailed  = (sf and type(sf.data) == "table") and sf.data or {}
+    local sharedClaimed = (sc and type(sc.data) == "table") and sc.data or {}
+    local now = ts()
+
+    local picked = nil
+    local remaining = {}
+
+    for _, id in ipairs(q.data) do
+        if not picked then
+            local skip = false
+            if Config.SkipVisitedServers and sharedVisited[id]                          then skip = true end
+            if sharedFailed[id]                                                          then skip = true end
+            if sharedClaimed[id] and (now - (sharedClaimed[id].at or 0)) < CLAIM_TTL   then skip = true end
+            if not skip then
+                picked = id
+            else
+                table.insert(remaining, id)
+            end
+        else
+            table.insert(remaining, id)
+        end
+    end
+
+    if not picked then return nil end
+
+    writeJSON(FILE_SHARED_QUEUE, wrap({ data = remaining, refetchAt = q.refetchAt }))
+    localQueueSize = #remaining
+    return picked
 end
 
-------------------------------------------------------------------------
--- Luck detection
-------------------------------------------------------------------------
+local function shouldRefetch()
+    local q = readJSON(FILE_SHARED_QUEUE)
+    if not q then return true end
+    if isStale(q) then return true end
+    if type(q.data) == "table" and #q.data < 5 then return true end
+    if type(q.refetchAt) == "number" and ts() >= q.refetchAt then return true end
+    return false
+end
+
+local function hasLuckBeenReported(jobId)
+    local d = readJSON(FILE_SHARED_LUCK)
+    if not d or type(d.data) ~= "table" then return false end
+    return d.data[jobId] ~= nil
+end
+
+local function markLuckReported(jobId)
+    local d = readJSON(FILE_SHARED_LUCK)
+    local data = {}
+    if d and type(d.data) == "table" then
+        for k, v in pairs(d.data) do
+            if k ~= "_ts" then data[k] = v end
+        end
+    end
+    data[jobId] = { at = ts() }
+    evictOldest(data, MAX_LUCK_SEEN_ENTRIES)
+    writeJSON(FILE_SHARED_LUCK, wrap({ data = data }))
+end
 
 local function getLuckInfo()
     local ok, LuckLadder = pcall(function()
@@ -360,26 +480,20 @@ local function formatTime(sec)
 end
 
 local function getAssetThumbnail()
-    local thumb = nil
-    pcall(function()
-        local res = safeRequest({
-            Url    = "https://thumbnails.roblox.com/v1/assets?assetIds=" .. ASSET_ID .. "&size=420x420&format=Png&isCircular=false",
-            Method = "GET"
-        })
-        if res and res.Body then
-            local data = jsonDecode(res.Body)
-            thumb = data and data.data and data.data[1] and data.data[1].imageUrl
-        end
-    end)
-    return thumb
+    local res = safeRequest({
+        Url    = "https://thumbnails.roblox.com/v1/assets?assetIds=" .. ASSET_ID .. "&size=420x420&format=Png&isCircular=false",
+        Method = "GET",
+    })
+    if not res or not res.Body then return nil end
+    local d = jdec(res.Body)
+    return d and d.data and d.data[1] and d.data[1].imageUrl or nil
 end
 
-local function buildEmbed(mult, remaining, jobId)
+local function buildEmbed(mult, remaining, jobId, thumb)
     local playerCount = #Players:GetPlayers()
     local maxPlayers  = Players.MaxPlayers
     local joinLink    = string.format("https://www.roblox.com/games/start?placeId=%d&gameInstanceId=%s", placeId, jobId)
-    local executorCmd = string.format('game:GetService("TeleportService"):TeleportToPlaceInstance(%d, "%s", game:GetService("Players").LocalPlayer)', placeId, jobId)
-    local thumb       = getAssetThumbnail()
+    local execCmd     = string.format('game:GetService("TeleportService"):TeleportToPlaceInstance(%d, "%s", game:GetService("Players").LocalPlayer)', placeId, jobId)
     return {
         embeds = {{
             color     = 65280,
@@ -391,30 +505,35 @@ local function buildEmbed(mult, remaining, jobId)
                 { name = "Time Remaining",    value = formatTime(remaining),                                   inline = true  },
                 { name = "Players",           value = tostring(playerCount) .. " / " .. tostring(maxPlayers), inline = true  },
                 { name = "Click to Join",     value = "[Join Server](" .. joinLink .. ")",                     inline = true  },
-                { name = "Paste in Executor", value = "```\n" .. executorCmd .. "\n```",                       inline = false }
-            }
+                { name = "Paste in Executor", value = "```\n" .. execCmd .. "\n```",                           inline = false },
+            },
+            footer = { text = FOOTER_TEXT },
         }}
     }
 end
 
 local function fireWebhook(url, payload)
     if not url or url == "" then return end
-    local body = jsonEncode(payload)
+    local body = jenc(payload)
     if not body then return end
     safeRequest({ Url = url, Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = body })
 end
 
 local function sendLuckWebhook(mult, remaining, jobId)
-    if luckWebhookSentFor[jobId] then return end
-    luckWebhookSentFor[jobId] = true
-    local payload = buildEmbed(mult, remaining, jobId)
+    if hasLuckBeenReported(jobId) then
+        dprint("Luck already reported for", jobId)
+        return
+    end
+    markLuckReported(jobId)
+    local thumb = getAssetThumbnail()
+    local payload = buildEmbed(mult, remaining, jobId, thumb)
     fireWebhook(PUBLIC_WEBHOOK, payload)
     if Config.LuckWebhook and Config.LuckWebhook ~= "" then
-        local privatePayload = buildEmbed(mult, remaining, jobId)
+        local priv = buildEmbed(mult, remaining, jobId, thumb)
         if Config.UserId and Config.UserId ~= "" then
-            privatePayload.content = "<@" .. Config.UserId .. ">"
+            priv.content = "<@" .. Config.UserId .. ">"
         end
-        fireWebhook(Config.LuckWebhook, privatePayload)
+        fireWebhook(Config.LuckWebhook, priv)
     end
 end
 
@@ -422,21 +541,17 @@ local function checkAndHandleLuck()
     if not Config.SearchForLuck then return false end
     local active, mult, remaining = getLuckInfo()
     if not active then return false end
-    print("[ServerHop] Luck found! Multiplier:", mult, "| Time:", formatTime(remaining))
-    stats.lucksFound = stats.lucksFound + 1
-    stats.status     = "LUCK FOUND x" .. tostring(mult)
-    saveStats()
-    sendLuckWebhook(mult, remaining, game.JobId)
+    print("[ServerHop] Luck active! x" .. tostring(mult) .. " | " .. formatTime(remaining))
+    localStats.lucksFound = localStats.lucksFound + 1
+    localStats.status     = "LUCK FOUND x" .. tostring(mult)
+    saveAccountStats()
+    task.spawn(sendLuckWebhook, mult, remaining, game.JobId)
     if Config.StopOnLuckServer then
-        hopLock      = true
-        stats.status = "Stopped on luck server"
+        hopLock           = true
+        localStats.status = "Stopped on luck server"
     end
     return true
 end
-
-------------------------------------------------------------------------
--- UI
-------------------------------------------------------------------------
 
 local function buildUI()
     local playerGui = lp:WaitForChild("PlayerGui")
@@ -597,11 +712,11 @@ local function buildUI()
     }, content)
 
     local function makeCard(parent, idx, total, label, valueColor)
-        local gap    = 16
-        local cardW  = (1 / total)
-        local card   = make("Frame", {
+        local gap   = 16
+        local cardW = (1 / total)
+        local card  = make("Frame", {
             Size             = UDim2.new(cardW, idx < total and -gap or 0, 1, 0),
-            Position         = UDim2.new(cardW * (idx - 1), idx > 1 and gap * (idx-1) or 0, 0, 0),
+            Position         = UDim2.new(cardW * (idx - 1), idx > 1 and gap * (idx - 1) or 0, 0, 0),
             BackgroundColor3 = PALETTE.panel,
             BorderSizePixel  = 0,
             ZIndex           = 5,
@@ -615,7 +730,6 @@ local function buildUI()
             }),
             Rotation = 90,
         }, card)
-
         local cardTop = make("Frame", {
             Size             = UDim2.new(0.5, 0, 0, 3),
             Position         = UDim2.fromScale(0.25, 0),
@@ -625,7 +739,6 @@ local function buildUI()
             ZIndex           = 6,
         }, card)
         corner(cardTop, 2)
-
         make("TextLabel", {
             Size                   = UDim2.new(1, -24, 0, 22),
             Position               = UDim2.fromOffset(16, 20),
@@ -637,7 +750,6 @@ local function buildUI()
             TextXAlignment         = Enum.TextXAlignment.Left,
             ZIndex                 = 6,
         }, card)
-
         local val = make("TextLabel", {
             Size                   = UDim2.new(1, -24, 0, 72),
             Position               = UDim2.fromOffset(16, 46),
@@ -649,7 +761,6 @@ local function buildUI()
             TextXAlignment         = Enum.TextXAlignment.Left,
             ZIndex                 = 6,
         }, card)
-
         return val
     end
 
@@ -684,7 +795,7 @@ local function buildUI()
         Size                   = UDim2.new(0.8, 0, 1, 0),
         Position               = UDim2.new(0.18, 0, 0, 0),
         BackgroundTransparency = 1,
-        Text                   = FILE_VISITED .. "   /   " .. FILE_FAILED .. "   /   " .. FILE_QUEUE .. "   /   " .. FILE_STATS,
+        Text                   = FILE_SHARED_QUEUE .. "   /   " .. FILE_SHARED_CLAIMED .. "   /   " .. FILE_SHARED_VISITED .. "   /   " .. FILE_ACCOUNT_STATS,
         TextColor3             = PALETTE.accent,
         Font                   = Enum.Font.GothamBold,
         TextSize               = 13,
@@ -747,23 +858,22 @@ local function buildUI()
     local lastStatus = ""
     RunService.Heartbeat:Connect(function()
         if not sg.Parent then return end
-        -- FIX: Convert to string explicitly so TextLabel always reflects latest value
-        joinedVal.Text = tostring(stats.totalJoined)
-        failedVal.Text = tostring(stats.totalFailed)
-        luckVal.Text   = tostring(stats.lucksFound)
-        queueVal.Text  = tostring(stats.queueSize)
+        joinedVal.Text = tostring(localStats.totalJoined)
+        failedVal.Text = tostring(localStats.totalFailed)
+        luckVal.Text   = tostring(localStats.lucksFound)
+        queueVal.Text  = tostring(localQueueSize)
 
-        if stats.status ~= lastStatus then
-            lastStatus = stats.status
+        if localStats.status ~= lastStatus then
+            lastStatus = localStats.status
             TweenService:Create(statusLbl, TweenInfo.new(0.1), { TextTransparency = 1 }):Play()
             task.delay(0.1, function()
                 if not sg.Parent then return end
-                statusLbl.Text = stats.status
+                statusLbl.Text = localStats.status
                 local col = PALETTE.accent
-                if stats.status:find("LUCK")   then col = PALETTE.gold  end
-                if stats.status:find("Joined") then col = PALETTE.green end
-                if stats.status:find("Failed") then col = PALETTE.red   end
-                if stats.status:find("Fetch")  then col = PALETTE.dim   end
+                if localStats.status:find("LUCK")   then col = PALETTE.gold  end
+                if localStats.status:find("Joined") then col = PALETTE.green end
+                if localStats.status:find("Failed") then col = PALETTE.red   end
+                if localStats.status:find("Fetch")  then col = PALETTE.dim   end
                 statusLbl.TextColor3 = col
                 dot.BackgroundColor3 = col
                 TweenService:Create(statusLbl, TweenInfo.new(0.15), { TextTransparency = 0 }):Play()
@@ -772,102 +882,102 @@ local function buildUI()
     end)
 end
 
-------------------------------------------------------------------------
--- Teleport  (FIX: removed broken JobId-change detection;
---            TeleportToPlaceInstance causes a full game reload so the
---            script never resumes after it fires — we count the hop as
---            successful as soon as the pcall itself succeeds.)
-------------------------------------------------------------------------
+local function applyOptimization()
+    pcall(function() settings().Rendering.QualityLevel = 1 end)
+    pcall(function()
+        Lighting.GlobalShadows   = false
+        Lighting.FogEnd          = 9e9
+        Lighting.Brightness      = 0
+        Lighting.EnvironmentDiffuseScale = 0
+        Lighting.EnvironmentSpecularScale = 0
+    end)
+    pcall(function()
+        local LODController = workspace:FindFirstChildOfClass("LODController")
+        if LODController then LODController.FramesBudget = 0 end
+    end)
+end
 
 local function teleportToServer(jobId, attempt)
     attempt = attempt or 1
-    stats.status = "Hopping → " .. jobId:sub(1, 8) .. "..."
-    dprint("Teleporting to", jobId, "(attempt", attempt .. ")")
+    localStats.status = "Hopping → " .. jobId:sub(1, 8) .. "..."
+    dprint("Teleport attempt", attempt, "->", jobId)
 
-    local ok, err = pcall(function()
-        TeleportService:TeleportToPlaceInstance(placeId, jobId, lp)
-    end)
+    local ok, err = pcall(TeleportService.TeleportToPlaceInstance, TeleportService, placeId, jobId, lp)
 
     if not ok then
-        dprint("TeleportToPlaceInstance error:", err)
+        dprint("Teleport error:", err)
         if Config.RetryFailedTeleport and attempt < Config.MaxTeleportRetries then
-            task.wait(2)
+            task.wait(2 ^ attempt)
             return teleportToServer(jobId, attempt + 1)
         end
-        failedServers[jobId] = true
-        stats.totalFailed    = stats.totalFailed + 1
-        stats.status         = "Failed: " .. jobId:sub(1, 8)
-        saveStats()
-        if Config.PersistAcrossRejoins then saveFailed() end
+        releaseClaim(jobId)
+        markFailed(jobId)
+        localStats.totalFailed = localStats.totalFailed + 1
+        localStats.status      = "Failed: " .. jobId:sub(1, 8)
+        saveAccountStats()
         return false
     end
 
-    -- The teleport call succeeded — the engine will now load the new server.
-    -- Mark the hop as joined immediately so the counter is correct before
-    -- the client reloads.  Any wait-for-JobId-change loop would hang here
-    -- because this script is about to be destroyed by the teleport.
-    visitedServers[jobId] = true
-    stats.totalJoined     = stats.totalJoined + 1
-    stats.status          = "Joined #" .. stats.totalJoined
-    dprint("Teleport dispatched. totalJoined =", stats.totalJoined)
-    saveStats()
-    if Config.PersistAcrossRejoins then saveVisited() end
-
-    -- Give Roblox a moment to actually start the teleport before the loop
-    -- in run() tries to pop the next server.
-    task.wait(8)
+    markVisited(jobId)
+    localStats.totalJoined = localStats.totalJoined + 1
+    localStats.status      = "Joined #" .. localStats.totalJoined
+    dprint("Teleport dispatched. joined =", localStats.totalJoined)
+    saveAccountStats()
+    task.wait(10)
     return true
 end
 
-------------------------------------------------------------------------
--- Entry point
-------------------------------------------------------------------------
-
 local function run()
-    print("[ServerHop] Starting — Mode:", Config.FetchMode)
+    print("[ServerHop] Starting — Account:", accountKey, "Mode:", Config.FetchMode)
 
-    if Config.Optimization then buildUI() end
+    buildUI()
+    applyOptimization()
+    loadAccountStats()
+    loadLocalSets()
 
-    if Config.PersistAcrossRejoins then
-        loadVisited()
-        loadFailed()
-        loadQueue()
-    end
+    markVisited(game.JobId)
 
-    loadStats()
-
-    visitedServers[game.JobId] = true
-    stats.queueSize = #serverQueue
+    task.wait(math.random(0, 3) + (tonumber(accountKey:sub(-3)) or 0) % 5)
 
     if Config.SearchForLuck then
         local found = checkAndHandleLuck()
         if found and Config.StopOnLuckServer then
-            print("[ServerHop] Luck found on current server. Stopping.")
+            print("[ServerHop] Luck on current server. Stopped.")
             return
         end
     end
 
-    if #serverQueue == 0 then refillQueue() end
+    if shouldRefetch() then refillSharedQueue() end
 
     while not hopLock do
-        if #serverQueue < 5 then refillQueue() end
+        if shouldRefetch() then
+            refillSharedQueue()
+        end
 
-        if #serverQueue == 0 then
-            print("[ServerHop] No valid servers found. Stopping.")
-            stats.status = "No servers found"
+        local q = readJSON(FILE_SHARED_QUEUE)
+        localQueueSize = (q and type(q.data) == "table") and #q.data or 0
+
+        if localQueueSize == 0 then
+            print("[ServerHop] Queue empty. Stopping.")
+            localStats.status = "No servers found"
             break
         end
 
-        local jobId = popQueue()
-        if not jobId then continue end
-        if Config.SkipVisitedServers and visitedServers[jobId] then continue end
-        if failedServers[jobId] then continue end
+        local jobId = popFromSharedQueue()
+        if not jobId then
+            task.wait(1)
+            continue
+        end
+
+        if not tryClaimServer(jobId) then
+            dprint("Claim failed for", jobId, "— already taken")
+            task.wait(0.3)
+            continue
+        end
 
         local success = teleportToServer(jobId)
 
         if success then
-            -- Script will be destroyed by the teleport; lines below only
-            -- run if the engine somehow kept us alive (edge case).
             task.wait(3)
             if Config.SearchForLuck then checkAndHandleLuck() end
             if hopLock then break end
@@ -877,7 +987,7 @@ local function run()
     end
 
     print("[ServerHop] Session ended.")
-    stats.status = "Session ended"
+    localStats.status = "Session ended"
 end
 
 run()
