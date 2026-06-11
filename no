@@ -32,9 +32,9 @@ local PALETTE = {
 	text         = Color3.fromRGB(210, 220, 240),
 	dim          = Color3.fromRGB(85,  95,  120),
 	dimmer       = Color3.fromRGB(55,  62,  85),
-	minigame     = Color3.fromRGB(100, 255, 180),
-	minigameGlow = Color3.fromRGB(50,  200, 130),
-	minigameAlt  = Color3.fromRGB(255, 230, 80),
+	ufo          = Color3.fromRGB(100, 255, 180),
+	ufoGlow      = Color3.fromRGB(50,  200, 130),
+	ufoGolden    = Color3.fromRGB(255, 230, 80),
 }
 
 local ASSET_IDS = {
@@ -50,15 +50,25 @@ local ASSET_IDS = {
 }
 
 local SUFFIXES = {
-	{ 1e24, "Sp" }, { 1e21, "Sx" }, { 1e18, "Qn" }, { 1e15, "Qd" },
-	{ 1e12, "T"  }, { 1e9,  "B"  }, { 1e6,  "M"  }, { 1e3,  "K"  },
+	{ 1e27, "Oo"  },
+	{ 1e24, "Sp"  },
+	{ 1e21, "Sx"  },
+	{ 1e18, "Qn"  },
+	{ 1e15, "Qd"  },
+	{ 1e12, "T"   },
+	{ 1e9,  "B"   },
+	{ 1e6,  "M"   },
+	{ 1e3,  "K"   },
 }
 
 local function formatNum(n)
 	n = tonumber(n) or 0
 	for _, pair in ipairs(SUFFIXES) do
 		if n >= pair[1] then
-			return (string.format("%.2f", n / pair[1]):gsub("%.?0+$", "")) .. pair[2]
+			local val = n / pair[1]
+			local s = string.format("%.2f", val)
+			s = s:gsub("%.?0+$", "")
+			return s .. pair[2]
 		end
 	end
 	return tostring(math.floor(n))
@@ -146,26 +156,15 @@ local sessionStartGoop  = safeGet("goop")
 local bestSlimeData = { name = "None", odds = "N/A", assetId = "" }
 
 local minigameState = {
-	active       = false,
-	itemsWon     = "N/A",
-	nextEventSecs = 0,
-	clientLoaded = false,
+	itemsWon  = "N/A",
+	nextTimer = "N/A",
 }
-
-local minigameClient = nil
-task.spawn(function()
-	repeat task.wait() until game:IsLoaded()
-	pcall(function()
-		minigameState.clientLoaded = true
-	end)
-end)
 
 task.spawn(function()
 	repeat task.wait() until game:IsLoaded()
 	pcall(function()
 		local sourceFolder = ReplicatedStorage:WaitForChild("Source", 30)
 		local slimesModule = require(sourceFolder.Game.Items.Slimes)
-		local ZonesModule  = require(sourceFolder.Game.Items.Zones)
 		while true do
 			task.wait(3)
 			pcall(function()
@@ -595,86 +594,63 @@ local function buildHUD(playerGui)
 		return row, valLbl
 	end
 
-	local _, rpsVal = makeRateRow(rightPanel, ASSET_IDS.goldDice, "Rolls/h",  PALETTE.void)
-	local _, cpsVal = makeRateRow(rightPanel, ASSET_IDS.coins,    "Coins/h",  PALETTE.gold)
-	local _, kpmVal = makeRateRow(rightPanel, ASSET_IDS.kills,    "Kills/h",  PALETTE.red)
+	local _, rphVal = makeRateRow(rightPanel, ASSET_IDS.goldDice, "Rolls/hr",  PALETTE.void)
+	local _, cphVal = makeRateRow(rightPanel, ASSET_IDS.coins,    "Coins/hr",  PALETTE.gold)
+	local _, gphVal = makeRateRow(rightPanel, ASSET_IDS.goop,     "Goop/hr",   PALETTE.green)
+	local _, kphVal = makeRateRow(rightPanel, ASSET_IDS.kills,    "Kills/hr",  PALETTE.red)
 
 	makeDivider(rightPanel)
 
 	makeSectionTag(rightPanel, "🎮 MINIGAME")
 
-	local minigameActive = makeFrame({
+	local mgItemsRow = makeFrame({
 		Size             = UDim2.fromScale(1, 0.085),
 		BackgroundColor3 = PALETTE.panelAlt,
 	}, rightPanel)
-	addCorner(minigameActive, 6)
-	addStroke(minigameActive, PALETTE.minigame, 1)
+	addCorner(mgItemsRow, 6)
+	addStroke(mgItemsRow, PALETTE.accent, 1)
 
 	makeLabel({
-		Size           = UDim2.fromScale(0.45, 0.7),
-		Position       = UDim2.fromScale(0.04, 0.15),
-		Text           = "Status",
-		TextColor3     = PALETTE.dim,
-		Font           = Enum.Font.Gotham,
-		TextXAlignment = Enum.TextXAlignment.Left,
-	}, minigameActive)
-
-	local minigameStatusVal = makeLabel({
-		Size           = UDim2.fromScale(0.5, 0.7),
-		Position       = UDim2.fromScale(0.48, 0.15),
-		Text           = "Idle",
-		TextColor3     = PALETTE.minigame,
-		Font           = Enum.Font.GothamBold,
-		TextXAlignment = Enum.TextXAlignment.Right,
-	}, minigameActive)
-
-	local minigameItemsRow = makeFrame({
-		Size             = UDim2.fromScale(1, 0.085),
-		BackgroundColor3 = PALETTE.panelAlt,
-	}, rightPanel)
-	addCorner(minigameItemsRow, 6)
-
-	makeLabel({
-		Size           = UDim2.fromScale(0.38, 0.7),
+		Size           = UDim2.fromScale(0.48, 0.7),
 		Position       = UDim2.fromScale(0.04, 0.15),
 		Text           = "Items Won",
 		TextColor3     = PALETTE.dim,
 		Font           = Enum.Font.Gotham,
 		TextXAlignment = Enum.TextXAlignment.Left,
-	}, minigameItemsRow)
+	}, mgItemsRow)
 
-	local minigameItemsVal = makeLabel({
-		Size           = UDim2.fromScale(0.56, 0.7),
-		Position       = UDim2.fromScale(0.42, 0.15),
+	local mgItemsVal = makeLabel({
+		Size           = UDim2.fromScale(0.46, 0.7),
+		Position       = UDim2.fromScale(0.5, 0.15),
 		Text           = "N/A",
-		TextColor3     = PALETTE.minigame,
+		TextColor3     = PALETTE.text,
 		Font           = Enum.Font.GothamBold,
 		TextXAlignment = Enum.TextXAlignment.Right,
-	}, minigameItemsRow)
+	}, mgItemsRow)
 
-	local minigameNextRow = makeFrame({
+	local mgNextRow = makeFrame({
 		Size             = UDim2.fromScale(1, 0.085),
 		BackgroundColor3 = PALETTE.panelAlt,
 	}, rightPanel)
-	addCorner(minigameNextRow, 6)
+	addCorner(mgNextRow, 6)
 
 	makeLabel({
-		Size           = UDim2.fromScale(0.4, 0.7),
+		Size           = UDim2.fromScale(0.44, 0.7),
 		Position       = UDim2.fromScale(0.04, 0.15),
 		Text           = "Next",
 		TextColor3     = PALETTE.dim,
 		Font           = Enum.Font.Gotham,
 		TextXAlignment = Enum.TextXAlignment.Left,
-	}, minigameNextRow)
+	}, mgNextRow)
 
-	local minigameNextVal = makeLabel({
-		Size           = UDim2.fromScale(0.54, 0.7),
-		Position       = UDim2.fromScale(0.44, 0.15),
-		Text           = "--:--",
+	local mgNextVal = makeLabel({
+		Size           = UDim2.fromScale(0.5, 0.7),
+		Position       = UDim2.fromScale(0.48, 0.15),
+		Text           = "N/A",
 		TextColor3     = PALETTE.accent,
 		Font           = Enum.Font.GothamBold,
 		TextXAlignment = Enum.TextXAlignment.Right,
-	}, minigameNextRow)
+	}, mgNextRow)
 
 	local statusPanel = makeFrame({
 		Name             = "StatusPanel",
@@ -724,17 +700,16 @@ local function buildHUD(playerGui)
 		sessKillsVal     = sessKillsVal,
 		sessCoinsVal     = sessCoinsVal,
 		sessGoopVal      = sessGoopVal,
-		rpsVal           = rpsVal,
-		cpsVal           = cpsVal,
-		kpmVal           = kpmVal,
+		rphVal           = rphVal,
+		cphVal           = cphVal,
+		gphVal           = gphVal,
+		kphVal           = kphVal,
 		bestSlimeIcon    = bestSlimeIcon,
 		bestSlimeNameLbl = bestSlimeNameLbl,
 		bestSlimeOddsLbl = bestSlimeOddsLbl,
 		statusLabel      = statusLabel,
-		minigameStatusVal = minigameStatusVal,
-		minigameItemsVal = minigameItemsVal,
-		minigameNextVal  = minigameNextVal,
-		minigameActive   = minigameActive,
+		mgItemsVal       = mgItemsVal,
+		mgNextVal        = mgNextVal,
 	}
 end
 
@@ -754,9 +729,10 @@ local prevRolls      = safeGet("stats","rolls")
 local prevCoins      = safeGet("coins")
 local prevGoop       = safeGet("goop")
 local prevKills      = safeGet("stats","kills")
-local rateRps        = 0
-local rateCps        = 0
-local rateKps        = 0
+local rateRph        = 0
+local rateCph        = 0
+local rateGph        = 0
+local rateKph        = 0
 local lastRateUpdate = os.clock()
 local RATE_WINDOW    = 5
 
@@ -778,22 +754,28 @@ local function updateStats(refs)
 		local dt   = now - lastRateUpdate
 		local curR = safeGet("stats","rolls")
 		local curC = safeGet("coins")
+		local curG = safeGet("goop")
 		local curK = safeGet("stats","kills")
 
 		local deltaR = math.max(0, curR - prevRolls)
 		local deltaC = math.max(0, curC - prevCoins)
+		local deltaG = math.max(0, curG - prevGoop)
 		local deltaK = math.max(0, curK - prevKills)
 
 		if deltaR > 0 then everEarnedRolls = true end
 		if deltaC > 0 then everEarnedCoins = true end
+		if deltaG > 0 then everEarnedGoop  = true end
 		if deltaK > 0 then everEarnedKills = true end
 
-		rateRps = deltaR / dt
-		rateCps = deltaC / dt
-		rateKps = deltaK / dt
+		-- convert per-second rates to per-hour
+		rateRph = (deltaR / dt) * 3600
+		rateCph = (deltaC / dt) * 3600
+		rateGph = (deltaG / dt) * 3600
+		rateKph = (deltaK / dt) * 3600
 
 		prevRolls      = curR
 		prevCoins      = curC
+		prevGoop       = curG
 		prevKills      = curK
 		lastRateUpdate = now
 	end
@@ -819,21 +801,27 @@ local function updateStats(refs)
 	updateLabel(refs.sessGoopVal,  formatNum(math.max(0, safeGet("goop")           - sessionStartGoop)))
 
 	if everEarnedRolls then
-		updateLabel(refs.rpsVal, string.format("%.1f/h", rateRps * 3600))
+		updateLabel(refs.rphVal, formatNum(math.floor(rateRph)) .. "/hr")
 	else
-		updateLabel(refs.rpsVal, "-")
+		updateLabel(refs.rphVal, "-")
 	end
 
 	if everEarnedCoins then
-		updateLabel(refs.cpsVal, formatNum(math.floor(rateCps * 3600)) .. "/h")
+		updateLabel(refs.cphVal, formatNum(math.floor(rateCph)) .. "/hr")
 	else
-		updateLabel(refs.cpsVal, "-")
+		updateLabel(refs.cphVal, "-")
+	end
+
+	if everEarnedGoop then
+		updateLabel(refs.gphVal, formatNum(math.floor(rateGph)) .. "/hr")
+	else
+		updateLabel(refs.gphVal, "-")
 	end
 
 	if everEarnedKills then
-		updateLabel(refs.kpmVal, string.format("%.1f/h", rateKps * 3600))
+		updateLabel(refs.kphVal, formatNum(math.floor(rateKph)) .. "/hr")
 	else
-		updateLabel(refs.kpmVal, "-")
+		updateLabel(refs.kphVal, "-")
 	end
 
 	refs.timerLabel.Text = getTimerText()
@@ -846,24 +834,8 @@ local function updateStats(refs)
 		end
 	end
 
-	local statusDisplay = minigameState.active and "Active" or "Idle"
-	local statusColor = minigameState.active and PALETTE.minigame or PALETTE.dim
-	if refs.minigameStatusVal.Text ~= statusDisplay then
-		refs.minigameStatusVal.Text       = statusDisplay
-		refs.minigameStatusVal.TextColor3 = statusColor
-		addStroke(refs.minigameActive, minigameState.active and PALETTE.minigame or PALETTE.dimmer, 1)
-	end
-
-	local itemsDisplay = minigameState.itemsWon or "N/A"
-	if refs.minigameItemsVal.Text ~= itemsDisplay then
-		refs.minigameItemsVal.Text = itemsDisplay
-	end
-
-	local secs = minigameState.nextEventSecs or 0
-	local nextDisplay = string.format("%02d:%02d", math.floor(secs / 60), secs % 60)
-	if refs.minigameNextVal.Text ~= nextDisplay then
-		refs.minigameNextVal.Text = nextDisplay
-	end
+	updateLabel(refs.mgItemsVal, minigameState.itemsWon)
+	updateLabel(refs.mgNextVal,  minigameState.nextTimer)
 end
 
 local function runStatusEngine(refs, alive)
@@ -874,7 +846,8 @@ local function runStatusEngine(refs, alive)
 	local lastCoins  = safeGet("coins")
 	local lastRolls  = safeGet("stats","rolls")
 	local lastKills  = safeGet("stats","kills")
-	local coinDelta, rollDelta, killDelta = 0, 0, 0
+	local lastGoop   = safeGet("goop")
+	local coinDelta, rollDelta, killDelta, goopDelta = 0, 0, 0, 0
 	local peakCoinRate = 0
 	local startRolls   = safeGet("stats","rolls")
 
@@ -899,18 +872,19 @@ local function runStatusEngine(refs, alive)
 				local c = safeGet("coins")
 				local r = safeGet("stats","rolls")
 				local k = safeGet("stats","kills")
+				local g = safeGet("goop")
 				coinDelta = math.max(0, c - lastCoins)
 				rollDelta = math.max(0, r - lastRolls)
 				killDelta = math.max(0, k - lastKills)
+				goopDelta = math.max(0, g - lastGoop)
 				local rate = math.floor(coinDelta / WINDOW)
 				if rate > peakCoinRate then peakCoinRate = rate end
-				lastCoins = c; lastRolls = r; lastKills = k
+				lastCoins = c; lastRolls = r; lastKills = k; lastGoop = g
 			end)
 		end
 	end)
 
 	local reactive = {
-		{ check = function() return minigameState.active end, text = function() return "🎮 Minigame active!" end, color = PALETTE.minigame },
 		{ check = function() return tonumber(safeGet("specialRollProgression","galaxy","rollsUntilNext")) == 0 end,  text = function() return "Galaxy roll ready"   end, color = PALETTE.galaxy  },
 		{ check = function() return tonumber(safeGet("specialRollProgression","void","rollsUntilNext")) == 0 end,    text = function() return "Void roll ready"     end, color = PALETTE.void    },
 		{ check = function() return tonumber(safeGet("specialRollProgression","diamond","rollsUntilNext")) == 0 end, text = function() return "Diamond roll ready"  end, color = PALETTE.diamond },
@@ -931,20 +905,15 @@ local function runStatusEngine(refs, alive)
 			end,
 			color = PALETTE.green,
 		},
-		{ check = function() return killDelta >= 25  end, text = function() return "Kill streak  +"  .. formatNum(killDelta) end,                              color = PALETTE.red  },
-		{ check = function() return coinDelta >= 5e5 end, text = function() return "Earning  "       .. formatNum(math.floor(coinDelta/WINDOW)) .. "/sec" end, color = PALETTE.gold },
-		{ check = function() return rollDelta >= 10  end, text = function() return string.format("Rolling fast  %.1f/sec", rollDelta/WINDOW) end,              color = PALETTE.void },
+		{ check = function() return killDelta >= 25  end, text = function() return "Kill streak  +"  .. formatNum(killDelta) end,                                       color = PALETTE.red  },
+		{ check = function() return coinDelta >= 5e5 end, text = function() return "Earning  "       .. formatNum(math.floor(coinDelta/WINDOW*3600)) .. "/hr" end,      color = PALETTE.gold },
+		{ check = function() return goopDelta >= 1000 end,text = function() return "Goop rate  +"    .. formatNum(math.floor(goopDelta/WINDOW*3600)) .. "/hr" end,      color = PALETTE.green},
+		{ check = function() return rollDelta >= 10  end, text = function() return "Rolling fast  "  .. formatNum(math.floor(rollDelta/WINDOW*3600)) .. "/hr" end,      color = PALETTE.void },
 	}
 
 	local idlePool = {
 		function() local z=safeGet("zone"); local b=safeGet("furthestZone"); return {text="Zone efficiency  "..(b>0 and math.floor((z/math.max(1,b))*100) or 100).."%", color=PALETTE.accent} end,
-		function()
-			local s = minigameState.nextEventSecs or 0
-			if minigameState.active then
-				return {text="🎮 Minigame in progress", color=PALETTE.minigame}
-			end
-			return {text="🎮 Next minigame in  "..string.format("%02d:%02d", math.floor(s/60), s%60), color=PALETTE.dim}
-		end,
+		function() return {text="🎮 Next minigame  "..minigameState.nextTimer, color=PALETTE.accent} end,
 		function() local n=tonumber(safeGet("specialRollProgression","galaxy","rollsUntilNext")) or 0; return {text=n>0 and "Galaxy in  "..formatNum(n).." rolls" or "Galaxy roll standing by", color=PALETTE.galaxy} end,
 		function() local n=tonumber(safeGet("specialRollProgression","void","rollsUntilNext")) or 0;   return {text=n>0 and "Void in  "..formatNum(n).." rolls" or "Void roll standing by",    color=PALETTE.void}   end,
 		function() local n=tonumber(safeGet("specialRollProgression","diamond","rollsUntilNext")) or 0;return {text=n>0 and "Diamond in  "..formatNum(n).." rolls" or "Diamond roll standing by",color=PALETTE.diamond}end,
@@ -956,19 +925,19 @@ local function runStatusEngine(refs, alive)
 		function() return {text="Balance  "..formatNum(safeGet("coins")),color=PALETTE.gold} end,
 		function() return {text="Rebirth tier  "..formatNum(safeGet("rebirths")),color=PALETTE.diamond} end,
 		function() return {text="Session  "..math.floor((os.clock()-sessionStart)/60).." min",color=PALETTE.dim} end,
-		function() return rollDelta>0 and {text=string.format("Roll rate  %.1f/sec",rollDelta/WINDOW),color=PALETTE.void} or {text="Roll monitor active",color=PALETTE.dim} end,
+		function() return rollDelta>0 and {text="Roll rate  "..formatNum(math.floor(rollDelta/WINDOW*3600)).."/hr",color=PALETTE.void} or {text="Roll monitor active",color=PALETTE.dim} end,
 		function() return {text="Farming zone  "..formatNum(safeGet("zone")),color=PALETTE.accent} end,
 		function() return {text="Goop reserve  "..formatNum(safeGet("goop")),color=PALETTE.green} end,
 		function() local r=safeGet("rebirths"); return {text=string.format("Luck amp  x%.1f",1+(r*0.1)),color=PALETTE.gold} end,
-		function() return coinDelta>0 and {text="Coins/min  "..formatNum(math.floor(coinDelta/WINDOW*60)),color=PALETTE.gold} or {text="Coin tracker active",color=PALETTE.dim} end,
-		function() return peakCoinRate>0 and {text="Peak rate  "..formatNum(peakCoinRate).."/sec",color=PALETTE.gold} or {text="Peak rate calculating",color=PALETTE.dim} end,
+		function() return coinDelta>0 and {text="Coins/hr  "..formatNum(math.floor(coinDelta/WINDOW*3600)),color=PALETTE.gold} or {text="Coin tracker active",color=PALETTE.dim} end,
+		function() return peakCoinRate>0 and {text="Peak rate  "..formatNum(peakCoinRate*3600).."/hr",color=PALETTE.gold} or {text="Peak rate calculating",color=PALETTE.dim} end,
 		function() return {text="Session rolls  "..formatNum(safeGet("stats","rolls")-startRolls),color=PALETTE.void} end,
-		function() local e=os.clock()-sessionStart; local k=safeGet("stats","kills"); return {text=string.format("Kills/min  %.1f",e>0 and (k/(e/60)) or 0),color=PALETTE.red} end,
-		function() local e=os.clock()-sessionStart; local r=safeGet("stats","rolls")-startRolls; return {text=string.format("Session rps  %.2f",e>0 and (r/e) or 0),color=PALETTE.void} end,
+		function() local e=os.clock()-sessionStart; local h=e/3600; local k=safeGet("stats","kills"); return {text="Kills/hr  "..formatNum(h>0 and math.floor(k/h) or 0),color=PALETTE.red} end,
+		function() local e=os.clock()-sessionStart; local h=e/3600; local r=safeGet("stats","rolls")-startRolls; return {text="Rolls/hr  "..formatNum(h>0 and math.floor(r/h) or 0),color=PALETTE.void} end,
 		function() local z=safeGet("zone"); local b=safeGet("furthestZone"); return b>z and {text="Best zone  "..formatNum(b),color=PALETTE.accent} or {text="At furthest zone",color=PALETTE.accent} end,
-		function() return coinDelta>0 and {text="Goop/min  "..formatNum(math.floor(coinDelta/WINDOW*60)),color=PALETTE.green} or {text="Goop tracker active",color=PALETTE.dim} end,
+		function() return goopDelta>0 and {text="Goop/hr  "..formatNum(math.floor(goopDelta/WINDOW*3600)),color=PALETTE.green} or {text="Goop tracker active",color=PALETTE.dim} end,
 		function() local r=safeGet("rebirths"); return {text=string.format("Rebirth mult  x%.2f",1+(r*0.25)),color=PALETTE.diamond} end,
-		function() local e=os.clock()-sessionStart; local c=safeGet("coins"); return {text="Avg coins/min  "..formatNum(math.floor(e>0 and (c/(e/60)) or 0)),color=PALETTE.gold} end,
+		function() local e=os.clock()-sessionStart; local h=e/3600; local c=safeGet("coins"); return {text="Coins/hr  "..formatNum(h>0 and math.floor(c/h) or 0),color=PALETTE.gold} end,
 		function()
 			local vn=tonumber(safeGet("specialRollProgression","void","rollsUntilNext")) or 0
 			local dn=tonumber(safeGet("specialRollProgression","diamond","rollsUntilNext")) or 0
@@ -985,9 +954,11 @@ local function runStatusEngine(refs, alive)
 		function()
 			local e=os.clock()-sessionStart
 			if e<120 then return {text="Session warming up",color=PALETTE.dim} end
-			return {text="Coins/hr  "..formatNum(math.floor((safeGet("coins")/e)*3600)),color=PALETTE.gold}
+			local h=e/3600
+			return {text="Coins/hr  "..formatNum(math.floor(safeGet("coins")/h)),color=PALETTE.gold}
 		end,
 		function() return bestSlimeData.name~="None" and {text="Best roll: "..bestSlimeData.name,color=PALETTE.void} or {text="No rare roll recorded yet",color=PALETTE.dim} end,
+		function() return {text="🎮 Items won  "..minigameState.itemsWon,color=PALETTE.accent} end,
 	}
 
 	task.spawn(function()
