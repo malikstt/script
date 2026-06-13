@@ -36,15 +36,12 @@ local PALETTE = {
 	dimmer       = Color3.fromRGB(55,  62,  85),
 }
 
-local WHEEL_ICONS = {
-	["wood"]      = "rbxassetid://97418696122224",
-	["silver"]    = "rbxassetid://127511505086003",
-	["gold"]      = "rbxassetid://83852056911466",
-	["diamond"]   = "rbxassetid://140018893557567",
-	["obsidian"]  = "rbxassetid://138012305604736",
-	["crimson"]   = "rbxassetid://91040468347565",
-	["legendary"] = "rbxassetid://134092143150080",
-}
+local WHEEL_ICONS = {}
+for _, wheel in ipairs(Shared.WHEELS) do
+	WHEEL_ICONS[wheel.mat] = require(ReplicatedStorage.Source.Game.AssetIds.ImageIds).spinners.streakSpinners[wheel.mat].currency
+end
+
+local SPIN_ICON = "rbxassetid://77999805030576"
 
 local ASSET_IDS = {
 	rebirth     = "rbxassetid://132563621658654",
@@ -96,6 +93,10 @@ local function formatTime(secs)
 	if m > 0 then table.insert(parts, m .. "m") end
 	if s > 0 then table.insert(parts, s .. "s") end
 	return #parts > 0 and table.concat(parts, " ") or "Ready"
+end
+
+local function capitalize(s)
+	return s:sub(1,1):upper() .. s:sub(2)
 end
 
 local function tweenProp(obj, props, t)
@@ -208,21 +209,31 @@ local function getCurrentWheelMat()
 	return wheel and wheel.mat or nil
 end
 
-local function getNextRewardWheelMat()
-	local sd = getStreakData()
-	if not sd then return nil end
-	local nextStreak = (sd.currentStreak or 0) + 1
-	local idx = Shared.getWheelIndex(nextStreak)
-	local wheel = Shared.WHEELS[idx]
-	return wheel and wheel.mat or nil
-end
-
-local function getNextRewardTimer()
+local function getNextClaimableSpinInfo()
 	local sd = getStreakData()
 	if not sd then return nil end
 	local now = math.round(workspace:GetServerTimeNow())
 	local nextAt = (sd.lastStreakClaimTime or 0) + Shared.STREAK_CADENCE
-	return math.max(0, nextAt - now)
+	local remaining = math.max(0, nextAt - now)
+	local nextStreak = (sd.currentStreak or 0) + 1
+	local idx = Shared.getWheelIndex(nextStreak)
+	local wheel = Shared.WHEELS[idx]
+	return {
+		remaining = remaining,
+		mat = wheel and wheel.mat or nil,
+	}
+end
+
+local function getNextChargeWheelInfo()
+	local sd = getStreakData()
+	if not sd then return nil end
+	local info = getSpinChargeInfo()
+	local mat = getCurrentWheelMat()
+	return {
+		mat = mat,
+		remaining = info and info.remaining or nil,
+		claimable = info and info.claimable or 0,
+	}
 end
 
 local sessionStart      = os.clock()
@@ -676,9 +687,9 @@ local function buildHUD(playerGui)
 
 	makeSectionTag(rightPanel, "STREAK WHEEL")
 
-	local function makeWheelInfoRow(parent, labelText, accentColor, rowH)
+	local function makeWheelRow(parent, labelText, accentColor, iconOverride)
 		local row = makeFrame({
-			Size             = UDim2.fromScale(1, rowH or 0.085),
+			Size             = UDim2.fromScale(1, 0.085),
 			BackgroundColor3 = PALETTE.panelAlt,
 		}, parent)
 		addCorner(row, 6)
@@ -688,7 +699,7 @@ local function buildHUD(playerGui)
 		local iconImg = makeImageLabel({
 			Size     = UDim2.fromScale(0.82, 0.7),
 			Position = UDim2.fromScale(0.09, 0.15),
-			Image    = "",
+			Image    = iconOverride or "",
 		}, iconFrame)
 		make("UIAspectRatioConstraint", { AspectRatio = 1, AspectType = Enum.AspectType.ScaleWithParentSize, DominantAxis = Enum.DominantAxis.Height }, iconImg)
 
@@ -711,9 +722,9 @@ local function buildHUD(playerGui)
 		return row, valLbl, iconImg
 	end
 
-	local _, currentWheelVal, currentWheelIcon = makeWheelInfoRow(rightPanel, "Current Wheel", PALETTE.gold)
-	local _, nextRewardVal,   nextRewardIcon   = makeWheelInfoRow(rightPanel, "Next Reward",   PALETTE.accent)
-	local _, spinChargeVal,   _                = makeWheelInfoRow(rightPanel, "Spin Charge",   PALETTE.green)
+	local _, currentWheelVal, currentWheelIcon     = makeWheelRow(rightPanel, "Current Wheel", PALETTE.gold)
+	local _, nextClaimableVal, nextClaimableIcon   = makeWheelRow(rightPanel, "Next Claimable", PALETTE.accent, SPIN_ICON)
+	local _, nextChargeVal, nextChargeIcon         = makeWheelRow(rightPanel, "Spin Charge", PALETTE.green)
 
 	local statusPanel = makeFrame({
 		Name             = "StatusPanel",
@@ -773,9 +784,10 @@ local function buildHUD(playerGui)
 		statusLabel      = statusLabel,
 		currentWheelVal  = currentWheelVal,
 		currentWheelIcon = currentWheelIcon,
-		nextRewardVal    = nextRewardVal,
-		nextRewardIcon   = nextRewardIcon,
-		spinChargeVal    = spinChargeVal,
+		nextClaimableVal  = nextClaimableVal,
+		nextClaimableIcon = nextClaimableIcon,
+		nextChargeVal    = nextChargeVal,
+		nextChargeIcon   = nextChargeIcon,
 	}
 end
 
@@ -806,10 +818,6 @@ local everEarnedCoins = safeGet("coins") > sessionStartCoins
 local everEarnedGoop  = safeGet("goop")  > sessionStartGoop
 local everEarnedRolls = safeGet("stats","rolls") > sessionStartRolls
 local everEarnedKills = safeGet("stats","kills") > sessionStartKills
-
-local function capitalize(s)
-	return s:sub(1,1):upper() .. s:sub(2)
-end
 
 local function updateStats(refs)
 	local function updateLabel(lbl, newText)
@@ -889,28 +897,35 @@ local function updateStats(refs)
 		refs.currentWheelIcon.Image = ""
 	end
 
-	local nextMat = getNextRewardWheelMat()
-	local nextTimer = getNextRewardTimer()
-	if nextMat then
-		local timerStr = (nextTimer and nextTimer > 0) and (" " .. formatTime(nextTimer)) or " Ready"
-		updateLabel(refs.nextRewardVal, capitalize(nextMat) .. timerStr)
-		refs.nextRewardIcon.Image = WHEEL_ICONS[nextMat] or ""
+	local claimInfo = getNextClaimableSpinInfo()
+	if claimInfo then
+		if claimInfo.remaining == 0 then
+			updateLabel(refs.nextClaimableVal, "Ready!")
+		else
+			updateLabel(refs.nextClaimableVal, formatTime(claimInfo.remaining))
+		end
 	else
-		updateLabel(refs.nextRewardVal, "-")
-		refs.nextRewardIcon.Image = ""
+		updateLabel(refs.nextClaimableVal, "-")
 	end
 
 	local chargeInfo = getSpinChargeInfo()
+	local chargeMat = getCurrentWheelMat()
+	if chargeMat then
+		refs.nextChargeIcon.Image = WHEEL_ICONS[chargeMat] or ""
+	else
+		refs.nextChargeIcon.Image = ""
+	end
 	if chargeInfo then
 		if chargeInfo.claimable and chargeInfo.claimable > 0 then
-			updateLabel(refs.spinChargeVal, chargeInfo.claimable .. " ready")
+			updateLabel(refs.nextChargeVal, chargeInfo.claimable .. " ready")
 		elseif chargeInfo.remaining and chargeInfo.remaining > 0 then
-			updateLabel(refs.spinChargeVal, formatTime(chargeInfo.remaining))
+			local mat = chargeMat and (capitalize(chargeMat) .. " ") or ""
+			updateLabel(refs.nextChargeVal, mat .. formatTime(chargeInfo.remaining))
 		else
-			updateLabel(refs.spinChargeVal, "N/A")
+			updateLabel(refs.nextChargeVal, "N/A")
 		end
 	else
-		updateLabel(refs.spinChargeVal, "N/A")
+		updateLabel(refs.nextChargeVal, "N/A")
 	end
 end
 
@@ -961,10 +976,10 @@ local function runStatusEngine(refs, alive)
 	end)
 
 	local reactive = {
-		{ check = function() return tonumber(safeGet("specialRollProgression","galaxy","rollsUntilNext")) == 0 end,  text = function() return "Galaxy roll ready"   end, color = PALETTE.galaxy  },
-		{ check = function() return tonumber(safeGet("specialRollProgression","void","rollsUntilNext")) == 0 end,    text = function() return "Void roll ready"     end, color = PALETTE.void    },
-		{ check = function() return tonumber(safeGet("specialRollProgression","diamond","rollsUntilNext")) == 0 end, text = function() return "Diamond roll ready"  end, color = PALETTE.diamond },
-		{ check = function() return tonumber(safeGet("specialRollProgression","golden","rollsUntilNext")) == 0 end,  text = function() return "Golden roll ready"   end, color = PALETTE.gold    },
+		{ check = function() return tonumber(safeGet("specialRollProgression","galaxy","rollsUntilNext")) == 0 end,  text = function() return "Galaxy roll ready"  end, color = PALETTE.galaxy  },
+		{ check = function() return tonumber(safeGet("specialRollProgression","void","rollsUntilNext")) == 0 end,    text = function() return "Void roll ready"    end, color = PALETTE.void    },
+		{ check = function() return tonumber(safeGet("specialRollProgression","diamond","rollsUntilNext")) == 0 end, text = function() return "Diamond roll ready" end, color = PALETTE.diamond },
+		{ check = function() return tonumber(safeGet("specialRollProgression","golden","rollsUntilNext")) == 0 end,  text = function() return "Golden roll ready"  end, color = PALETTE.gold    },
 		{
 			check = function() local r = safeGet("rebirths"); return safeGet("goop") >= (2^r)*500 end,
 			text  = function() return "Rebirth requirement met" end,
@@ -981,20 +996,28 @@ local function runStatusEngine(refs, alive)
 			end,
 			color = PALETTE.green,
 		},
-		{ check = function() return killDelta >= 25  end, text = function() return "Kill streak  +"  .. formatNum(killDelta) end, color = PALETTE.red  },
-		{ check = function() return coinDelta >= 5e5 end, text = function() return "Earning  "       .. formatNum(math.floor(coinDelta/WINDOW*3600)) .. "/hr" end, color = PALETTE.gold },
-		{ check = function() return goopDelta >= 1000 end,text = function() return "Goop rate  +"    .. formatNum(math.floor(goopDelta/WINDOW*3600)) .. "/hr" end, color = PALETTE.green},
-		{ check = function() return rollDelta >= 10  end, text = function() return "Rolling fast  "  .. formatNum(math.floor(rollDelta/WINDOW*3600)) .. "/hr" end, color = PALETTE.void },
+		{ check = function() return killDelta >= 25   end, text = function() return "Kill streak  +"  .. formatNum(killDelta) end, color = PALETTE.red  },
+		{ check = function() return coinDelta >= 5e5  end, text = function() return "Earning  "       .. formatNum(math.floor(coinDelta/WINDOW*3600)) .. "/hr" end, color = PALETTE.gold },
+		{ check = function() return goopDelta >= 1000 end, text = function() return "Goop rate  +"    .. formatNum(math.floor(goopDelta/WINDOW*3600)) .. "/hr" end, color = PALETTE.green},
+		{ check = function() return rollDelta >= 10   end, text = function() return "Rolling fast  "  .. formatNum(math.floor(rollDelta/WINDOW*3600)) .. "/hr" end, color = PALETTE.void },
 		{
 			check = function()
 				local info = getSpinChargeInfo()
 				return info and info.claimable and info.claimable > 0
 			end,
-			text = function()
+			text  = function()
 				local info = getSpinChargeInfo()
 				return "Spin charge ready  x" .. (info and info.claimable or 0)
 			end,
 			color = PALETTE.green,
+		},
+		{
+			check = function()
+				local info = getNextClaimableSpinInfo()
+				return info and info.remaining == 0
+			end,
+			text  = function() return "Daily spin claimable!" end,
+			color = PALETTE.gold,
 		},
 	}
 
@@ -1026,9 +1049,18 @@ local function runStatusEngine(refs, alive)
 			if info and info.claimable and info.claimable > 0 then
 				return {text="Spin charges ready  x"..info.claimable, color=PALETTE.green}
 			elseif info and info.remaining and info.remaining > 0 then
-				return {text="Next spin in  "..formatTime(info.remaining), color=PALETTE.accent}
+				return {text="Next spin charge  "..formatTime(info.remaining), color=PALETTE.accent}
 			end
 			return {text="Spin charge tracking", color=PALETTE.dim}
+		end,
+		function()
+			local info = getNextClaimableSpinInfo()
+			if info and info.remaining == 0 then
+				return {text="Daily spin ready to claim!", color=PALETTE.gold}
+			elseif info and info.remaining > 0 then
+				return {text="Daily spin in  "..formatTime(info.remaining), color=PALETTE.accent}
+			end
+			return {text="Daily spin tracking", color=PALETTE.dim}
 		end,
 		function() local e=os.clock()-sessionStart; local h=e/3600; local k=safeGet("stats","kills"); return {text="Kills/hr  "..formatNum(h>0 and math.floor(k/h) or 0),color=PALETTE.red} end,
 		function() local e=os.clock()-sessionStart; local h=e/3600; local r=safeGet("stats","rolls")-startRolls; return {text="Rolls/hr  "..formatNum(h>0 and math.floor(r/h) or 0),color=PALETTE.void} end,
